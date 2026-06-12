@@ -1,0 +1,44 @@
+{
+  "name": "@silk/taskmux",
+  "version": "0.0.0",
+  "description": "Local task board for native agent CLI sessions backed by tmux.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "taskmux": "./dist/cli.js",
+    "tb": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "taskmux",
+    "tmux",
+    "cli",
+    "agents",
+    "codex",
+    "claude"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/silk/taskmux.git"
+  },
+  "bugs": {
+    "url": "https://github.com/silk/taskmux/issues"
+  },
+  "homepage": "https://github.com/silk/taskmux#readme",
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^5.8.0"
+  }
+}
