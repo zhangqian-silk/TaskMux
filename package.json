@@ -31,12 +31,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/silk/taskmux.git"
+    "url": "git+https://github.com/zhangqian-silk/taskmux.git"
   },
   "bugs": {
-    "url": "https://github.com/silk/taskmux/issues"
+    "url": "https://github.com/zhangqian-silk/taskmux/issues"
   },
-  "homepage": "https://github.com/silk/taskmux#readme",
+  "homepage": "https://github.com/zhangqian-silk/taskmux#readme",
   "devDependencies": {
     "@types/node": "^25.9.3",
     "typescript": "^5.8.0"
