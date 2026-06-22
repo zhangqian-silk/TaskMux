@@ -50,6 +50,12 @@ task transcript <task-id> <role>
 
 task detach <task-id> <role>
   tmux detach-client -s taskmux-<task-id>
+
+task stop <task-id> <role>
+  tmux send-keys -t taskmux-<task-id>:<role> C-c
+
+task kill <task-id> <role>
+  tmux kill-window -t taskmux-<task-id>:<role>
 ```
 
 `TASKMUX_TMUX_BIN` can override the tmux executable for tests and controlled environments. Normal users should rely on the default `tmux` executable.
@@ -77,6 +83,8 @@ Initial runners:
 - Codex CLI
 - Claude Code
 
+`src/runner/runnerRegistry.ts` is the single source of supported runner ids. Role assignment rejects unsupported agents before writing `role.json`.
+
 Adapters provide:
 
 - Executable detection
@@ -84,6 +92,21 @@ Adapters provide:
 - Workspace handling
 - Optional environment variables
 - Capability metadata for future plugin, hook, or MCP integration
+
+## Interactive Task Shell
+
+The interactive shell is implemented in `src/shell/taskShell.ts`. It loads a task, prints the same summary as `task open`, then maps shell commands to existing task commands.
+
+Examples:
+
+```text
+summary -> task open <task-id>
+roles -> task roles <task-id>
+comment <body> -> task comment <task-id> <body>
+enter <role> -> task enter <task-id> <role>
+```
+
+The shell does not implement separate business logic and does not intercept native Codex or Claude input after `enter`.
 
 ## Storage
 
@@ -113,7 +136,7 @@ TASKMUX_HOME or ~/.taskmux
           role.json
 ```
 
-`role.json` stores `name`, `agent`, `workspace`, `status`, `createdAt`, and `updatedAt`. The first stable role status is `idle`; tmux-backed execution will extend this path with runtime state in later slices.
+`role.json` stores `name`, `agent`, `workspace`, `status`, `createdAt`, and `updatedAt`. The first stable role status is `idle`; `task stop` and `task kill` update role status to `exited`. `task status` and `task detail` read role status from `role.json`.
 
 Task comments are append-only JSONL records:
 
@@ -132,9 +155,9 @@ TaskMux reads recent role output through tmux capture APIs. The first version sh
 
 Structured runner events are future work and must not be required for core role inspection.
 
-`task detail` reads role metadata from `role.json` and derives the tmux target as `taskmux-<task-id>:<role>`. `task transcript` currently reads tmux capture output directly; durable transcript files remain future work.
+`task detail` reads role metadata from `role.json` and derives the tmux target as `taskmux-<task-id>:<role>`. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
 
-`task open` reads task, role, and comment counts from storage and prints a task context summary. It is non-interactive in the current version. `task detach` detaches tmux clients for the task session and does not terminate the role process.
+`task open` reads task, role, and comment counts from storage and prints a task context summary. `task shell` provides an interactive wrapper over the same task command handlers. `task detach` detaches tmux clients for the task session and does not terminate the role process.
 
 ## Testing Strategy
 

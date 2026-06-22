@@ -37,3 +37,11 @@ export function createRole(name: string, agent: string, workspace: string, now: 
     updatedAt: timestamp
   };
 }
+
+export function updateRoleStatus(role: Role, status: RoleStatus, now: Date): Role {
+  return {
+    ...role,
+    status,
+    updatedAt: now.toISOString()
+  };
+}

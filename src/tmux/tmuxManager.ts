@@ -30,6 +30,14 @@ export class TmuxManager {
     this.runner.run(this.tmuxBin, ["detach-client", "-s", this.sessionName(taskId)]);
   }
 
+  stopRole(taskId: string, roleName: string): void {
+    this.runner.run(this.tmuxBin, ["send-keys", "-t", this.target(taskId, roleName), "C-c"]);
+  }
+
+  killRole(taskId: string, roleName: string): void {
+    this.runner.run(this.tmuxBin, ["kill-window", "-t", this.target(taskId, roleName)]);
+  }
+
   private ensureSession(taskId: string): void {
     try {
       this.runner.run(this.tmuxBin, ["has-session", "-t", this.sessionName(taskId)]);

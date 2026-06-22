@@ -16,7 +16,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --test test/*.test.js",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build",
+    "pack:dry-run": "npm pack --dry-run --cache ./.npm-cache"
   },
   "engines": {
     "node": ">=20"

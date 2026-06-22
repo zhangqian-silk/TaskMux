@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,38 @@ function runTaskmux(args, env) {
       ...process.env,
       ...env
     }
+  });
+}
+
+function runTaskmuxInteractive(args, input, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("node", [cli, ...args], {
+      env: {
+        ...process.env,
+        ...env
+      },
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`taskmux exited with ${code}: ${stderr}`));
+        return;
+      }
+
+      resolve(stdout);
+    });
+
+    child.stdin.end(input);
   });
 }
 
@@ -135,6 +167,31 @@ test("assigns a role to an existing task", () => {
   assert.equal(role.agent, "codex");
   assert.equal(role.workspace, "/tmp/project-a");
   assert.equal(role.status, "idle");
+});
+
+test("rejects unsupported role agents", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "unknown",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  assert.match(output, /Unsupported agent: unknown/);
+  assert.match(output, /Supported agents: codex, claude/);
 });
 
 test("lists roles for a task", () => {
@@ -332,6 +389,13 @@ test("reads role transcript through tmux capture-pane", () => {
   });
 
   assert.match(output, /recent reviewer output/);
+  assert.match(
+    readFileSync(
+      join(home, "tasks", "task-1", "roles", "reviewer", "transcript.log"),
+      "utf8"
+    ),
+    /recent reviewer output/
+  );
 }
 );
 
@@ -406,6 +470,117 @@ test("detaches a task role through tmux", () => {
   assert.deepEqual(calls[0], ["detach-client", "-s", "taskmux-task-1"]);
 });
 
+test("shows role status", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "status", "task-1", "rd"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Role: rd/);
+  assert.match(output, /Status: idle/);
+  assert.match(output, /Tmux: taskmux-task-1:rd/);
+});
+
+test("stops a role through tmux and updates status", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "stop", "task-1", "rd"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  assert.match(output, /Stopped role rd for task-1/);
+
+  const calls = readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(calls[0], ["send-keys", "-t", "taskmux-task-1:rd", "C-c"]);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  assert.equal(role.status, "exited");
+});
+
+test("kills a role tmux window and updates status", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "kill", "task-1", "rd"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  assert.match(output, /Killed role rd for task-1/);
+
+  const calls = readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(calls[0], ["kill-window", "-t", "taskmux-task-1:rd"]);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  assert.equal(role.status, "exited");
+});
+
 test("adds and lists task comments", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
 
@@ -459,4 +634,37 @@ test("runs doctor checks with configured executables", () => {
   assert.match(output, /claude\s+ok\s+claude 2\.0\.0/);
   assert.match(output, /taskmux home\s+ok/);
   assert.match(output, new RegExp(home.replaceAll("\\", "\\\\")));
+});
+
+test("runs an interactive task shell", async () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = await runTaskmuxInteractive(
+    ["task", "shell", "task-1"],
+    "summary\nroles\ncomment hello from shell\ncomments\nexit\n",
+    { TASKMUX_HOME: home }
+  );
+
+  assert.match(output, /Task: task-1/);
+  assert.match(output, /tb task-1>/);
+  assert.match(output, /rd\s+codex\s+idle\s+\/tmp\/project-a/);
+  assert.match(output, /Added comment to task-1: hello from shell/);
+  assert.match(output, /hello from shell/);
 });

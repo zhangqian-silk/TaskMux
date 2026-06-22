@@ -16,6 +16,7 @@ export type TaskStore = {
   nextCommentId(taskId: string): string;
   saveComment(taskId: string, comment: TaskComment): void;
   listComments(taskId: string): TaskComment[];
+  saveTranscript(taskId: string, roleName: string, transcript: string): void;
 };
 
 export function resolveTaskmuxHome(env: NodeJS.ProcessEnv): string {
@@ -120,6 +121,12 @@ export class FileTaskStore implements TaskStore {
     }
   }
 
+  saveTranscript(taskId: string, roleName: string, transcript: string): void {
+    const roleDir = this.roleDir(taskId, roleName);
+    mkdirSync(roleDir, { recursive: true });
+    writeFileSync(this.transcriptFile(taskId, roleName), transcript);
+  }
+
   private tasksDir(): string {
     return join(this.rootDir, "tasks");
   }
@@ -146,5 +153,9 @@ export class FileTaskStore implements TaskStore {
 
   private roleFile(taskId: string, name: string): string {
     return join(this.roleDir(taskId, name), "role.json");
+  }
+
+  private transcriptFile(taskId: string, name: string): string {
+    return join(this.roleDir(taskId, name), "transcript.log");
   }
 }

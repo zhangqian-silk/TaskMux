@@ -1,5 +1,6 @@
 import { createTaskComment } from "../comment/comment.js";
-import { createRole } from "../role/role.js";
+import { createRole, updateRoleStatus } from "../role/role.js";
+import { resolveRunner, supportedRunnerIds } from "../runner/runnerRegistry.js";
 import { createTask } from "../task/task.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import type { TmuxManager } from "../tmux/tmuxManager.js";
@@ -26,10 +27,16 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return tailTaskRoleCommand(rest, store, tmux);
     case "detail":
       return detailTaskRoleCommand(rest, store);
+    case "status":
+      return detailTaskRoleCommand(rest, store);
     case "transcript":
-      return tailTaskRoleCommand(rest, store, tmux);
+      return transcriptTaskRoleCommand(rest, store, tmux);
     case "detach":
       return detachTaskRoleCommand(rest, store, tmux);
+    case "stop":
+      return stopTaskRoleCommand(rest, store, tmux);
+    case "kill":
+      return killTaskRoleCommand(rest, store, tmux);
     case "comment":
       return addTaskCommentCommand(rest, store);
     case "comments":
@@ -119,7 +126,13 @@ function assignTaskRoleCommand(args: string[], store: TaskStore): string {
 
   const agent = readOption(rest, "--agent");
   const workspace = readOption(rest, "--workspace");
-  const role = createRole(roleName, agent, workspace, new Date());
+  const runner = resolveRunner(agent);
+
+  if (runner === null) {
+    return `Unsupported agent: ${agent}\nSupported agents: ${supportedRunnerIds().join(", ")}\n`;
+  }
+
+  const role = createRole(roleName, runner.command, workspace, new Date());
 
   store.saveRole(taskId, role);
 
@@ -180,6 +193,23 @@ function tailTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManage
   return tmux.captureRole(roleLookup.taskId, roleLookup.role.name);
 }
 
+function transcriptTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
+  const roleLookup = findRole(args, store);
+
+  if (typeof roleLookup === "string") {
+    return roleLookup;
+  }
+
+  if (tmux === undefined) {
+    return "Tmux manager is not configured.\n";
+  }
+
+  const transcript = tmux.captureRole(roleLookup.taskId, roleLookup.role.name);
+  store.saveTranscript(roleLookup.taskId, roleLookup.role.name, transcript);
+
+  return transcript;
+}
+
 function detailTaskRoleCommand(args: string[], store: TaskStore): string {
   const roleLookup = findRole(args, store);
 
@@ -215,6 +245,40 @@ function detachTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxMana
   tmux.detachRole(roleLookup.taskId);
 
   return `Detached role ${roleLookup.role.name} for ${roleLookup.taskId}\n`;
+}
+
+function stopTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
+  const roleLookup = findRole(args, store);
+
+  if (typeof roleLookup === "string") {
+    return roleLookup;
+  }
+
+  if (tmux === undefined) {
+    return "Tmux manager is not configured.\n";
+  }
+
+  tmux.stopRole(roleLookup.taskId, roleLookup.role.name);
+  store.saveRole(roleLookup.taskId, updateRoleStatus(roleLookup.role, "exited", new Date()));
+
+  return `Stopped role ${roleLookup.role.name} for ${roleLookup.taskId}\n`;
+}
+
+function killTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
+  const roleLookup = findRole(args, store);
+
+  if (typeof roleLookup === "string") {
+    return roleLookup;
+  }
+
+  if (tmux === undefined) {
+    return "Tmux manager is not configured.\n";
+  }
+
+  tmux.killRole(roleLookup.taskId, roleLookup.role.name);
+  store.saveRole(roleLookup.taskId, updateRoleStatus(roleLookup.role, "exited", new Date()));
+
+  return `Killed role ${roleLookup.role.name} for ${roleLookup.taskId}\n`;
 }
 
 function addTaskCommentCommand(args: string[], store: TaskStore): string {
@@ -302,8 +366,11 @@ export function taskUsage(): string {
   taskmux task enter <task-id> <role>
   taskmux task tail <task-id> <role>
   taskmux task detail <task-id> <role>
+  taskmux task status <task-id> <role>
   taskmux task transcript <task-id> <role>
   taskmux task detach <task-id> <role>
+  taskmux task stop <task-id> <role>
+  taskmux task kill <task-id> <role>
   taskmux task comment <task-id> <body>
   taskmux task comments <task-id>
 `;

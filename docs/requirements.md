@@ -49,22 +49,26 @@ TaskMux currently provides:
 - `taskmux task list` lists local tasks in id order
 - `taskmux task show <task-id>` shows one task by id
 - `taskmux task open <task-id>` shows a task context summary for outer-shell workflows
+- `taskmux task shell <task-id>` opens an interactive task control shell
 - `taskmux task assign <task-id> <role> --agent <agent> --workspace <path>` assigns a role to an existing task with status `idle`
 - `taskmux task roles <task-id>` lists roles assigned to a task
 - `taskmux task enter <task-id> <role>` creates or reuses the task tmux session and role tmux window, then attaches to the role
 - `taskmux task tail <task-id> <role>` reads recent role output from tmux capture-pane
 - `taskmux task detail <task-id> <role>` shows role metadata and tmux target information
+- `taskmux task status <task-id> <role>` shows role status and tmux target information
 - `taskmux task transcript <task-id> <role>` reads the current tmux capture stream for the role
 - `taskmux task detach <task-id> <role>` detaches tmux clients from the task session without stopping role processes
+- `taskmux task stop <task-id> <role>` sends `C-c` to the role tmux window and records the role as `exited`
+- `taskmux task kill <task-id> <role>` kills the role tmux window and records the role as `exited`
 - `taskmux task comment <task-id> <body>` appends a comment to a task
 - `taskmux task comments <task-id>` lists comments for a task
 - `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, and the configured TaskMux home
 
 TaskMux should also provide future commands for:
 
-- Interactive task shell mode
-- Stop and kill role process controls
-- Durable transcript export
+- Dedicated transcript export formats
+- Configurable custom runners
+- Release automation around npm publishing
 
 ## Execution Semantics
 
@@ -94,13 +98,14 @@ Suggested layout:
       roles/
         rd/
           role.json
-          tmux.json
           transcript.log
 ```
 
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 
-Role records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped. Reassigning an existing role overwrites that role's current agent and workspace while preserving the task identity.
+Role records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped. Reassigning an existing role overwrites that role's current agent and workspace while preserving the task identity. Supported first-version agents are `codex` and `claude`.
+
+Role transcripts live under `tasks/<task-id>/roles/<role>/transcript.log` after `task transcript` captures current tmux output.
 
 Task comments live in `tasks/<task-id>/comments.jsonl`. Each line stores one comment object with `id`, `body`, and `createdAt`.
 
