@@ -48,11 +48,12 @@ TaskMux currently provides:
 - `taskmux task create <title>` creates a local task with status `open`
 - `taskmux task list` lists local tasks in id order
 - `taskmux task show <task-id>` shows one task by id
+- `taskmux task assign <task-id> <role> --agent <agent> --workspace <path>` assigns a role to an existing task with status `idle`
+- `taskmux task roles <task-id>` lists roles assigned to a task
 
 TaskMux should also provide commands for:
 
 - Opening a task shell
-- Assigning roles to tasks
 - Binding roles to runners
 - Binding roles to workspaces
 - Adding task comments
@@ -96,6 +97,8 @@ Suggested layout:
 ```
 
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
+
+Role records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped. Reassigning an existing role overwrites that role's current agent and workspace while preserving the task identity.
 
 ## First-Version Exclusions
 

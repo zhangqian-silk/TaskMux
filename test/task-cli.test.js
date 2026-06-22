@@ -63,3 +63,79 @@ test("shows a task by id", () => {
   assert.match(output, /Title: Review checkout flow/);
   assert.match(output, /Status: open/);
 });
+
+test("assigns a role to an existing task", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  assert.match(output, /Assigned role rd to task-1/);
+  assert.match(output, /Agent: codex/);
+  assert.match(output, /Workspace: \/tmp\/project-a/);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+
+  assert.equal(role.name, "rd");
+  assert.equal(role.agent, "codex");
+  assert.equal(role.workspace, "/tmp/project-a");
+  assert.equal(role.status, "idle");
+});
+
+test("lists roles for a task", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "reviewer",
+      "--agent",
+      "claude",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "roles", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /rd\s+codex\s+idle\s+\/tmp\/project-a/);
+  assert.match(output, /reviewer\s+claude\s+idle\s+\/tmp\/project-a/);
+});

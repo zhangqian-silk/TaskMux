@@ -66,6 +66,19 @@ TASKMUX_HOME or ~/.taskmux
 
 `task.json` stores `id`, `title`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, and task lookup. The CLI resolves the data directory once and passes the store into task command handlers.
 
+Role assignment uses the same store boundary:
+
+```text
+TASKMUX_HOME or ~/.taskmux
+  tasks/
+    task-1/
+      roles/
+        rd/
+          role.json
+```
+
+`role.json` stores `name`, `agent`, `workspace`, `status`, `createdAt`, and `updatedAt`. The first stable role status is `idle`; tmux-backed execution will extend this path with runtime state in later slices.
+
 ## Observability
 
 TaskMux reads recent role output through tmux capture APIs. The first version should expose role detail, tail, and transcript views without attaching to the role.

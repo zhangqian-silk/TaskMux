@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { Role } from "../role/role.js";
 import type { Task } from "../task/task.js";
 
 export type TaskStore = {
@@ -8,6 +9,8 @@ export type TaskStore = {
   saveTask(task: Task): void;
   listTasks(): Task[];
   getTask(id: string): Task | null;
+  saveRole(taskId: string, role: Role): void;
+  listRoles(taskId: string): Role[];
 };
 
 export function resolveTaskmuxHome(env: NodeJS.ProcessEnv): string {
@@ -59,6 +62,35 @@ export class FileTaskStore implements TaskStore {
     }
   }
 
+  saveRole(taskId: string, role: Role): void {
+    const roleDir = this.roleDir(taskId, role.name);
+    mkdirSync(roleDir, { recursive: true });
+    writeFileSync(this.roleFile(taskId, role.name), `${JSON.stringify(role, null, 2)}\n`);
+  }
+
+  listRoles(taskId: string): Role[] {
+    const rolesDir = this.rolesDir(taskId);
+    mkdirSync(rolesDir, { recursive: true });
+
+    return readdirSync(rolesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => this.getRole(taskId, entry.name))
+      .filter((role): role is Role => role !== null)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  private getRole(taskId: string, name: string): Role | null {
+    try {
+      return JSON.parse(readFileSync(this.roleFile(taskId, name), "utf8")) as Role;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
   private tasksDir(): string {
     return join(this.rootDir, "tasks");
   }
@@ -69,5 +101,17 @@ export class FileTaskStore implements TaskStore {
 
   private taskFile(id: string): string {
     return join(this.taskDir(id), "task.json");
+  }
+
+  private rolesDir(taskId: string): string {
+    return join(this.taskDir(taskId), "roles");
+  }
+
+  private roleDir(taskId: string, name: string): string {
+    return join(this.rolesDir(taskId), name);
+  }
+
+  private roleFile(taskId: string, name: string): string {
+    return join(this.roleDir(taskId, name), "role.json");
   }
 }
