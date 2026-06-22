@@ -257,3 +257,36 @@ test("tails role output through tmux capture-pane", () => {
     "-80"
   ]);
 });
+
+test("adds and lists task comments", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+
+  const addOutput = runTaskmux(
+    ["task", "comment", "task-1", "Keep old session compatibility."],
+    { TASKMUX_HOME: home }
+  );
+
+  assert.match(addOutput, /Added comment to task-1/);
+
+  const commentsFile = readFileSync(join(home, "tasks", "task-1", "comments.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+
+  assert.equal(commentsFile[0].body, "Keep old session compatibility.");
+
+  runTaskmux(["task", "comment", "task-1", "Reviewer should check copy."], {
+    TASKMUX_HOME: home
+  });
+
+  const listOutput = runTaskmux(["task", "comments", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(listOutput, /Keep old session compatibility\./);
+  assert.match(listOutput, /Reviewer should check copy\./);
+});

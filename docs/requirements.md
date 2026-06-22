@@ -52,13 +52,14 @@ TaskMux currently provides:
 - `taskmux task roles <task-id>` lists roles assigned to a task
 - `taskmux task enter <task-id> <role>` creates or reuses the task tmux session and role tmux window, then attaches to the role
 - `taskmux task tail <task-id> <role>` reads recent role output from tmux capture-pane
+- `taskmux task comment <task-id> <body>` appends a comment to a task
+- `taskmux task comments <task-id>` lists comments for a task
 
 TaskMux should also provide commands for:
 
 - Opening a task shell
 - Binding roles to runners
 - Binding roles to workspaces
-- Adding task comments
 - Listing roles and role status
 - Detaching from a role session without stopping it
 - Showing role details and transcripts
@@ -99,6 +100,8 @@ Suggested layout:
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 
 Role records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped. Reassigning an existing role overwrites that role's current agent and workspace while preserving the task identity.
+
+Task comments live in `tasks/<task-id>/comments.jsonl`. Each line stores one comment object with `id`, `body`, and `createdAt`.
 
 ## First-Version Exclusions
 

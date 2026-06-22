@@ -1,6 +1,7 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { TaskComment } from "../comment/comment.js";
 import type { Role } from "../role/role.js";
 import type { Task } from "../task/task.js";
 
@@ -12,6 +13,9 @@ export type TaskStore = {
   saveRole(taskId: string, role: Role): void;
   listRoles(taskId: string): Role[];
   getRole(taskId: string, name: string): Role | null;
+  nextCommentId(taskId: string): string;
+  saveComment(taskId: string, comment: TaskComment): void;
+  listComments(taskId: string): TaskComment[];
 };
 
 export function resolveTaskmuxHome(env: NodeJS.ProcessEnv): string {
@@ -92,6 +96,30 @@ export class FileTaskStore implements TaskStore {
     }
   }
 
+  nextCommentId(taskId: string): string {
+    return `comment-${this.listComments(taskId).length + 1}`;
+  }
+
+  saveComment(taskId: string, comment: TaskComment): void {
+    mkdirSync(this.taskDir(taskId), { recursive: true });
+    appendFileSync(this.commentsFile(taskId), `${JSON.stringify(comment)}\n`);
+  }
+
+  listComments(taskId: string): TaskComment[] {
+    try {
+      return readFileSync(this.commentsFile(taskId), "utf8")
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as TaskComment);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return [];
+      }
+
+      throw error;
+    }
+  }
+
   private tasksDir(): string {
     return join(this.rootDir, "tasks");
   }
@@ -102,6 +130,10 @@ export class FileTaskStore implements TaskStore {
 
   private taskFile(id: string): string {
     return join(this.taskDir(id), "task.json");
+  }
+
+  private commentsFile(taskId: string): string {
+    return join(this.taskDir(taskId), "comments.jsonl");
   }
 
   private rolesDir(taskId: string): string {

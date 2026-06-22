@@ -95,6 +95,17 @@ TASKMUX_HOME or ~/.taskmux
 
 `role.json` stores `name`, `agent`, `workspace`, `status`, `createdAt`, and `updatedAt`. The first stable role status is `idle`; tmux-backed execution will extend this path with runtime state in later slices.
 
+Task comments are append-only JSONL records:
+
+```text
+TASKMUX_HOME or ~/.taskmux
+  tasks/
+    task-1/
+      comments.jsonl
+```
+
+Each comment stores `id`, `body`, and `createdAt`. The first version derives comment ids from the current comment count for the task.
+
 ## Observability
 
 TaskMux reads recent role output through tmux capture APIs. The first version should expose role detail, tail, and transcript views without attaching to the role.

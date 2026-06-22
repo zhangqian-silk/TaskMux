@@ -1,3 +1,4 @@
+import { createTaskComment } from "../comment/comment.js";
 import { createRole } from "../role/role.js";
 import { createTask } from "../task/task.js";
 import type { TaskStore } from "../storage/taskStore.js";
@@ -21,6 +22,10 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return enterTaskRoleCommand(rest, store, tmux);
     case "tail":
       return tailTaskRoleCommand(rest, store, tmux);
+    case "comment":
+      return addTaskCommentCommand(rest, store);
+    case "comments":
+      return listTaskCommentsCommand(rest, store);
     default:
       return taskUsage();
   }
@@ -144,6 +149,43 @@ function tailTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManage
   return tmux.captureRole(roleLookup.taskId, roleLookup.role.name);
 }
 
+function addTaskCommentCommand(args: string[], store: TaskStore): string {
+  const [taskId, ...bodyParts] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    return "Task id is required.\n";
+  }
+
+  if (store.getTask(taskId) === null) {
+    return `Task not found: ${taskId}\n`;
+  }
+
+  const comment = createTaskComment(store.nextCommentId(taskId), bodyParts.join(" "), new Date());
+  store.saveComment(taskId, comment);
+
+  return `Added comment to ${taskId}: ${comment.body}\n`;
+}
+
+function listTaskCommentsCommand(args: string[], store: TaskStore): string {
+  const [taskId] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    return "Task id is required.\n";
+  }
+
+  if (store.getTask(taskId) === null) {
+    return `Task not found: ${taskId}\n`;
+  }
+
+  const comments = store.listComments(taskId);
+
+  if (comments.length === 0) {
+    return "No comments found.\n";
+  }
+
+  return `${comments.map((comment) => `${comment.id}\t${comment.createdAt}\t${comment.body}`).join("\n")}\n`;
+}
+
 function findRole(
   args: string[],
   store: TaskStore
@@ -190,5 +232,7 @@ export function taskUsage(): string {
   taskmux task roles <task-id>
   taskmux task enter <task-id> <role>
   taskmux task tail <task-id> <role>
+  taskmux task comment <task-id> <body>
+  taskmux task comments <task-id>
 `;
 }
