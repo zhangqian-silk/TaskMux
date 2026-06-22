@@ -55,6 +55,17 @@ TaskMux stores state in a user-level data directory. The first version may use J
 
 The storage layer must keep task state independent from project workspace contents.
 
+The current storage implementation uses:
+
+```text
+TASKMUX_HOME or ~/.taskmux
+  tasks/
+    task-1/
+      task.json
+```
+
+`task.json` stores `id`, `title`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, and task lookup. The CLI resolves the data directory once and passes the store into task command handlers.
+
 ## Observability
 
 TaskMux reads recent role output through tmux capture APIs. The first version should expose role detail, tail, and transcript views without attaching to the role.

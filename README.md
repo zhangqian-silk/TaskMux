@@ -30,6 +30,8 @@ tb
 
 ```sh
 tb task create "Refactor login page"
+tb task list
+tb task show task-1
 tb task assign task-42 rd --agent codex --workspace ~/projects/app
 tb task assign task-42 reviewer --agent claude --workspace ~/projects/app
 tb task open task-42
@@ -44,6 +46,28 @@ tb task-42> enter rd
 ```
 
 `enter rd` attaches to the tmux window for the `rd` role. Detaching returns to the task shell while the role process continues running.
+
+## Task Storage
+
+TaskMux stores task data in the user-level data directory:
+
+```text
+~/.taskmux
+```
+
+Tests, automation, and isolated runs can override this location:
+
+```sh
+TASKMUX_HOME=/tmp/taskmux-demo tb task create "Try TaskMux"
+```
+
+The current task command surface is:
+
+```sh
+tb task create "Refactor login page"
+tb task list
+tb task show task-1
+```
 
 ## License
 

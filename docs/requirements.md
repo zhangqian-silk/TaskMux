@@ -43,9 +43,14 @@ reviewer -> tmux window taskmux-task-42:reviewer
 
 ## Required Commands
 
-TaskMux should provide commands for:
+TaskMux currently provides:
 
-- Creating and listing tasks
+- `taskmux task create <title>` creates a local task with status `open`
+- `taskmux task list` lists local tasks in id order
+- `taskmux task show <task-id>` shows one task by id
+
+TaskMux should also provide commands for:
+
 - Opening a task shell
 - Assigning roles to tasks
 - Binding roles to runners
@@ -73,6 +78,8 @@ Users must not need to understand tmux internals for normal operation.
 
 TaskMux stores data in a user-level application directory. It does not write task state into the project workspace by default.
 
+The default directory is `~/.taskmux`. The `TASKMUX_HOME` environment variable overrides this path for isolated runs, tests, and automation.
+
 Suggested layout:
 
 ```text
@@ -87,6 +94,8 @@ Suggested layout:
           tmux.json
           transcript.log
 ```
+
+Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 
 ## First-Version Exclusions
 
