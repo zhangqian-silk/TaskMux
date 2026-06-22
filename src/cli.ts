@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { runTaskCommand } from "./commands/taskCommands.js";
+import { runDoctor } from "./doctor/doctor.js";
 import { FileTaskStore, resolveTaskmuxHome } from "./storage/taskStore.js";
 import { NodeCommandRunner } from "./tmux/commandRunner.js";
 import { TmuxManager } from "./tmux/tmuxManager.js";
@@ -14,6 +15,7 @@ Local task board for native agent CLI sessions backed by tmux.
 Usage:
   taskmux --help
   taskmux --version
+  taskmux doctor
   taskmux task create <title>
   taskmux task list
   taskmux task show <task-id>
@@ -29,6 +31,11 @@ const args = process.argv.slice(2);
 
 if (args.includes("--version") || args.includes("-v")) {
   console.log(VERSION);
+  process.exit(0);
+}
+
+if (args[0] === "doctor") {
+  console.log(runDoctor(process.env, new NodeCommandRunner()).trimEnd());
   process.exit(0);
 }
 

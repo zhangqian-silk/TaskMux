@@ -41,6 +41,20 @@ process.exit(0);
   return { fakeTmux, logFile };
 }
 
+function createFakeExecutable(home, name, output) {
+  const executable = join(home, name);
+
+  writeFileSync(
+    executable,
+    `#!/usr/bin/env node
+process.stdout.write(${JSON.stringify(output)});
+`
+  );
+  chmodSync(executable, 0o755);
+
+  return executable;
+}
+
 test("creates a task in the configured taskmux home", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
 
@@ -289,4 +303,26 @@ test("adds and lists task comments", () => {
 
   assert.match(listOutput, /Keep old session compatibility\./);
   assert.match(listOutput, /Reviewer should check copy\./);
+});
+
+test("runs doctor checks with configured executables", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeTmux = createFakeExecutable(home, "fake-tmux.js", "tmux 3.4\n");
+  const fakeCodex = createFakeExecutable(home, "fake-codex.js", "codex 1.0.0\n");
+  const fakeClaude = createFakeExecutable(home, "fake-claude.js", "claude 2.0.0\n");
+
+  const output = runTaskmux(["doctor"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    TASKMUX_CODEX_BIN: fakeCodex,
+    TASKMUX_CLAUDE_BIN: fakeClaude
+  });
+
+  assert.match(output, /TaskMux doctor/);
+  assert.match(output, /node\s+ok\s+v/);
+  assert.match(output, /tmux\s+ok\s+tmux 3\.4/);
+  assert.match(output, /codex\s+ok\s+codex 1\.0\.0/);
+  assert.match(output, /claude\s+ok\s+claude 2\.0\.0/);
+  assert.match(output, /taskmux home\s+ok/);
+  assert.match(output, new RegExp(home.replaceAll("\\", "\\\\")));
 });

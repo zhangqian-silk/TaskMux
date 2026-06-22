@@ -54,6 +54,7 @@ TaskMux currently provides:
 - `taskmux task tail <task-id> <role>` reads recent role output from tmux capture-pane
 - `taskmux task comment <task-id> <body>` appends a comment to a task
 - `taskmux task comments <task-id>` lists comments for a task
+- `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, and the configured TaskMux home
 
 TaskMux should also provide commands for:
 
@@ -63,7 +64,6 @@ TaskMux should also provide commands for:
 - Listing roles and role status
 - Detaching from a role session without stopping it
 - Showing role details and transcripts
-- Running `doctor` checks for tmux and runner availability
 
 ## Execution Semantics
 

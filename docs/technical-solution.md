@@ -48,6 +48,20 @@ task tail <task-id> <role>
 
 `TASKMUX_TMUX_BIN` can override the tmux executable for tests and controlled environments. Normal users should rely on the default `tmux` executable.
 
+## Doctor
+
+`taskmux doctor` runs environment checks without mutating task state.
+
+Current checks:
+
+- Node.js version from the current process
+- tmux executable using `tmux -V`
+- Codex CLI executable using `codex --version`
+- Claude Code executable using `claude --version`
+- resolved TaskMux home directory
+
+Executable paths can be overridden with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN` for tests and managed environments.
+
 ## Runner Adapter
 
 Runner adapters describe how to start a native CLI for a role.
