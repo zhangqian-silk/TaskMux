@@ -35,6 +35,8 @@ tb task show task-1
 tb task assign task-1 rd --agent codex --workspace ~/projects/app
 tb task assign task-1 reviewer --agent claude --workspace ~/projects/app
 tb task roles task-1
+tb task enter task-1 rd
+tb task tail task-1 rd
 tb task open task-42
 ```
 
@@ -70,9 +72,13 @@ tb task list
 tb task show task-1
 tb task assign task-1 rd --agent codex --workspace ~/projects/app
 tb task roles task-1
+tb task enter task-1 rd
+tb task tail task-1 rd
 ```
 
 Assigned roles are stored under the task directory. Each role currently records its name, agent, workspace, status, and timestamps.
+
+`task enter` uses tmux to create or reuse a task session and role window, then attaches the user to that role's native agent CLI. `task tail` reads recent role output with `tmux capture-pane`.
 
 ## License
 

@@ -32,6 +32,22 @@ The Tmux Manager wraps tmux commands for:
 
 TaskMux does not implement its own PTY supervisor in the first version.
 
+The current tmux command contract is:
+
+```text
+task enter <task-id> <role>
+  tmux has-session -t taskmux-<task-id>
+  tmux new-session -d -s taskmux-<task-id>          # when missing
+  tmux list-windows -t taskmux-<task-id> -F #{window_name}
+  tmux new-window -t taskmux-<task-id> -n <role> -c <workspace> <agent>  # when missing
+  tmux attach-session -t taskmux-<task-id>:<role>
+
+task tail <task-id> <role>
+  tmux capture-pane -p -t taskmux-<task-id>:<role> -S -80
+```
+
+`TASKMUX_TMUX_BIN` can override the tmux executable for tests and controlled environments. Normal users should rely on the default `tmux` executable.
+
 ## Runner Adapter
 
 Runner adapters describe how to start a native CLI for a role.

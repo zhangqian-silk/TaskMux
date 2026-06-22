@@ -11,6 +11,7 @@ export type TaskStore = {
   getTask(id: string): Task | null;
   saveRole(taskId: string, role: Role): void;
   listRoles(taskId: string): Role[];
+  getRole(taskId: string, name: string): Role | null;
 };
 
 export function resolveTaskmuxHome(env: NodeJS.ProcessEnv): string {
@@ -79,7 +80,7 @@ export class FileTaskStore implements TaskStore {
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
-  private getRole(taskId: string, name: string): Role | null {
+  getRole(taskId: string, name: string): Role | null {
     try {
       return JSON.parse(readFileSync(this.roleFile(taskId, name), "utf8")) as Role;
     } catch (error) {

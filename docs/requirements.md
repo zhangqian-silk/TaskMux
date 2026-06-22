@@ -50,6 +50,8 @@ TaskMux currently provides:
 - `taskmux task show <task-id>` shows one task by id
 - `taskmux task assign <task-id> <role> --agent <agent> --workspace <path>` assigns a role to an existing task with status `idle`
 - `taskmux task roles <task-id>` lists roles assigned to a task
+- `taskmux task enter <task-id> <role>` creates or reuses the task tmux session and role tmux window, then attaches to the role
+- `taskmux task tail <task-id> <role>` reads recent role output from tmux capture-pane
 
 TaskMux should also provide commands for:
 
@@ -58,9 +60,7 @@ TaskMux should also provide commands for:
 - Binding roles to workspaces
 - Adding task comments
 - Listing roles and role status
-- Entering a role session
 - Detaching from a role session without stopping it
-- Capturing recent role output
 - Showing role details and transcripts
 - Running `doctor` checks for tmux and runner availability
 

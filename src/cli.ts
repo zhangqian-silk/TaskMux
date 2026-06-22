@@ -2,6 +2,8 @@
 
 import { runTaskCommand } from "./commands/taskCommands.js";
 import { FileTaskStore, resolveTaskmuxHome } from "./storage/taskStore.js";
+import { NodeCommandRunner } from "./tmux/commandRunner.js";
+import { TmuxManager } from "./tmux/tmuxManager.js";
 
 const VERSION = "0.0.0";
 
@@ -15,6 +17,10 @@ Usage:
   taskmux task create <title>
   taskmux task list
   taskmux task show <task-id>
+  taskmux task assign <task-id> <role> --agent <agent> --workspace <path>
+  taskmux task roles <task-id>
+  taskmux task enter <task-id> <role>
+  taskmux task tail <task-id> <role>
 
 Role, tmux, and runner commands are defined in docs/requirements.md.
 `;
@@ -28,7 +34,8 @@ if (args.includes("--version") || args.includes("-v")) {
 
 if (args[0] === "task") {
   const store = new FileTaskStore(resolveTaskmuxHome(process.env));
-  console.log(runTaskCommand(args.slice(1), store).trimEnd());
+  const tmux = new TmuxManager(process.env.TASKMUX_TMUX_BIN ?? "tmux", new NodeCommandRunner());
+  console.log(runTaskCommand(args.slice(1), store, tmux).trimEnd());
   process.exit(0);
 }
 
