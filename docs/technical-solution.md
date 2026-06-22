@@ -44,6 +44,12 @@ task enter <task-id> <role>
 
 task tail <task-id> <role>
   tmux capture-pane -p -t taskmux-<task-id>:<role> -S -80
+
+task transcript <task-id> <role>
+  tmux capture-pane -p -t taskmux-<task-id>:<role> -S -80
+
+task detach <task-id> <role>
+  tmux detach-client -s taskmux-<task-id>
 ```
 
 `TASKMUX_TMUX_BIN` can override the tmux executable for tests and controlled environments. Normal users should rely on the default `tmux` executable.
@@ -125,6 +131,10 @@ Each comment stores `id`, `body`, and `createdAt`. The first version derives com
 TaskMux reads recent role output through tmux capture APIs. The first version should expose role detail, tail, and transcript views without attaching to the role.
 
 Structured runner events are future work and must not be required for core role inspection.
+
+`task detail` reads role metadata from `role.json` and derives the tmux target as `taskmux-<task-id>:<role>`. `task transcript` currently reads tmux capture output directly; durable transcript files remain future work.
+
+`task open` reads task, role, and comment counts from storage and prints a task context summary. It is non-interactive in the current version. `task detach` detaches tmux clients for the task session and does not terminate the role process.
 
 ## Testing Strategy
 

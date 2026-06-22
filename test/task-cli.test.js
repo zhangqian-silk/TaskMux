@@ -272,6 +272,140 @@ test("tails role output through tmux capture-pane", () => {
   ]);
 });
 
+test("shows role detail for a task", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "detail", "task-1", "rd"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Task: task-1/);
+  assert.match(output, /Role: rd/);
+  assert.match(output, /Agent: codex/);
+  assert.match(output, /Workspace: \/tmp\/project-a/);
+  assert.match(output, /Status: idle/);
+  assert.match(output, /Tmux: taskmux-task-1:rd/);
+});
+
+test("reads role transcript through tmux capture-pane", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Review checkout flow"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "reviewer",
+      "--agent",
+      "claude",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "transcript", "task-1", "reviewer"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  assert.match(output, /recent reviewer output/);
+}
+);
+
+test("opens a task context summary", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(["task", "comment", "task-1", "Keep old session compatibility."], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(["task", "open", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Task: task-1/);
+  assert.match(output, /Title: Refactor login page/);
+  assert.match(output, /Roles: 1/);
+  assert.match(output, /Comments: 1/);
+  assert.match(output, /Next: taskmux task enter task-1 <role>/);
+});
+
+test("detaches a task role through tmux", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "detach", "task-1", "rd"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  assert.match(output, /Detached role rd for task-1/);
+
+  const calls = readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+
+  assert.deepEqual(calls[0], ["detach-client", "-s", "taskmux-task-1"]);
+});
+
 test("adds and lists task comments", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
 

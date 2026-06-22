@@ -14,6 +14,8 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return listTaskCommand(store);
     case "show":
       return showTaskCommand(rest, store);
+    case "open":
+      return openTaskCommand(rest, store);
     case "assign":
       return assignTaskRoleCommand(rest, store);
     case "roles":
@@ -22,6 +24,12 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return enterTaskRoleCommand(rest, store, tmux);
     case "tail":
       return tailTaskRoleCommand(rest, store, tmux);
+    case "detail":
+      return detailTaskRoleCommand(rest, store);
+    case "transcript":
+      return tailTaskRoleCommand(rest, store, tmux);
+    case "detach":
+      return detachTaskRoleCommand(rest, store, tmux);
     case "comment":
       return addTaskCommentCommand(rest, store);
     case "comments":
@@ -68,6 +76,29 @@ function showTaskCommand(args: string[], store: TaskStore): string {
     `Status: ${task.status}`,
     `Created: ${task.createdAt}`,
     `Updated: ${task.updatedAt}`
+  ].join("\n").concat("\n");
+}
+
+function openTaskCommand(args: string[], store: TaskStore): string {
+  const [id] = args;
+
+  if (id === undefined || id.trim().length === 0) {
+    return "Task id is required.\n";
+  }
+
+  const task = store.getTask(id);
+
+  if (task === null) {
+    return `Task not found: ${id}\n`;
+  }
+
+  return [
+    `Task: ${task.id}`,
+    `Title: ${task.title}`,
+    `Status: ${task.status}`,
+    `Roles: ${store.listRoles(task.id).length}`,
+    `Comments: ${store.listComments(task.id).length}`,
+    `Next: taskmux task enter ${task.id} <role>`
   ].join("\n").concat("\n");
 }
 
@@ -149,6 +180,43 @@ function tailTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManage
   return tmux.captureRole(roleLookup.taskId, roleLookup.role.name);
 }
 
+function detailTaskRoleCommand(args: string[], store: TaskStore): string {
+  const roleLookup = findRole(args, store);
+
+  if (typeof roleLookup === "string") {
+    return roleLookup;
+  }
+
+  const role = roleLookup.role;
+
+  return [
+    `Task: ${roleLookup.taskId}`,
+    `Role: ${role.name}`,
+    `Agent: ${role.agent}`,
+    `Workspace: ${role.workspace}`,
+    `Status: ${role.status}`,
+    `Tmux: taskmux-${roleLookup.taskId}:${role.name}`,
+    `Created: ${role.createdAt}`,
+    `Updated: ${role.updatedAt}`
+  ].join("\n").concat("\n");
+}
+
+function detachTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
+  const roleLookup = findRole(args, store);
+
+  if (typeof roleLookup === "string") {
+    return roleLookup;
+  }
+
+  if (tmux === undefined) {
+    return "Tmux manager is not configured.\n";
+  }
+
+  tmux.detachRole(roleLookup.taskId);
+
+  return `Detached role ${roleLookup.role.name} for ${roleLookup.taskId}\n`;
+}
+
 function addTaskCommentCommand(args: string[], store: TaskStore): string {
   const [taskId, ...bodyParts] = args;
 
@@ -228,10 +296,14 @@ export function taskUsage(): string {
   taskmux task create <title>
   taskmux task list
   taskmux task show <task-id>
+  taskmux task open <task-id>
   taskmux task assign <task-id> <role> --agent <agent> --workspace <path>
   taskmux task roles <task-id>
   taskmux task enter <task-id> <role>
   taskmux task tail <task-id> <role>
+  taskmux task detail <task-id> <role>
+  taskmux task transcript <task-id> <role>
+  taskmux task detach <task-id> <role>
   taskmux task comment <task-id> <body>
   taskmux task comments <task-id>
 `;

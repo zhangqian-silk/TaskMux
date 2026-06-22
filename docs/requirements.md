@@ -48,22 +48,23 @@ TaskMux currently provides:
 - `taskmux task create <title>` creates a local task with status `open`
 - `taskmux task list` lists local tasks in id order
 - `taskmux task show <task-id>` shows one task by id
+- `taskmux task open <task-id>` shows a task context summary for outer-shell workflows
 - `taskmux task assign <task-id> <role> --agent <agent> --workspace <path>` assigns a role to an existing task with status `idle`
 - `taskmux task roles <task-id>` lists roles assigned to a task
 - `taskmux task enter <task-id> <role>` creates or reuses the task tmux session and role tmux window, then attaches to the role
 - `taskmux task tail <task-id> <role>` reads recent role output from tmux capture-pane
+- `taskmux task detail <task-id> <role>` shows role metadata and tmux target information
+- `taskmux task transcript <task-id> <role>` reads the current tmux capture stream for the role
+- `taskmux task detach <task-id> <role>` detaches tmux clients from the task session without stopping role processes
 - `taskmux task comment <task-id> <body>` appends a comment to a task
 - `taskmux task comments <task-id>` lists comments for a task
 - `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, and the configured TaskMux home
 
-TaskMux should also provide commands for:
+TaskMux should also provide future commands for:
 
-- Opening a task shell
-- Binding roles to runners
-- Binding roles to workspaces
-- Listing roles and role status
-- Detaching from a role session without stopping it
-- Showing role details and transcripts
+- Interactive task shell mode
+- Stop and kill role process controls
+- Durable transcript export
 
 ## Execution Semantics
 

@@ -32,6 +32,7 @@ tb
 tb task create "Refactor login page"
 tb task list
 tb task show task-1
+tb task open task-1
 tb task assign task-1 rd --agent codex --workspace ~/projects/app
 tb task assign task-1 reviewer --agent claude --workspace ~/projects/app
 tb task roles task-1
@@ -39,8 +40,10 @@ tb task comment task-1 "Keep old session compatibility."
 tb task comments task-1
 tb task enter task-1 rd
 tb task tail task-1 rd
+tb task detail task-1 rd
+tb task transcript task-1 rd
+tb task detach task-1 rd
 tb doctor
-tb task open task-42
 ```
 
 Inside the task shell:
@@ -73,12 +76,16 @@ The current task command surface is:
 tb task create "Refactor login page"
 tb task list
 tb task show task-1
+tb task open task-1
 tb task assign task-1 rd --agent codex --workspace ~/projects/app
 tb task roles task-1
 tb task comment task-1 "Keep old session compatibility."
 tb task comments task-1
 tb task enter task-1 rd
 tb task tail task-1 rd
+tb task detail task-1 rd
+tb task transcript task-1 rd
+tb task detach task-1 rd
 tb doctor
 ```
 
@@ -87,6 +94,10 @@ Assigned roles are stored under the task directory. Each role currently records 
 Task comments are appended to `comments.jsonl` under the task directory and can be listed without entering a role session.
 
 `task enter` uses tmux to create or reuse a task session and role window, then attaches the user to that role's native agent CLI. `task tail` reads recent role output with `tmux capture-pane`.
+
+`task detail` shows role metadata and tmux target information. `task transcript` currently reads the same tmux capture stream as `tail`, with durable transcript files reserved for a later slice.
+
+`task open` prints a task context summary for outer-shell workflows. `task detach` asks tmux to detach clients from the task session while leaving role processes running.
 
 `doctor` checks Node.js, tmux, Codex CLI, Claude Code, and the configured TaskMux data directory. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
 

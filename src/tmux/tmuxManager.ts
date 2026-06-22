@@ -26,6 +26,10 @@ export class TmuxManager {
     ]);
   }
 
+  detachRole(taskId: string): void {
+    this.runner.run(this.tmuxBin, ["detach-client", "-s", this.sessionName(taskId)]);
+  }
+
   private ensureSession(taskId: string): void {
     try {
       this.runner.run(this.tmuxBin, ["has-session", "-t", this.sessionName(taskId)]);
