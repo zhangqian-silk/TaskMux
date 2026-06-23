@@ -31,6 +31,9 @@ tb
 
 ```sh
 tb task create "Refactor login page"
+tb runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
+tb runner list
+tb runner show agent-js
 tb task list
 tb task show task-1
 tb task start task-1
@@ -39,7 +42,7 @@ tb task archive task-1
 tb task reopen task-1
 tb task open task-1
 tb task shell task-1
-tb task assign task-1 rd --agent codex --workspace ~/projects/app
+tb task assign task-1 rd --agent agent-js --workspace ~/projects/app
 tb task assign task-1 reviewer --agent claude --workspace ~/projects/app
 tb task roles task-1
 tb task comment task-1 "Keep old session compatibility."
@@ -55,6 +58,7 @@ tb task stop task-1 rd
 tb task kill task-1 rd
 tb task restart task-1 rd
 tb task cleanup task-1
+tb runner remove agent-js
 tb doctor
 ```
 
@@ -89,6 +93,9 @@ The current task command surface is:
 
 ```sh
 tb task create "Refactor login page"
+tb runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
+tb runner list
+tb runner show agent-js
 tb task list
 tb task show task-1
 tb task start task-1
@@ -97,7 +104,7 @@ tb task archive task-1
 tb task reopen task-1
 tb task open task-1
 tb task shell task-1
-tb task assign task-1 rd --agent codex --workspace ~/projects/app
+tb task assign task-1 rd --agent agent-js --workspace ~/projects/app
 tb task roles task-1
 tb task comment task-1 "Keep old session compatibility."
 tb task comments task-1
@@ -112,16 +119,19 @@ tb task stop task-1 rd
 tb task kill task-1 rd
 tb task restart task-1 rd
 tb task cleanup task-1
+tb runner remove agent-js
 tb doctor
 ```
 
-Assigned roles are stored under the task directory. Each role records `schemaVersion`, name, agent, workspace, status, and timestamps.
+Runner definitions can be built in or user configured. Built-in runner ids are `codex` and `claude`. Custom runners are managed with `runner add/list/show/remove`, stored under the TaskMux data directory, and can define a command, repeated args, and environment variables.
+
+Assigned roles are stored under the task directory. Each role records `schemaVersion`, name, agent, command, args, env, workspace, status, and timestamps.
 
 Task comments are appended to `comments.jsonl` under the task directory and can be listed without entering a role session. Each comment record includes `schemaVersion`.
 
 `task start`, `task done`, `task archive`, and `task reopen` update the task lifecycle status.
 
-`task enter` uses tmux to create or reuse a task session and role window, attaches the user to that role's native agent CLI, and records the role as `running` after a successful attach. `task tail` reads recent role output with `tmux capture-pane`.
+`task assign` resolves `--agent` against built-in and custom runner ids. `task enter` uses tmux to create or reuse a task session and role window, starts the resolved runner command with its args and env, attaches the user to that role's native agent CLI, and records the role as `running` after a successful attach. `task tail` reads recent role output with `tmux capture-pane`.
 
 `task shell` opens an interactive TaskMux control prompt for the task. Shell commands reuse the same task command handlers as the non-interactive CLI, including task lifecycle, role refresh, cleanup, and restart commands.
 
@@ -129,7 +139,7 @@ Task comments are appended to `comments.jsonl` under the task directory and can 
 
 `task open` prints a task context summary for outer-shell workflows. `task detach` asks tmux to detach clients from the task session while leaving role processes running and records the role as `detached`. `task stop` sends `C-c` to the role window; `task kill` kills the role window. `task restart` kills an existing role window when present, recreates the role window from stored role metadata, attaches to it, and records the role as `running`.
 
-`doctor` checks Node.js, tmux, Codex CLI, Claude Code, and the configured TaskMux data directory. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
+`doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runner commands, and the configured TaskMux data directory. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
 
 ## Data Schema
 
@@ -148,13 +158,29 @@ TaskMux stores versioned local JSON records. Current records use `schemaVersion:
 
 Role records use `status` values `idle`, `running`, `detached`, `exited`, or `failed`. Comment records use `id`, `body`, and `createdAt`. Invalid JSON or unsupported schema records fail with `DATA_ERROR`.
 
+Custom runner records also use `schemaVersion: 1`:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "agent-js",
+  "command": "/path/to/agent-js",
+  "args": ["--model", "review"],
+  "env": {
+    "TASKMUX_MODE": "dev"
+  },
+  "createdAt": "2026-06-23T00:00:00.000Z",
+  "updatedAt": "2026-06-23T00:00:00.000Z"
+}
+```
+
 ## Exit Codes
 
 | Code | Name | Meaning |
 | --- | --- | --- |
 | 0 | OK | Command completed |
 | 2 | USAGE_ERROR | Missing or invalid CLI input |
-| 3 | TASK_NOT_FOUND / ROLE_NOT_FOUND | Requested task or role does not exist |
+| 3 | TASK_NOT_FOUND / ROLE_NOT_FOUND / RUNNER_NOT_FOUND | Requested task, role, or runner does not exist |
 | 4 | DATA_ERROR | Stored TaskMux data is unreadable or fails schema validation |
 | 5 | RUNTIME_ERROR | Unexpected runtime failure |
 

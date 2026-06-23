@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { runTaskCommand } from "./commands/taskCommands.js";
+import { runRunnerCommand } from "./commands/runnerCommands.js";
 import { runDoctor } from "./doctor/doctor.js";
 import { CliError, usageError } from "./errors/cliError.js";
 import { runTaskShell } from "./shell/taskShell.js";
@@ -18,6 +19,10 @@ Usage:
   taskmux --help
   taskmux --version
   taskmux doctor
+  taskmux runner add <runner-id> --command <command> [--arg <arg> ...] [--env KEY=value ...]
+  taskmux runner list
+  taskmux runner show <runner-id>
+  taskmux runner remove <runner-id>
   taskmux task create <title>
   taskmux task list
   taskmux task show <task-id>
@@ -63,7 +68,14 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "doctor") {
-    console.log(runDoctor(process.env, new NodeCommandRunner()).trimEnd());
+    const store = new FileTaskStore(resolveTaskmuxHome(process.env));
+    console.log(runDoctor(process.env, new NodeCommandRunner(), store.listCustomRunners()).trimEnd());
+    return;
+  }
+
+  if (args[0] === "runner") {
+    const store = new FileTaskStore(resolveTaskmuxHome(process.env));
+    console.log(runRunnerCommand(args.slice(1), store).trimEnd());
     return;
   }
 

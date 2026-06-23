@@ -37,6 +37,26 @@ Detected status changes are written back to `role.json` with a refreshed `update
 - `task kill <task-id> <role>` records the role as `exited` after killing the role window.
 - `task restart <task-id> <role>` attempts to kill the old role window, recreates the role window from stored role metadata, attaches to it, and records the role as `running`.
 
+## Runner Configuration
+
+Built-in runners are always available:
+
+- `codex`
+- `claude`
+
+Custom runners are managed with:
+
+- `runner add <runner-id> --command <command> [--arg <arg> ...] [--env KEY=value ...]`
+- `runner list`
+- `runner show <runner-id>`
+- `runner remove <runner-id>`
+
+Runner ids may contain letters, numbers, hyphens, and underscores. Custom runner ids cannot replace built-in runner ids.
+
+`task assign --agent <runner-id>` resolves the runner before writing `role.json`. Role records store the resolved `agent`, `command`, `args`, and `env`. Later changes to the runner definition do not mutate already assigned roles.
+
+`doctor` checks custom runner commands with `--version` and reports them as `runner:<runner-id>`.
+
 ## Error Codes
 
 CLI errors are structured for automation and shell scripts.
@@ -46,6 +66,7 @@ CLI errors are structured for automation and shell scripts.
 | 2 | `USAGE_ERROR` | Missing task id, missing role name, missing option values, unsupported agent, empty title, or empty comment |
 | 3 | `TASK_NOT_FOUND` | The requested task record does not exist |
 | 3 | `ROLE_NOT_FOUND` | The requested role record does not exist under an existing task |
+| 3 | `RUNNER_NOT_FOUND` | The requested custom or built-in runner id cannot be resolved |
 | 4 | `DATA_ERROR` | Stored JSON cannot be parsed or does not match the active schema |
 | 5 | `RUNTIME_ERROR` | Unexpected runtime failure |
 
@@ -74,7 +95,12 @@ Role record:
 {
   "schemaVersion": 1,
   "name": "rd",
-  "agent": "codex",
+  "agent": "agent-js",
+  "command": "/path/to/agent-js",
+  "args": ["--model", "review"],
+  "env": {
+    "TASKMUX_MODE": "dev"
+  },
   "workspace": "/path/to/project",
   "status": "idle",
   "createdAt": "2026-06-23T00:00:00.000Z",
@@ -90,6 +116,22 @@ Comment record:
   "id": "comment-1",
   "body": "Keep old session compatibility.",
   "createdAt": "2026-06-23T00:00:00.000Z"
+}
+```
+
+Custom runner record:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "agent-js",
+  "command": "/path/to/agent-js",
+  "args": ["--model", "review"],
+  "env": {
+    "TASKMUX_MODE": "dev"
+  },
+  "createdAt": "2026-06-23T00:00:00.000Z",
+  "updatedAt": "2026-06-23T00:00:00.000Z"
 }
 ```
 

@@ -39,7 +39,7 @@ task enter <task-id> <role>
   tmux has-session -t taskmux-<task-id>
   tmux new-session -d -s taskmux-<task-id>          # when missing
   tmux list-windows -t taskmux-<task-id> -F #{window_name}
-  tmux new-window -t taskmux-<task-id> -n <role> -c <workspace> <agent>  # when missing
+  tmux new-window -t taskmux-<task-id> -n <role> -c <workspace> <runner shell-command>  # when missing
   tmux attach-session -t taskmux-<task-id>:<role>
 
 task tail <task-id> <role>
@@ -102,15 +102,23 @@ Initial runners:
 - Codex CLI
 - Claude Code
 
-`src/runner/runnerRegistry.ts` is the single source of supported runner ids. Role assignment rejects unsupported agents before writing `role.json`.
+`src/runner/runnerRegistry.ts` is the single source for built-in runner ids and merges custom runner records from storage for command resolution. Role assignment rejects unsupported agents before writing `role.json`.
 
-Adapters provide:
+Runner definitions provide:
 
-- Executable detection
-- Start command construction
-- Workspace handling
-- Optional environment variables
-- Capability metadata for future plugin, hook, or MCP integration
+- Runner id
+- Command
+- Ordered args
+- Environment variables
+- Source metadata: `builtin` or `custom`
+
+Custom runner records live in `TASKMUX_HOME/runners/<runner-id>/runner.json`. Existing roles store the resolved command contract so later runner edits do not silently change already assigned roles.
+
+Tmux starts roles with one shell-command argument assembled from the stored role command, env, and args. Example:
+
+```text
+env TASKMUX_MODE=dev /path/to/agent-js --model review
+```
 
 ## Interactive Task Shell
 
@@ -157,6 +165,9 @@ Role assignment uses the same store boundary:
 
 ```text
 TASKMUX_HOME or ~/.taskmux
+  runners/
+    agent-js/
+      runner.json
   tasks/
     task-1/
       roles/
@@ -164,7 +175,9 @@ TASKMUX_HOME or ~/.taskmux
           role.json
 ```
 
-`role.json` stores `schemaVersion`, `name`, `agent`, `workspace`, `status`, `createdAt`, and `updatedAt`. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
+`runner.json` stores `schemaVersion`, `id`, `command`, `args`, `env`, `createdAt`, and `updatedAt`.
+
+`role.json` stores `schemaVersion`, `name`, `agent`, `command`, `args`, `env`, `workspace`, `status`, `createdAt`, and `updatedAt`. Older role records without `command`, `args`, or `env` remain readable; tmux falls back to `agent` as the command. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
 
 Task comments are append-only JSONL records:
 
@@ -180,8 +193,9 @@ Each comment stores `schemaVersion`, `id`, `body`, and `createdAt`. The first ve
 Storage reads validate JSON records before returning domain objects:
 
 - Task records require `schemaVersion: 1`, string ids and timestamps, and a valid task status.
-- Role records require `schemaVersion: 1`, string name, agent, workspace, timestamps, and a valid role status.
+- Role records require `schemaVersion: 1`, string name, agent, workspace, timestamps, and a valid role status. Optional command contracts require string `command`, string-array `args`, and string-map `env`.
 - Comment records require `schemaVersion: 1`, string id, body, and timestamp.
+- Runner records require `schemaVersion: 1`, string id, string command, string-array args, string-map env, and timestamps.
 
 Invalid records raise `DATA_ERROR` instead of being skipped silently.
 
@@ -194,6 +208,7 @@ Invalid records raise `DATA_ERROR` instead of being skipped silently.
 | `USAGE_ERROR` | 2 |
 | `TASK_NOT_FOUND` | 3 |
 | `ROLE_NOT_FOUND` | 3 |
+| `RUNNER_NOT_FOUND` | 3 |
 | `DATA_ERROR` | 4 |
 | `RUNTIME_ERROR` | 5 |
 

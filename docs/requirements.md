@@ -45,6 +45,10 @@ reviewer -> tmux window taskmux-task-42:reviewer
 
 TaskMux currently provides:
 
+- `taskmux runner add <runner-id> --command <command> [--arg <arg> ...] [--env KEY=value ...]` creates or replaces a custom runner definition
+- `taskmux runner list` lists built-in and custom runner definitions
+- `taskmux runner show <runner-id>` shows one runner definition
+- `taskmux runner remove <runner-id>` removes a custom runner definition
 - `taskmux task create <title>` creates a local task with status `open`
 - `taskmux task list` lists local tasks in id order
 - `taskmux task show <task-id>` shows one task by id
@@ -74,7 +78,6 @@ TaskMux currently provides:
 TaskMux should also provide future commands for:
 
 - Dedicated transcript export formats
-- Configurable custom runners
 - Release automation around npm publishing
 
 ## Execution Semantics
@@ -109,6 +112,17 @@ Role status is stored in `role.json` and may be refreshed from tmux by `task sta
 
 When tmux cannot be inspected, TaskMux keeps the stored status instead of overwriting it with an uncertain value.
 
+## Runner Semantics
+
+TaskMux supports built-in and custom runner ids.
+
+- Built-in runner ids are `codex` and `claude`.
+- Custom runners are stored locally and are task-independent.
+- A custom runner defines a command, ordered args, and environment variables.
+- `task assign --agent <runner-id>` resolves the runner id before writing role state.
+- A role stores the resolved runner command, args, and env so later `enter` and `restart` use the same execution contract even if the runner definition changes.
+- Built-in runners cannot be removed or replaced by custom runner definitions.
+
 ## Data Storage
 
 TaskMux stores data in a user-level application directory. It does not write task state into the project workspace by default.
@@ -133,7 +147,9 @@ Task, role, and comment records are versioned with `schemaVersion: 1`. TaskMux v
 
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 
-Role records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped. Reassigning an existing role overwrites that role's current agent and workspace while preserving the task identity. Supported first-version agents are `codex` and `claude`.
+Custom runner records live under `runners/<runner-id>/runner.json`.
+
+Role records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped. Reassigning an existing role overwrites that role's current agent, command, args, env, and workspace while preserving the task identity.
 
 Role transcripts live under `tasks/<task-id>/roles/<role>/transcript.log` after `task transcript` captures current tmux output.
 
@@ -146,7 +162,7 @@ TaskMux commands use stable process exit codes for scriptable failure handling.
 | Exit Code | Error Code | Scope |
 | --- | --- | --- |
 | 2 | `USAGE_ERROR` | Missing arguments, invalid options, unsupported agents, or empty user input |
-| 3 | `TASK_NOT_FOUND` / `ROLE_NOT_FOUND` | Missing task or role records |
+| 3 | `TASK_NOT_FOUND` / `ROLE_NOT_FOUND` / `RUNNER_NOT_FOUND` | Missing task, role, or runner records |
 | 4 | `DATA_ERROR` | Invalid stored JSON, unsupported schema version, or invalid stored fields |
 | 5 | `RUNTIME_ERROR` | Unexpected runtime failures or unavailable execution plumbing |
 
