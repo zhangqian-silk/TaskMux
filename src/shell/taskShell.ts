@@ -80,6 +80,13 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
   switch (name) {
     case "summary":
       return ["open", taskId];
+    case "start":
+    case "done":
+    case "archive":
+    case "reopen":
+    case "refresh":
+    case "cleanup":
+      return [name, taskId];
     case "roles":
     case "comments":
       return [name, taskId];
@@ -95,6 +102,7 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
     case "detach":
     case "stop":
     case "kill":
+    case "restart":
       return [name, taskId, ...args];
     default:
       return [name, ...args];
@@ -119,7 +127,13 @@ function parseCommandLine(line: string): string[] {
 function shellHelp(): string {
   return `Task shell commands:
   summary
+  start
+  done
+  archive
+  reopen
   roles
+  refresh
+  cleanup
   comments
   comment <body>
   assign <role> --agent <agent> --workspace <path>
@@ -131,6 +145,7 @@ function shellHelp(): string {
   detach <role>
   stop <role>
   kill <role>
+  restart <role>
   help
   exit
 `;

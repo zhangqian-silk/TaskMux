@@ -33,6 +33,10 @@ tb
 tb task create "Refactor login page"
 tb task list
 tb task show task-1
+tb task start task-1
+tb task done task-1
+tb task archive task-1
+tb task reopen task-1
 tb task open task-1
 tb task shell task-1
 tb task assign task-1 rd --agent codex --workspace ~/projects/app
@@ -44,19 +48,25 @@ tb task enter task-1 rd
 tb task tail task-1 rd
 tb task detail task-1 rd
 tb task status task-1 rd
+tb task refresh task-1
 tb task transcript task-1 rd
 tb task detach task-1 rd
 tb task stop task-1 rd
 tb task kill task-1 rd
+tb task restart task-1 rd
+tb task cleanup task-1
 tb doctor
 ```
 
 Inside the task shell:
 
 ```text
+tb task-42> start
 tb task-42> roles
+tb task-42> refresh
 tb task-42> comment "Keep old session compatibility."
 tb task-42> enter rd
+tb task-42> restart rd
 ```
 
 `enter rd` attaches to the tmux window for the `rd` role. Detaching returns to the task shell while the role process continues running.
@@ -81,6 +91,10 @@ The current task command surface is:
 tb task create "Refactor login page"
 tb task list
 tb task show task-1
+tb task start task-1
+tb task done task-1
+tb task archive task-1
+tb task reopen task-1
 tb task open task-1
 tb task shell task-1
 tb task assign task-1 rd --agent codex --workspace ~/projects/app
@@ -91,10 +105,13 @@ tb task enter task-1 rd
 tb task tail task-1 rd
 tb task detail task-1 rd
 tb task status task-1 rd
+tb task refresh task-1
 tb task transcript task-1 rd
 tb task detach task-1 rd
 tb task stop task-1 rd
 tb task kill task-1 rd
+tb task restart task-1 rd
+tb task cleanup task-1
 tb doctor
 ```
 
@@ -102,13 +119,15 @@ Assigned roles are stored under the task directory. Each role records `schemaVer
 
 Task comments are appended to `comments.jsonl` under the task directory and can be listed without entering a role session. Each comment record includes `schemaVersion`.
 
-`task enter` uses tmux to create or reuse a task session and role window, then attaches the user to that role's native agent CLI. `task tail` reads recent role output with `tmux capture-pane`.
+`task start`, `task done`, `task archive`, and `task reopen` update the task lifecycle status.
 
-`task shell` opens an interactive TaskMux control prompt for the task. Shell commands reuse the same task command handlers as the non-interactive CLI.
+`task enter` uses tmux to create or reuse a task session and role window, attaches the user to that role's native agent CLI, and records the role as `running` after a successful attach. `task tail` reads recent role output with `tmux capture-pane`.
 
-`task detail` shows stored role metadata and tmux target information. `task status` probes `tmux list-windows`; when the role window exists it reports and persists `running`, when the session exists but the role window is absent it reports and persists `exited`, and when tmux cannot be inspected it keeps the stored status. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
+`task shell` opens an interactive TaskMux control prompt for the task. Shell commands reuse the same task command handlers as the non-interactive CLI, including task lifecycle, role refresh, cleanup, and restart commands.
 
-`task open` prints a task context summary for outer-shell workflows. `task detach` asks tmux to detach clients from the task session while leaving role processes running. `task stop` sends `C-c` to the role window; `task kill` kills the role window.
+`task detail` shows stored role metadata and tmux target information. `task status` probes `tmux list-windows`; when the role window exists it reports and persists `running`, when the session exists but the role window is absent it reports and persists `exited`, and when tmux cannot be inspected it keeps the stored status. `task refresh` applies the same detection to every role in a task. `task cleanup` marks stale stored roles according to the current tmux window state without deleting task data. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
+
+`task open` prints a task context summary for outer-shell workflows. `task detach` asks tmux to detach clients from the task session while leaving role processes running and records the role as `detached`. `task stop` sends `C-c` to the role window; `task kill` kills the role window. `task restart` kills an existing role window when present, recreates the role window from stored role metadata, attaches to it, and records the role as `running`.
 
 `doctor` checks Node.js, tmux, Codex CLI, Claude Code, and the configured TaskMux data directory. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
 

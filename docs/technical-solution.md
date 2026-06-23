@@ -53,6 +53,10 @@ task status <task-id> <role>
   # role window present -> running
   # task session inspectable but role window absent -> exited
 
+task refresh <task-id>
+  tmux list-windows -t taskmux-<task-id> -F #{window_name}
+  # applied to every stored role for the task
+
 task detach <task-id> <role>
   tmux detach-client -s taskmux-<task-id>
 
@@ -61,6 +65,14 @@ task stop <task-id> <role>
 
 task kill <task-id> <role>
   tmux kill-window -t taskmux-<task-id>:<role>
+
+task restart <task-id> <role>
+  tmux kill-window -t taskmux-<task-id>:<role>  # ignored when already absent
+  tmux has-session -t taskmux-<task-id>
+  tmux new-session -d -s taskmux-<task-id>      # when missing
+  tmux list-windows -t taskmux-<task-id> -F #{window_name}
+  tmux new-window -t taskmux-<task-id> -n <role> -c <workspace> <agent>
+  tmux attach-session -t taskmux-<task-id>:<role>
 ```
 
 `TASKMUX_TMUX_BIN` can override the tmux executable for tests and controlled environments. Normal users should rely on the default `tmux` executable.
@@ -108,9 +120,16 @@ Examples:
 
 ```text
 summary -> task open <task-id>
+start -> task start <task-id>
+done -> task done <task-id>
+archive -> task archive <task-id>
+reopen -> task reopen <task-id>
 roles -> task roles <task-id>
+refresh -> task refresh <task-id>
+cleanup -> task cleanup <task-id>
 comment <body> -> task comment <task-id> <body>
 enter <role> -> task enter <task-id> <role>
+restart <role> -> task restart <task-id> <role>
 ```
 
 The shell does not implement separate business logic and does not intercept native Codex or Claude input after `enter`.
@@ -132,7 +151,7 @@ TASKMUX_HOME or ~/.taskmux
       task.json
 ```
 
-`task.json` stores `schemaVersion`, `id`, `title`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, and task lookup. The CLI resolves the data directory once and passes the store into task command handlers.
+`task.json` stores `schemaVersion`, `id`, `title`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
 
 Role assignment uses the same store boundary:
 
@@ -145,7 +164,7 @@ TASKMUX_HOME or ~/.taskmux
           role.json
 ```
 
-`role.json` stores `schemaVersion`, `name`, `agent`, `workspace`, `status`, `createdAt`, and `updatedAt`. The first stable role status is `idle`; `task stop` and `task kill` update role status to `exited`. `task status` refreshes role status from tmux when possible and writes detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
+`role.json` stores `schemaVersion`, `name`, `agent`, `workspace`, `status`, `createdAt`, and `updatedAt`. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
 
 Task comments are append-only JSONL records:
 
@@ -186,7 +205,7 @@ TaskMux reads recent role output through tmux capture APIs. The first version sh
 
 Structured runner events are future work and must not be required for core role inspection.
 
-`task detail` reads role metadata from `role.json` and derives the tmux target as `taskmux-<task-id>:<role>`. `task status` probes tmux window state and persists detected status changes. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
+`task detail` reads role metadata from `role.json` and derives the tmux target as `taskmux-<task-id>:<role>`. `task status` probes tmux window state and persists detected status changes. `task refresh` and `task cleanup` apply the same probe to every role in a task. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
 
 `task open` reads task, role, and comment counts from storage and prints a task context summary. `task shell` provides an interactive wrapper over the same task command handlers. `task detach` detaches tmux clients for the task session and does not terminate the role process.
 

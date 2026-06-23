@@ -164,6 +164,36 @@ test("shows a task by id", () => {
   assert.match(output, /Status: open/);
 });
 
+test("updates task lifecycle status", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Review checkout flow"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(
+    runTaskmux(["task", "start", "task-1"], { TASKMUX_HOME: home }),
+    /Started task task-1/
+  );
+  assert.match(
+    runTaskmux(["task", "done", "task-1"], { TASKMUX_HOME: home }),
+    /Completed task task-1/
+  );
+  assert.match(
+    runTaskmux(["task", "archive", "task-1"], { TASKMUX_HOME: home }),
+    /Archived task task-1/
+  );
+  assert.match(
+    runTaskmux(["task", "reopen", "task-1"], { TASKMUX_HOME: home }),
+    /Reopened task task-1/
+  );
+
+  const task = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "task.json"), "utf8")
+  );
+  assert.equal(task.status, "open");
+});
+
 test("assigns a role to an existing task", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
 
@@ -340,6 +370,11 @@ test("enters a role through tmux without requiring real tmux", () => {
     "codex"
   ]);
   assert.deepEqual(calls[4], ["attach-session", "-t", "taskmux-task-1:rd"]);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  assert.equal(role.status, "running");
 });
 
 test("tails role output through tmux capture-pane", () => {
@@ -525,6 +560,11 @@ test("detaches a task role through tmux", () => {
     .map((line) => JSON.parse(line));
 
   assert.deepEqual(calls[0], ["detach-client", "-s", "taskmux-task-1"]);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  assert.equal(role.status, "detached");
 });
 
 test("shows role status", () => {
@@ -618,6 +658,142 @@ test("detects exited role status when tmux window is absent", () => {
   });
 
   assert.match(output, /Status: exited/);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  assert.equal(role.status, "exited");
+});
+
+test("refreshes every role status for a task", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeTmux = createStatusTmux(home);
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "reviewer",
+      "--agent",
+      "claude",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "refresh", "task-1"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux
+  });
+
+  assert.match(output, /Refreshed task task-1 roles/);
+  assert.match(output, /rd\s+running/);
+  assert.match(output, /reviewer\s+exited/);
+
+  const rd = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  const reviewer = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "reviewer", "role.json"), "utf8")
+  );
+  assert.equal(rd.status, "running");
+  assert.equal(reviewer.status, "exited");
+});
+
+test("restarts a role through tmux and updates status", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(["task", "kill", "task-1", "rd"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  const output = runTaskmux(["task", "restart", "task-1", "rd"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  assert.match(output, /Restarted role rd for task-1/);
+
+  const calls = readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(calls.at(-6), ["kill-window", "-t", "taskmux-task-1:rd"]);
+  assert.deepEqual(calls.at(-1), ["attach-session", "-t", "taskmux-task-1:rd"]);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  assert.equal(role.status, "running");
+});
+
+test("cleans stale role windows into exited status", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "cleanup", "task-1"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  assert.match(output, /Cleaned task task-1 roles/);
+  assert.match(output, /rd\s+exited/);
 
   const role = JSON.parse(
     readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")

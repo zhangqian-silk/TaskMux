@@ -48,6 +48,10 @@ TaskMux currently provides:
 - `taskmux task create <title>` creates a local task with status `open`
 - `taskmux task list` lists local tasks in id order
 - `taskmux task show <task-id>` shows one task by id
+- `taskmux task start <task-id>` updates a task to status `active`
+- `taskmux task done <task-id>` updates a task to status `done`
+- `taskmux task archive <task-id>` updates a task to status `archived`
+- `taskmux task reopen <task-id>` updates a task to status `open`
 - `taskmux task open <task-id>` shows a task context summary for outer-shell workflows
 - `taskmux task shell <task-id>` opens an interactive task control shell
 - `taskmux task assign <task-id> <role> --agent <agent> --workspace <path>` assigns a role to an existing task with status `idle`
@@ -56,10 +60,13 @@ TaskMux currently provides:
 - `taskmux task tail <task-id> <role>` reads recent role output from tmux capture-pane
 - `taskmux task detail <task-id> <role>` shows role metadata and tmux target information
 - `taskmux task status <task-id> <role>` inspects tmux role window state, updates stored role status when detection succeeds, and shows role status plus tmux target information
+- `taskmux task refresh <task-id>` inspects every assigned role for a task and writes detected statuses to storage
 - `taskmux task transcript <task-id> <role>` reads the current tmux capture stream for the role
 - `taskmux task detach <task-id> <role>` detaches tmux clients from the task session without stopping role processes
 - `taskmux task stop <task-id> <role>` sends `C-c` to the role tmux window and records the role as `exited`
 - `taskmux task kill <task-id> <role>` kills the role tmux window and records the role as `exited`
+- `taskmux task restart <task-id> <role>` recreates and attaches to a role window using stored role metadata, then records the role as `running`
+- `taskmux task cleanup <task-id>` refreshes stored role state from tmux and marks stale role windows as `exited`
 - `taskmux task comment <task-id> <body>` appends a comment to a task
 - `taskmux task comments <task-id>` lists comments for a task
 - `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, and the configured TaskMux home
@@ -81,13 +88,22 @@ TaskMux must clearly distinguish:
 
 Users must not need to understand tmux internals for normal operation.
 
+## Task Status Semantics
+
+Task status is explicit user-managed state.
+
+- `open`: task is created or reopened
+- `active`: task is in progress
+- `done`: task work is completed
+- `archived`: task is retained but no longer part of the active board
+
 ## Status Semantics
 
 Role status is stored in `role.json` and may be refreshed from tmux by `task status`.
 
 - `idle`: role assigned but no detected running tmux role window
 - `running`: task tmux session contains the role window
-- `detached`: reserved for a role process that is running without an attached user-facing view
+- `detached`: TaskMux detached clients from the task session while leaving the role process available
 - `exited`: role window has been stopped, killed, or is absent while the task session can be inspected
 - `failed`: reserved for runner failures that TaskMux can classify
 

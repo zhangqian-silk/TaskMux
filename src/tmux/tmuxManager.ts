@@ -31,6 +31,16 @@ export class TmuxManager {
     this.runner.run(this.tmuxBin, ["detach-client", "-s", this.sessionName(taskId)]);
   }
 
+  restartRole(taskId: string, role: Role): void {
+    try {
+      this.killRole(taskId, role.name);
+    } catch {
+      // Restart must recover even when the old window is already gone.
+    }
+
+    this.enterRole(taskId, role);
+  }
+
   detectRoleStatus(taskId: string, roleName: string, fallback: RoleStatus): RoleStatus {
     try {
       const windows = this.runner.run(this.tmuxBin, [

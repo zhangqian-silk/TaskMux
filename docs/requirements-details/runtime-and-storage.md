@@ -1,5 +1,18 @@
 # Runtime And Storage Requirements
 
+## Task Lifecycle
+
+Task status is changed through explicit commands:
+
+| Command | Stored Status |
+| --- | --- |
+| `task start <task-id>` | `active` |
+| `task done <task-id>` | `done` |
+| `task archive <task-id>` | `archived` |
+| `task reopen <task-id>` | `open` |
+
+Each transition updates `task.json` and refreshes `updatedAt`.
+
 ## Role Status Detection
 
 `task status <task-id> <role>` is the stable command for checking a role's current execution state.
@@ -11,6 +24,18 @@ TaskMux resolves the role from storage, inspects the backing tmux session with `
 - If tmux inspection fails, TaskMux keeps the stored role status.
 
 Detected status changes are written back to `role.json` with a refreshed `updatedAt` timestamp.
+
+`task refresh <task-id>` applies the same detection to every assigned role in a task and prints the refreshed role status table.
+
+`task cleanup <task-id>` is non-destructive. It refreshes stored role statuses from the current tmux window state and marks stale role records as `exited`; it does not delete tasks, roles, comments, transcripts, sessions, or windows.
+
+## Role Lifecycle Actions
+
+- `task enter <task-id> <role>` records the role as `running` after a successful tmux attach command returns.
+- `task detach <task-id> <role>` records the role as `detached` after tmux detaches clients from the task session.
+- `task stop <task-id> <role>` records the role as `exited` after sending `C-c`.
+- `task kill <task-id> <role>` records the role as `exited` after killing the role window.
+- `task restart <task-id> <role>` attempts to kill the old role window, recreates the role window from stored role metadata, attaches to it, and records the role as `running`.
 
 ## Error Codes
 

@@ -27,3 +27,11 @@ export function createTask(id: string, title: string, now: Date): Task {
     updatedAt: timestamp
   };
 }
+
+export function updateTaskStatus(task: Task, status: TaskStatus, now: Date): Task {
+  return {
+    ...task,
+    status,
+    updatedAt: now.toISOString()
+  };
+}

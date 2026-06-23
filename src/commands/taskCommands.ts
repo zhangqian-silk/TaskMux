@@ -2,8 +2,9 @@ import { createTaskComment } from "../comment/comment.js";
 import { roleNotFound, runtimeError, taskNotFound, usageError } from "../errors/cliError.js";
 import { createRole, updateRoleStatus } from "../role/role.js";
 import { resolveRunner, supportedRunnerIds } from "../runner/runnerRegistry.js";
-import { createTask } from "../task/task.js";
+import { createTask, updateTaskStatus } from "../task/task.js";
 import type { TaskStore } from "../storage/taskStore.js";
+import type { TaskStatus } from "../task/task.js";
 import type { TmuxManager } from "../tmux/tmuxManager.js";
 
 export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
@@ -16,6 +17,14 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return listTaskCommand(store);
     case "show":
       return showTaskCommand(rest, store);
+    case "start":
+      return updateTaskStatusCommand(rest, store, "active", "Started");
+    case "done":
+      return updateTaskStatusCommand(rest, store, "done", "Completed");
+    case "archive":
+      return updateTaskStatusCommand(rest, store, "archived", "Archived");
+    case "reopen":
+      return updateTaskStatusCommand(rest, store, "open", "Reopened");
     case "open":
       return openTaskCommand(rest, store);
     case "assign":
@@ -30,6 +39,8 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return detailTaskRoleCommand(rest, store);
     case "status":
       return statusTaskRoleCommand(rest, store, tmux);
+    case "refresh":
+      return refreshTaskRolesCommand(rest, store, tmux, "Refreshed");
     case "transcript":
       return transcriptTaskRoleCommand(rest, store, tmux);
     case "detach":
@@ -38,6 +49,10 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return stopTaskRoleCommand(rest, store, tmux);
     case "kill":
       return killTaskRoleCommand(rest, store, tmux);
+    case "restart":
+      return restartTaskRoleCommand(rest, store, tmux);
+    case "cleanup":
+      return refreshTaskRolesCommand(rest, store, tmux, "Cleaned");
     case "comment":
       return addTaskCommentCommand(rest, store);
     case "comments":
@@ -90,6 +105,30 @@ function showTaskCommand(args: string[], store: TaskStore): string {
     `Created: ${task.createdAt}`,
     `Updated: ${task.updatedAt}`
   ].join("\n").concat("\n");
+}
+
+function updateTaskStatusCommand(
+  args: string[],
+  store: TaskStore,
+  status: TaskStatus,
+  action: string
+): string {
+  const [id] = args;
+
+  if (id === undefined || id.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  const task = store.getTask(id);
+
+  if (task === null) {
+    throw taskNotFound(id);
+  }
+
+  const updatedTask = updateTaskStatus(task, status, new Date());
+  store.saveTask(updatedTask);
+
+  return `${action} task ${updatedTask.id}\n`;
 }
 
 function openTaskCommand(args: string[], store: TaskStore): string {
@@ -190,6 +229,7 @@ function enterTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManag
   }
 
   tmux.enterRole(roleLookup.taskId, roleLookup.role);
+  store.saveRole(roleLookup.taskId, updateRoleStatus(roleLookup.role, "running", new Date()));
 
   return `Attached role ${roleLookup.role.name} for ${roleLookup.taskId}\n`;
 }
@@ -246,6 +286,49 @@ function detailTaskRoleCommand(args: string[], store: TaskStore): string {
   ].join("\n").concat("\n");
 }
 
+function refreshTaskRolesCommand(
+  args: string[],
+  store: TaskStore,
+  tmux: TmuxManager | undefined,
+  action: string
+): string {
+  const [taskId] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  if (store.getTask(taskId) === null) {
+    throw taskNotFound(taskId);
+  }
+
+  if (tmux === undefined) {
+    throw runtimeError("Tmux manager is not configured.");
+  }
+
+  const roles = store.listRoles(taskId);
+
+  if (roles.length === 0) {
+    return `${action} task ${taskId} roles\nNo roles assigned.\n`;
+  }
+
+  const currentRoles = roles.map((role) => {
+    const status = tmux.detectRoleStatus(taskId, role.name, role.status);
+    const currentRole = status === role.status ? role : updateRoleStatus(role, status, new Date());
+
+    if (currentRole !== role) {
+      store.saveRole(taskId, currentRole);
+    }
+
+    return currentRole;
+  });
+
+  return [
+    `${action} task ${taskId} roles`,
+    ...currentRoles.map((role) => `${role.name}\t${role.status}`)
+  ].join("\n").concat("\n");
+}
+
 function statusTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
   const roleLookup = findRole(args, store);
 
@@ -285,8 +368,26 @@ function detachTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxMana
   }
 
   tmux.detachRole(roleLookup.taskId);
+  store.saveRole(roleLookup.taskId, updateRoleStatus(roleLookup.role, "detached", new Date()));
 
   return `Detached role ${roleLookup.role.name} for ${roleLookup.taskId}\n`;
+}
+
+function restartTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
+  const roleLookup = findRole(args, store);
+
+  if (typeof roleLookup === "string") {
+    throw usageError(roleLookup.trim());
+  }
+
+  if (tmux === undefined) {
+    throw runtimeError("Tmux manager is not configured.");
+  }
+
+  tmux.restartRole(roleLookup.taskId, roleLookup.role);
+  store.saveRole(roleLookup.taskId, updateRoleStatus(roleLookup.role, "running", new Date()));
+
+  return `Restarted role ${roleLookup.role.name} for ${roleLookup.taskId}\n`;
 }
 
 function stopTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
@@ -408,6 +509,10 @@ export function taskUsage(): string {
   taskmux task create <title>
   taskmux task list
   taskmux task show <task-id>
+  taskmux task start <task-id>
+  taskmux task done <task-id>
+  taskmux task archive <task-id>
+  taskmux task reopen <task-id>
   taskmux task open <task-id>
   taskmux task assign <task-id> <role> --agent <agent> --workspace <path>
   taskmux task roles <task-id>
@@ -415,10 +520,13 @@ export function taskUsage(): string {
   taskmux task tail <task-id> <role>
   taskmux task detail <task-id> <role>
   taskmux task status <task-id> <role>
+  taskmux task refresh <task-id>
   taskmux task transcript <task-id> <role>
   taskmux task detach <task-id> <role>
   taskmux task stop <task-id> <role>
   taskmux task kill <task-id> <role>
+  taskmux task restart <task-id> <role>
+  taskmux task cleanup <task-id>
   taskmux task comment <task-id> <body>
   taskmux task comments <task-id>
 `;
