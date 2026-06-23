@@ -2,8 +2,9 @@ import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } f
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TaskComment } from "../comment/comment.js";
+import { dataError } from "../errors/cliError.js";
 import type { Role } from "../role/role.js";
-import type { Task } from "../task/task.js";
+import type { Task, TaskStatus } from "../task/task.js";
 
 export type TaskStore = {
   nextTaskId(): string;
@@ -58,7 +59,7 @@ export class FileTaskStore implements TaskStore {
 
   getTask(id: string): Task | null {
     try {
-      return JSON.parse(readFileSync(this.taskFile(id), "utf8")) as Task;
+      return parseTask(id, readFileSync(this.taskFile(id), "utf8"));
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         return null;
@@ -87,7 +88,7 @@ export class FileTaskStore implements TaskStore {
 
   getRole(taskId: string, name: string): Role | null {
     try {
-      return JSON.parse(readFileSync(this.roleFile(taskId, name), "utf8")) as Role;
+      return parseRole(name, readFileSync(this.roleFile(taskId, name), "utf8"));
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         return null;
@@ -111,7 +112,7 @@ export class FileTaskStore implements TaskStore {
       return readFileSync(this.commentsFile(taskId), "utf8")
         .split("\n")
         .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line) as TaskComment);
+        .map((line, index) => parseComment(`${taskId}:${index + 1}`, line));
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         return [];
@@ -158,4 +159,73 @@ export class FileTaskStore implements TaskStore {
   private transcriptFile(taskId: string, name: string): string {
     return join(this.roleDir(taskId, name), "transcript.log");
   }
+}
+
+function parseTask(id: string, raw: string): Task {
+  const value = parseJson(raw, `Invalid task record: ${id}`);
+
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.id !== "string" ||
+    typeof value.title !== "string" ||
+    !isTaskStatus(value.status) ||
+    typeof value.createdAt !== "string" ||
+    typeof value.updatedAt !== "string"
+  ) {
+    throw dataError(`Invalid task record: ${id}`);
+  }
+
+  return value as Task;
+}
+
+function parseRole(name: string, raw: string): Role {
+  const value = parseJson(raw, `Invalid role record: ${name}`);
+
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.name !== "string" ||
+    typeof value.agent !== "string" ||
+    typeof value.workspace !== "string" ||
+    !["idle", "running", "detached", "exited", "failed"].includes(String(value.status)) ||
+    typeof value.createdAt !== "string" ||
+    typeof value.updatedAt !== "string"
+  ) {
+    throw dataError(`Invalid role record: ${name}`);
+  }
+
+  return value as Role;
+}
+
+function parseComment(id: string, raw: string): TaskComment {
+  const value = parseJson(raw, `Invalid comment record: ${id}`);
+
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.id !== "string" ||
+    typeof value.body !== "string" ||
+    typeof value.createdAt !== "string"
+  ) {
+    throw dataError(`Invalid comment record: ${id}`);
+  }
+
+  return value as TaskComment;
+}
+
+function parseJson(raw: string, message: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw dataError(message);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isTaskStatus(status: unknown): status is TaskStatus {
+  return ["open", "active", "done", "archived"].includes(String(status));
 }

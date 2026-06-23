@@ -55,7 +55,7 @@ TaskMux currently provides:
 - `taskmux task enter <task-id> <role>` creates or reuses the task tmux session and role tmux window, then attaches to the role
 - `taskmux task tail <task-id> <role>` reads recent role output from tmux capture-pane
 - `taskmux task detail <task-id> <role>` shows role metadata and tmux target information
-- `taskmux task status <task-id> <role>` shows role status and tmux target information
+- `taskmux task status <task-id> <role>` inspects tmux role window state, updates stored role status when detection succeeds, and shows role status plus tmux target information
 - `taskmux task transcript <task-id> <role>` reads the current tmux capture stream for the role
 - `taskmux task detach <task-id> <role>` detaches tmux clients from the task session without stopping role processes
 - `taskmux task stop <task-id> <role>` sends `C-c` to the role tmux window and records the role as `exited`
@@ -81,6 +81,18 @@ TaskMux must clearly distinguish:
 
 Users must not need to understand tmux internals for normal operation.
 
+## Status Semantics
+
+Role status is stored in `role.json` and may be refreshed from tmux by `task status`.
+
+- `idle`: role assigned but no detected running tmux role window
+- `running`: task tmux session contains the role window
+- `detached`: reserved for a role process that is running without an attached user-facing view
+- `exited`: role window has been stopped, killed, or is absent while the task session can be inspected
+- `failed`: reserved for runner failures that TaskMux can classify
+
+When tmux cannot be inspected, TaskMux keeps the stored status instead of overwriting it with an uncertain value.
+
 ## Data Storage
 
 TaskMux stores data in a user-level application directory. It does not write task state into the project workspace by default.
@@ -101,13 +113,28 @@ Suggested layout:
           transcript.log
 ```
 
+Task, role, and comment records are versioned with `schemaVersion: 1`. TaskMux validates loaded records before using them. Invalid JSON, missing required fields, unsupported schema versions, or invalid status values must fail with `DATA_ERROR` rather than being treated as empty state.
+
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 
 Role records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped. Reassigning an existing role overwrites that role's current agent and workspace while preserving the task identity. Supported first-version agents are `codex` and `claude`.
 
 Role transcripts live under `tasks/<task-id>/roles/<role>/transcript.log` after `task transcript` captures current tmux output.
 
-Task comments live in `tasks/<task-id>/comments.jsonl`. Each line stores one comment object with `id`, `body`, and `createdAt`.
+Task comments live in `tasks/<task-id>/comments.jsonl`. Each line stores one comment object with `schemaVersion`, `id`, `body`, and `createdAt`.
+
+## Error Model
+
+TaskMux commands use stable process exit codes for scriptable failure handling.
+
+| Exit Code | Error Code | Scope |
+| --- | --- | --- |
+| 2 | `USAGE_ERROR` | Missing arguments, invalid options, unsupported agents, or empty user input |
+| 3 | `TASK_NOT_FOUND` / `ROLE_NOT_FOUND` | Missing task or role records |
+| 4 | `DATA_ERROR` | Invalid stored JSON, unsupported schema version, or invalid stored fields |
+| 5 | `RUNTIME_ERROR` | Unexpected runtime failures or unavailable execution plumbing |
+
+Errors are printed to stderr as `<ERROR_CODE>: <message>`.
 
 ## First-Version Exclusions
 

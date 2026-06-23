@@ -1,6 +1,7 @@
 export type RoleStatus = "idle" | "running" | "detached" | "exited" | "failed";
 
 export type Role = {
+  schemaVersion: 1;
   name: string;
   agent: string;
   workspace: string;
@@ -29,6 +30,7 @@ export function createRole(name: string, agent: string, workspace: string, now: 
   const timestamp = now.toISOString();
 
   return {
+    schemaVersion: 1,
     name: trimmedName,
     agent: trimmedAgent,
     workspace: trimmedWorkspace,

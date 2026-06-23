@@ -2,6 +2,7 @@
 
 import { runTaskCommand } from "./commands/taskCommands.js";
 import { runDoctor } from "./doctor/doctor.js";
+import { CliError, usageError } from "./errors/cliError.js";
 import { runTaskShell } from "./shell/taskShell.js";
 import { FileTaskStore, resolveTaskmuxHome } from "./storage/taskStore.js";
 import { NodeCommandRunner } from "./tmux/commandRunner.js";
@@ -31,27 +32,46 @@ Role, tmux, and runner commands are defined in docs/requirements.md.
 
 const args = process.argv.slice(2);
 
-if (args.includes("--version") || args.includes("-v")) {
-  console.log(VERSION);
-  process.exit(0);
-}
-
-if (args[0] === "doctor") {
-  console.log(runDoctor(process.env, new NodeCommandRunner()).trimEnd());
-  process.exit(0);
-}
-
-if (args[0] === "task") {
-  const store = new FileTaskStore(resolveTaskmuxHome(process.env));
-  const tmux = new TmuxManager(process.env.TASKMUX_TMUX_BIN ?? "tmux", new NodeCommandRunner());
-
-  if (args[1] === "shell") {
-    await runTaskShell(args[2] ?? "", store, tmux);
-    process.exit(0);
+main().catch((error: unknown) => {
+  if (error instanceof CliError) {
+    console.error(`${error.code}: ${error.message}`);
+    process.exit(error.exitCode);
   }
 
-  console.log(runTaskCommand(args.slice(1), store, tmux).trimEnd());
-  process.exit(0);
-}
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`RUNTIME_ERROR: ${message}`);
+  process.exit(5);
+});
 
-console.log(usage);
+async function main(): Promise<void> {
+  if (args.includes("--version") || args.includes("-v")) {
+    console.log(VERSION);
+    return;
+  }
+
+  if (args[0] === "doctor") {
+    console.log(runDoctor(process.env, new NodeCommandRunner()).trimEnd());
+    return;
+  }
+
+  if (args[0] === "task") {
+    const store = new FileTaskStore(resolveTaskmuxHome(process.env));
+    const tmux = new TmuxManager(process.env.TASKMUX_TMUX_BIN ?? "tmux", new NodeCommandRunner());
+
+    if (args[1] === "shell") {
+      const taskId = args[2];
+
+      if (taskId === undefined || taskId.trim().length === 0) {
+        throw usageError("Task id is required.");
+      }
+
+      await runTaskShell(taskId, store, tmux);
+      return;
+    }
+
+    console.log(runTaskCommand(args.slice(1), store, tmux).trimEnd());
+    return;
+  }
+
+  console.log(usage);
+}

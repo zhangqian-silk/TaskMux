@@ -1,4 +1,5 @@
 import { createTaskComment } from "../comment/comment.js";
+import { roleNotFound, runtimeError, taskNotFound, usageError } from "../errors/cliError.js";
 import { createRole, updateRoleStatus } from "../role/role.js";
 import { resolveRunner, supportedRunnerIds } from "../runner/runnerRegistry.js";
 import { createTask } from "../task/task.js";
@@ -28,7 +29,7 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
     case "detail":
       return detailTaskRoleCommand(rest, store);
     case "status":
-      return detailTaskRoleCommand(rest, store);
+      return statusTaskRoleCommand(rest, store, tmux);
     case "transcript":
       return transcriptTaskRoleCommand(rest, store, tmux);
     case "detach":
@@ -48,6 +49,11 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
 
 function createTaskCommand(args: string[], store: TaskStore): string {
   const title = args.join(" ").trim();
+
+  if (title.length === 0) {
+    throw usageError("Task title is required.");
+  }
+
   const task = createTask(store.nextTaskId(), title, new Date());
   store.saveTask(task);
 
@@ -68,13 +74,13 @@ function showTaskCommand(args: string[], store: TaskStore): string {
   const [id] = args;
 
   if (id === undefined || id.trim().length === 0) {
-    return "Task id is required.\n";
+    throw usageError("Task id is required.");
   }
 
   const task = store.getTask(id);
 
   if (task === null) {
-    return `Task not found: ${id}\n`;
+    throw taskNotFound(id);
   }
 
   return [
@@ -90,13 +96,13 @@ function openTaskCommand(args: string[], store: TaskStore): string {
   const [id] = args;
 
   if (id === undefined || id.trim().length === 0) {
-    return "Task id is required.\n";
+    throw usageError("Task id is required.");
   }
 
   const task = store.getTask(id);
 
   if (task === null) {
-    return `Task not found: ${id}\n`;
+    throw taskNotFound(id);
   }
 
   return [
@@ -113,23 +119,32 @@ function assignTaskRoleCommand(args: string[], store: TaskStore): string {
   const [taskId, roleName, ...rest] = args;
 
   if (taskId === undefined || taskId.trim().length === 0) {
-    return "Task id is required.\n";
+    throw usageError("Task id is required.");
   }
 
   if (roleName === undefined || roleName.trim().length === 0) {
-    return "Role name is required.\n";
+    throw usageError("Role name is required.");
   }
 
   if (store.getTask(taskId) === null) {
-    return `Task not found: ${taskId}\n`;
+    throw taskNotFound(taskId);
   }
 
-  const agent = readOption(rest, "--agent");
-  const workspace = readOption(rest, "--workspace");
+  const agent = readOption(rest, "--agent").trim();
+  const workspace = readOption(rest, "--workspace").trim();
+
+  if (agent.length === 0) {
+    throw usageError("--agent is required.");
+  }
+
+  if (workspace.length === 0) {
+    throw usageError("--workspace is required.");
+  }
+
   const runner = resolveRunner(agent);
 
   if (runner === null) {
-    return `Unsupported agent: ${agent}\nSupported agents: ${supportedRunnerIds().join(", ")}\n`;
+    throw usageError(`Unsupported agent: ${agent}\nSupported agents: ${supportedRunnerIds().join(", ")}`);
   }
 
   const role = createRole(roleName, runner.command, workspace, new Date());
@@ -147,11 +162,11 @@ function listTaskRolesCommand(args: string[], store: TaskStore): string {
   const [taskId] = args;
 
   if (taskId === undefined || taskId.trim().length === 0) {
-    return "Task id is required.\n";
+    throw usageError("Task id is required.");
   }
 
   if (store.getTask(taskId) === null) {
-    return `Task not found: ${taskId}\n`;
+    throw taskNotFound(taskId);
   }
 
   const roles = store.listRoles(taskId);
@@ -167,11 +182,11 @@ function enterTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManag
   const roleLookup = findRole(args, store);
 
   if (typeof roleLookup === "string") {
-    return roleLookup;
+    throw usageError(roleLookup.trim());
   }
 
   if (tmux === undefined) {
-    return "Tmux manager is not configured.\n";
+    throw runtimeError("Tmux manager is not configured.");
   }
 
   tmux.enterRole(roleLookup.taskId, roleLookup.role);
@@ -183,11 +198,11 @@ function tailTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManage
   const roleLookup = findRole(args, store);
 
   if (typeof roleLookup === "string") {
-    return roleLookup;
+    throw usageError(roleLookup.trim());
   }
 
   if (tmux === undefined) {
-    return "Tmux manager is not configured.\n";
+    throw runtimeError("Tmux manager is not configured.");
   }
 
   return tmux.captureRole(roleLookup.taskId, roleLookup.role.name);
@@ -197,11 +212,11 @@ function transcriptTaskRoleCommand(args: string[], store: TaskStore, tmux?: Tmux
   const roleLookup = findRole(args, store);
 
   if (typeof roleLookup === "string") {
-    return roleLookup;
+    throw usageError(roleLookup.trim());
   }
 
   if (tmux === undefined) {
-    return "Tmux manager is not configured.\n";
+    throw runtimeError("Tmux manager is not configured.");
   }
 
   const transcript = tmux.captureRole(roleLookup.taskId, roleLookup.role.name);
@@ -214,7 +229,7 @@ function detailTaskRoleCommand(args: string[], store: TaskStore): string {
   const roleLookup = findRole(args, store);
 
   if (typeof roleLookup === "string") {
-    return roleLookup;
+    throw usageError(roleLookup.trim());
   }
 
   const role = roleLookup.role;
@@ -231,15 +246,42 @@ function detailTaskRoleCommand(args: string[], store: TaskStore): string {
   ].join("\n").concat("\n");
 }
 
+function statusTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
+  const roleLookup = findRole(args, store);
+
+  if (typeof roleLookup === "string") {
+    throw usageError(roleLookup.trim());
+  }
+
+  const role = roleLookup.role;
+  const status = tmux?.detectRoleStatus(roleLookup.taskId, role.name, role.status) ?? role.status;
+  const currentRole = status === role.status ? role : updateRoleStatus(role, status, new Date());
+
+  if (currentRole !== role) {
+    store.saveRole(roleLookup.taskId, currentRole);
+  }
+
+  return [
+    `Task: ${roleLookup.taskId}`,
+    `Role: ${currentRole.name}`,
+    `Agent: ${currentRole.agent}`,
+    `Workspace: ${currentRole.workspace}`,
+    `Status: ${currentRole.status}`,
+    `Tmux: taskmux-${roleLookup.taskId}:${currentRole.name}`,
+    `Created: ${currentRole.createdAt}`,
+    `Updated: ${currentRole.updatedAt}`
+  ].join("\n").concat("\n");
+}
+
 function detachTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
   const roleLookup = findRole(args, store);
 
   if (typeof roleLookup === "string") {
-    return roleLookup;
+    throw usageError(roleLookup.trim());
   }
 
   if (tmux === undefined) {
-    return "Tmux manager is not configured.\n";
+    throw runtimeError("Tmux manager is not configured.");
   }
 
   tmux.detachRole(roleLookup.taskId);
@@ -251,11 +293,11 @@ function stopTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManage
   const roleLookup = findRole(args, store);
 
   if (typeof roleLookup === "string") {
-    return roleLookup;
+    throw usageError(roleLookup.trim());
   }
 
   if (tmux === undefined) {
-    return "Tmux manager is not configured.\n";
+    throw runtimeError("Tmux manager is not configured.");
   }
 
   tmux.stopRole(roleLookup.taskId, roleLookup.role.name);
@@ -268,11 +310,11 @@ function killTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManage
   const roleLookup = findRole(args, store);
 
   if (typeof roleLookup === "string") {
-    return roleLookup;
+    throw usageError(roleLookup.trim());
   }
 
   if (tmux === undefined) {
-    return "Tmux manager is not configured.\n";
+    throw runtimeError("Tmux manager is not configured.");
   }
 
   tmux.killRole(roleLookup.taskId, roleLookup.role.name);
@@ -285,14 +327,20 @@ function addTaskCommentCommand(args: string[], store: TaskStore): string {
   const [taskId, ...bodyParts] = args;
 
   if (taskId === undefined || taskId.trim().length === 0) {
-    return "Task id is required.\n";
+    throw usageError("Task id is required.");
   }
 
   if (store.getTask(taskId) === null) {
-    return `Task not found: ${taskId}\n`;
+    throw taskNotFound(taskId);
   }
 
-  const comment = createTaskComment(store.nextCommentId(taskId), bodyParts.join(" "), new Date());
+  const body = bodyParts.join(" ").trim();
+
+  if (body.length === 0) {
+    throw usageError("Comment body is required.");
+  }
+
+  const comment = createTaskComment(store.nextCommentId(taskId), body, new Date());
   store.saveComment(taskId, comment);
 
   return `Added comment to ${taskId}: ${comment.body}\n`;
@@ -302,11 +350,11 @@ function listTaskCommentsCommand(args: string[], store: TaskStore): string {
   const [taskId] = args;
 
   if (taskId === undefined || taskId.trim().length === 0) {
-    return "Task id is required.\n";
+    throw usageError("Task id is required.");
   }
 
   if (store.getTask(taskId) === null) {
-    return `Task not found: ${taskId}\n`;
+    throw taskNotFound(taskId);
   }
 
   const comments = store.listComments(taskId);
@@ -333,13 +381,13 @@ function findRole(
   }
 
   if (store.getTask(taskId) === null) {
-    return `Task not found: ${taskId}\n`;
+    throw taskNotFound(taskId);
   }
 
   const role = store.getRole(taskId, roleName);
 
   if (role === null) {
-    return `Role not found: ${roleName}\n`;
+    throw roleNotFound(roleName);
   }
 
   return { taskId, role };
@@ -349,7 +397,7 @@ function readOption(args: string[], name: string): string {
   const index = args.indexOf(name);
 
   if (index === -1 || args[index + 1] === undefined) {
-    throw new Error(`${name} is required.`);
+    throw usageError(`${name} is required.`);
   }
 
   return args[index + 1];

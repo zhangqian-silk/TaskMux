@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,16 @@ const cli = join(process.cwd(), "dist", "cli.js");
 
 function runTaskmux(args, env) {
   return execFileSync("node", [cli, ...args], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ...env
+    }
+  });
+}
+
+function runTaskmuxFailure(args, env) {
+  return spawnSync("node", [cli, ...args], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -73,6 +83,25 @@ process.exit(0);
   return { fakeTmux, logFile };
 }
 
+function createStatusTmux(home) {
+  const fakeTmux = join(home, "fake-status-tmux.js");
+
+  writeFileSync(
+    fakeTmux,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "list-windows") {
+  process.stdout.write("rd\\n");
+  process.exit(0);
+}
+process.exit(0);
+`
+  );
+  chmodSync(fakeTmux, 0o755);
+
+  return fakeTmux;
+}
+
 function createFakeExecutable(home, name, output) {
   const executable = join(home, name);
 
@@ -101,6 +130,7 @@ test("creates a task in the configured taskmux home", () => {
     readFileSync(join(home, "tasks", "task-1", "task.json"), "utf8")
   );
 
+  assert.equal(task.schemaVersion, 1);
   assert.equal(task.id, "task-1");
   assert.equal(task.title, "Refactor login page");
   assert.equal(task.status, "open");
@@ -163,6 +193,7 @@ test("assigns a role to an existing task", () => {
     readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
   );
 
+  assert.equal(role.schemaVersion, 1);
   assert.equal(role.name, "rd");
   assert.equal(role.agent, "codex");
   assert.equal(role.workspace, "/tmp/project-a");
@@ -176,7 +207,7 @@ test("rejects unsupported role agents", () => {
     TASKMUX_HOME: home
   });
 
-  const output = runTaskmux(
+  const result = runTaskmuxFailure(
     [
       "task",
       "assign",
@@ -190,8 +221,34 @@ test("rejects unsupported role agents", () => {
     { TASKMUX_HOME: home }
   );
 
-  assert.match(output, /Unsupported agent: unknown/);
-  assert.match(output, /Supported agents: codex, claude/);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /USAGE_ERROR: Unsupported agent: unknown/);
+  assert.match(result.stderr, /Supported agents: codex, claude/);
+});
+
+test("returns a usage exit code for unsupported agents", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+
+  const result = runTaskmuxFailure(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "unknown",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /USAGE_ERROR: Unsupported agent: unknown/);
 });
 
 test("lists roles for a task", () => {
@@ -499,6 +556,75 @@ test("shows role status", () => {
   assert.match(output, /Tmux: taskmux-task-1:rd/);
 });
 
+test("detects running role status from tmux", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeTmux = createStatusTmux(home);
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "status", "task-1", "rd"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux
+  });
+
+  assert.match(output, /Status: running/);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  assert.equal(role.status, "running");
+});
+
+test("detects exited role status when tmux window is absent", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "status", "task-1", "rd"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  assert.match(output, /Status: exited/);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  assert.equal(role.status, "exited");
+});
+
 test("stops a role through tmux and updates status", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
   const { fakeTmux, logFile } = createFakeTmux(home);
@@ -600,6 +726,7 @@ test("adds and lists task comments", () => {
     .split("\n")
     .map((line) => JSON.parse(line));
 
+  assert.equal(commentsFile[0].schemaVersion, 1);
   assert.equal(commentsFile[0].body, "Keep old session compatibility.");
 
   runTaskmux(["task", "comment", "task-1", "Reviewer should check copy."], {
@@ -612,6 +739,99 @@ test("adds and lists task comments", () => {
 
   assert.match(listOutput, /Keep old session compatibility\./);
   assert.match(listOutput, /Reviewer should check copy\./);
+});
+
+test("returns a not found exit code for missing tasks", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  const result = runTaskmuxFailure(["task", "show", "task-404"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /TASK_NOT_FOUND: Task not found: task-404/);
+});
+
+test("returns a role not found exit code for missing roles", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+
+  const result = runTaskmuxFailure(["task", "detail", "task-1", "reviewer"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /ROLE_NOT_FOUND: Role not found: reviewer/);
+});
+
+test("returns a usage exit code for missing task shell ids", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  const result = runTaskmuxFailure(["task", "shell"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /USAGE_ERROR: Task id is required/);
+});
+
+test("returns a data error exit code for invalid task schema", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const taskDir = join(home, "tasks", "task-1");
+  execFileSync("mkdir", ["-p", taskDir]);
+  writeFileSync(join(taskDir, "task.json"), JSON.stringify({ id: "task-1" }));
+
+  const result = runTaskmuxFailure(["task", "show", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Invalid task record: task-1/);
+});
+
+test("returns a data error exit code for invalid role schema", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const taskDir = join(home, "tasks", "task-1");
+  const roleDir = join(taskDir, "roles", "rd");
+  execFileSync("mkdir", ["-p", roleDir]);
+  writeFileSync(
+    join(taskDir, "task.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      id: "task-1",
+      title: "Refactor login page",
+      status: "open",
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z"
+    })
+  );
+  writeFileSync(join(roleDir, "role.json"), JSON.stringify({ schemaVersion: 2 }));
+
+  const result = runTaskmuxFailure(["task", "detail", "task-1", "rd"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Invalid role record: rd/);
+});
+
+test("returns a data error exit code for invalid comment schema", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  writeFileSync(join(home, "tasks", "task-1", "comments.jsonl"), "{\"schemaVersion\":2}\n");
+
+  const result = runTaskmuxFailure(["task", "comments", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Invalid comment record: task-1:1/);
 });
 
 test("runs doctor checks with configured executables", () => {

@@ -1,4 +1,5 @@
 import type { Role } from "../role/role.js";
+import type { RoleStatus } from "../role/role.js";
 import type { CommandRunner } from "./commandRunner.js";
 
 export class TmuxManager {
@@ -28,6 +29,22 @@ export class TmuxManager {
 
   detachRole(taskId: string): void {
     this.runner.run(this.tmuxBin, ["detach-client", "-s", this.sessionName(taskId)]);
+  }
+
+  detectRoleStatus(taskId: string, roleName: string, fallback: RoleStatus): RoleStatus {
+    try {
+      const windows = this.runner.run(this.tmuxBin, [
+        "list-windows",
+        "-t",
+        this.sessionName(taskId),
+        "-F",
+        "#{window_name}"
+      ]);
+
+      return windows.split("\n").includes(roleName) ? "running" : "exited";
+    } catch {
+      return fallback;
+    }
   }
 
   stopRole(taskId: string, roleName: string): void {

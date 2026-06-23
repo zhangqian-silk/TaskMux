@@ -1,6 +1,7 @@
 export type TaskStatus = "open" | "active" | "done" | "archived";
 
 export type Task = {
+  schemaVersion: 1;
   id: string;
   title: string;
   status: TaskStatus;
@@ -18,6 +19,7 @@ export function createTask(id: string, title: string, now: Date): Task {
   const timestamp = now.toISOString();
 
   return {
+    schemaVersion: 1,
     id,
     title: trimmedTitle,
     status: "open",

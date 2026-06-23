@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { runTaskCommand } from "../commands/taskCommands.js";
+import { CliError, taskNotFound } from "../errors/cliError.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import type { TmuxManager } from "../tmux/tmuxManager.js";
 
@@ -10,8 +11,7 @@ export async function runTaskShell(
   tmux: TmuxManager
 ): Promise<void> {
   if (store.getTask(taskId) === null) {
-    output.write(`Task not found: ${taskId}\n`);
-    return;
+    throw taskNotFound(taskId);
   }
 
   output.write(runTaskCommand(["open", taskId], store, tmux));
@@ -63,7 +63,16 @@ function handleShellLine(
     return "continue";
   }
 
-  output.write(runTaskCommand(toTaskCommand(taskId, name, args), store, tmux));
+  try {
+    output.write(runTaskCommand(toTaskCommand(taskId, name, args), store, tmux));
+  } catch (error) {
+    if (error instanceof CliError) {
+      output.write(`${error.code}: ${error.message}\n`);
+      return "continue";
+    }
+
+    throw error;
+  }
   return "continue";
 }
 
