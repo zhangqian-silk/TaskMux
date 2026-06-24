@@ -4,6 +4,9 @@ import { createTaskEvent } from "../event/taskEvent.js";
 import { createRole, updateRoleStatus } from "../role/role.js";
 import { resolveRunner, supportedRunnerIds } from "../runner/runnerRegistry.js";
 import { createTask, updateTaskMetadata, updateTaskStatus } from "../task/task.js";
+import type { TaskComment } from "../comment/comment.js";
+import type { TaskEvent } from "../event/taskEvent.js";
+import type { Role } from "../role/role.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import type { Task, TaskMetadata, TaskPriority, TaskStatus } from "../task/task.js";
 import type { TmuxManager } from "../tmux/tmuxManager.js";
@@ -32,6 +35,8 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return updateTaskStatusCommand(rest, store, "open", "Reopened");
     case "open":
       return openTaskCommand(rest, store);
+    case "context":
+      return contextTaskCommand(rest, store);
     case "assign":
       return assignTaskRoleCommand(rest, store);
     case "roles":
@@ -202,6 +207,29 @@ function openTaskCommand(args: string[], store: TaskStore): string {
     `Comments: ${store.listComments(task.id).length}`,
     `Next: taskmux task enter ${task.id} <role>`
   ].join("\n").concat("\n");
+}
+
+function contextTaskCommand(args: string[], store: TaskStore): string {
+  const [taskId, ...rest] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  const task = store.getTask(taskId);
+
+  if (task === null) {
+    throw taskNotFound(taskId);
+  }
+
+  const options = parseTaskContextOptions(rest);
+  const context = buildTaskContext(task, store, options.includeTranscripts);
+
+  if (options.format === "json") {
+    return `${JSON.stringify(context, null, 2)}\n`;
+  }
+
+  return renderTaskContextText(context, options.includeTranscripts);
 }
 
 function assignTaskRoleCommand(args: string[], store: TaskStore): string {
@@ -541,6 +569,118 @@ function listTaskEventsCommand(args: string[], store: TaskStore): string {
     .join("\n")}\n`;
 }
 
+type TaskContextFormat = "text" | "json";
+
+type TaskContextOptions = {
+  format: TaskContextFormat;
+  includeTranscripts: boolean;
+};
+
+type TaskContextRole = Role & {
+  transcript?: string | null;
+};
+
+type TaskContext = {
+  task: Task;
+  roles: TaskContextRole[];
+  comments: TaskComment[];
+  events: TaskEvent[];
+};
+
+function parseTaskContextOptions(args: string[]): TaskContextOptions {
+  assertKnownOptions(args, new Set(["--format", "--include-transcripts"]));
+
+  const format = parseTaskContextFormat(readOptionalOption(args, "--format"));
+
+  return {
+    format,
+    includeTranscripts: hasFlag(args, "--include-transcripts")
+  };
+}
+
+function parseTaskContextFormat(value: string | undefined): TaskContextFormat {
+  if (value === undefined) {
+    return "text";
+  }
+
+  if (value !== "text" && value !== "json") {
+    throw usageError("--format must be one of text, json.");
+  }
+
+  return value;
+}
+
+function buildTaskContext(task: Task, store: TaskStore, includeTranscripts: boolean): TaskContext {
+  return {
+    task,
+    roles: store.listRoles(task.id).map((role) => includeTranscripts
+      ? { ...role, transcript: store.readTranscript(task.id, role.name) }
+      : role),
+    comments: store.listComments(task.id),
+    events: store.listEvents(task.id)
+  };
+}
+
+function renderTaskContextText(context: TaskContext, includeTranscripts: boolean): string {
+  return [
+    "Task Context",
+    ...renderTaskContextTaskLines(context.task),
+    "",
+    "Roles",
+    ...renderTaskContextRoles(context.roles, includeTranscripts),
+    "",
+    "Comments",
+    ...renderTaskContextComments(context.comments),
+    "",
+    "Events",
+    ...renderTaskContextEvents(context.events)
+  ].join("\n").concat("\n");
+}
+
+function renderTaskContextTaskLines(task: Task): string[] {
+  return [
+    `Task: ${task.id}`,
+    `Title: ${task.title}`,
+    `Status: ${task.status}`,
+    ...renderTaskMetadataLines(task),
+    `Created: ${task.createdAt}`,
+    `Updated: ${task.updatedAt}`
+  ];
+}
+
+function renderTaskContextRoles(roles: TaskContextRole[], includeTranscripts: boolean): string[] {
+  if (roles.length === 0) {
+    return ["  No roles."];
+  }
+
+  return roles.flatMap((role) => {
+    const lines = [`  ${role.name}\t${role.agent}\t${role.status}\t${role.workspace}`];
+
+    if (includeTranscripts && role.transcript !== undefined) {
+      const transcript = role.transcript;
+      lines.push(`    Transcript: ${transcript === null ? "not captured" : transcript.trimEnd()}`);
+    }
+
+    return lines;
+  });
+}
+
+function renderTaskContextComments(comments: TaskComment[]): string[] {
+  if (comments.length === 0) {
+    return ["  No comments."];
+  }
+
+  return comments.map((comment) => `  ${comment.id}\t${comment.body}`);
+}
+
+function renderTaskContextEvents(events: TaskEvent[]): string[] {
+  if (events.length === 0) {
+    return ["  No events."];
+  }
+
+  return events.map((event) => `  ${event.id}\t${event.type}\t${renderEventPayload(event.payload)}`);
+}
+
 function recordTaskEvent(
   store: TaskStore,
   taskId: string,
@@ -809,6 +949,10 @@ function readRepeatedOption(args: string[], name: string): string[] {
   return values;
 }
 
+function hasFlag(args: string[], name: string): boolean {
+  return args.includes(name);
+}
+
 function assertKnownOptions(args: string[], knownOptions: Set<string>): void {
   for (const arg of args) {
     if (arg.startsWith("--") && !knownOptions.has(arg)) {
@@ -859,6 +1003,7 @@ export function taskUsage(): string {
   taskmux task archive <task-id>
   taskmux task reopen <task-id>
   taskmux task open <task-id>
+  taskmux task context <task-id> [--format text|json] [--include-transcripts]
   taskmux task assign <task-id> <role> --agent <agent> --workspace <path>
   taskmux task roles <task-id>
   taskmux task enter <task-id> <role>

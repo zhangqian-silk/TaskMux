@@ -91,6 +91,8 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
     case "comments":
     case "events":
       return [name, taskId];
+    case "context":
+      return [name, taskId, ...args];
     case "update":
       return [name, taskId, ...args];
     case "comment":
@@ -140,6 +142,7 @@ function shellHelp(): string {
   update [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
   comments
   events
+  context [--format text|json] [--include-transcripts]
   comment <body>
   assign <role> --agent <agent> --workspace <path>
   enter <role>

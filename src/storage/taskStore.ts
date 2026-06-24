@@ -24,6 +24,7 @@ export type TaskStore = {
   saveEvent(taskId: string, event: TaskEvent): void;
   listEvents(taskId: string): TaskEvent[];
   saveTranscript(taskId: string, roleName: string, transcript: string): void;
+  readTranscript(taskId: string, roleName: string): string | null;
   saveCustomRunner(runner: CustomRunner): void;
   listCustomRunners(): CustomRunner[];
   getCustomRunner(id: string): CustomRunner | null;
@@ -168,6 +169,16 @@ export class FileTaskStore implements TaskStore {
     const roleDir = this.roleDir(taskId, storageName);
     mkdirSync(roleDir, { recursive: true });
     writeFileSync(this.transcriptFile(taskId, storageName), transcript);
+  }
+
+  readTranscript(taskId: string, roleName: string): string | null {
+    const storageName = this.resolveRoleStorageName(taskId, roleName);
+
+    if (storageName === null) {
+      return null;
+    }
+
+    return this.readOptionalText(this.transcriptFile(taskId, storageName));
   }
 
   saveCustomRunner(runner: CustomRunner): void {

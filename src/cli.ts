@@ -37,6 +37,7 @@ Usage:
   taskmux task archive <task-id>
   taskmux task reopen <task-id>
   taskmux task shell <task-id>
+  taskmux task context <task-id> [--format text|json] [--include-transcripts]
   taskmux task assign <task-id> <role> --agent <agent> --workspace <path>
   taskmux task roles <task-id>
   taskmux task enter <task-id> <role>

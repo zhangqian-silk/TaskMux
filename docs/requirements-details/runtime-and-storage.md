@@ -128,6 +128,29 @@ Task board metadata fields are stored in `info.json` so users can edit them dire
 
 `task list` and `task board` share the same metadata filter model: status, owner, tag, priority, and case-insensitive search across title, description, owner, priority, due date, and tags. `task board` groups the filtered result set by lifecycle status.
 
+## Task Handoff Context
+
+`task context <task-id>` renders a full handoff snapshot for a task. The snapshot includes:
+
+- Task runtime state and editable metadata
+- Assigned roles with agent, status, and workspace
+- Stored comments
+- Stored events
+- Stored role transcripts when `--include-transcripts` is present
+
+The default format is text. `--format json` emits:
+
+```json
+{
+  "task": {},
+  "roles": [],
+  "comments": [],
+  "events": []
+}
+```
+
+When transcripts are included, each role may include `transcript` with the stored `transcript.log` content or `null` when no transcript has been captured. `task context` does not call tmux; users capture fresh output with `task transcript <task-id> <role>` first.
+
 Task runtime record:
 
 ```json

@@ -60,6 +60,7 @@ TaskMux currently provides:
 - `taskmux task archive <task-id>` updates a task to status `archived`
 - `taskmux task reopen <task-id>` updates a task to status `open`
 - `taskmux task open <task-id>` shows a task context summary for outer-shell workflows
+- `taskmux task context <task-id> [--format text|json] [--include-transcripts]` renders a task handoff snapshot across metadata, roles, comments, events, and optional stored role transcripts
 - `taskmux task shell <task-id>` opens an interactive task control shell
 - `taskmux task assign <task-id> <role> --agent <agent> --workspace <path>` assigns a role to an existing task with status `idle`
 - `taskmux task roles <task-id>` lists roles assigned to a task
@@ -187,6 +188,8 @@ Custom runner records live under `runners/<runner-id>/runner.json`.
 Role runtime records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped and resolved from `info.json`. Reassigning an existing role overwrites that role's current agent, command, args, env, and workspace while preserving the task identity.
 
 Role transcripts live under `tasks/<task-id>/roles/<role>/transcript.log` after `task transcript` captures current tmux output.
+
+`task context` reads the current task, assigned roles, comments, events, and optionally stored role transcripts. The default text format is intended for human handoff. `--format json` returns a structured object with `task`, `roles`, `comments`, and `events`. `--include-transcripts` does not call tmux; it only includes transcript files already persisted by `task transcript`.
 
 Task comments live in `tasks/<task-id>/comments.jsonl`. Each line stores one comment object with `schemaVersion`, `id`, `body`, and `createdAt`.
 
