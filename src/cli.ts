@@ -44,6 +44,9 @@ Usage:
   taskmux task kill <task-id> <role>
   taskmux task restart <task-id> <role>
   taskmux task cleanup <task-id>
+  taskmux task comment <task-id> <body>
+  taskmux task comments <task-id>
+  taskmux task events <task-id>
 
 Role, tmux, and runner commands are defined in docs/requirements.md.
 `;

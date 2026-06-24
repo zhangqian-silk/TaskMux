@@ -89,6 +89,7 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
       return [name, taskId];
     case "roles":
     case "comments":
+    case "events":
       return [name, taskId];
     case "comment":
       return [name, taskId, ...args];
@@ -135,6 +136,7 @@ function shellHelp(): string {
   refresh
   cleanup
   comments
+  events
   comment <body>
   assign <role> --agent <agent> --workspace <path>
   enter <role>

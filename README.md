@@ -25,6 +25,7 @@ tb
 - Each role window runs one native agent CLI process.
 - Leaving a role means detaching from tmux, not exiting the agent CLI.
 - `task status` checks tmux window state and writes detected role status back to storage.
+- `task events` lists the append-only local event history for task creation, lifecycle changes, role assignment, and comments.
 - Codex CLI and Claude Code keep their native terminal behavior.
 
 ## Example
@@ -47,6 +48,7 @@ tb task assign task-1 reviewer --agent claude --workspace ~/projects/app
 tb task roles task-1
 tb task comment task-1 "Keep old session compatibility."
 tb task comments task-1
+tb task events task-1
 tb task enter task-1 rd
 tb task tail task-1 rd
 tb task detail task-1 rd
@@ -69,6 +71,7 @@ tb task-42> start
 tb task-42> roles
 tb task-42> refresh
 tb task-42> comment "Keep old session compatibility."
+tb task-42> events
 tb task-42> enter rd
 tb task-42> restart rd
 ```
@@ -108,6 +111,7 @@ tb task assign task-1 rd --agent agent-js --workspace ~/projects/app
 tb task roles task-1
 tb task comment task-1 "Keep old session compatibility."
 tb task comments task-1
+tb task events task-1
 tb task enter task-1 rd
 tb task tail task-1 rd
 tb task detail task-1 rd
@@ -129,11 +133,13 @@ Assigned roles are stored under the task directory. Each role records `schemaVer
 
 Task comments are appended to `comments.jsonl` under the task directory and can be listed without entering a role session. Each comment record includes `schemaVersion`.
 
+Task events are appended to `events.jsonl` under the task directory. The current event stream records `task.created`, `task.status_changed`, `role.assigned`, and `comment.added`; each event record includes `schemaVersion`, `id`, `type`, `payload`, and `createdAt`.
+
 `task start`, `task done`, `task archive`, and `task reopen` update the task lifecycle status.
 
 `task assign` resolves `--agent` against built-in and custom runner ids. `task enter` uses tmux to create or reuse a task session and role window, starts the resolved runner command with its args and env, attaches the user to that role's native agent CLI, and records the role as `running` after a successful attach. `task tail` reads recent role output with `tmux capture-pane`.
 
-`task shell` opens an interactive TaskMux control prompt for the task. Shell commands reuse the same task command handlers as the non-interactive CLI, including task lifecycle, role refresh, cleanup, and restart commands.
+`task shell` opens an interactive TaskMux control prompt for the task. Shell commands reuse the same task command handlers as the non-interactive CLI, including task lifecycle, role refresh, cleanup, events, and restart commands.
 
 `task detail` shows stored role metadata and tmux target information. `task status` probes `tmux list-windows`; when the role window exists it reports and persists `running`, when the session exists but the role window is absent it reports and persists `exited`, and when tmux cannot be inspected it keeps the stored status. `task refresh` applies the same detection to every role in a task. `task cleanup` marks stale stored roles according to the current tmux window state without deleting task data. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
 
@@ -156,7 +162,7 @@ TaskMux stores versioned local JSON records. Current records use `schemaVersion:
 }
 ```
 
-Role records use `status` values `idle`, `running`, `detached`, `exited`, or `failed`. Comment records use `id`, `body`, and `createdAt`. Invalid JSON or unsupported schema records fail with `DATA_ERROR`.
+Role records use `status` values `idle`, `running`, `detached`, `exited`, or `failed`. Comment records use `id`, `body`, and `createdAt`. Event records use `id`, `type`, `payload`, and `createdAt`. Invalid JSON or unsupported schema records fail with `DATA_ERROR`.
 
 Custom runner records also use `schemaVersion: 1`:
 
