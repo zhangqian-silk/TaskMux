@@ -26,6 +26,7 @@ tb
 - Leaving a role means detaching from tmux, not exiting the agent CLI.
 - `task status` checks tmux window state and writes detected role status back to storage.
 - `task events` lists the append-only local event history for task creation, lifecycle changes, role assignment, and comments.
+- `task context` renders a task handoff snapshot across task metadata, roles, comments, events, and optional stored transcripts.
 - Codex CLI and Claude Code keep their native terminal behavior.
 
 ## Example
@@ -47,6 +48,8 @@ tb task done task-1
 tb task archive task-1
 tb task reopen task-1
 tb task open task-1
+tb task context task-1
+tb task context task-1 --format json --include-transcripts
 tb task shell task-1
 tb task assign task-1 rd --agent agent-js --workspace ~/projects/app
 tb task assign task-1 reviewer --agent claude --workspace ~/projects/app
@@ -79,6 +82,7 @@ tb task-42> roles
 tb task-42> refresh
 tb task-42> comment "Keep old session compatibility."
 tb task-42> events
+tb task-42> context
 tb task-42> enter rd
 tb task-42> restart rd
 ```
@@ -118,6 +122,8 @@ tb task done task-1
 tb task archive task-1
 tb task reopen task-1
 tb task open task-1
+tb task context task-1
+tb task context task-1 --format json --include-transcripts
 tb task shell task-1
 tb task assign task-1 rd --agent agent-js --workspace ~/projects/app
 tb task roles task-1
@@ -163,7 +169,7 @@ Task events are appended to `events.jsonl` under the task directory. The current
 
 `task detail` shows stored role metadata and tmux target information. `task status` probes `tmux list-windows`; when the role window exists it reports and persists `running`, when the session exists but the role window is absent it reports and persists `exited`, and when tmux cannot be inspected it keeps the stored status. `task refresh` applies the same detection to every role in a task. `task cleanup` marks stale stored roles according to the current tmux window state without deleting task data. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
 
-`task open` prints a task context summary for outer-shell workflows. `task detach` asks tmux to detach clients from the task session while leaving role processes running and records the role as `detached`. `task stop` sends `C-c` to the role window; `task kill` kills the role window. `task restart` kills an existing role window when present, recreates the role window from stored role metadata, attaches to it, and records the role as `running`.
+`task open` prints a compact task context summary for outer-shell workflows. `task context` prints a full handoff snapshot with task metadata, roles, comments, and events; `--format json` emits the same context as structured JSON, and `--include-transcripts` includes stored `transcript.log` content for each role when present. `task detach` asks tmux to detach clients from the task session while leaving role processes running and records the role as `detached`. `task stop` sends `C-c` to the role window; `task kill` kills the role window. `task restart` kills an existing role window when present, recreates the role window from stored role metadata, attaches to it, and records the role as `running`.
 
 TaskMux maintains a global storage schema manifest at `schema.json` under the configured data directory. Normal task and runner commands check that manifest on startup. If the local storage version is older than the CLI's latest storage version, the command fails with `DATA_ERROR` and tells the user to run `taskmux migrate`.
 

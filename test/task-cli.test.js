@@ -1002,6 +1002,109 @@ test("opens a task context summary", () => {
   assert.match(output, /Next: taskmux task enter task-1 <role>/);
 });
 
+test("renders a task handoff context as text", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(
+    [
+      "task",
+      "create",
+      "Refactor login page",
+      "--description",
+      "Update the auth form",
+      "--priority",
+      "high",
+      "--tag",
+      "frontend",
+      "--owner",
+      "alex",
+      "--due",
+      "2026-07-01"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(["task", "start", "task-1"], { TASKMUX_HOME: home });
+  runTaskmux(["task", "comment", "task-1", "Keep old session compatibility."], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(["task", "context", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Task Context/);
+  assert.match(output, /Task: task-1/);
+  assert.match(output, /Title: Refactor login page/);
+  assert.match(output, /Description: Update the auth form/);
+  assert.match(output, /Priority: high/);
+  assert.match(output, /Tags: frontend/);
+  assert.match(output, /Owner: alex/);
+  assert.match(output, /Due: 2026-07-01/);
+  assert.match(output, /Roles/);
+  assert.match(output, /rd\s+codex\s+idle\s+\/tmp\/project-a/);
+  assert.match(output, /Comments/);
+  assert.match(output, /comment-1\s+Keep old session compatibility\./);
+  assert.match(output, /Events/);
+  assert.match(output, /task.created/);
+  assert.match(output, /task.status_changed/);
+  assert.match(output, /comment.added/);
+});
+
+test("renders a task handoff context as json with stored transcripts", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Review checkout flow"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "reviewer",
+      "--agent",
+      "claude",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(["task", "comment", "task-1", "Check edge cases."], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["task", "transcript", "task-1", "reviewer"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  const output = runTaskmux(["task", "context", "task-1", "--format", "json", "--include-transcripts"], {
+    TASKMUX_HOME: home
+  });
+  const context = JSON.parse(output);
+
+  assert.equal(context.task.id, "task-1");
+  assert.equal(context.task.title, "Review checkout flow");
+  assert.equal(context.roles[0].name, "reviewer");
+  assert.equal(context.roles[0].transcript, "recent reviewer output\n");
+  assert.equal(context.comments[0].body, "Check edge cases.");
+  assert.equal(context.events[0].type, "task.created");
+});
+
 test("detaches a task role through tmux", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
   const { fakeTmux, logFile } = createFakeTmux(home);
@@ -1852,7 +1955,7 @@ test("runs an interactive task shell", async () => {
 
   const output = await runTaskmuxInteractive(
     ["task", "shell", "task-1"],
-    "summary\nupdate --priority high --owner shell-owner\nsummary\nroles\ncomment hello from shell\ncomments\nevents\nexit\n",
+    "summary\nupdate --priority high --owner shell-owner\nsummary\nroles\ncomment hello from shell\ncomments\nevents\ncontext\nexit\n",
     { TASKMUX_HOME: home }
   );
 
@@ -1867,4 +1970,5 @@ test("runs an interactive task shell", async () => {
   assert.match(output, /task\.created/);
   assert.match(output, /role\.assigned/);
   assert.match(output, /comment\.added/);
+  assert.match(output, /Task Context/);
 });

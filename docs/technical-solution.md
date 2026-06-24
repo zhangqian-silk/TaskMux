@@ -134,6 +134,7 @@ archive -> task archive <task-id>
 reopen -> task reopen <task-id>
 roles -> task roles <task-id>
 events -> task events <task-id>
+context -> task context <task-id>
 refresh -> task refresh <task-id>
 cleanup -> task cleanup <task-id>
 comment <body> -> task comment <task-id> <body>
@@ -168,6 +169,8 @@ TASKMUX_HOME or ~/.taskmux
 `schema.json` stores the global storage schema manifest: `schemaVersion`, `storageVersion`, and `updatedAt`. `info.json` stores the user-editable task title and task board metadata: `description`, `priority`, `tags`, `owner`, and `dueAt`. `task.json` stores runtime state: `schemaVersion`, `id`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
 
 Task board commands live in `src/commands/taskCommands.ts`. `task create` and `task update` compose task title and metadata writes before saving through `TaskStore`. `task list` and `task board` share one filter parser for status, owner, tag, priority, and search. `task list` renders tab-separated rows; `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`.
+
+`task context` composes a handoff snapshot from the same store boundary. It reads the task, roles, comments, and events, then renders either text or JSON. `--include-transcripts` reads persisted `roles/<role>/transcript.log` files through `TaskStore.readTranscript`; it does not call tmux or mutate transcript state.
 
 Role assignment uses the same store boundary:
 
@@ -253,7 +256,7 @@ TaskMux reads recent role output through tmux capture APIs. The first version ex
 
 `task detail` combines role name from `info.json` with runtime metadata from `role.json` and derives the tmux target as `taskmux-<task-id>:<role>`. `task status` probes tmux window state and persists detected status changes. `task refresh` and `task cleanup` apply the same probe to every role in a task. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
 
-`task events` reads `events.jsonl` and prints event id, timestamp, type, and payload key-value pairs. `task open` reads task, role, and comment counts from storage and prints a task context summary. `task shell` provides an interactive wrapper over the same task command handlers, including `events`. `task detach` detaches tmux clients for the task session and does not terminate the role process.
+`task events` reads `events.jsonl` and prints event id, timestamp, type, and payload key-value pairs. `task open` reads task, role, and comment counts from storage and prints a task context summary. `task context` produces a fuller handoff snapshot, with JSON output available for automation. `task shell` provides an interactive wrapper over the same task command handlers, including `events` and `context`. `task detach` detaches tmux clients for the task session and does not terminate the role process.
 
 ## Testing Strategy
 
