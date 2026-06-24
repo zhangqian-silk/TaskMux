@@ -129,7 +129,9 @@ tb doctor
 
 Runner definitions can be built in or user configured. Built-in runner ids are `codex` and `claude`. Custom runners are managed with `runner add/list/show/remove`, stored under the TaskMux data directory, and can define a command, repeated args, and environment variables.
 
-Assigned roles are stored under the task directory. Each role records `schemaVersion`, name, agent, command, args, env, workspace, status, and timestamps.
+Editable task and role labels are separated from runtime state. Task title lives in `tasks/<task-id>/info.json`; role name lives in `tasks/<task-id>/roles/<role>/info.json`. Users can edit those `info.json` files directly, and TaskMux reads the edited values on the next command.
+
+Assigned roles are stored under the task directory. Each role runtime record stores `schemaVersion`, agent, command, args, env, workspace, status, and timestamps.
 
 Task comments are appended to `comments.jsonl` under the task directory and can be listed without entering a role session. Each comment record includes `schemaVersion`.
 
@@ -151,18 +153,39 @@ Task events are appended to `events.jsonl` under the task directory. The current
 
 TaskMux stores versioned local JSON records. Current records use `schemaVersion: 1`.
 
+Task info record:
+
+```json
+{
+  "schemaVersion": 1,
+  "title": "Refactor login page"
+}
+```
+
+Task runtime record:
+
 ```json
 {
   "schemaVersion": 1,
   "id": "task-1",
-  "title": "Refactor login page",
   "status": "open",
   "createdAt": "2026-06-23T00:00:00.000Z",
   "updatedAt": "2026-06-23T00:00:00.000Z"
 }
 ```
 
-Role records use `status` values `idle`, `running`, `detached`, `exited`, or `failed`. Comment records use `id`, `body`, and `createdAt`. Event records use `id`, `type`, `payload`, and `createdAt`. Invalid JSON or unsupported schema records fail with `DATA_ERROR`.
+Role info records use `name`. Role runtime records use `status` values `idle`, `running`, `detached`, `exited`, or `failed`. Comment records use `id`, `body`, and `createdAt`. Event records use `id`, `type`, `payload`, and `createdAt`. Invalid JSON or unsupported schema records fail with `DATA_ERROR`.
+
+Role info record:
+
+```json
+{
+  "schemaVersion": 1,
+  "name": "rd"
+}
+```
+
+Role runtime records keep execution data separate from the editable name.
 
 Custom runner records also use `schemaVersion: 1`:
 

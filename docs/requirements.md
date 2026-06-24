@@ -137,22 +137,32 @@ Suggested layout:
 ~/.taskmux/
   tasks/
     task-42/
+      info.json
       task.json
       comments.jsonl
       events.jsonl
       roles/
         rd/
+          info.json
           role.json
           transcript.log
 ```
 
 Task, role, comment, and event records are versioned with `schemaVersion: 1`. TaskMux validates loaded records before using them. Invalid JSON, missing required fields, unsupported schema versions, or invalid status values must fail with `DATA_ERROR` rather than being treated as empty state.
 
+Task and role user-editable labels are isolated from runtime state:
+
+- Task title lives in `tasks/<task-id>/info.json`.
+- Role name lives in `tasks/<task-id>/roles/<role>/info.json`.
+- Runtime records do not require title or role name fields.
+- Users may edit `info.json` directly; TaskMux reads the edited title or role name on the next command.
+- Existing older records with inline task title or role name remain readable for compatibility.
+
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 
 Custom runner records live under `runners/<runner-id>/runner.json`.
 
-Role records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped. Reassigning an existing role overwrites that role's current agent, command, args, env, and workspace while preserving the task identity.
+Role runtime records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped and resolved from `info.json`. Reassigning an existing role overwrites that role's current agent, command, args, env, and workspace while preserving the task identity.
 
 Role transcripts live under `tasks/<task-id>/roles/<role>/transcript.log` after `task transcript` captures current tmux output.
 

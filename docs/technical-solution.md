@@ -157,11 +157,12 @@ The current storage implementation uses:
 TASKMUX_HOME or ~/.taskmux
   tasks/
     task-1/
+      info.json
       task.json
       events.jsonl
 ```
 
-`task.json` stores `schemaVersion`, `id`, `title`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
+`info.json` stores the user-editable task title. `task.json` stores runtime state: `schemaVersion`, `id`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
 
 Role assignment uses the same store boundary:
 
@@ -174,12 +175,13 @@ TASKMUX_HOME or ~/.taskmux
     task-1/
       roles/
         rd/
+          info.json
           role.json
 ```
 
 `runner.json` stores `schemaVersion`, `id`, `command`, `args`, `env`, `createdAt`, and `updatedAt`.
 
-`role.json` stores `schemaVersion`, `name`, `agent`, `command`, `args`, `env`, `workspace`, `status`, `createdAt`, and `updatedAt`. Older role records without `command`, `args`, or `env` remain readable; tmux falls back to `agent` as the command. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
+`info.json` stores the user-editable role name. `role.json` stores runtime state: `schemaVersion`, `agent`, `command`, `args`, `env`, `workspace`, `status`, `createdAt`, and `updatedAt`. Older role records with inline `name` and older task records with inline `title` remain readable. Older role records without `command`, `args`, or `env` remain readable; tmux falls back to `agent` as the command. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
 
 Task comments are append-only JSONL records:
 
@@ -207,8 +209,8 @@ The command layer appends events only after the underlying user-visible mutation
 
 Storage reads validate JSON records before returning domain objects:
 
-- Task records require `schemaVersion: 1`, string ids and timestamps, and a valid task status.
-- Role records require `schemaVersion: 1`, string name, agent, workspace, timestamps, and a valid role status. Optional command contracts require string `command`, string-array `args`, and string-map `env`.
+- Task info records require `schemaVersion: 1` and string title. Task runtime records require `schemaVersion: 1`, string ids and timestamps, and a valid task status.
+- Role info records require `schemaVersion: 1` and string name. Role runtime records require `schemaVersion: 1`, string agent, workspace, timestamps, and a valid role status. Optional command contracts require string `command`, string-array `args`, and string-map `env`.
 - Comment records require `schemaVersion: 1`, string id, body, and timestamp.
 - Event records require `schemaVersion: 1`, string id, string type, string-map payload, and timestamp.
 - Runner records require `schemaVersion: 1`, string id, string command, string-array args, string-map env, and timestamps.
@@ -234,7 +236,7 @@ Command handlers throw `CliError` for expected user, lookup, and storage failure
 
 TaskMux reads recent role output through tmux capture APIs. The first version exposes role detail, tail, transcript, and task event history without attaching to the role.
 
-`task detail` reads role metadata from `role.json` and derives the tmux target as `taskmux-<task-id>:<role>`. `task status` probes tmux window state and persists detected status changes. `task refresh` and `task cleanup` apply the same probe to every role in a task. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
+`task detail` combines role name from `info.json` with runtime metadata from `role.json` and derives the tmux target as `taskmux-<task-id>:<role>`. `task status` probes tmux window state and persists detected status changes. `task refresh` and `task cleanup` apply the same probe to every role in a task. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
 
 `task events` reads `events.jsonl` and prints event id, timestamp, type, and payload key-value pairs. `task open` reads task, role, and comment counts from storage and prints a task context summary. `task shell` provides an interactive wrapper over the same task command handlers, including `events`. `task detach` detaches tmux clients for the task session and does not terminate the role process.
 

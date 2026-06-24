@@ -91,25 +91,41 @@ Non-interactive commands write errors to stderr as `<ERROR_CODE>: <message>` and
 
 TaskMux storage records are local JSON or JSONL files. Every first-version record includes `schemaVersion: 1`.
 
-Task record:
+Task info record:
+
+```json
+{
+  "schemaVersion": 1,
+  "title": "Refactor login page"
+}
+```
+
+Task runtime record:
 
 ```json
 {
   "schemaVersion": 1,
   "id": "task-1",
-  "title": "Refactor login page",
   "status": "open",
   "createdAt": "2026-06-23T00:00:00.000Z",
   "updatedAt": "2026-06-23T00:00:00.000Z"
 }
 ```
 
-Role record:
+Role info record:
 
 ```json
 {
   "schemaVersion": 1,
-  "name": "rd",
+  "name": "rd"
+}
+```
+
+Role runtime record:
+
+```json
+{
+  "schemaVersion": 1,
   "agent": "agent-js",
   "command": "/path/to/agent-js",
   "args": ["--model", "review"],
@@ -166,3 +182,5 @@ Custom runner record:
 ```
 
 Allowed task statuses are `open`, `active`, `done`, and `archived`. Allowed role statuses are `idle`, `running`, `detached`, `exited`, and `failed`.
+
+Task and role `info.json` files are the supported direct-edit surface. Runtime records remain managed by TaskMux. Older task and role runtime records with inline `title` or `name` remain readable.
