@@ -103,9 +103,11 @@ The TaskMux data directory also contains a global storage schema manifest:
 
 Normal task and runner commands check the manifest before reading domain records. Missing manifests are initialized to the current storage schema version. Older manifests stop the command with `DATA_ERROR: Storage schema upgrade required: <current> -> <latest>. Run \`taskmux migrate\`.` Newer or invalid manifests also fail with `DATA_ERROR`.
 
-`taskmux migrate` runs registered storage migrations in order and writes the latest manifest only after successful migration. Current business stores do not include fallback readers for older storage layouts; older storage is handled by migration scripts.
+`taskmux backup` creates a timestamped raw copy of the current TaskMux data under `backups/backup-<timestamp>/`. Backup creation copies current storage entries and excludes `backups/` so backup chains do not recursively include previous backups.
 
-`doctor` includes a `storage schema` check. Outdated storage is reported as `upgrade-required` with `current`, `latest`, and `run taskmux migrate` guidance.
+`taskmux migrate` runs registered storage migrations in order and writes the latest manifest only after successful migration. When upgrading from an older manifest, TaskMux creates a backup before applying migration steps and prints the backup path. Current business stores do not include fallback readers for older storage layouts; older storage is handled by migration scripts.
+
+`doctor` includes `storage schema`, `storage permissions`, and `storage records` checks. Outdated storage is reported as `upgrade-required` with `current`, `latest`, and `run taskmux migrate` guidance. Invalid stored records are reported as `storage records invalid` without aborting the doctor report.
 
 Task info record:
 

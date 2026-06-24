@@ -156,6 +156,8 @@ The current storage implementation uses:
 ```text
 TASKMUX_HOME or ~/.taskmux
   schema.json
+  backups/
+    backup-<timestamp>/
   tasks/
     task-1/
       info.json
@@ -224,7 +226,9 @@ Invalid records raise `DATA_ERROR` instead of being skipped silently.
 
 Storage migrations live under `src/storage/migrations/` and are registered by the migration runner. Each migration handles one version step. `taskmux migrate` runs the required steps in order and writes the latest `schema.json` only after all required migrations complete.
 
-`doctor` calls the storage schema inspector without upgrading storage. It reports `ok`, `upgrade-required`, `unsupported`, or `invalid` and keeps upgrade execution behind the explicit `taskmux migrate` command.
+`src/storage/storageBackup.ts` owns raw storage backups. `taskmux backup` creates `backups/backup-<timestamp>/` under the TaskMux home and copies all current storage entries except `backups/`. `taskmux migrate` creates a backup before applying migrations from an older schema version and includes that backup path in command output.
+
+`doctor` calls the storage schema inspector without upgrading storage. It reports `ok`, `upgrade-required`, `unsupported`, or `invalid` and keeps upgrade execution behind the explicit `taskmux migrate` command. Doctor also checks storage read/write permission with a temporary probe file and scans stored task, role, and runner records through the current store validators. Record validation failures are reported as `storage records invalid` instead of aborting the doctor report.
 
 ## Error Handling
 

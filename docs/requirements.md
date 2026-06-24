@@ -75,7 +75,9 @@ TaskMux currently provides:
 - `taskmux task comment <task-id> <body>` appends a comment to a task
 - `taskmux task comments <task-id>` lists comments for a task
 - `taskmux task events <task-id>` lists the local event history for a task
-- `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, and the configured TaskMux home
+- `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runners, TaskMux home, storage schema, storage permissions, and stored record health
+- `taskmux backup` creates a timestamped raw storage backup
+- `taskmux migrate` upgrades older local storage schemas after creating a backup
 
 TaskMux should also provide future commands for:
 
@@ -136,6 +138,8 @@ Suggested layout:
 ```text
 ~/.taskmux/
   schema.json
+  backups/
+    backup-<timestamp>/
   tasks/
     task-42/
       info.json
@@ -158,9 +162,11 @@ The data directory has a global storage schema manifest at `schema.json`. Normal
 - Older manifests fail with `DATA_ERROR` and instruct the user to run `taskmux migrate`.
 - Newer or invalid manifests fail with `DATA_ERROR`.
 
-`taskmux migrate` is the only place where older storage schemas are upgraded. Migrations run in version order and update `schema.json` after all required steps succeed. Business stores read and write only the latest schema.
+`taskmux backup` creates a timestamped raw copy of the current data directory under `backups/`. Backup creation excludes the `backups/` directory itself so backups do not recursively copy previous backups.
 
-`doctor` reports storage schema status. Outdated storage is reported as `upgrade-required` with `current`, `latest`, and `run taskmux migrate` guidance.
+`taskmux migrate` is the only place where older storage schemas are upgraded. Migrations run in version order and update `schema.json` after all required steps succeed. When a migration upgrades an older schema, TaskMux creates a backup before applying migration steps and prints the backup path. Business stores read and write only the latest schema.
+
+`doctor` reports storage schema status, storage directory read/write permission, and stored record health. Outdated storage is reported as `upgrade-required` with `current`, `latest`, and `run taskmux migrate` guidance. Invalid stored records are reported as `storage records invalid` without aborting the rest of the doctor report.
 
 Task and role user-editable labels are isolated from runtime state:
 

@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -186,15 +186,40 @@ test("migrates storage schema to the latest version", () => {
   const output = runTaskmux(["migrate"], {
     TASKMUX_HOME: home
   });
+  const backupPath = output.match(/Backup: (.+)/)?.[1]?.trim();
   const schema = JSON.parse(readFileSync(join(home, "schema.json"), "utf8"));
 
   assert.match(output, /Migrated storage schema 0 -> 1/);
+  assert.match(output, /Backup: /);
+  assert.ok(backupPath);
+  assert.equal(JSON.parse(readFileSync(join(backupPath, "schema.json"), "utf8")).storageVersion, 0);
   assert.equal(schema.schemaVersion, 1);
   assert.equal(schema.storageVersion, 1);
   assert.equal(typeof schema.updatedAt, "string");
   assert.match(
     runTaskmux(["task", "list"], { TASKMUX_HOME: home }),
     /No tasks found/
+  );
+});
+
+test("creates explicit storage backups", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(["backup"], {
+    TASKMUX_HOME: home
+  });
+  const backupPath = output.match(/Created backup (.+)/)?.[1]?.trim();
+
+  assert.ok(backupPath);
+  assert.equal(existsSync(join(backupPath, "backups")), false);
+  assert.equal(JSON.parse(readFileSync(join(backupPath, "schema.json"), "utf8")).storageVersion, 1);
+  assert.equal(
+    JSON.parse(readFileSync(join(backupPath, "tasks", "task-1", "info.json"), "utf8")).title,
+    "Refactor login page"
   );
 });
 
@@ -1597,6 +1622,8 @@ test("runs doctor checks with configured executables", () => {
   assert.match(output, /claude\s+ok\s+claude 2\.0\.0/);
   assert.match(output, /taskmux home\s+ok/);
   assert.match(output, /storage schema\s+ok\s+latest=1/);
+  assert.match(output, /storage permissions\s+ok\s+read-write/);
+  assert.match(output, /storage records\s+ok\s+tasks=0 roles=0 runners=0/);
   assert.match(output, new RegExp(home.replaceAll("\\", "\\\\")));
 });
 
@@ -1615,6 +1642,27 @@ test("doctor guides users when storage schema needs migration", () => {
   });
 
   assert.match(output, /storage schema\s+upgrade-required\s+current=0 latest=1; run taskmux migrate/);
+});
+
+test("doctor reports invalid storage records without failing", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeTmux = createFakeExecutable(home, "fake-tmux.js", "tmux 3.4\n");
+  const fakeCodex = createFakeExecutable(home, "fake-codex.js", "codex 1.0.0\n");
+  const fakeClaude = createFakeExecutable(home, "fake-claude.js", "claude 2.0.0\n");
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  writeFileSync(join(home, "tasks", "task-1", "task.json"), JSON.stringify({ schemaVersion: 2 }));
+
+  const output = runTaskmux(["doctor"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    TASKMUX_CODEX_BIN: fakeCodex,
+    TASKMUX_CLAUDE_BIN: fakeClaude
+  });
+
+  assert.match(output, /storage records\s+invalid\s+Invalid task record: task-1/);
 });
 
 test("runs doctor checks for custom runner executables", () => {

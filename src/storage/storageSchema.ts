@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataError } from "../errors/cliError.js";
 import { migrateStorageV0ToV1, type StorageMigration } from "./migrations/v0ToV1.js";
+import { createStorageBackup, type StorageBackupResult } from "./storageBackup.js";
 
 export const CURRENT_STORAGE_SCHEMA_VERSION = 1;
 export const STORAGE_SCHEMA_FILE = "schema.json";
@@ -47,6 +48,7 @@ export type StorageMigrationResult = {
   fromVersion: number | null;
   toVersion: number;
   changed: boolean;
+  backup?: StorageBackupResult;
 };
 
 const migrations: StorageMigration[] = [migrateStorageV0ToV1];
@@ -154,6 +156,7 @@ export function runStorageMigrations(rootDir: string, now = new Date()): Storage
 
   const fromVersion = state.currentVersion;
   let currentVersion = state.currentVersion;
+  const backup = createStorageBackup(rootDir, now);
 
   while (currentVersion < CURRENT_STORAGE_SCHEMA_VERSION) {
     const migration = migrations.find((item) => item.fromVersion === currentVersion);
@@ -173,7 +176,8 @@ export function runStorageMigrations(rootDir: string, now = new Date()): Storage
   return {
     fromVersion,
     toVersion: currentVersion,
-    changed: true
+    changed: true,
+    backup
   };
 }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { runTaskCommand } from "./commands/taskCommands.js";
-import { runMigrateCommand } from "./commands/migrationCommands.js";
+import { runBackupCommand, runMigrateCommand } from "./commands/migrationCommands.js";
 import { runRunnerCommand } from "./commands/runnerCommands.js";
 import { runDoctor } from "./doctor/doctor.js";
 import { CliError, usageError } from "./errors/cliError.js";
@@ -21,6 +21,7 @@ Usage:
   taskmux --help
   taskmux --version
   taskmux doctor
+  taskmux backup
   taskmux migrate
   taskmux runner add <runner-id> --command <command> [--arg <arg> ...] [--env KEY=value ...]
   taskmux runner list
@@ -78,7 +79,7 @@ async function main(): Promise<void> {
   if (args[0] === "doctor") {
     const storageSchema = inspectStorageSchema(rootDir);
     const store = new FileTaskStore(rootDir);
-    const customRunners = canReadStore(storageSchema) ? store.listCustomRunners() : [];
+    const customRunners = canReadStore(storageSchema) ? listCustomRunnersForDoctor(store) : [];
 
     console.log(runDoctor(process.env, new NodeCommandRunner(), customRunners, storageSchema).trimEnd());
     return;
@@ -86,6 +87,11 @@ async function main(): Promise<void> {
 
   if (args[0] === "migrate") {
     console.log(runMigrateCommand(rootDir).trimEnd());
+    return;
+  }
+
+  if (args[0] === "backup") {
+    console.log(runBackupCommand(rootDir).trimEnd());
     return;
   }
 
@@ -121,4 +127,12 @@ async function main(): Promise<void> {
 
 function canReadStore(state: StorageSchemaState): boolean {
   return state.status === "current" || state.status === "uninitialized";
+}
+
+function listCustomRunnersForDoctor(store: FileTaskStore) {
+  try {
+    return store.listCustomRunners();
+  } catch {
+    return [];
+  }
 }
