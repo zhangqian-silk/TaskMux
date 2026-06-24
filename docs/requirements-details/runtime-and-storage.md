@@ -13,6 +13,8 @@ Task status is changed through explicit commands:
 
 Each transition updates `task.json` and refreshes `updatedAt`.
 
+`task delete <task-id>` moves the full task directory to `trash/tasks/<task-id>` and removes it from active task commands. `task restore <task-id>` moves that directory back to `tasks/<task-id>` and preserves task metadata, roles, comments, events, and transcripts.
+
 ## Task Event Log
 
 TaskMux records task-level mutations in `events.jsonl` under the task directory. The log is append-only and local to the configured TaskMux home.
@@ -23,8 +25,12 @@ The current event stream records:
 | --- | --- | --- |
 | `task.created` | `task create` succeeds | `title` |
 | `task.updated` | `task update` succeeds | `title` |
+| `task.deleted` | `task delete` succeeds | `task` |
+| `task.restored` | `task restore` succeeds | `task` |
 | `task.status_changed` | `task start`, `task done`, `task archive`, or `task reopen` succeeds | `from`, `to` |
 | `role.assigned` | `task assign` succeeds | `role`, `agent` |
+| `role.updated` | `task role update` succeeds | `role` |
+| `role.renamed` | `task role rename` succeeds | `from`, `to` |
 | `comment.added` | `task comment` succeeds | `comment` |
 
 `task events <task-id>` lists events in storage order as `event-id`, timestamp, event type, and key-value payload pairs. A task with no event file returns `No events found.` instead of failing.
@@ -52,6 +58,8 @@ Detected status changes are written back to `role.json` with a refreshed `update
 - `task stop <task-id> <role>` records the role as `exited` after sending `C-c`.
 - `task kill <task-id> <role>` records the role as `exited` after killing the role window.
 - `task restart <task-id> <role>` attempts to kill the old role window, recreates the role window from stored role metadata, attaches to it, and records the role as `running`.
+- `task role update <task-id> <role>` updates a role's stored runner contract, workspace, or both.
+- `task role rename <task-id> <role> <new-role>` updates the editable role name and attempts to rename the matching tmux window. Missing tmux sessions or windows do not block the local role rename.
 
 ## Runner Configuration
 
@@ -69,7 +77,7 @@ Custom runners are managed with:
 
 Runner ids may contain letters, numbers, hyphens, and underscores. Custom runner ids cannot replace built-in runner ids.
 
-`task assign --agent <runner-id>` resolves the runner before writing `role.json`. Role records store the resolved `agent`, `command`, `args`, and `env`. Later changes to the runner definition do not mutate already assigned roles.
+`task assign --agent <runner-id>` resolves the runner before writing `role.json`. Role records store the resolved `agent`, `command`, `args`, and `env`. Later changes to the runner definition do not mutate already assigned roles. `task role update --agent <runner-id>` resolves the current runner definition and overwrites the role's stored execution contract.
 
 `doctor` checks custom runner commands with `--version` and reports them as `runner:<runner-id>`.
 
@@ -126,7 +134,9 @@ Task info record:
 
 Task board metadata fields are stored in `info.json` so users can edit them directly. `description`, `priority`, `tags`, `owner`, and `dueAt` are optional. Priority values are `low`, `medium`, `high`, and `urgent`; due dates use `YYYY-MM-DD`.
 
-`task list` and `task board` share the same metadata filter model: status, owner, tag, priority, and case-insensitive search across title, description, owner, priority, due date, and tags. `task board` groups the filtered result set by lifecycle status.
+`task update` supports clearing optional metadata fields with `--clear-description`, `--clear-priority`, `--clear-tags`, `--clear-owner`, and `--clear-due`.
+
+`task list` and `task board` share the same metadata filter model: status, owner, tag, priority, and case-insensitive search across title, description, owner, priority, due date, and tags. `task board` groups the filtered result set by lifecycle status. `task board --with-roles` appends stored role status counts for each task; it does not probe tmux.
 
 ## Task Handoff Context
 

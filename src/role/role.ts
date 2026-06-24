@@ -55,3 +55,11 @@ export function updateRoleStatus(role: Role, status: RoleStatus, now: Date): Rol
     updatedAt: now.toISOString()
   };
 }
+
+export function updateRole(role: Role, patch: Partial<Pick<Role, "name" | "agent" | "command" | "args" | "env" | "workspace">>, now: Date): Role {
+  return {
+    ...role,
+    ...patch,
+    updatedAt: now.toISOString()
+  };
+}

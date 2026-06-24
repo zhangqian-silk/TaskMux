@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TaskComment } from "../comment/comment.js";
@@ -12,9 +12,12 @@ import { taskRecordCodec } from "./taskRecordCodec.js";
 export type TaskStore = {
   nextTaskId(): string;
   saveTask(task: Task): void;
+  deleteTask(id: string): boolean;
+  restoreTask(id: string): boolean;
   listTasks(): Task[];
   getTask(id: string): Task | null;
   saveRole(taskId: string, role: Role): void;
+  renameRole(taskId: string, oldName: string, role: Role): void;
   listRoles(taskId: string): Role[];
   getRole(taskId: string, name: string): Role | null;
   nextCommentId(taskId: string): string;
@@ -60,6 +63,32 @@ export class FileTaskStore implements TaskStore {
     writeFileSync(this.taskInfoFile(task.id), `${JSON.stringify(encoded.info, null, 2)}\n`);
   }
 
+  deleteTask(id: string): boolean {
+    if (this.readOptionalText(this.taskFile(id)) === null) {
+      return false;
+    }
+
+    const trashDir = this.trashedTaskDir(id);
+    mkdirSync(this.trashedTasksDir(), { recursive: true });
+    rmSync(trashDir, { recursive: true, force: true });
+    renameSync(this.taskDir(id), trashDir);
+    return true;
+  }
+
+  restoreTask(id: string): boolean {
+    if (this.readOptionalText(this.trashedTaskFile(id)) === null) {
+      return false;
+    }
+
+    if (this.readOptionalText(this.taskFile(id)) !== null) {
+      throw dataError(`Cannot restore task because active task already exists: ${id}`);
+    }
+
+    mkdirSync(this.tasksDir(), { recursive: true });
+    renameSync(this.trashedTaskDir(id), this.taskDir(id));
+    return true;
+  }
+
   listTasks(): Task[] {
     const tasksDir = this.tasksDir();
     mkdirSync(tasksDir, { recursive: true });
@@ -93,20 +122,32 @@ export class FileTaskStore implements TaskStore {
     writeFileSync(this.roleInfoFile(taskId, storageName), `${JSON.stringify(encoded.info, null, 2)}\n`);
   }
 
+  renameRole(taskId: string, oldName: string, role: Role): void {
+    const storageName = this.resolveRoleStorageName(taskId, oldName);
+
+    if (storageName === null) {
+      return;
+    }
+
+    const encoded = taskRecordCodec.encodeRole(role);
+    writeFileSync(this.roleFile(taskId, storageName), `${JSON.stringify(encoded.runtime, null, 2)}\n`);
+    writeFileSync(this.roleInfoFile(taskId, storageName), `${JSON.stringify(encoded.info, null, 2)}\n`);
+  }
+
   listRoles(taskId: string): Role[] {
     const rolesDir = this.rolesDir(taskId);
     mkdirSync(rolesDir, { recursive: true });
 
     return readdirSync(rolesDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
-      .map((entry) => this.getRole(taskId, entry.name))
+      .map((entry) => this.readRoleByStorageName(taskId, entry.name))
       .filter((role): role is Role => role !== null)
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
   getRole(taskId: string, name: string): Role | null {
     try {
-      return this.getRoleByStorageName(taskId, name) ?? this.findRoleByInfoName(taskId, name);
+      return this.findRoleByInfoName(taskId, name) ?? this.getRoleByStorageName(taskId, name);
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         return null;
@@ -239,6 +280,22 @@ export class FileTaskStore implements TaskStore {
     return join(this.taskDir(id), "info.json");
   }
 
+  private trashDir(): string {
+    return join(this.rootDir, "trash");
+  }
+
+  private trashedTasksDir(): string {
+    return join(this.trashDir(), "tasks");
+  }
+
+  private trashedTaskDir(id: string): string {
+    return join(this.trashedTasksDir(), id);
+  }
+
+  private trashedTaskFile(id: string): string {
+    return join(this.trashedTaskDir(id), "task.json");
+  }
+
   private commentsFile(taskId: string): string {
     return join(this.taskDir(taskId), "comments.jsonl");
   }
@@ -280,6 +337,12 @@ export class FileTaskStore implements TaskStore {
   }
 
   private getRoleByStorageName(taskId: string, storageName: string): Role | null {
+    const role = this.readRoleByStorageName(taskId, storageName);
+
+    return role?.name === storageName ? role : null;
+  }
+
+  private readRoleByStorageName(taskId: string, storageName: string): Role | null {
     const runtimeRaw = this.readOptionalText(this.roleFile(taskId, storageName));
 
     if (runtimeRaw === null) {
@@ -296,7 +359,7 @@ export class FileTaskStore implements TaskStore {
     mkdirSync(rolesDir, { recursive: true });
 
     for (const entry of readdirSync(rolesDir, { withFileTypes: true }).filter((item) => item.isDirectory())) {
-      const role = this.getRoleByStorageName(taskId, entry.name);
+      const role = this.readRoleByStorageName(taskId, entry.name);
 
       if (role !== null && role.name === name) {
         return role;
@@ -315,7 +378,7 @@ export class FileTaskStore implements TaskStore {
     }
 
     for (const entry of readdirSync(rolesDir, { withFileTypes: true }).filter((item) => item.isDirectory())) {
-      const role = this.getRoleByStorageName(taskId, entry.name);
+      const role = this.readRoleByStorageName(taskId, entry.name);
 
       if (role !== null && role.name === name) {
         return entry.name;
