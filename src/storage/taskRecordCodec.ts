@@ -1,11 +1,16 @@
 import { dataError } from "../errors/cliError.js";
 import type { Role } from "../role/role.js";
 import type { RunnerEnvironment } from "../runner/runner.js";
-import type { Task, TaskStatus } from "../task/task.js";
+import type { Task, TaskPriority, TaskStatus } from "../task/task.js";
 
 export type TaskInfoRecord = {
   schemaVersion: 1;
   title: string;
+  description?: string;
+  priority?: TaskPriority;
+  tags?: string[];
+  owner?: string;
+  dueAt?: string;
 };
 
 export type TaskRuntimeRecord = {
@@ -55,7 +60,12 @@ export class TaskRecordCodec {
       },
       info: {
         schemaVersion: 1,
-        title: task.title
+        title: task.title,
+        description: task.description,
+        priority: task.priority,
+        tags: task.tags,
+        owner: task.owner,
+        dueAt: task.dueAt
       }
     };
   }
@@ -71,7 +81,12 @@ export class TaskRecordCodec {
 
     return {
       ...runtime,
-      title: info.title
+      title: info.title,
+      description: info.description,
+      priority: info.priority,
+      tags: info.tags,
+      owner: info.owner,
+      dueAt: info.dueAt
     };
   }
 
@@ -131,7 +146,16 @@ export class TaskRecordCodec {
   private parseTaskInfo(id: string, raw: string): TaskInfoRecord {
     const value = parseJson(raw, `Invalid task info record: ${id}`);
 
-    if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.title !== "string") {
+    if (
+      !isRecord(value) ||
+      value.schemaVersion !== 1 ||
+      typeof value.title !== "string" ||
+      (value.description !== undefined && typeof value.description !== "string") ||
+      (value.priority !== undefined && !isTaskPriority(value.priority)) ||
+      (value.tags !== undefined && !isStringArray(value.tags)) ||
+      (value.owner !== undefined && typeof value.owner !== "string") ||
+      (value.dueAt !== undefined && typeof value.dueAt !== "string")
+    ) {
       throw dataError(`Invalid task info record: ${id}`);
     }
 
@@ -195,4 +219,8 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 
 function isTaskStatus(status: unknown): status is TaskStatus {
   return ["open", "active", "done", "archived"].includes(String(status));
+}
+
+function isTaskPriority(priority: unknown): priority is TaskPriority {
+  return ["low", "medium", "high", "urgent"].includes(String(priority));
 }

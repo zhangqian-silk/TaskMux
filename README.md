@@ -31,12 +31,17 @@ tb
 ## Example
 
 ```sh
-tb task create "Refactor login page"
+tb task create "Refactor login page" --description "Update the auth form" --priority high --tag frontend --owner alex --due 2026-07-01
 tb runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
 tb runner list
 tb runner show agent-js
-tb task list
+tb task list --owner alex
+tb task list --tag frontend
+tb task list --priority high
+tb task list --search auth
+tb task board --owner alex
 tb task show task-1
+tb task update task-1 --priority urgent --tag blocked
 tb task start task-1
 tb task done task-1
 tb task archive task-1
@@ -97,12 +102,17 @@ TASKMUX_HOME=/tmp/taskmux-demo tb task create "Try TaskMux"
 The current task command surface is:
 
 ```sh
-tb task create "Refactor login page"
+tb task create "Refactor login page" --description "Update the auth form" --priority high --tag frontend --owner alex --due 2026-07-01
 tb runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
 tb runner list
 tb runner show agent-js
-tb task list
+tb task list --owner alex
+tb task list --tag frontend
+tb task list --priority high
+tb task list --search auth
+tb task board --owner alex
 tb task show task-1
+tb task update task-1 --priority urgent --tag blocked
 tb task start task-1
 tb task done task-1
 tb task archive task-1
@@ -133,7 +143,7 @@ tb migrate
 
 Runner definitions can be built in or user configured. Built-in runner ids are `codex` and `claude`. Custom runners are managed with `runner add/list/show/remove`, stored under the TaskMux data directory, and can define a command, repeated args, and environment variables.
 
-Editable task and role labels are separated from runtime state. Task title lives in `tasks/<task-id>/info.json`; role name lives in `tasks/<task-id>/roles/<role>/info.json`. Users can edit those `info.json` files directly, and TaskMux reads the edited values on the next command.
+Editable task and role labels are separated from runtime state. Task title and task board metadata live in `tasks/<task-id>/info.json`; role name lives in `tasks/<task-id>/roles/<role>/info.json`. Users can edit those `info.json` files directly, and TaskMux reads the edited values on the next command.
 
 Assigned roles are stored under the task directory. Each role runtime record stores `schemaVersion`, agent, command, args, env, workspace, status, and timestamps.
 
@@ -141,9 +151,11 @@ Runtime records with inline task titles or role names are invalid in the current
 
 Task comments are appended to `comments.jsonl` under the task directory and can be listed without entering a role session. Each comment record includes `schemaVersion`.
 
-Task events are appended to `events.jsonl` under the task directory. The current event stream records `task.created`, `task.status_changed`, `role.assigned`, and `comment.added`; each event record includes `schemaVersion`, `id`, `type`, `payload`, and `createdAt`.
+Task events are appended to `events.jsonl` under the task directory. The current event stream records `task.created`, `task.updated`, `task.status_changed`, `role.assigned`, and `comment.added`; each event record includes `schemaVersion`, `id`, `type`, `payload`, and `createdAt`.
 
 `task start`, `task done`, `task archive`, and `task reopen` update the task lifecycle status.
+
+`task update` edits task board metadata. `task list` supports `--status`, `--owner`, `--tag`, `--priority`, and `--search` filters. `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`.
 
 `task assign` resolves `--agent` against built-in and custom runner ids. `task enter` uses tmux to create or reuse a task session and role window, starts the resolved runner command with its args and env, attaches the user to that role's native agent CLI, and records the role as `running` after a successful attach. `task tail` reads recent role output with `tmux capture-pane`.
 
@@ -180,7 +192,12 @@ Task info record:
 ```json
 {
   "schemaVersion": 1,
-  "title": "Refactor login page"
+  "title": "Refactor login page",
+  "description": "Update the auth form",
+  "priority": "high",
+  "tags": ["frontend", "auth"],
+  "owner": "alex",
+  "dueAt": "2026-07-01"
 }
 ```
 

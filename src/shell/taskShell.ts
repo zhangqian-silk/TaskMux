@@ -91,6 +91,8 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
     case "comments":
     case "events":
       return [name, taskId];
+    case "update":
+      return [name, taskId, ...args];
     case "comment":
       return [name, taskId, ...args];
     case "assign":
@@ -135,6 +137,7 @@ function shellHelp(): string {
   roles
   refresh
   cleanup
+  update [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
   comments
   events
   comment <body>

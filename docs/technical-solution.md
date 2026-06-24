@@ -165,7 +165,9 @@ TASKMUX_HOME or ~/.taskmux
       events.jsonl
 ```
 
-`schema.json` stores the global storage schema manifest: `schemaVersion`, `storageVersion`, and `updatedAt`. `info.json` stores the user-editable task title. `task.json` stores runtime state: `schemaVersion`, `id`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
+`schema.json` stores the global storage schema manifest: `schemaVersion`, `storageVersion`, and `updatedAt`. `info.json` stores the user-editable task title and task board metadata: `description`, `priority`, `tags`, `owner`, and `dueAt`. `task.json` stores runtime state: `schemaVersion`, `id`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
+
+Task board commands live in `src/commands/taskCommands.ts`. `task create` and `task update` compose task title and metadata writes before saving through `TaskStore`. `task list` and `task board` share one filter parser for status, owner, tag, priority, and search. `task list` renders tab-separated rows; `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`.
 
 Role assignment uses the same store boundary:
 
@@ -208,11 +210,11 @@ TASKMUX_HOME or ~/.taskmux
 
 Each event stores `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. `src/event/taskEvent.ts` defines the event record shape. `FileTaskStore` derives event ids from the current event count for the task and validates every loaded event before returning it to command handlers.
 
-The command layer appends events only after the underlying user-visible mutation succeeds. Current event types are `task.created`, `task.status_changed`, `role.assigned`, and `comment.added`.
+The command layer appends events only after the underlying user-visible mutation succeeds. Current event types are `task.created`, `task.updated`, `task.status_changed`, `role.assigned`, and `comment.added`.
 
 Storage reads validate JSON records before returning domain objects:
 
-- Task info records require `schemaVersion: 1` and string title. Task runtime records require `schemaVersion: 1`, string ids and timestamps, and a valid task status.
+- Task info records require `schemaVersion: 1` and string title. Optional task board metadata requires string description, priority `low|medium|high|urgent`, string-array tags, string owner, and string due date. Task runtime records require `schemaVersion: 1`, string ids and timestamps, and a valid task status.
 - Role info records require `schemaVersion: 1` and string name. Role runtime records require `schemaVersion: 1`, string agent, string command, string-array args, string-map env, workspace, timestamps, and a valid role status.
 - Comment records require `schemaVersion: 1`, string id, body, and timestamp.
 - Event records require `schemaVersion: 1`, string id, string type, string-map payload, and timestamp.

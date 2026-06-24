@@ -50,8 +50,10 @@ TaskMux currently provides:
 - `taskmux runner list` lists built-in and custom runner definitions
 - `taskmux runner show <runner-id>` shows one runner definition
 - `taskmux runner remove <runner-id>` removes a custom runner definition
-- `taskmux task create <title>` creates a local task with status `open`
-- `taskmux task list` lists local tasks in id order
+- `taskmux task create <title> [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]` creates a local task with status `open` and optional task board metadata
+- `taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]` updates task board metadata
+- `taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]` lists local tasks in id order with optional filters
+- `taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]` renders local tasks grouped by lifecycle status with optional filters
 - `taskmux task show <task-id>` shows one task by id
 - `taskmux task start <task-id>` updates a task to status `active`
 - `taskmux task done <task-id>` updates a task to status `done`
@@ -170,11 +172,13 @@ The data directory has a global storage schema manifest at `schema.json`. Normal
 
 Task and role user-editable labels are isolated from runtime state:
 
-- Task title lives in `tasks/<task-id>/info.json`.
+- Task title, description, priority, tags, owner, and due date live in `tasks/<task-id>/info.json`.
 - Role name lives in `tasks/<task-id>/roles/<role>/info.json`.
 - Runtime records do not require title or role name fields.
 - Users may edit `info.json` directly; TaskMux reads the edited title or role name on the next command.
 - Runtime records containing inline task title or role name are invalid in the current schema.
+
+Task priorities are `low`, `medium`, `high`, and `urgent`. Due dates use `YYYY-MM-DD`. `task list` filters by status, owner, tag, priority, and case-insensitive search across title, description, owner, priority, due date, and tags. `task board` uses the same filters and groups matching tasks under `open`, `active`, `done`, and `archived`.
 
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 
@@ -186,7 +190,7 @@ Role transcripts live under `tasks/<task-id>/roles/<role>/transcript.log` after 
 
 Task comments live in `tasks/<task-id>/comments.jsonl`. Each line stores one comment object with `schemaVersion`, `id`, `body`, and `createdAt`.
 
-Task events live in `tasks/<task-id>/events.jsonl`. Each line stores one event object with `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. Event ids use `event-<number>` within the task. The first event set records `task.created`, `task.status_changed`, `role.assigned`, and `comment.added`.
+Task events live in `tasks/<task-id>/events.jsonl`. Each line stores one event object with `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. Event ids use `event-<number>` within the task. The first event set records `task.created`, `task.updated`, `task.status_changed`, `role.assigned`, and `comment.added`.
 
 ## Error Model
 
