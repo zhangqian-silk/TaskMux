@@ -109,10 +109,8 @@ export class TmuxManager {
 }
 
 function roleShellCommand(role: Role): string {
-  const command = role.command ?? role.agent;
-  const args = role.args ?? [];
-  const env = Object.entries(role.env ?? {}).map(([key, value]) => `${key}=${value}`);
-  const parts = env.length > 0 ? ["env", ...env, command, ...args] : [command, ...args];
+  const env = Object.entries(role.env).map(([key, value]) => `${key}=${value}`);
+  const parts = env.length > 0 ? ["env", ...env, role.command, ...role.args] : [role.command, ...role.args];
 
   return parts.map(shellQuote).join(" ");
 }

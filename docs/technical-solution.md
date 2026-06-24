@@ -181,7 +181,7 @@ TASKMUX_HOME or ~/.taskmux
 
 `runner.json` stores `schemaVersion`, `id`, `command`, `args`, `env`, `createdAt`, and `updatedAt`.
 
-`info.json` stores the user-editable role name. `role.json` stores runtime state: `schemaVersion`, `agent`, `command`, `args`, `env`, `workspace`, `status`, `createdAt`, and `updatedAt`. Older role records with inline `name` and older task records with inline `title` remain readable. Older role records without `command`, `args`, or `env` remain readable; tmux falls back to `agent` as the command. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
+`info.json` stores the user-editable role name. `role.json` stores runtime state: `schemaVersion`, `agent`, `command`, `args`, `env`, `workspace`, `status`, `createdAt`, and `updatedAt`. Runtime records containing inline task title or role name are rejected by the current schema. Role runtime records must include the resolved command contract (`command`, `args`, and `env`) so tmux can restart roles from persisted state without consulting mutable runner definitions. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
 
 Task comments are append-only JSONL records:
 
@@ -210,12 +210,14 @@ The command layer appends events only after the underlying user-visible mutation
 Storage reads validate JSON records before returning domain objects:
 
 - Task info records require `schemaVersion: 1` and string title. Task runtime records require `schemaVersion: 1`, string ids and timestamps, and a valid task status.
-- Role info records require `schemaVersion: 1` and string name. Role runtime records require `schemaVersion: 1`, string agent, workspace, timestamps, and a valid role status. Optional command contracts require string `command`, string-array `args`, and string-map `env`.
+- Role info records require `schemaVersion: 1` and string name. Role runtime records require `schemaVersion: 1`, string agent, string command, string-array args, string-map env, workspace, timestamps, and a valid role status.
 - Comment records require `schemaVersion: 1`, string id, body, and timestamp.
 - Event records require `schemaVersion: 1`, string id, string type, string-map payload, and timestamp.
 - Runner records require `schemaVersion: 1`, string id, string command, string-array args, string-map env, and timestamps.
 
 Invalid records raise `DATA_ERROR` instead of being skipped silently.
+
+`src/storage/taskRecordCodec.ts` owns task and role record encoding, decoding, and composition. `FileTaskStore` only resolves file paths and raw file IO for these records. Future backward-compatible readers or migration rules should be added behind the codec boundary instead of being distributed across store methods.
 
 ## Error Handling
 

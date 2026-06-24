@@ -6,9 +6,9 @@ export type Role = {
   schemaVersion: 1;
   name: string;
   agent: string;
-  command?: string;
-  args?: string[];
-  env?: RunnerEnvironment;
+  command: string;
+  args: string[];
+  env: RunnerEnvironment;
   workspace: string;
   status: RoleStatus;
   createdAt: string;
