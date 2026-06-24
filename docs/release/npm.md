@@ -1,6 +1,6 @@
 # npm Release
 
-TaskMux publishes as `@silk/taskmux`.
+TaskMux publishes as `@zq-silk/taskmux`.
 
 ## Preflight
 

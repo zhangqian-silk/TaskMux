@@ -7,14 +7,13 @@ It lets a user create local tasks, assign roles, bind each role to a native agen
 ## Package
 
 ```sh
-npm install -g @silk/taskmux
+npm install -g @zq-silk/taskmux
 ```
 
-Command entrypoints:
+Command entrypoint:
 
 ```sh
 taskmux
-tb
 ```
 
 ## Core Model
@@ -32,65 +31,65 @@ tb
 ## Example
 
 ```sh
-tb task create "Refactor login page" --description "Update the auth form" --priority high --tag frontend --owner alex --due 2026-07-01
-tb runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
-tb runner list
-tb runner show agent-js
-tb task list --owner alex
-tb task list --tag frontend
-tb task list --priority high
-tb task list --search auth
-tb task board --owner alex --with-roles
-tb task show task-1
-tb task update task-1 --priority urgent --tag blocked
-tb task update task-1 --clear-due --clear-owner
-tb task start task-1
-tb task done task-1
-tb task archive task-1
-tb task reopen task-1
-tb task delete task-1
-tb task restore task-1
-tb task open task-1
-tb task context task-1
-tb task context task-1 --format json --include-transcripts
-tb task shell task-1
-tb task assign task-1 rd --agent agent-js --workspace ~/projects/app
-tb task assign task-1 reviewer --agent claude --workspace ~/projects/app
-tb task role update task-1 rd --agent codex --workspace ~/projects/app
-tb task role rename task-1 rd developer
-tb task roles task-1
-tb task comment task-1 "Keep old session compatibility."
-tb task comments task-1
-tb task events task-1
-tb task enter task-1 rd
-tb task tail task-1 rd
-tb task detail task-1 rd
-tb task status task-1 rd
-tb task refresh task-1
-tb task transcript task-1 rd
-tb task detach task-1 rd
-tb task stop task-1 rd
-tb task kill task-1 rd
-tb task restart task-1 rd
-tb task cleanup task-1
-tb runner remove agent-js
-tb doctor
-tb backup
-tb migrate
+taskmux task create "Refactor login page" --description "Update the auth form" --priority high --tag frontend --owner alex --due 2026-07-01
+taskmux runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
+taskmux runner list
+taskmux runner show agent-js
+taskmux task list --owner alex
+taskmux task list --tag frontend
+taskmux task list --priority high
+taskmux task list --search auth
+taskmux task board --owner alex --with-roles
+taskmux task show task-1
+taskmux task update task-1 --priority urgent --tag blocked
+taskmux task update task-1 --clear-due --clear-owner
+taskmux task start task-1
+taskmux task done task-1
+taskmux task archive task-1
+taskmux task reopen task-1
+taskmux task delete task-1
+taskmux task restore task-1
+taskmux task open task-1
+taskmux task context task-1
+taskmux task context task-1 --format json --include-transcripts
+taskmux task shell task-1
+taskmux task assign task-1 rd --agent agent-js --workspace ~/projects/app
+taskmux task assign task-1 reviewer --agent claude --workspace ~/projects/app
+taskmux task role update task-1 rd --agent codex --workspace ~/projects/app
+taskmux task role rename task-1 rd developer
+taskmux task roles task-1
+taskmux task comment task-1 "Keep old session compatibility."
+taskmux task comments task-1
+taskmux task events task-1
+taskmux task enter task-1 rd
+taskmux task tail task-1 rd
+taskmux task detail task-1 rd
+taskmux task status task-1 rd
+taskmux task refresh task-1
+taskmux task transcript task-1 rd
+taskmux task detach task-1 rd
+taskmux task stop task-1 rd
+taskmux task kill task-1 rd
+taskmux task restart task-1 rd
+taskmux task cleanup task-1
+taskmux runner remove agent-js
+taskmux doctor
+taskmux backup
+taskmux migrate
 ```
 
 Inside the task shell:
 
 ```text
-tb task-42> start
-tb task-42> roles
-tb task-42> refresh
-tb task-42> comment "Keep old session compatibility."
-tb task-42> events
-tb task-42> context
-tb task-42> role rename rd developer
-tb task-42> enter rd
-tb task-42> restart rd
+taskmux task-42> start
+taskmux task-42> roles
+taskmux task-42> refresh
+taskmux task-42> comment "Keep old session compatibility."
+taskmux task-42> events
+taskmux task-42> context
+taskmux task-42> role rename rd developer
+taskmux task-42> enter rd
+taskmux task-42> restart rd
 ```
 
 `enter rd` attaches to the tmux window for the `rd` role. Detaching returns to the task shell while the role process continues running.
@@ -106,56 +105,56 @@ TaskMux stores task data in the user-level data directory:
 Tests, automation, and isolated runs can override this location:
 
 ```sh
-TASKMUX_HOME=/tmp/taskmux-demo tb task create "Try TaskMux"
+TASKMUX_HOME=/tmp/taskmux-demo taskmux task create "Try TaskMux"
 ```
 
 The current task command surface is:
 
 ```sh
-tb task create "Refactor login page" --description "Update the auth form" --priority high --tag frontend --owner alex --due 2026-07-01
-tb runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
-tb runner list
-tb runner show agent-js
-tb task list --owner alex
-tb task list --tag frontend
-tb task list --priority high
-tb task list --search auth
-tb task board --owner alex --with-roles
-tb task show task-1
-tb task update task-1 --priority urgent --tag blocked
-tb task update task-1 --clear-due --clear-owner
-tb task start task-1
-tb task done task-1
-tb task archive task-1
-tb task reopen task-1
-tb task delete task-1
-tb task restore task-1
-tb task open task-1
-tb task context task-1
-tb task context task-1 --format json --include-transcripts
-tb task shell task-1
-tb task assign task-1 rd --agent agent-js --workspace ~/projects/app
-tb task role update task-1 rd --agent codex --workspace ~/projects/app
-tb task role rename task-1 rd developer
-tb task roles task-1
-tb task comment task-1 "Keep old session compatibility."
-tb task comments task-1
-tb task events task-1
-tb task enter task-1 rd
-tb task tail task-1 rd
-tb task detail task-1 rd
-tb task status task-1 rd
-tb task refresh task-1
-tb task transcript task-1 rd
-tb task detach task-1 rd
-tb task stop task-1 rd
-tb task kill task-1 rd
-tb task restart task-1 rd
-tb task cleanup task-1
-tb runner remove agent-js
-tb doctor
-tb backup
-tb migrate
+taskmux task create "Refactor login page" --description "Update the auth form" --priority high --tag frontend --owner alex --due 2026-07-01
+taskmux runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
+taskmux runner list
+taskmux runner show agent-js
+taskmux task list --owner alex
+taskmux task list --tag frontend
+taskmux task list --priority high
+taskmux task list --search auth
+taskmux task board --owner alex --with-roles
+taskmux task show task-1
+taskmux task update task-1 --priority urgent --tag blocked
+taskmux task update task-1 --clear-due --clear-owner
+taskmux task start task-1
+taskmux task done task-1
+taskmux task archive task-1
+taskmux task reopen task-1
+taskmux task delete task-1
+taskmux task restore task-1
+taskmux task open task-1
+taskmux task context task-1
+taskmux task context task-1 --format json --include-transcripts
+taskmux task shell task-1
+taskmux task assign task-1 rd --agent agent-js --workspace ~/projects/app
+taskmux task role update task-1 rd --agent codex --workspace ~/projects/app
+taskmux task role rename task-1 rd developer
+taskmux task roles task-1
+taskmux task comment task-1 "Keep old session compatibility."
+taskmux task comments task-1
+taskmux task events task-1
+taskmux task enter task-1 rd
+taskmux task tail task-1 rd
+taskmux task detail task-1 rd
+taskmux task status task-1 rd
+taskmux task refresh task-1
+taskmux task transcript task-1 rd
+taskmux task detach task-1 rd
+taskmux task stop task-1 rd
+taskmux task kill task-1 rd
+taskmux task restart task-1 rd
+taskmux task cleanup task-1
+taskmux runner remove agent-js
+taskmux doctor
+taskmux backup
+taskmux migrate
 ```
 
 Runner definitions can be built in or user configured. Built-in runner ids are `codex` and `claude`. Custom runners are managed with `runner add/list/show/remove`, stored under the TaskMux data directory, and can define a command, repeated args, and environment variables.

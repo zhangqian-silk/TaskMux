@@ -9,8 +9,8 @@ TaskMux does not provide team collaboration, remote synchronization, identity ma
 ## Package Identity
 
 - Product name: TaskMux
-- npm package: `@silk/taskmux`
-- CLI commands: `taskmux`, `tb`
+- npm package: `@zq-silk/taskmux`
+- CLI command: `taskmux`
 - License: MIT
 
 ## Core Concepts
