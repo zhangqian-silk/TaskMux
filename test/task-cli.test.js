@@ -328,6 +328,60 @@ test("updates task board metadata", () => {
   assert.match(showOutput, /Due: 2026-08-02/);
 });
 
+test("clears task board metadata", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(
+    [
+      "task",
+      "create",
+      "Refactor login page",
+      "--description",
+      "Update the auth form",
+      "--priority",
+      "high",
+      "--tag",
+      "frontend",
+      "--owner",
+      "alex",
+      "--due",
+      "2026-07-01"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(
+    [
+      "task",
+      "update",
+      "task-1",
+      "--clear-description",
+      "--clear-priority",
+      "--clear-tags",
+      "--clear-owner",
+      "--clear-due"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  const showOutput = runTaskmux(["task", "show", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  const taskInfo = JSON.parse(readFileSync(join(home, "tasks", "task-1", "info.json"), "utf8"));
+
+  assert.match(output, /Updated task task-1/);
+  assert.equal(taskInfo.title, "Refactor login page");
+  assert.equal(taskInfo.description, undefined);
+  assert.equal(taskInfo.priority, undefined);
+  assert.equal(taskInfo.tags, undefined);
+  assert.equal(taskInfo.owner, undefined);
+  assert.equal(taskInfo.dueAt, undefined);
+  assert.doesNotMatch(showOutput, /Description:/);
+  assert.doesNotMatch(showOutput, /Priority:/);
+  assert.doesNotMatch(showOutput, /Tags:/);
+  assert.doesNotMatch(showOutput, /Owner:/);
+  assert.doesNotMatch(showOutput, /Due:/);
+});
+
 test("filters and searches tasks on board metadata", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
 
@@ -387,6 +441,57 @@ test("renders a grouped task board with metadata filters", () => {
   assert.match(output, /Done/);
   assert.doesNotMatch(output, /Write rollout notes/);
   assert.match(output, /Archived/);
+});
+
+test("renders role status counts on the grouped task board", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Coordinate checkout flow"], { TASKMUX_HOME: home });
+  runTaskmux(
+    ["task", "assign", "task-1", "rd", "--agent", "codex", "--workspace", "/tmp/project-a"],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(
+    ["task", "assign", "task-1", "reviewer", "--agent", "claude", "--workspace", "/tmp/project-a"],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(["task", "start", "task-1"], { TASKMUX_HOME: home });
+
+  const output = runTaskmux(["task", "board", "--with-roles"], { TASKMUX_HOME: home });
+
+  assert.match(output, /task-1\s+Coordinate checkout flow\s+roles idle=2/);
+});
+
+test("deletes and restores tasks without losing task data", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page", "--owner", "alex"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["task", "comment", "task-1", "Keep task data."], {
+    TASKMUX_HOME: home
+  });
+
+  const deleteOutput = runTaskmux(["task", "delete", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  const listOutput = runTaskmux(["task", "list"], { TASKMUX_HOME: home });
+  const missingShow = runTaskmuxFailure(["task", "show", "task-1"], { TASKMUX_HOME: home });
+
+  assert.match(deleteOutput, /Deleted task task-1/);
+  assert.match(listOutput, /No tasks found/);
+  assert.equal(missingShow.status, 3);
+  assert.equal(existsSync(join(home, "trash", "tasks", "task-1", "info.json")), true);
+
+  const restoreOutput = runTaskmux(["task", "restore", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  const showOutput = runTaskmux(["task", "show", "task-1"], { TASKMUX_HOME: home });
+  const commentsOutput = runTaskmux(["task", "comments", "task-1"], { TASKMUX_HOME: home });
+
+  assert.match(restoreOutput, /Restored task task-1/);
+  assert.match(showOutput, /Owner: alex/);
+  assert.match(commentsOutput, /Keep task data/);
 });
 
 test("rejects task records with inline titles", () => {
@@ -797,6 +902,69 @@ test("lists roles for a task", () => {
 
   assert.match(output, /rd\s+codex\s+idle\s+\/tmp\/project-a/);
   assert.match(output, /reviewer\s+claude\s+idle\s+\/tmp\/project-a/);
+});
+
+test("updates role runner and workspace", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
+
+  runTaskmux(["runner", "add", "agent-js", "--command", fakeAgent, "--arg", "--mode", "--arg", "review"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    ["task", "assign", "task-1", "rd", "--agent", "codex", "--workspace", "/tmp/project-a"],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(
+    ["task", "role", "update", "task-1", "rd", "--agent", "agent-js", "--workspace", "/tmp/project-b"],
+    { TASKMUX_HOME: home }
+  );
+  const detailOutput = runTaskmux(["task", "detail", "task-1", "rd"], {
+    TASKMUX_HOME: home
+  });
+  const role = JSON.parse(readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8"));
+
+  assert.match(output, /Updated role rd for task-1/);
+  assert.match(detailOutput, /Agent: agent-js/);
+  assert.match(detailOutput, /Workspace: \/tmp\/project-b/);
+  assert.equal(role.command, fakeAgent);
+  assert.deepEqual(role.args, ["--mode", "review"]);
+  assert.equal(role.workspace, "/tmp/project-b");
+});
+
+test("renames roles and tmux windows", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    ["task", "assign", "task-1", "rd", "--agent", "codex", "--workspace", "/tmp/project-a"],
+    { TASKMUX_HOME: home }
+  );
+
+  const output = runTaskmux(["task", "role", "rename", "task-1", "rd", "developer"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+  const rolesOutput = runTaskmux(["task", "roles", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  const calls = readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+
+  assert.match(output, /Renamed role rd to developer for task-1/);
+  assert.match(rolesOutput, /developer\s+codex\s+idle\s+\/tmp\/project-a/);
+  assert.doesNotMatch(rolesOutput, /rd\s+codex/);
+  assert.deepEqual(calls[0], ["rename-window", "-t", "taskmux-task-1:rd", "developer"]);
 });
 
 test("enters a role through tmux without requiring real tmux", () => {

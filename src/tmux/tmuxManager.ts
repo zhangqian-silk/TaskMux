@@ -65,6 +65,10 @@ export class TmuxManager {
     this.runner.run(this.tmuxBin, ["kill-window", "-t", this.target(taskId, roleName)]);
   }
 
+  renameRole(taskId: string, oldRoleName: string, newRoleName: string): void {
+    this.runner.run(this.tmuxBin, ["rename-window", "-t", this.target(taskId, oldRoleName), newRoleName]);
+  }
+
   private ensureSession(taskId: string): void {
     try {
       this.runner.run(this.tmuxBin, ["has-session", "-t", this.sessionName(taskId)]);

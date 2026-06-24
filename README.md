@@ -40,19 +40,24 @@ tb task list --owner alex
 tb task list --tag frontend
 tb task list --priority high
 tb task list --search auth
-tb task board --owner alex
+tb task board --owner alex --with-roles
 tb task show task-1
 tb task update task-1 --priority urgent --tag blocked
+tb task update task-1 --clear-due --clear-owner
 tb task start task-1
 tb task done task-1
 tb task archive task-1
 tb task reopen task-1
+tb task delete task-1
+tb task restore task-1
 tb task open task-1
 tb task context task-1
 tb task context task-1 --format json --include-transcripts
 tb task shell task-1
 tb task assign task-1 rd --agent agent-js --workspace ~/projects/app
 tb task assign task-1 reviewer --agent claude --workspace ~/projects/app
+tb task role update task-1 rd --agent codex --workspace ~/projects/app
+tb task role rename task-1 rd developer
 tb task roles task-1
 tb task comment task-1 "Keep old session compatibility."
 tb task comments task-1
@@ -83,6 +88,7 @@ tb task-42> refresh
 tb task-42> comment "Keep old session compatibility."
 tb task-42> events
 tb task-42> context
+tb task-42> role rename rd developer
 tb task-42> enter rd
 tb task-42> restart rd
 ```
@@ -114,18 +120,23 @@ tb task list --owner alex
 tb task list --tag frontend
 tb task list --priority high
 tb task list --search auth
-tb task board --owner alex
+tb task board --owner alex --with-roles
 tb task show task-1
 tb task update task-1 --priority urgent --tag blocked
+tb task update task-1 --clear-due --clear-owner
 tb task start task-1
 tb task done task-1
 tb task archive task-1
 tb task reopen task-1
+tb task delete task-1
+tb task restore task-1
 tb task open task-1
 tb task context task-1
 tb task context task-1 --format json --include-transcripts
 tb task shell task-1
 tb task assign task-1 rd --agent agent-js --workspace ~/projects/app
+tb task role update task-1 rd --agent codex --workspace ~/projects/app
+tb task role rename task-1 rd developer
 tb task roles task-1
 tb task comment task-1 "Keep old session compatibility."
 tb task comments task-1
@@ -157,13 +168,13 @@ Runtime records with inline task titles or role names are invalid in the current
 
 Task comments are appended to `comments.jsonl` under the task directory and can be listed without entering a role session. Each comment record includes `schemaVersion`.
 
-Task events are appended to `events.jsonl` under the task directory. The current event stream records `task.created`, `task.updated`, `task.status_changed`, `role.assigned`, and `comment.added`; each event record includes `schemaVersion`, `id`, `type`, `payload`, and `createdAt`.
+Task events are appended to `events.jsonl` under the task directory. The current event stream records `task.created`, `task.updated`, `task.deleted`, `task.restored`, `task.status_changed`, `role.assigned`, `role.updated`, `role.renamed`, and `comment.added`; each event record includes `schemaVersion`, `id`, `type`, `payload`, and `createdAt`.
 
 `task start`, `task done`, `task archive`, and `task reopen` update the task lifecycle status.
 
-`task update` edits task board metadata. `task list` supports `--status`, `--owner`, `--tag`, `--priority`, and `--search` filters. `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`.
+`task update` edits task board metadata and supports `--clear-description`, `--clear-priority`, `--clear-tags`, `--clear-owner`, and `--clear-due`. `task delete` moves a task into `trash/tasks/<task-id>`; `task restore` moves it back without losing task files. `task list` supports `--status`, `--owner`, `--tag`, `--priority`, and `--search` filters. `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`; `--with-roles` adds stored role status counts.
 
-`task assign` resolves `--agent` against built-in and custom runner ids. `task enter` uses tmux to create or reuse a task session and role window, starts the resolved runner command with its args and env, attaches the user to that role's native agent CLI, and records the role as `running` after a successful attach. `task tail` reads recent role output with `tmux capture-pane`.
+`task assign` resolves `--agent` against built-in and custom runner ids. `task role update` can replace a role's runner contract and workspace. `task role rename` updates the role info record and attempts to rename the matching tmux window when it exists. `task enter` uses tmux to create or reuse a task session and role window, starts the resolved runner command with its args and env, attaches the user to that role's native agent CLI, and records the role as `running` after a successful attach. `task tail` reads recent role output with `tmux capture-pane`.
 
 `task shell` opens an interactive TaskMux control prompt for the task. Shell commands reuse the same task command handlers as the non-interactive CLI, including task lifecycle, role refresh, cleanup, events, and restart commands.
 

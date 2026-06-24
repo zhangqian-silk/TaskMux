@@ -73,6 +73,9 @@ task restart <task-id> <role>
   tmux list-windows -t taskmux-<task-id> -F #{window_name}
   tmux new-window -t taskmux-<task-id> -n <role> -c <workspace> <agent>
   tmux attach-session -t taskmux-<task-id>:<role>
+
+task role rename <task-id> <role> <new-role>
+  tmux rename-window -t taskmux-<task-id>:<role> <new-role>  # best effort
 ```
 
 `TASKMUX_TMUX_BIN` can override the tmux executable for tests and controlled environments. Normal users should rely on the default `tmux` executable.
@@ -132,11 +135,14 @@ start -> task start <task-id>
 done -> task done <task-id>
 archive -> task archive <task-id>
 reopen -> task reopen <task-id>
+delete -> task delete <task-id>
 roles -> task roles <task-id>
 events -> task events <task-id>
 context -> task context <task-id>
 refresh -> task refresh <task-id>
 cleanup -> task cleanup <task-id>
+role update <role> ... -> task role update <task-id> <role> ...
+role rename <role> <new-role> -> task role rename <task-id> <role> <new-role>
 comment <body> -> task comment <task-id> <body>
 enter <role> -> task enter <task-id> <role>
 restart <role> -> task restart <task-id> <role>
@@ -159,6 +165,9 @@ TASKMUX_HOME or ~/.taskmux
   schema.json
   backups/
     backup-<timestamp>/
+  trash/
+    tasks/
+      task-1/
   tasks/
     task-1/
       info.json
@@ -168,9 +177,11 @@ TASKMUX_HOME or ~/.taskmux
 
 `schema.json` stores the global storage schema manifest: `schemaVersion`, `storageVersion`, and `updatedAt`. `info.json` stores the user-editable task title and task board metadata: `description`, `priority`, `tags`, `owner`, and `dueAt`. `task.json` stores runtime state: `schemaVersion`, `id`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
 
-Task board commands live in `src/commands/taskCommands.ts`. `task create` and `task update` compose task title and metadata writes before saving through `TaskStore`. `task list` and `task board` share one filter parser for status, owner, tag, priority, and search. `task list` renders tab-separated rows; `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`.
+Task board commands live in `src/commands/taskCommands.ts`. `task create` and `task update` compose task title and metadata writes before saving through `TaskStore`; clear flags write `undefined` optional metadata so JSON encoding omits those fields. `task list` and `task board` share one filter parser for status, owner, tag, priority, and search. `task list` renders tab-separated rows; `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`. `task board --with-roles` reads stored roles and appends status counts without tmux probes.
 
 `task context` composes a handoff snapshot from the same store boundary. It reads the task, roles, comments, and events, then renders either text or JSON. `--include-transcripts` reads persisted `roles/<role>/transcript.log` files through `TaskStore.readTranscript`; it does not call tmux or mutate transcript state.
+
+`task delete` and `task restore` are implemented as directory moves in `FileTaskStore`. Delete moves `tasks/<task-id>` into `trash/tasks/<task-id>` and active task reads no longer see it. Restore moves the same directory back and preserves nested roles, comments, events, and transcripts.
 
 Role assignment uses the same store boundary:
 
@@ -189,7 +200,7 @@ TASKMUX_HOME or ~/.taskmux
 
 `runner.json` stores `schemaVersion`, `id`, `command`, `args`, `env`, `createdAt`, and `updatedAt`.
 
-`info.json` stores the user-editable role name. `role.json` stores runtime state: `schemaVersion`, `agent`, `command`, `args`, `env`, `workspace`, `status`, `createdAt`, and `updatedAt`. Runtime records containing inline task title or role name are rejected by the current schema. Role runtime records must include the resolved command contract (`command`, `args`, and `env`) so tmux can restart roles from persisted state without consulting mutable runner definitions. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
+`info.json` stores the user-editable role name. `role.json` stores runtime state: `schemaVersion`, `agent`, `command`, `args`, `env`, `workspace`, `status`, `createdAt`, and `updatedAt`. Runtime records containing inline task title or role name are rejected by the current schema. Role runtime records must include the resolved command contract (`command`, `args`, and `env`) so tmux can restart roles from persisted state without consulting mutable runner definitions. `task role update` overwrites that command contract or workspace while preserving status and created time. `task role rename` updates the role info record in its existing storage directory and calls `TmuxManager.renameRole` best effort. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
 
 Task comments are append-only JSONL records:
 
@@ -213,7 +224,7 @@ TASKMUX_HOME or ~/.taskmux
 
 Each event stores `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. `src/event/taskEvent.ts` defines the event record shape. `FileTaskStore` derives event ids from the current event count for the task and validates every loaded event before returning it to command handlers.
 
-The command layer appends events only after the underlying user-visible mutation succeeds. Current event types are `task.created`, `task.updated`, `task.status_changed`, `role.assigned`, and `comment.added`.
+The command layer appends events only after the underlying user-visible mutation succeeds. Current event types are `task.created`, `task.updated`, `task.deleted`, `task.restored`, `task.status_changed`, `role.assigned`, `role.updated`, `role.renamed`, and `comment.added`.
 
 Storage reads validate JSON records before returning domain objects:
 

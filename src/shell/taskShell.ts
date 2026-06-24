@@ -86,6 +86,7 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
     case "reopen":
     case "refresh":
     case "cleanup":
+    case "delete":
       return [name, taskId];
     case "roles":
     case "comments":
@@ -95,6 +96,8 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
       return [name, taskId, ...args];
     case "update":
       return [name, taskId, ...args];
+    case "role":
+      return [name, args[0] ?? "", taskId, ...args.slice(1)];
     case "comment":
       return [name, taskId, ...args];
     case "assign":
@@ -139,10 +142,13 @@ function shellHelp(): string {
   roles
   refresh
   cleanup
-  update [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
+  update [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD] [--clear-description] [--clear-priority] [--clear-tags] [--clear-owner] [--clear-due]
+  delete
   comments
   events
   context [--format text|json] [--include-transcripts]
+  role update <role> [--agent <agent>] [--workspace <path>]
+  role rename <role> <new-role>
   comment <body>
   assign <role> --agent <agent> --workspace <path>
   enter <role>

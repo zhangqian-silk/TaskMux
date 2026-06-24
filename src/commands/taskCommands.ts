@@ -1,7 +1,7 @@
 import { createTaskComment } from "../comment/comment.js";
 import { roleNotFound, runtimeError, taskNotFound, usageError } from "../errors/cliError.js";
 import { createTaskEvent } from "../event/taskEvent.js";
-import { createRole, updateRoleStatus } from "../role/role.js";
+import { createRole, updateRole, updateRoleStatus } from "../role/role.js";
 import { resolveRunner, supportedRunnerIds } from "../runner/runnerRegistry.js";
 import { createTask, updateTaskMetadata, updateTaskStatus } from "../task/task.js";
 import type { TaskComment } from "../comment/comment.js";
@@ -37,6 +37,12 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return openTaskCommand(rest, store);
     case "context":
       return contextTaskCommand(rest, store);
+    case "delete":
+      return deleteTaskCommand(rest, store);
+    case "restore":
+      return restoreTaskCommand(rest, store);
+    case "role":
+      return taskRoleCommand(rest, store, tmux);
     case "assign":
       return assignTaskRoleCommand(rest, store);
     case "roles":
@@ -101,10 +107,10 @@ function listTaskCommand(args: string[], store: TaskStore): string {
 }
 
 function boardTaskCommand(args: string[], store: TaskStore): string {
-  const filters = parseTaskListFilters(args);
-  const tasks = store.listTasks().filter((task) => taskMatchesFilters(task, filters));
+  const options = parseTaskBoardViewOptions(args);
+  const tasks = store.listTasks().filter((task) => taskMatchesFilters(task, options.filters));
 
-  return renderTaskBoard(tasks);
+  return renderTaskBoard(tasks, store, options.withRoles);
 }
 
 function showTaskCommand(args: string[], store: TaskStore): string {
@@ -143,7 +149,7 @@ function updateTaskCommand(args: string[], store: TaskStore): string {
     throw taskNotFound(id);
   }
 
-  const input = parseTaskBoardInput(rest, { requireTitle: false, allowTitleOption: true });
+  const input = parseTaskBoardInput(rest, { requireTitle: false, allowTitleOption: true, allowClear: true });
   const patch = input.title === undefined ? input.metadata : { title: input.title, ...input.metadata };
 
   if (Object.keys(patch).length === 0) {
@@ -232,6 +238,52 @@ function contextTaskCommand(args: string[], store: TaskStore): string {
   return renderTaskContextText(context, options.includeTranscripts);
 }
 
+function deleteTaskCommand(args: string[], store: TaskStore): string {
+  const [taskId] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  if (store.getTask(taskId) === null) {
+    throw taskNotFound(taskId);
+  }
+
+  recordTaskEvent(store, taskId, "task.deleted", { task: taskId });
+  store.deleteTask(taskId);
+
+  return `Deleted task ${taskId}\n`;
+}
+
+function restoreTaskCommand(args: string[], store: TaskStore): string {
+  const [taskId] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  if (!store.restoreTask(taskId)) {
+    throw taskNotFound(taskId);
+  }
+
+  recordTaskEvent(store, taskId, "task.restored", { task: taskId });
+
+  return `Restored task ${taskId}\n`;
+}
+
+function taskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
+  const [command, ...rest] = args;
+
+  switch (command) {
+    case "update":
+      return updateTaskRoleCommand(rest, store);
+    case "rename":
+      return renameTaskRoleCommand(rest, store, tmux);
+    default:
+      return taskUsage();
+  }
+}
+
 function assignTaskRoleCommand(args: string[], store: TaskStore): string {
   const [taskId, roleName, ...rest] = args;
 
@@ -274,6 +326,111 @@ function assignTaskRoleCommand(args: string[], store: TaskStore): string {
     `Agent: ${role.agent}`,
     `Workspace: ${role.workspace}`
   ].join("\n").concat("\n");
+}
+
+function updateTaskRoleCommand(args: string[], store: TaskStore): string {
+  const [taskId, roleName, ...rest] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  if (roleName === undefined || roleName.trim().length === 0) {
+    throw usageError("Role name is required.");
+  }
+
+  if (store.getTask(taskId) === null) {
+    throw taskNotFound(taskId);
+  }
+
+  const role = store.getRole(taskId, roleName);
+
+  if (role === null) {
+    throw roleNotFound(roleName);
+  }
+
+  assertKnownOptions(rest, new Set(["--agent", "--workspace"]));
+
+  const agent = readOptionalOption(rest, "--agent")?.trim();
+  const workspace = readOptionalOption(rest, "--workspace")?.trim();
+  const patch: Partial<Pick<Role, "agent" | "command" | "args" | "env" | "workspace">> = {};
+
+  if (agent !== undefined) {
+    if (agent.length === 0) {
+      throw usageError("--agent is required.");
+    }
+
+    const runner = resolveRunner(agent, store.listCustomRunners());
+
+    if (runner === null) {
+      throw usageError(`Unsupported agent: ${agent}\nSupported agents: ${supportedRunnerIds(store.listCustomRunners()).join(", ")}`);
+    }
+
+    patch.agent = runner.id;
+    patch.command = runner.command;
+    patch.args = runner.args;
+    patch.env = runner.env;
+  }
+
+  if (workspace !== undefined) {
+    if (workspace.length === 0) {
+      throw usageError("--workspace is required.");
+    }
+
+    patch.workspace = workspace;
+  }
+
+  if (Object.keys(patch).length === 0) {
+    throw usageError("At least one role update option is required.");
+  }
+
+  const updatedRole = updateRole(role, patch, new Date());
+  store.saveRole(taskId, updatedRole);
+  recordTaskEvent(store, taskId, "role.updated", { role: updatedRole.name });
+
+  return `Updated role ${updatedRole.name} for ${taskId}\n`;
+}
+
+function renameTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
+  const [taskId, oldName, newName] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  if (oldName === undefined || oldName.trim().length === 0) {
+    throw usageError("Role name is required.");
+  }
+
+  if (newName === undefined || newName.trim().length === 0) {
+    throw usageError("New role name is required.");
+  }
+
+  if (store.getTask(taskId) === null) {
+    throw taskNotFound(taskId);
+  }
+
+  const role = store.getRole(taskId, oldName);
+
+  if (role === null) {
+    throw roleNotFound(oldName);
+  }
+
+  if (store.getRole(taskId, newName) !== null) {
+    throw usageError(`Role already exists: ${newName}`);
+  }
+
+  try {
+    tmux?.renameRole(taskId, oldName, newName);
+  } catch {
+    // Role metadata is still renamed when no tmux session or window exists.
+  }
+
+  const renamedRole = updateRole(role, { name: newName }, new Date());
+  store.renameRole(taskId, oldName, renamedRole);
+  recordTaskEvent(store, taskId, "role.renamed", { from: oldName, to: newName });
+
+  return `Renamed role ${oldName} to ${newName} for ${taskId}\n`;
 }
 
 function listTaskRolesCommand(args: string[], store: TaskStore): string {
@@ -746,9 +903,14 @@ type TaskListFilters = {
   search?: string;
 };
 
+type TaskBoardViewOptions = {
+  filters: TaskListFilters;
+  withRoles: boolean;
+};
+
 function parseTaskBoardInput(
   args: string[],
-  options: { requireTitle: boolean; allowTitleOption?: boolean }
+  options: { requireTitle: boolean; allowTitleOption?: boolean; allowClear?: boolean }
 ): TaskBoardInput {
   const optionStart = args.findIndex((arg) => arg.startsWith("--"));
   const titleParts = optionStart === -1 ? args : args.slice(0, optionStart);
@@ -762,7 +924,17 @@ function parseTaskBoardInput(
   const owner = readOptionalOption(optionArgs, "--owner")?.trim();
   const dueAt = readOptionalOption(optionArgs, "--due")?.trim();
 
-  assertKnownOptions(optionArgs, new Set(["--title", "--description", "--priority", "--tag", "--owner", "--due"]));
+  const knownOptions = new Set(["--title", "--description", "--priority", "--tag", "--owner", "--due"]);
+
+  if (options.allowClear === true) {
+    knownOptions.add("--clear-description");
+    knownOptions.add("--clear-priority");
+    knownOptions.add("--clear-tags");
+    knownOptions.add("--clear-owner");
+    knownOptions.add("--clear-due");
+  }
+
+  assertKnownOptions(optionArgs, knownOptions);
 
   if (options.requireTitle && title.length === 0) {
     throw usageError("Task title is required.");
@@ -789,6 +961,28 @@ function parseTaskBoardInput(
     metadata.dueAt = dueAt;
   }
 
+  if (options.allowClear === true) {
+    if (hasFlag(optionArgs, "--clear-description")) {
+      metadata.description = undefined;
+    }
+
+    if (hasFlag(optionArgs, "--clear-priority")) {
+      metadata.priority = undefined;
+    }
+
+    if (hasFlag(optionArgs, "--clear-tags")) {
+      metadata.tags = undefined;
+    }
+
+    if (hasFlag(optionArgs, "--clear-owner")) {
+      metadata.owner = undefined;
+    }
+
+    if (hasFlag(optionArgs, "--clear-due")) {
+      metadata.dueAt = undefined;
+    }
+  }
+
   return {
     title: title.length === 0 ? undefined : title,
     metadata
@@ -806,6 +1000,21 @@ function parseTaskListFilters(args: string[]): TaskListFilters {
     tag: readOptionalOption(args, "--tag")?.trim(),
     priority: parseTaskPriority(readOptionalOption(args, "--priority")),
     search: readOptionalOption(args, "--search")?.trim().toLowerCase()
+  };
+}
+
+function parseTaskBoardViewOptions(args: string[]): TaskBoardViewOptions {
+  assertKnownOptions(args, new Set(["--status", "--owner", "--tag", "--priority", "--search", "--with-roles"]));
+
+  return {
+    filters: {
+      status: parseTaskStatus(readOptionalOption(args, "--status")),
+      owner: readOptionalOption(args, "--owner")?.trim(),
+      tag: readOptionalOption(args, "--tag")?.trim(),
+      priority: parseTaskPriority(readOptionalOption(args, "--priority")),
+      search: readOptionalOption(args, "--search")?.trim().toLowerCase()
+    },
+    withRoles: hasFlag(args, "--with-roles")
   };
 }
 
@@ -839,7 +1048,7 @@ function renderTaskListRow(task: Task): string {
   return `${task.id}\t${task.status}\t${task.title}${metadata.length === 0 ? "" : `\t${metadata}`}`;
 }
 
-function renderTaskBoard(tasks: Task[]): string {
+function renderTaskBoard(tasks: Task[], store: TaskStore, withRoles: boolean): string {
   const groups: Array<{ status: TaskStatus; title: string }> = [
     { status: "open", title: "Open" },
     { status: "active", title: "Active" },
@@ -853,16 +1062,35 @@ function renderTaskBoard(tasks: Task[]): string {
       return [group.title, "  No tasks."];
     }
 
-    return [group.title, ...groupedTasks.map(renderTaskBoardRow)];
+    return [group.title, ...groupedTasks.map((task) => renderTaskBoardRow(task, store, withRoles))];
   });
 
   return `${lines.join("\n")}\n`;
 }
 
-function renderTaskBoardRow(task: Task): string {
-  const metadata = renderTaskMetadataSummary(task);
+function renderTaskBoardRow(task: Task, store: TaskStore, withRoles: boolean): string {
+  const summaries = [
+    renderTaskMetadataSummary(task),
+    withRoles ? renderTaskRoleSummary(store.listRoles(task.id)) : ""
+  ].filter((summary) => summary.length > 0);
 
-  return `  ${task.id}\t${task.title}${metadata.length === 0 ? "" : `\t${metadata}`}`;
+  return `  ${task.id}\t${task.title}${summaries.length === 0 ? "" : `\t${summaries.join(" ")}`}`;
+}
+
+function renderTaskRoleSummary(roles: Role[]): string {
+  if (roles.length === 0) {
+    return "roles none";
+  }
+
+  const counts = roles.reduce<Record<string, number>>((result, role) => {
+    result[role.status] = (result[role.status] ?? 0) + 1;
+    return result;
+  }, {});
+
+  return `roles ${["idle", "running", "detached", "exited", "failed"]
+    .filter((status) => counts[status] !== undefined)
+    .map((status) => `${status}=${counts[status]}`)
+    .join(" ")}`;
 }
 
 function renderTaskMetadataLines(task: Task): string[] {
@@ -994,17 +1222,21 @@ function assertDueAt(value: string): void {
 export function taskUsage(): string {
   return `Task commands:
   taskmux task create <title> [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
-  taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
+  taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD] [--clear-description] [--clear-priority] [--clear-tags] [--clear-owner] [--clear-due]
   taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
-  taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
+  taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>] [--with-roles]
   taskmux task show <task-id>
   taskmux task start <task-id>
   taskmux task done <task-id>
   taskmux task archive <task-id>
   taskmux task reopen <task-id>
+  taskmux task delete <task-id>
+  taskmux task restore <task-id>
   taskmux task open <task-id>
   taskmux task context <task-id> [--format text|json] [--include-transcripts]
   taskmux task assign <task-id> <role> --agent <agent> --workspace <path>
+  taskmux task role update <task-id> <role> [--agent <agent>] [--workspace <path>]
+  taskmux task role rename <task-id> <role> <new-role>
   taskmux task roles <task-id>
   taskmux task enter <task-id> <role>
   taskmux task tail <task-id> <role>

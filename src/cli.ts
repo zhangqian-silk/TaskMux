@@ -28,17 +28,21 @@ Usage:
   taskmux runner show <runner-id>
   taskmux runner remove <runner-id>
   taskmux task create <title> [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
-  taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
+  taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD] [--clear-description] [--clear-priority] [--clear-tags] [--clear-owner] [--clear-due]
   taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
-  taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
+  taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>] [--with-roles]
   taskmux task show <task-id>
   taskmux task start <task-id>
   taskmux task done <task-id>
   taskmux task archive <task-id>
   taskmux task reopen <task-id>
+  taskmux task delete <task-id>
+  taskmux task restore <task-id>
   taskmux task shell <task-id>
   taskmux task context <task-id> [--format text|json] [--include-transcripts]
   taskmux task assign <task-id> <role> --agent <agent> --workspace <path>
+  taskmux task role update <task-id> <role> [--agent <agent>] [--workspace <path>]
+  taskmux task role rename <task-id> <role> <new-role>
   taskmux task roles <task-id>
   taskmux task enter <task-id> <role>
   taskmux task tail <task-id> <role>

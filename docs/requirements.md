@@ -51,18 +51,22 @@ TaskMux currently provides:
 - `taskmux runner show <runner-id>` shows one runner definition
 - `taskmux runner remove <runner-id>` removes a custom runner definition
 - `taskmux task create <title> [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]` creates a local task with status `open` and optional task board metadata
-- `taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]` updates task board metadata
+- `taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD] [--clear-description] [--clear-priority] [--clear-tags] [--clear-owner] [--clear-due]` updates or clears task board metadata
 - `taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]` lists local tasks in id order with optional filters
-- `taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]` renders local tasks grouped by lifecycle status with optional filters
+- `taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>] [--with-roles]` renders local tasks grouped by lifecycle status with optional filters and role status counts
 - `taskmux task show <task-id>` shows one task by id
 - `taskmux task start <task-id>` updates a task to status `active`
 - `taskmux task done <task-id>` updates a task to status `done`
 - `taskmux task archive <task-id>` updates a task to status `archived`
 - `taskmux task reopen <task-id>` updates a task to status `open`
+- `taskmux task delete <task-id>` moves a task into local trash
+- `taskmux task restore <task-id>` restores a deleted task from local trash
 - `taskmux task open <task-id>` shows a task context summary for outer-shell workflows
 - `taskmux task context <task-id> [--format text|json] [--include-transcripts]` renders a task handoff snapshot across metadata, roles, comments, events, and optional stored role transcripts
 - `taskmux task shell <task-id>` opens an interactive task control shell
 - `taskmux task assign <task-id> <role> --agent <agent> --workspace <path>` assigns a role to an existing task with status `idle`
+- `taskmux task role update <task-id> <role> [--agent <agent>] [--workspace <path>]` updates a role's runner contract or workspace
+- `taskmux task role rename <task-id> <role> <new-role>` renames a role and attempts to rename the matching tmux window
 - `taskmux task roles <task-id>` lists roles assigned to a task
 - `taskmux task enter <task-id> <role>` creates or reuses the task tmux session and role tmux window, then attaches to the role
 - `taskmux task tail <task-id> <role>` reads recent role output from tmux capture-pane
@@ -127,6 +131,7 @@ TaskMux supports built-in and custom runner ids.
 - Custom runners are stored locally and are task-independent.
 - A custom runner defines a command, ordered args, and environment variables.
 - `task assign --agent <runner-id>` resolves the runner id before writing role state.
+- `task role update --agent <runner-id>` resolves the runner id and overwrites that role's stored command, args, env, and agent id.
 - A role stores the resolved runner command, args, and env so later `enter` and `restart` use the same execution contract even if the runner definition changes.
 - Built-in runners cannot be removed or replaced by custom runner definitions.
 
@@ -143,6 +148,9 @@ Suggested layout:
   schema.json
   backups/
     backup-<timestamp>/
+  trash/
+    tasks/
+      task-42/
   tasks/
     task-42/
       info.json
@@ -179,13 +187,13 @@ Task and role user-editable labels are isolated from runtime state:
 - Users may edit `info.json` directly; TaskMux reads the edited title or role name on the next command.
 - Runtime records containing inline task title or role name are invalid in the current schema.
 
-Task priorities are `low`, `medium`, `high`, and `urgent`. Due dates use `YYYY-MM-DD`. `task list` filters by status, owner, tag, priority, and case-insensitive search across title, description, owner, priority, due date, and tags. `task board` uses the same filters and groups matching tasks under `open`, `active`, `done`, and `archived`.
+Task priorities are `low`, `medium`, `high`, and `urgent`. Due dates use `YYYY-MM-DD`. `task update` can clear optional metadata fields with the `--clear-*` flags. `task list` filters by status, owner, tag, priority, and case-insensitive search across title, description, owner, priority, due date, and tags. `task board` uses the same filters and groups matching tasks under `open`, `active`, `done`, and `archived`; `--with-roles` appends stored role status counts.
 
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 
 Custom runner records live under `runners/<runner-id>/runner.json`.
 
-Role runtime records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped and resolved from `info.json`. Reassigning an existing role overwrites that role's current agent, command, args, env, and workspace while preserving the task identity.
+Role runtime records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are task-scoped and resolved from `info.json`. Reassigning an existing role overwrites that role's current agent, command, args, env, and workspace while preserving the task identity. `task role update` changes the same runtime contract without changing the role name. `task role rename` updates `info.json` and attempts `tmux rename-window` for the current role target; tmux rename failures do not block local metadata updates when the window is absent.
 
 Role transcripts live under `tasks/<task-id>/roles/<role>/transcript.log` after `task transcript` captures current tmux output.
 
@@ -193,7 +201,9 @@ Role transcripts live under `tasks/<task-id>/roles/<role>/transcript.log` after 
 
 Task comments live in `tasks/<task-id>/comments.jsonl`. Each line stores one comment object with `schemaVersion`, `id`, `body`, and `createdAt`.
 
-Task events live in `tasks/<task-id>/events.jsonl`. Each line stores one event object with `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. Event ids use `event-<number>` within the task. The first event set records `task.created`, `task.updated`, `task.status_changed`, `role.assigned`, and `comment.added`.
+Deleted tasks are moved to `trash/tasks/<task-id>` and are excluded from active task list, board, show, role, comment, event, and context commands. `task restore` moves the task directory back into `tasks/<task-id>` and preserves comments, events, roles, and transcripts.
+
+Task events live in `tasks/<task-id>/events.jsonl`. Each line stores one event object with `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. Event ids use `event-<number>` within the task. The first event set records `task.created`, `task.updated`, `task.deleted`, `task.restored`, `task.status_changed`, `role.assigned`, `role.updated`, `role.renamed`, and `comment.added`.
 
 ## Error Model
 
