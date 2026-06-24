@@ -245,6 +245,150 @@ test("reads edited task info from the user-editable info file", () => {
   assert.match(listOutput, /task-1\s+open\s+Edited task title/);
 });
 
+test("creates tasks with task board metadata", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  const output = runTaskmux(
+    [
+      "task",
+      "create",
+      "Refactor login page",
+      "--description",
+      "Update the auth form",
+      "--priority",
+      "high",
+      "--tag",
+      "frontend",
+      "--tag",
+      "auth",
+      "--owner",
+      "alex",
+      "--due",
+      "2026-07-01"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  const taskInfo = JSON.parse(readFileSync(join(home, "tasks", "task-1", "info.json"), "utf8"));
+  const showOutput = runTaskmux(["task", "show", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Created task task-1: Refactor login page/);
+  assert.equal(taskInfo.description, "Update the auth form");
+  assert.equal(taskInfo.priority, "high");
+  assert.deepEqual(taskInfo.tags, ["frontend", "auth"]);
+  assert.equal(taskInfo.owner, "alex");
+  assert.equal(taskInfo.dueAt, "2026-07-01");
+  assert.match(showOutput, /Description: Update the auth form/);
+  assert.match(showOutput, /Priority: high/);
+  assert.match(showOutput, /Tags: frontend, auth/);
+  assert.match(showOutput, /Owner: alex/);
+  assert.match(showOutput, /Due: 2026-07-01/);
+});
+
+test("updates task board metadata", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(
+    [
+      "task",
+      "update",
+      "task-1",
+      "--title",
+      "Refactor checkout page",
+      "--description",
+      "Coordinate UI and validation work",
+      "--priority",
+      "urgent",
+      "--tag",
+      "checkout",
+      "--tag",
+      "blocked",
+      "--owner",
+      "maya",
+      "--due",
+      "2026-08-02"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  const showOutput = runTaskmux(["task", "show", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Updated task task-1/);
+  assert.match(showOutput, /Title: Refactor checkout page/);
+  assert.match(showOutput, /Description: Coordinate UI and validation work/);
+  assert.match(showOutput, /Priority: urgent/);
+  assert.match(showOutput, /Tags: checkout, blocked/);
+  assert.match(showOutput, /Owner: maya/);
+  assert.match(showOutput, /Due: 2026-08-02/);
+});
+
+test("filters and searches tasks on board metadata", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(
+    ["task", "create", "Refactor login page", "--tag", "frontend", "--owner", "alex", "--priority", "high"],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(
+    ["task", "create", "Write release docs", "--tag", "docs", "--owner", "maya", "--priority", "medium"],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(
+    ["task", "create", "Fix auth token bug", "--tag", "backend", "--owner", "alex", "--priority", "urgent"],
+    { TASKMUX_HOME: home }
+  );
+
+  const ownerOutput = runTaskmux(["task", "list", "--owner", "alex"], { TASKMUX_HOME: home });
+  const tagOutput = runTaskmux(["task", "list", "--tag", "docs"], { TASKMUX_HOME: home });
+  const priorityOutput = runTaskmux(["task", "list", "--priority", "urgent"], { TASKMUX_HOME: home });
+  const searchOutput = runTaskmux(["task", "list", "--search", "release"], { TASKMUX_HOME: home });
+
+  assert.match(ownerOutput, /Refactor login page/);
+  assert.match(ownerOutput, /Fix auth token bug/);
+  assert.doesNotMatch(ownerOutput, /Write release docs/);
+  assert.match(tagOutput, /Write release docs/);
+  assert.doesNotMatch(tagOutput, /Refactor login page/);
+  assert.match(priorityOutput, /Fix auth token bug/);
+  assert.doesNotMatch(priorityOutput, /Refactor login page/);
+  assert.match(searchOutput, /Write release docs/);
+  assert.doesNotMatch(searchOutput, /Fix auth token bug/);
+});
+
+test("renders a grouped task board with metadata filters", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(
+    ["task", "create", "Plan checkout work", "--tag", "frontend", "--owner", "alex", "--priority", "high"],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(
+    ["task", "create", "Implement checkout work", "--tag", "frontend", "--owner", "alex", "--priority", "urgent"],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(
+    ["task", "create", "Write rollout notes", "--tag", "docs", "--owner", "maya", "--priority", "medium"],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(["task", "start", "task-2"], { TASKMUX_HOME: home });
+  runTaskmux(["task", "done", "task-3"], { TASKMUX_HOME: home });
+
+  const output = runTaskmux(["task", "board", "--owner", "alex"], { TASKMUX_HOME: home });
+
+  assert.match(output, /Open/);
+  assert.match(output, /task-1\s+Plan checkout work\s+priority=high owner=alex tags=frontend/);
+  assert.match(output, /Active/);
+  assert.match(output, /task-2\s+Implement checkout work\s+priority=urgent owner=alex tags=frontend/);
+  assert.match(output, /Done/);
+  assert.doesNotMatch(output, /Write rollout notes/);
+  assert.match(output, /Archived/);
+});
+
 test("rejects task records with inline titles", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
   const taskDir = join(home, "tasks", "task-1");
@@ -1708,12 +1852,15 @@ test("runs an interactive task shell", async () => {
 
   const output = await runTaskmuxInteractive(
     ["task", "shell", "task-1"],
-    "summary\nroles\ncomment hello from shell\ncomments\nevents\nexit\n",
+    "summary\nupdate --priority high --owner shell-owner\nsummary\nroles\ncomment hello from shell\ncomments\nevents\nexit\n",
     { TASKMUX_HOME: home }
   );
 
   assert.match(output, /Task: task-1/);
   assert.match(output, /tb task-1>/);
+  assert.match(output, /Updated task task-1/);
+  assert.match(output, /Priority: high/);
+  assert.match(output, /Owner: shell-owner/);
   assert.match(output, /rd\s+codex\s+idle\s+\/tmp\/project-a/);
   assert.match(output, /Added comment to task-1: hello from shell/);
   assert.match(output, /hello from shell/);

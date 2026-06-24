@@ -22,6 +22,7 @@ The current event stream records:
 | Event Type | Trigger | Payload |
 | --- | --- | --- |
 | `task.created` | `task create` succeeds | `title` |
+| `task.updated` | `task update` succeeds | `title` |
 | `task.status_changed` | `task start`, `task done`, `task archive`, or `task reopen` succeeds | `from`, `to` |
 | `role.assigned` | `task assign` succeeds | `role`, `agent` |
 | `comment.added` | `task comment` succeeds | `comment` |
@@ -114,9 +115,18 @@ Task info record:
 ```json
 {
   "schemaVersion": 1,
-  "title": "Refactor login page"
+  "title": "Refactor login page",
+  "description": "Update the auth form",
+  "priority": "high",
+  "tags": ["frontend", "auth"],
+  "owner": "alex",
+  "dueAt": "2026-07-01"
 }
 ```
+
+Task board metadata fields are stored in `info.json` so users can edit them directly. `description`, `priority`, `tags`, `owner`, and `dueAt` are optional. Priority values are `low`, `medium`, `high`, and `urgent`; due dates use `YYYY-MM-DD`.
+
+`task list` and `task board` share the same metadata filter model: status, owner, tag, priority, and case-insensitive search across title, description, owner, priority, due date, and tags. `task board` groups the filtered result set by lifecycle status.
 
 Task runtime record:
 

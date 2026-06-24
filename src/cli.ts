@@ -27,8 +27,10 @@ Usage:
   taskmux runner list
   taskmux runner show <runner-id>
   taskmux runner remove <runner-id>
-  taskmux task create <title>
-  taskmux task list
+  taskmux task create <title> [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
+  taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
+  taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
+  taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
   taskmux task show <task-id>
   taskmux task start <task-id>
   taskmux task done <task-id>

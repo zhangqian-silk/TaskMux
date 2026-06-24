@@ -3,9 +3,9 @@ import { roleNotFound, runtimeError, taskNotFound, usageError } from "../errors/
 import { createTaskEvent } from "../event/taskEvent.js";
 import { createRole, updateRoleStatus } from "../role/role.js";
 import { resolveRunner, supportedRunnerIds } from "../runner/runnerRegistry.js";
-import { createTask, updateTaskStatus } from "../task/task.js";
+import { createTask, updateTaskMetadata, updateTaskStatus } from "../task/task.js";
 import type { TaskStore } from "../storage/taskStore.js";
-import type { TaskStatus } from "../task/task.js";
+import type { Task, TaskMetadata, TaskPriority, TaskStatus } from "../task/task.js";
 import type { TmuxManager } from "../tmux/tmuxManager.js";
 
 export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
@@ -15,9 +15,13 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
     case "create":
       return createTaskCommand(rest, store);
     case "list":
-      return listTaskCommand(store);
+      return listTaskCommand(rest, store);
+    case "board":
+      return boardTaskCommand(rest, store);
     case "show":
       return showTaskCommand(rest, store);
+    case "update":
+      return updateTaskCommand(rest, store);
     case "start":
       return updateTaskStatusCommand(rest, store, "active", "Started");
     case "done":
@@ -66,27 +70,36 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
 }
 
 function createTaskCommand(args: string[], store: TaskStore): string {
-  const title = args.join(" ").trim();
+  const input = parseTaskBoardInput(args, { requireTitle: true });
+  const title = input.title ?? "";
 
   if (title.length === 0) {
     throw usageError("Task title is required.");
   }
 
-  const task = createTask(store.nextTaskId(), title, new Date());
+  const task = createTask(store.nextTaskId(), title, new Date(), input.metadata);
   store.saveTask(task);
   recordTaskEvent(store, task.id, "task.created", { title: task.title });
 
   return `Created task ${task.id}: ${task.title}\n`;
 }
 
-function listTaskCommand(store: TaskStore): string {
-  const tasks = store.listTasks();
+function listTaskCommand(args: string[], store: TaskStore): string {
+  const filters = parseTaskListFilters(args);
+  const tasks = store.listTasks().filter((task) => taskMatchesFilters(task, filters));
 
   if (tasks.length === 0) {
     return "No tasks found.\n";
   }
 
-  return `${tasks.map((task) => `${task.id}\t${task.status}\t${task.title}`).join("\n")}\n`;
+  return `${tasks.map(renderTaskListRow).join("\n")}\n`;
+}
+
+function boardTaskCommand(args: string[], store: TaskStore): string {
+  const filters = parseTaskListFilters(args);
+  const tasks = store.listTasks().filter((task) => taskMatchesFilters(task, filters));
+
+  return renderTaskBoard(tasks);
 }
 
 function showTaskCommand(args: string[], store: TaskStore): string {
@@ -106,9 +119,37 @@ function showTaskCommand(args: string[], store: TaskStore): string {
     `Task: ${task.id}`,
     `Title: ${task.title}`,
     `Status: ${task.status}`,
+    ...renderTaskMetadataLines(task),
     `Created: ${task.createdAt}`,
     `Updated: ${task.updatedAt}`
   ].join("\n").concat("\n");
+}
+
+function updateTaskCommand(args: string[], store: TaskStore): string {
+  const [id, ...rest] = args;
+
+  if (id === undefined || id.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  const task = store.getTask(id);
+
+  if (task === null) {
+    throw taskNotFound(id);
+  }
+
+  const input = parseTaskBoardInput(rest, { requireTitle: false, allowTitleOption: true });
+  const patch = input.title === undefined ? input.metadata : { title: input.title, ...input.metadata };
+
+  if (Object.keys(patch).length === 0) {
+    throw usageError("At least one task update option is required.");
+  }
+
+  const updatedTask = updateTaskMetadata(task, patch, new Date());
+  store.saveTask(updatedTask);
+  recordTaskEvent(store, updatedTask.id, "task.updated", { title: updatedTask.title });
+
+  return `Updated task ${updatedTask.id}\n`;
 }
 
 function updateTaskStatusCommand(
@@ -156,6 +197,7 @@ function openTaskCommand(args: string[], store: TaskStore): string {
     `Task: ${task.id}`,
     `Title: ${task.title}`,
     `Status: ${task.status}`,
+    ...renderTaskMetadataLines(task),
     `Roles: ${store.listRoles(task.id).length}`,
     `Comments: ${store.listComments(task.id).length}`,
     `Next: taskmux task enter ${task.id} <role>`
@@ -551,10 +593,266 @@ function readOption(args: string[], name: string): string {
   return args[index + 1];
 }
 
+type TaskBoardInput = {
+  title?: string;
+  metadata: TaskMetadata;
+};
+
+type TaskListFilters = {
+  status?: TaskStatus;
+  owner?: string;
+  tag?: string;
+  priority?: TaskPriority;
+  search?: string;
+};
+
+function parseTaskBoardInput(
+  args: string[],
+  options: { requireTitle: boolean; allowTitleOption?: boolean }
+): TaskBoardInput {
+  const optionStart = args.findIndex((arg) => arg.startsWith("--"));
+  const titleParts = optionStart === -1 ? args : args.slice(0, optionStart);
+  const optionArgs = optionStart === -1 ? [] : args.slice(optionStart);
+  const titleFromOption = options.allowTitleOption === true ? readOptionalOption(optionArgs, "--title")?.trim() : undefined;
+  const title = (titleFromOption ?? titleParts.join(" ")).trim();
+  const metadata: TaskMetadata = {};
+  const description = readOptionalOption(optionArgs, "--description")?.trim();
+  const priority = parseTaskPriority(readOptionalOption(optionArgs, "--priority"));
+  const tags = readRepeatedOption(optionArgs, "--tag").map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+  const owner = readOptionalOption(optionArgs, "--owner")?.trim();
+  const dueAt = readOptionalOption(optionArgs, "--due")?.trim();
+
+  assertKnownOptions(optionArgs, new Set(["--title", "--description", "--priority", "--tag", "--owner", "--due"]));
+
+  if (options.requireTitle && title.length === 0) {
+    throw usageError("Task title is required.");
+  }
+
+  if (description !== undefined && description.length > 0) {
+    metadata.description = description;
+  }
+
+  if (priority !== undefined) {
+    metadata.priority = priority;
+  }
+
+  if (tags.length > 0) {
+    metadata.tags = tags;
+  }
+
+  if (owner !== undefined && owner.length > 0) {
+    metadata.owner = owner;
+  }
+
+  if (dueAt !== undefined && dueAt.length > 0) {
+    assertDueAt(dueAt);
+    metadata.dueAt = dueAt;
+  }
+
+  return {
+    title: title.length === 0 ? undefined : title,
+    metadata
+  };
+}
+
+function parseTaskListFilters(args: string[]): TaskListFilters {
+  assertKnownOptions(args, new Set(["--status", "--owner", "--tag", "--priority", "--search"]));
+
+  const status = parseTaskStatus(readOptionalOption(args, "--status"));
+
+  return {
+    status,
+    owner: readOptionalOption(args, "--owner")?.trim(),
+    tag: readOptionalOption(args, "--tag")?.trim(),
+    priority: parseTaskPriority(readOptionalOption(args, "--priority")),
+    search: readOptionalOption(args, "--search")?.trim().toLowerCase()
+  };
+}
+
+function taskMatchesFilters(task: Task, filters: TaskListFilters): boolean {
+  if (filters.status !== undefined && task.status !== filters.status) {
+    return false;
+  }
+
+  if (filters.owner !== undefined && task.owner !== filters.owner) {
+    return false;
+  }
+
+  if (filters.tag !== undefined && !(task.tags ?? []).includes(filters.tag)) {
+    return false;
+  }
+
+  if (filters.priority !== undefined && task.priority !== filters.priority) {
+    return false;
+  }
+
+  if (filters.search !== undefined && !taskSearchText(task).includes(filters.search)) {
+    return false;
+  }
+
+  return true;
+}
+
+function renderTaskListRow(task: Task): string {
+  const metadata = renderTaskMetadataSummary(task);
+
+  return `${task.id}\t${task.status}\t${task.title}${metadata.length === 0 ? "" : `\t${metadata}`}`;
+}
+
+function renderTaskBoard(tasks: Task[]): string {
+  const groups: Array<{ status: TaskStatus; title: string }> = [
+    { status: "open", title: "Open" },
+    { status: "active", title: "Active" },
+    { status: "done", title: "Done" },
+    { status: "archived", title: "Archived" }
+  ];
+  const lines = groups.flatMap((group) => {
+    const groupedTasks = tasks.filter((task) => task.status === group.status);
+
+    if (groupedTasks.length === 0) {
+      return [group.title, "  No tasks."];
+    }
+
+    return [group.title, ...groupedTasks.map(renderTaskBoardRow)];
+  });
+
+  return `${lines.join("\n")}\n`;
+}
+
+function renderTaskBoardRow(task: Task): string {
+  const metadata = renderTaskMetadataSummary(task);
+
+  return `  ${task.id}\t${task.title}${metadata.length === 0 ? "" : `\t${metadata}`}`;
+}
+
+function renderTaskMetadataLines(task: Task): string[] {
+  const lines: string[] = [];
+
+  if (task.description !== undefined) {
+    lines.push(`Description: ${task.description}`);
+  }
+
+  if (task.priority !== undefined) {
+    lines.push(`Priority: ${task.priority}`);
+  }
+
+  if (task.tags !== undefined && task.tags.length > 0) {
+    lines.push(`Tags: ${task.tags.join(", ")}`);
+  }
+
+  if (task.owner !== undefined) {
+    lines.push(`Owner: ${task.owner}`);
+  }
+
+  if (task.dueAt !== undefined) {
+    lines.push(`Due: ${task.dueAt}`);
+  }
+
+  return lines;
+}
+
+function renderTaskMetadataSummary(task: Task): string {
+  return [
+    task.priority === undefined ? null : `priority=${task.priority}`,
+    task.owner === undefined ? null : `owner=${task.owner}`,
+    task.tags === undefined || task.tags.length === 0 ? null : `tags=${task.tags.join(",")}`,
+    task.dueAt === undefined ? null : `due=${task.dueAt}`
+  ]
+    .filter((item): item is string => item !== null)
+    .join(" ");
+}
+
+function taskSearchText(task: Task): string {
+  return [
+    task.title,
+    task.description,
+    task.owner,
+    task.priority,
+    task.dueAt,
+    ...(task.tags ?? [])
+  ]
+    .filter((value): value is string => value !== undefined)
+    .join(" ")
+    .toLowerCase();
+}
+
+function readOptionalOption(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+
+  if (index === -1) {
+    return undefined;
+  }
+
+  if (args[index + 1] === undefined || args[index + 1].startsWith("--")) {
+    throw usageError(`${name} is required.`);
+  }
+
+  return args[index + 1];
+}
+
+function readRepeatedOption(args: string[], name: string): string[] {
+  const values: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== name) {
+      continue;
+    }
+
+    if (args[index + 1] === undefined || args[index + 1].startsWith("--")) {
+      throw usageError(`${name} is required.`);
+    }
+
+    values.push(args[index + 1]);
+    index += 1;
+  }
+
+  return values;
+}
+
+function assertKnownOptions(args: string[], knownOptions: Set<string>): void {
+  for (const arg of args) {
+    if (arg.startsWith("--") && !knownOptions.has(arg)) {
+      throw usageError(`Unsupported option: ${arg}`);
+    }
+  }
+}
+
+function parseTaskPriority(value: string | undefined): TaskPriority | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!["low", "medium", "high", "urgent"].includes(value)) {
+    throw usageError("--priority must be one of low, medium, high, urgent.");
+  }
+
+  return value as TaskPriority;
+}
+
+function parseTaskStatus(value: string | undefined): TaskStatus | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!["open", "active", "done", "archived"].includes(value)) {
+    throw usageError("--status must be one of open, active, done, archived.");
+  }
+
+  return value as TaskStatus;
+}
+
+function assertDueAt(value: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw usageError("--due must use YYYY-MM-DD.");
+  }
+}
+
 export function taskUsage(): string {
   return `Task commands:
-  taskmux task create <title>
-  taskmux task list
+  taskmux task create <title> [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
+  taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
+  taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
+  taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
   taskmux task show <task-id>
   taskmux task start <task-id>
   taskmux task done <task-id>
