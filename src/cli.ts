@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { runTaskCommand } from "./commands/taskCommands.js";
+import { runMigrateCommand } from "./commands/migrationCommands.js";
 import { runRunnerCommand } from "./commands/runnerCommands.js";
 import { runDoctor } from "./doctor/doctor.js";
 import { CliError, usageError } from "./errors/cliError.js";
 import { runTaskShell } from "./shell/taskShell.js";
 import { FileTaskStore, resolveTaskmuxHome } from "./storage/taskStore.js";
+import { ensureStorageSchema, inspectStorageSchema, type StorageSchemaState } from "./storage/storageSchema.js";
 import { NodeCommandRunner } from "./tmux/commandRunner.js";
 import { TmuxManager } from "./tmux/tmuxManager.js";
 
@@ -19,6 +21,7 @@ Usage:
   taskmux --help
   taskmux --version
   taskmux doctor
+  taskmux migrate
   taskmux runner add <runner-id> --command <command> [--arg <arg> ...] [--env KEY=value ...]
   taskmux runner list
   taskmux runner show <runner-id>
@@ -65,25 +68,37 @@ main().catch((error: unknown) => {
 });
 
 async function main(): Promise<void> {
+  const rootDir = resolveTaskmuxHome(process.env);
+
   if (args.includes("--version") || args.includes("-v")) {
     console.log(VERSION);
     return;
   }
 
   if (args[0] === "doctor") {
-    const store = new FileTaskStore(resolveTaskmuxHome(process.env));
-    console.log(runDoctor(process.env, new NodeCommandRunner(), store.listCustomRunners()).trimEnd());
+    const storageSchema = inspectStorageSchema(rootDir);
+    const store = new FileTaskStore(rootDir);
+    const customRunners = canReadStore(storageSchema) ? store.listCustomRunners() : [];
+
+    console.log(runDoctor(process.env, new NodeCommandRunner(), customRunners, storageSchema).trimEnd());
+    return;
+  }
+
+  if (args[0] === "migrate") {
+    console.log(runMigrateCommand(rootDir).trimEnd());
     return;
   }
 
   if (args[0] === "runner") {
-    const store = new FileTaskStore(resolveTaskmuxHome(process.env));
+    ensureStorageSchema(rootDir);
+    const store = new FileTaskStore(rootDir);
     console.log(runRunnerCommand(args.slice(1), store).trimEnd());
     return;
   }
 
   if (args[0] === "task") {
-    const store = new FileTaskStore(resolveTaskmuxHome(process.env));
+    ensureStorageSchema(rootDir);
+    const store = new FileTaskStore(rootDir);
     const tmux = new TmuxManager(process.env.TASKMUX_TMUX_BIN ?? "tmux", new NodeCommandRunner());
 
     if (args[1] === "shell") {
@@ -102,4 +117,8 @@ async function main(): Promise<void> {
   }
 
   console.log(usage);
+}
+
+function canReadStore(state: StorageSchemaState): boolean {
+  return state.status === "current" || state.status === "uninitialized";
 }

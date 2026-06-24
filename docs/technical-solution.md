@@ -155,6 +155,7 @@ The current storage implementation uses:
 
 ```text
 TASKMUX_HOME or ~/.taskmux
+  schema.json
   tasks/
     task-1/
       info.json
@@ -162,7 +163,7 @@ TASKMUX_HOME or ~/.taskmux
       events.jsonl
 ```
 
-`info.json` stores the user-editable task title. `task.json` stores runtime state: `schemaVersion`, `id`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
+`schema.json` stores the global storage schema manifest: `schemaVersion`, `storageVersion`, and `updatedAt`. `info.json` stores the user-editable task title. `task.json` stores runtime state: `schemaVersion`, `id`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
 
 Role assignment uses the same store boundary:
 
@@ -217,7 +218,13 @@ Storage reads validate JSON records before returning domain objects:
 
 Invalid records raise `DATA_ERROR` instead of being skipped silently.
 
-`src/storage/taskRecordCodec.ts` owns task and role record encoding, decoding, and composition. `FileTaskStore` only resolves file paths and raw file IO for these records. Future backward-compatible readers or migration rules should be added behind the codec boundary instead of being distributed across store methods.
+`src/storage/taskRecordCodec.ts` owns task and role record encoding, decoding, and composition for the current storage schema. `FileTaskStore` only resolves file paths and raw file IO for these records. Cross-version upgrade handling belongs to the storage schema and migration boundary, not to fallback branches inside business stores.
+
+`src/storage/storageSchema.ts` owns the global storage schema manifest, startup preflight, and migration runner. Normal `task` and `runner` commands call the preflight before constructing business stores. If storage is outdated, preflight raises `DATA_ERROR` with `taskmux migrate` guidance; it does not let business commands read older layouts.
+
+Storage migrations live under `src/storage/migrations/` and are registered by the migration runner. Each migration handles one version step. `taskmux migrate` runs the required steps in order and writes the latest `schema.json` only after all required migrations complete.
+
+`doctor` calls the storage schema inspector without upgrading storage. It reports `ok`, `upgrade-required`, `unsupported`, or `invalid` and keeps upgrade execution behind the explicit `taskmux migrate` command.
 
 ## Error Handling
 

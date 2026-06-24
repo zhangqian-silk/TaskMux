@@ -1,11 +1,13 @@
 import type { CustomRunner } from "../runner/runner.js";
 import { resolveTaskmuxHome } from "../storage/taskStore.js";
+import { inspectStorageSchema, type StorageSchemaState } from "../storage/storageSchema.js";
 import type { CommandRunner } from "../tmux/commandRunner.js";
 
 export function runDoctor(
   env: NodeJS.ProcessEnv,
   runner: CommandRunner,
-  customRunners: CustomRunner[] = []
+  customRunners: CustomRunner[] = [],
+  storageSchema: StorageSchemaState = inspectStorageSchema(resolveTaskmuxHome(env))
 ): string {
   const checks = [
     checkNode(),
@@ -19,7 +21,8 @@ export function runDoctor(
       name: "taskmux home",
       status: "ok",
       detail: resolveTaskmuxHome(env)
-    }
+    },
+    checkStorageSchema(storageSchema)
   ];
 
   return `TaskMux doctor\n${checks
@@ -29,7 +32,7 @@ export function runDoctor(
 
 type DoctorCheck = {
   name: string;
-  status: "ok" | "missing";
+  status: "ok" | "missing" | "upgrade-required" | "unsupported" | "invalid";
   detail: string;
 };
 
@@ -64,4 +67,39 @@ function checkExecutable(
 
 function firstLine(output: string): string {
   return output.trim().split("\n")[0] ?? "";
+}
+
+function checkStorageSchema(state: StorageSchemaState): DoctorCheck {
+  switch (state.status) {
+    case "uninitialized":
+      return {
+        name: "storage schema",
+        status: "ok",
+        detail: `latest=${state.latestVersion}`
+      };
+    case "current":
+      return {
+        name: "storage schema",
+        status: "ok",
+        detail: `current=${state.currentVersion} latest=${state.latestVersion}`
+      };
+    case "upgrade-required":
+      return {
+        name: "storage schema",
+        status: "upgrade-required",
+        detail: `current=${state.currentVersion} latest=${state.latestVersion}; run taskmux migrate`
+      };
+    case "unsupported":
+      return {
+        name: "storage schema",
+        status: "unsupported",
+        detail: `current=${state.currentVersion} latest=${state.latestVersion}`
+      };
+    case "invalid":
+      return {
+        name: "storage schema",
+        status: "invalid",
+        detail: state.detail
+      };
+  }
 }
