@@ -917,6 +917,74 @@ test("adds and lists task comments", () => {
   assert.match(listOutput, /Reviewer should check copy\./);
 });
 
+test("records and lists task event history", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["task", "start", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(["task", "comment", "task-1", "Keep old session compatibility."], {
+    TASKMUX_HOME: home
+  });
+
+  const events = readFileSync(join(home, "tasks", "task-1", "events.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+
+  assert.equal(events[0].schemaVersion, 1);
+  assert.equal(events[0].id, "event-1");
+  assert.equal(events[0].type, "task.created");
+  assert.equal(events[0].payload.title, "Refactor login page");
+  assert.equal(events[1].type, "task.status_changed");
+  assert.deepEqual(events[1].payload, { from: "open", to: "active" });
+  assert.equal(events[2].type, "role.assigned");
+  assert.deepEqual(events[2].payload, { role: "rd", agent: "codex" });
+  assert.equal(events[3].type, "comment.added");
+  assert.deepEqual(events[3].payload, { comment: "comment-1" });
+
+  const output = runTaskmux(["task", "events", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /event-1\s+.+\s+task\.created\s+title=Refactor login page/);
+  assert.match(output, /event-2\s+.+\s+task\.status_changed\s+from=open to=active/);
+  assert.match(output, /event-3\s+.+\s+role\.assigned\s+role=rd agent=codex/);
+  assert.match(output, /event-4\s+.+\s+comment\.added\s+comment=comment-1/);
+});
+
+test("returns a data error exit code for invalid event schema", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+  writeFileSync(join(home, "tasks", "task-1", "events.jsonl"), "{\"schemaVersion\":2}\n");
+
+  const result = runTaskmuxFailure(["task", "events", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Invalid event record: task-1:1/);
+});
+
 test("returns a not found exit code for missing tasks", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
 
@@ -1212,7 +1280,7 @@ test("runs an interactive task shell", async () => {
 
   const output = await runTaskmuxInteractive(
     ["task", "shell", "task-1"],
-    "summary\nroles\ncomment hello from shell\ncomments\nexit\n",
+    "summary\nroles\ncomment hello from shell\ncomments\nevents\nexit\n",
     { TASKMUX_HOME: home }
   );
 
@@ -1221,4 +1289,7 @@ test("runs an interactive task shell", async () => {
   assert.match(output, /rd\s+codex\s+idle\s+\/tmp\/project-a/);
   assert.match(output, /Added comment to task-1: hello from shell/);
   assert.match(output, /hello from shell/);
+  assert.match(output, /task\.created/);
+  assert.match(output, /role\.assigned/);
+  assert.match(output, /comment\.added/);
 });

@@ -24,6 +24,7 @@ TaskMux does not provide team collaboration, remote synchronization, identity ma
 | Tmux Session | The persistent terminal session backing one TaskMux task |
 | Tmux Window | The persistent terminal window backing one role |
 | Transcript | Captured terminal output for inspection without attaching to the role |
+| Event | An append-only local record of task-level mutations |
 
 ## Tmux Mapping
 
@@ -73,6 +74,7 @@ TaskMux currently provides:
 - `taskmux task cleanup <task-id>` refreshes stored role state from tmux and marks stale role windows as `exited`
 - `taskmux task comment <task-id> <body>` appends a comment to a task
 - `taskmux task comments <task-id>` lists comments for a task
+- `taskmux task events <task-id>` lists the local event history for a task
 - `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, and the configured TaskMux home
 
 TaskMux should also provide future commands for:
@@ -137,13 +139,14 @@ Suggested layout:
     task-42/
       task.json
       comments.jsonl
+      events.jsonl
       roles/
         rd/
           role.json
           transcript.log
 ```
 
-Task, role, and comment records are versioned with `schemaVersion: 1`. TaskMux validates loaded records before using them. Invalid JSON, missing required fields, unsupported schema versions, or invalid status values must fail with `DATA_ERROR` rather than being treated as empty state.
+Task, role, comment, and event records are versioned with `schemaVersion: 1`. TaskMux validates loaded records before using them. Invalid JSON, missing required fields, unsupported schema versions, or invalid status values must fail with `DATA_ERROR` rather than being treated as empty state.
 
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 
@@ -154,6 +157,8 @@ Role records live under `tasks/<task-id>/roles/<role>/role.json`. Role names are
 Role transcripts live under `tasks/<task-id>/roles/<role>/transcript.log` after `task transcript` captures current tmux output.
 
 Task comments live in `tasks/<task-id>/comments.jsonl`. Each line stores one comment object with `schemaVersion`, `id`, `body`, and `createdAt`.
+
+Task events live in `tasks/<task-id>/events.jsonl`. Each line stores one event object with `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. Event ids use `event-<number>` within the task. The first event set records `task.created`, `task.status_changed`, `role.assigned`, and `comment.added`.
 
 ## Error Model
 

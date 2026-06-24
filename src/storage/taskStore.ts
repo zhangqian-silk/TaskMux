@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TaskComment } from "../comment/comment.js";
 import { dataError } from "../errors/cliError.js";
+import type { TaskEvent } from "../event/taskEvent.js";
 import type { Role } from "../role/role.js";
 import type { CustomRunner } from "../runner/runner.js";
 import type { Task, TaskStatus } from "../task/task.js";
@@ -18,6 +19,9 @@ export type TaskStore = {
   nextCommentId(taskId: string): string;
   saveComment(taskId: string, comment: TaskComment): void;
   listComments(taskId: string): TaskComment[];
+  nextEventId(taskId: string): string;
+  saveEvent(taskId: string, event: TaskEvent): void;
+  listEvents(taskId: string): TaskEvent[];
   saveTranscript(taskId: string, roleName: string, transcript: string): void;
   saveCustomRunner(runner: CustomRunner): void;
   listCustomRunners(): CustomRunner[];
@@ -127,6 +131,30 @@ export class FileTaskStore implements TaskStore {
     }
   }
 
+  nextEventId(taskId: string): string {
+    return `event-${this.listEvents(taskId).length + 1}`;
+  }
+
+  saveEvent(taskId: string, event: TaskEvent): void {
+    mkdirSync(this.taskDir(taskId), { recursive: true });
+    appendFileSync(this.eventsFile(taskId), `${JSON.stringify(event)}\n`);
+  }
+
+  listEvents(taskId: string): TaskEvent[] {
+    try {
+      return readFileSync(this.eventsFile(taskId), "utf8")
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line, index) => parseEvent(`${taskId}:${index + 1}`, line));
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return [];
+      }
+
+      throw error;
+    }
+  }
+
   saveTranscript(taskId: string, roleName: string, transcript: string): void {
     const roleDir = this.roleDir(taskId, roleName);
     mkdirSync(roleDir, { recursive: true });
@@ -189,6 +217,10 @@ export class FileTaskStore implements TaskStore {
 
   private commentsFile(taskId: string): string {
     return join(this.taskDir(taskId), "comments.jsonl");
+  }
+
+  private eventsFile(taskId: string): string {
+    return join(this.taskDir(taskId), "events.jsonl");
   }
 
   private rolesDir(taskId: string): string {
@@ -293,6 +325,23 @@ function parseComment(id: string, raw: string): TaskComment {
   }
 
   return value as TaskComment;
+}
+
+function parseEvent(id: string, raw: string): TaskEvent {
+  const value = parseJson(raw, `Invalid event record: ${id}`);
+
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.id !== "string" ||
+    typeof value.type !== "string" ||
+    !isStringRecord(value.payload) ||
+    typeof value.createdAt !== "string"
+  ) {
+    throw dataError(`Invalid event record: ${id}`);
+  }
+
+  return value as TaskEvent;
 }
 
 function parseJson(raw: string, message: string): unknown {

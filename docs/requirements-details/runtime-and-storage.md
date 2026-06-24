@@ -13,6 +13,21 @@ Task status is changed through explicit commands:
 
 Each transition updates `task.json` and refreshes `updatedAt`.
 
+## Task Event Log
+
+TaskMux records task-level mutations in `events.jsonl` under the task directory. The log is append-only and local to the configured TaskMux home.
+
+The current event stream records:
+
+| Event Type | Trigger | Payload |
+| --- | --- | --- |
+| `task.created` | `task create` succeeds | `title` |
+| `task.status_changed` | `task start`, `task done`, `task archive`, or `task reopen` succeeds | `from`, `to` |
+| `role.assigned` | `task assign` succeeds | `role`, `agent` |
+| `comment.added` | `task comment` succeeds | `comment` |
+
+`task events <task-id>` lists events in storage order as `event-id`, timestamp, event type, and key-value payload pairs. A task with no event file returns `No events found.` instead of failing.
+
 ## Role Status Detection
 
 `task status <task-id> <role>` is the stable command for checking a role's current execution state.
@@ -67,7 +82,7 @@ CLI errors are structured for automation and shell scripts.
 | 3 | `TASK_NOT_FOUND` | The requested task record does not exist |
 | 3 | `ROLE_NOT_FOUND` | The requested role record does not exist under an existing task |
 | 3 | `RUNNER_NOT_FOUND` | The requested custom or built-in runner id cannot be resolved |
-| 4 | `DATA_ERROR` | Stored JSON cannot be parsed or does not match the active schema |
+| 4 | `DATA_ERROR` | Stored task, role, comment, event, or runner JSON cannot be parsed or does not match the active schema |
 | 5 | `RUNTIME_ERROR` | Unexpected runtime failure |
 
 Non-interactive commands write errors to stderr as `<ERROR_CODE>: <message>` and exit with the mapped code. The interactive task shell prints structured command errors and keeps the shell running.
@@ -115,6 +130,21 @@ Comment record:
   "schemaVersion": 1,
   "id": "comment-1",
   "body": "Keep old session compatibility.",
+  "createdAt": "2026-06-23T00:00:00.000Z"
+}
+```
+
+Event record:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "event-1",
+  "type": "task.status_changed",
+  "payload": {
+    "from": "open",
+    "to": "active"
+  },
   "createdAt": "2026-06-23T00:00:00.000Z"
 }
 ```

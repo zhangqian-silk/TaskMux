@@ -1,5 +1,6 @@
 import { createTaskComment } from "../comment/comment.js";
 import { roleNotFound, runtimeError, taskNotFound, usageError } from "../errors/cliError.js";
+import { createTaskEvent } from "../event/taskEvent.js";
 import { createRole, updateRoleStatus } from "../role/role.js";
 import { resolveRunner, supportedRunnerIds } from "../runner/runnerRegistry.js";
 import { createTask, updateTaskStatus } from "../task/task.js";
@@ -57,6 +58,8 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return addTaskCommentCommand(rest, store);
     case "comments":
       return listTaskCommentsCommand(rest, store);
+    case "events":
+      return listTaskEventsCommand(rest, store);
     default:
       return taskUsage();
   }
@@ -71,6 +74,7 @@ function createTaskCommand(args: string[], store: TaskStore): string {
 
   const task = createTask(store.nextTaskId(), title, new Date());
   store.saveTask(task);
+  recordTaskEvent(store, task.id, "task.created", { title: task.title });
 
   return `Created task ${task.id}: ${task.title}\n`;
 }
@@ -127,6 +131,10 @@ function updateTaskStatusCommand(
 
   const updatedTask = updateTaskStatus(task, status, new Date());
   store.saveTask(updatedTask);
+  recordTaskEvent(store, updatedTask.id, "task.status_changed", {
+    from: task.status,
+    to: updatedTask.status
+  });
 
   return `${action} task ${updatedTask.id}\n`;
 }
@@ -189,6 +197,7 @@ function assignTaskRoleCommand(args: string[], store: TaskStore): string {
   const role = createRole(roleName, runner, workspace, new Date());
 
   store.saveRole(taskId, role);
+  recordTaskEvent(store, taskId, "role.assigned", { role: role.name, agent: role.agent });
 
   return [
     `Assigned role ${role.name} to ${taskId}`,
@@ -443,6 +452,7 @@ function addTaskCommentCommand(args: string[], store: TaskStore): string {
 
   const comment = createTaskComment(store.nextCommentId(taskId), body, new Date());
   store.saveComment(taskId, comment);
+  recordTaskEvent(store, taskId, "comment.added", { comment: comment.id });
 
   return `Added comment to ${taskId}: ${comment.body}\n`;
 }
@@ -465,6 +475,43 @@ function listTaskCommentsCommand(args: string[], store: TaskStore): string {
   }
 
   return `${comments.map((comment) => `${comment.id}\t${comment.createdAt}\t${comment.body}`).join("\n")}\n`;
+}
+
+function listTaskEventsCommand(args: string[], store: TaskStore): string {
+  const [taskId] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  if (store.getTask(taskId) === null) {
+    throw taskNotFound(taskId);
+  }
+
+  const events = store.listEvents(taskId);
+
+  if (events.length === 0) {
+    return "No events found.\n";
+  }
+
+  return `${events
+    .map((event) => `${event.id}\t${event.createdAt}\t${event.type}\t${renderEventPayload(event.payload)}`)
+    .join("\n")}\n`;
+}
+
+function recordTaskEvent(
+  store: TaskStore,
+  taskId: string,
+  type: string,
+  payload: Record<string, string>
+): void {
+  store.saveEvent(taskId, createTaskEvent(store.nextEventId(taskId), type, payload, new Date()));
+}
+
+function renderEventPayload(payload: Record<string, string>): string {
+  return Object.entries(payload)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" ");
 }
 
 function findRole(
@@ -529,5 +576,6 @@ export function taskUsage(): string {
   taskmux task cleanup <task-id>
   taskmux task comment <task-id> <body>
   taskmux task comments <task-id>
+  taskmux task events <task-id>
 `;
 }

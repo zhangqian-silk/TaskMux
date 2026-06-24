@@ -12,7 +12,7 @@ TaskMux CLI
   -> Runner Adapter
 ```
 
-tmux owns persistent terminal execution. TaskMux owns task state, role metadata, comments, transcript indexing, and user-facing commands.
+tmux owns persistent terminal execution. TaskMux owns task state, role metadata, comments, task event history, transcript indexing, and user-facing commands.
 
 ## Package Boundary
 
@@ -133,6 +133,7 @@ done -> task done <task-id>
 archive -> task archive <task-id>
 reopen -> task reopen <task-id>
 roles -> task roles <task-id>
+events -> task events <task-id>
 refresh -> task refresh <task-id>
 cleanup -> task cleanup <task-id>
 comment <body> -> task comment <task-id> <body>
@@ -157,6 +158,7 @@ TASKMUX_HOME or ~/.taskmux
   tasks/
     task-1/
       task.json
+      events.jsonl
 ```
 
 `task.json` stores `schemaVersion`, `id`, `title`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
@@ -190,11 +192,25 @@ TASKMUX_HOME or ~/.taskmux
 
 Each comment stores `schemaVersion`, `id`, `body`, and `createdAt`. The first version derives comment ids from the current comment count for the task.
 
+Task events are append-only JSONL records:
+
+```text
+TASKMUX_HOME or ~/.taskmux
+  tasks/
+    task-1/
+      events.jsonl
+```
+
+Each event stores `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. `src/event/taskEvent.ts` defines the event record shape. `FileTaskStore` derives event ids from the current event count for the task and validates every loaded event before returning it to command handlers.
+
+The command layer appends events only after the underlying user-visible mutation succeeds. Current event types are `task.created`, `task.status_changed`, `role.assigned`, and `comment.added`.
+
 Storage reads validate JSON records before returning domain objects:
 
 - Task records require `schemaVersion: 1`, string ids and timestamps, and a valid task status.
 - Role records require `schemaVersion: 1`, string name, agent, workspace, timestamps, and a valid role status. Optional command contracts require string `command`, string-array `args`, and string-map `env`.
 - Comment records require `schemaVersion: 1`, string id, body, and timestamp.
+- Event records require `schemaVersion: 1`, string id, string type, string-map payload, and timestamp.
 - Runner records require `schemaVersion: 1`, string id, string command, string-array args, string-map env, and timestamps.
 
 Invalid records raise `DATA_ERROR` instead of being skipped silently.
@@ -216,13 +232,11 @@ Command handlers throw `CliError` for expected user, lookup, and storage failure
 
 ## Observability
 
-TaskMux reads recent role output through tmux capture APIs. The first version should expose role detail, tail, and transcript views without attaching to the role.
-
-Structured runner events are future work and must not be required for core role inspection.
+TaskMux reads recent role output through tmux capture APIs. The first version exposes role detail, tail, transcript, and task event history without attaching to the role.
 
 `task detail` reads role metadata from `role.json` and derives the tmux target as `taskmux-<task-id>:<role>`. `task status` probes tmux window state and persists detected status changes. `task refresh` and `task cleanup` apply the same probe to every role in a task. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
 
-`task open` reads task, role, and comment counts from storage and prints a task context summary. `task shell` provides an interactive wrapper over the same task command handlers. `task detach` detaches tmux clients for the task session and does not terminate the role process.
+`task events` reads `events.jsonl` and prints event id, timestamp, type, and payload key-value pairs. `task open` reads task, role, and comment counts from storage and prints a task context summary. `task shell` provides an interactive wrapper over the same task command handlers, including `events`. `task detach` detaches tmux clients for the task session and does not terminate the role process.
 
 ## Testing Strategy
 
