@@ -62,6 +62,7 @@ tb task restart task-1 rd
 tb task cleanup task-1
 tb runner remove agent-js
 tb doctor
+tb backup
 tb migrate
 ```
 
@@ -126,6 +127,7 @@ tb task restart task-1 rd
 tb task cleanup task-1
 tb runner remove agent-js
 tb doctor
+tb backup
 tb migrate
 ```
 
@@ -153,9 +155,11 @@ Task events are appended to `events.jsonl` under the task directory. The current
 
 TaskMux maintains a global storage schema manifest at `schema.json` under the configured data directory. Normal task and runner commands check that manifest on startup. If the local storage version is older than the CLI's latest storage version, the command fails with `DATA_ERROR` and tells the user to run `taskmux migrate`.
 
-`migrate` runs storage migrations in version order and updates `schema.json` after a successful upgrade. Current task and runner stores only read and write the latest schema; older layouts are handled by migration scripts instead of fallback branches in business commands.
+`backup` creates a timestamped raw copy of the current TaskMux data under `backups/` while excluding older backups from the new copy.
 
-`doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runner commands, the configured TaskMux data directory, and storage schema status. When storage is outdated, `doctor` reports `upgrade-required` and points to `taskmux migrate`. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
+`migrate` runs storage migrations in version order and updates `schema.json` after a successful upgrade. When an older storage version is upgraded, TaskMux creates a backup before running migration steps and prints the backup path. Current task and runner stores only read and write the latest schema; older layouts are handled by migration scripts instead of fallback branches in business commands.
+
+`doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runner commands, the configured TaskMux data directory, storage schema status, storage directory read/write permissions, and stored record health. When storage is outdated, `doctor` reports `upgrade-required` and points to `taskmux migrate`. Invalid stored records are reported as `storage records invalid` without aborting the doctor report. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
 
 ## Data Schema
 

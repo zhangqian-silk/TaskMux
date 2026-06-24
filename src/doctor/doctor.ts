@@ -1,5 +1,7 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { CustomRunner } from "../runner/runner.js";
-import { resolveTaskmuxHome } from "../storage/taskStore.js";
+import { FileTaskStore, resolveTaskmuxHome } from "../storage/taskStore.js";
 import { inspectStorageSchema, type StorageSchemaState } from "../storage/storageSchema.js";
 import type { CommandRunner } from "../tmux/commandRunner.js";
 
@@ -22,7 +24,9 @@ export function runDoctor(
       status: "ok",
       detail: resolveTaskmuxHome(env)
     },
-    checkStorageSchema(storageSchema)
+    checkStorageSchema(storageSchema),
+    checkStoragePermissions(resolveTaskmuxHome(env)),
+    checkStorageRecords(resolveTaskmuxHome(env), storageSchema)
   ];
 
   return `TaskMux doctor\n${checks
@@ -102,4 +106,75 @@ function checkStorageSchema(state: StorageSchemaState): DoctorCheck {
         detail: state.detail
       };
   }
+}
+
+function checkStoragePermissions(rootDir: string): DoctorCheck {
+  const probePath = join(rootDir, ".taskmux-doctor-write-check");
+
+  try {
+    mkdirSync(rootDir, { recursive: true });
+    writeFileSync(probePath, "ok\n");
+    rmSync(probePath);
+
+    return {
+      name: "storage permissions",
+      status: "ok",
+      detail: "read-write"
+    };
+  } catch (error) {
+    return {
+      name: "storage permissions",
+      status: "invalid",
+      detail: errorMessage(error)
+    };
+  }
+}
+
+function checkStorageRecords(rootDir: string, state: StorageSchemaState): DoctorCheck {
+  if (state.status === "upgrade-required") {
+    return {
+      name: "storage records",
+      status: "upgrade-required",
+      detail: "run taskmux migrate"
+    };
+  }
+
+  if (state.status === "unsupported") {
+    return {
+      name: "storage records",
+      status: "unsupported",
+      detail: `current=${state.currentVersion} latest=${state.latestVersion}`
+    };
+  }
+
+  if (state.status === "invalid") {
+    return {
+      name: "storage records",
+      status: "invalid",
+      detail: state.detail
+    };
+  }
+
+  try {
+    const store = new FileTaskStore(rootDir);
+    const tasks = store.listTasks();
+    const roleCount = tasks.reduce((count, task) => count + store.listRoles(task.id).length, 0);
+    const runnerCount = store.listCustomRunners().length;
+
+    return {
+      name: "storage records",
+      status: "ok",
+      detail: `tasks=${tasks.length} roles=${roleCount} runners=${runnerCount}`
+    };
+  } catch (error) {
+    return {
+      name: "storage records",
+      status: "invalid",
+      detail: errorMessage(error)
+    };
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
