@@ -1010,6 +1010,143 @@ test("returns a data error exit code for invalid comment schema", () => {
   assert.match(result.stderr, /DATA_ERROR: Invalid comment record: task-1:1/);
 });
 
+test("adds lists and shows custom runners", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
+
+  const addOutput = runTaskmux(
+    [
+      "runner",
+      "add",
+      "agent-js",
+      "--command",
+      fakeAgent,
+      "--arg",
+      "--model",
+      "--arg",
+      "review",
+      "--env",
+      "TASKMUX_MODE=dev"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  assert.match(addOutput, /Added runner agent-js/);
+
+  const runner = JSON.parse(
+    readFileSync(join(home, "runners", "agent-js", "runner.json"), "utf8")
+  );
+  assert.equal(runner.schemaVersion, 1);
+  assert.equal(runner.id, "agent-js");
+  assert.equal(runner.command, fakeAgent);
+  assert.deepEqual(runner.args, ["--model", "review"]);
+  assert.deepEqual(runner.env, { TASKMUX_MODE: "dev" });
+
+  const listOutput = runTaskmux(["runner", "list"], { TASKMUX_HOME: home });
+  assert.match(listOutput, /codex\s+builtin\s+codex/);
+  assert.match(listOutput, /claude\s+builtin\s+claude/);
+  assert.match(listOutput, new RegExp(`agent-js\\s+custom\\s+${fakeAgent.replaceAll("\\", "\\\\")}`));
+
+  const showOutput = runTaskmux(["runner", "show", "agent-js"], { TASKMUX_HOME: home });
+  assert.match(showOutput, /Runner: agent-js/);
+  assert.match(showOutput, new RegExp(`Command: ${fakeAgent.replaceAll("\\", "\\\\")}`));
+  assert.match(showOutput, /Args: --model review/);
+  assert.match(showOutput, /Env: TASKMUX_MODE=dev/);
+});
+
+test("assigns custom runners and starts configured commands", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(
+    [
+      "runner",
+      "add",
+      "agent-js",
+      "--command",
+      fakeAgent,
+      "--arg",
+      "--model",
+      "--arg",
+      "review",
+      "--env",
+      "TASKMUX_MODE=dev"
+    ],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+
+  const assignOutput = runTaskmux(
+    [
+      "task",
+      "assign",
+      "task-1",
+      "rd",
+      "--agent",
+      "agent-js",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  assert.match(assignOutput, /Assigned role rd to task-1/);
+  assert.match(assignOutput, /Agent: agent-js/);
+
+  const role = JSON.parse(
+    readFileSync(join(home, "tasks", "task-1", "roles", "rd", "role.json"), "utf8")
+  );
+  assert.equal(role.agent, "agent-js");
+  assert.equal(role.command, fakeAgent);
+  assert.deepEqual(role.args, ["--model", "review"]);
+  assert.deepEqual(role.env, { TASKMUX_MODE: "dev" });
+
+  runTaskmux(["task", "enter", "task-1", "rd"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  const calls = readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(calls[3], [
+    "new-window",
+    "-t",
+    "taskmux-task-1",
+    "-n",
+    "rd",
+    "-c",
+    "/tmp/project-a",
+    `env TASKMUX_MODE=dev ${fakeAgent} --model review`
+  ]);
+});
+
+test("removes custom runners", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
+
+  runTaskmux(["runner", "add", "agent-js", "--command", fakeAgent], {
+    TASKMUX_HOME: home
+  });
+
+  const removeOutput = runTaskmux(["runner", "remove", "agent-js"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(removeOutput, /Removed runner agent-js/);
+
+  const result = runTaskmuxFailure(["runner", "show", "agent-js"], {
+    TASKMUX_HOME: home
+  });
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /RUNNER_NOT_FOUND: Runner not found: agent-js/);
+});
+
 test("runs doctor checks with configured executables", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
   const fakeTmux = createFakeExecutable(home, "fake-tmux.js", "tmux 3.4\n");
@@ -1030,6 +1167,27 @@ test("runs doctor checks with configured executables", () => {
   assert.match(output, /claude\s+ok\s+claude 2\.0\.0/);
   assert.match(output, /taskmux home\s+ok/);
   assert.match(output, new RegExp(home.replaceAll("\\", "\\\\")));
+});
+
+test("runs doctor checks for custom runner executables", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeTmux = createFakeExecutable(home, "fake-tmux.js", "tmux 3.4\n");
+  const fakeCodex = createFakeExecutable(home, "fake-codex.js", "codex 1.0.0\n");
+  const fakeClaude = createFakeExecutable(home, "fake-claude.js", "claude 2.0.0\n");
+  const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
+
+  runTaskmux(["runner", "add", "agent-js", "--command", fakeAgent], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(["doctor"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    TASKMUX_CODEX_BIN: fakeCodex,
+    TASKMUX_CLAUDE_BIN: fakeClaude
+  });
+
+  assert.match(output, /runner:agent-js\s+ok\s+custom agent 1\.0/);
 });
 
 test("runs an interactive task shell", async () => {

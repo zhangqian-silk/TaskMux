@@ -1,9 +1,10 @@
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TaskComment } from "../comment/comment.js";
 import { dataError } from "../errors/cliError.js";
 import type { Role } from "../role/role.js";
+import type { CustomRunner } from "../runner/runner.js";
 import type { Task, TaskStatus } from "../task/task.js";
 
 export type TaskStore = {
@@ -18,6 +19,10 @@ export type TaskStore = {
   saveComment(taskId: string, comment: TaskComment): void;
   listComments(taskId: string): TaskComment[];
   saveTranscript(taskId: string, roleName: string, transcript: string): void;
+  saveCustomRunner(runner: CustomRunner): void;
+  listCustomRunners(): CustomRunner[];
+  getCustomRunner(id: string): CustomRunner | null;
+  removeCustomRunner(id: string): boolean;
 };
 
 export function resolveTaskmuxHome(env: NodeJS.ProcessEnv): string {
@@ -128,6 +133,48 @@ export class FileTaskStore implements TaskStore {
     writeFileSync(this.transcriptFile(taskId, roleName), transcript);
   }
 
+  saveCustomRunner(runner: CustomRunner): void {
+    const runnerDir = this.runnerDir(runner.id);
+    mkdirSync(runnerDir, { recursive: true });
+    writeFileSync(this.runnerFile(runner.id), `${JSON.stringify(runner, null, 2)}\n`);
+  }
+
+  listCustomRunners(): CustomRunner[] {
+    const runnersDir = this.runnersDir();
+    mkdirSync(runnersDir, { recursive: true });
+
+    return readdirSync(runnersDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => this.getCustomRunner(entry.name))
+      .filter((runner): runner is CustomRunner => runner !== null)
+      .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  getCustomRunner(id: string): CustomRunner | null {
+    try {
+      return parseCustomRunner(id, readFileSync(this.runnerFile(id), "utf8"));
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  removeCustomRunner(id: string): boolean {
+    try {
+      rmSync(this.runnerDir(id), { recursive: true });
+      return true;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return false;
+      }
+
+      throw error;
+    }
+  }
+
   private tasksDir(): string {
     return join(this.rootDir, "tasks");
   }
@@ -159,6 +206,18 @@ export class FileTaskStore implements TaskStore {
   private transcriptFile(taskId: string, name: string): string {
     return join(this.roleDir(taskId, name), "transcript.log");
   }
+
+  private runnersDir(): string {
+    return join(this.rootDir, "runners");
+  }
+
+  private runnerDir(id: string): string {
+    return join(this.runnersDir(), id);
+  }
+
+  private runnerFile(id: string): string {
+    return join(this.runnerDir(id), "runner.json");
+  }
 }
 
 function parseTask(id: string, raw: string): Task {
@@ -187,6 +246,9 @@ function parseRole(name: string, raw: string): Role {
     value.schemaVersion !== 1 ||
     typeof value.name !== "string" ||
     typeof value.agent !== "string" ||
+    (value.command !== undefined && typeof value.command !== "string") ||
+    (value.args !== undefined && !isStringArray(value.args)) ||
+    (value.env !== undefined && !isStringRecord(value.env)) ||
     typeof value.workspace !== "string" ||
     !["idle", "running", "detached", "exited", "failed"].includes(String(value.status)) ||
     typeof value.createdAt !== "string" ||
@@ -196,6 +258,25 @@ function parseRole(name: string, raw: string): Role {
   }
 
   return value as Role;
+}
+
+function parseCustomRunner(id: string, raw: string): CustomRunner {
+  const value = parseJson(raw, `Invalid runner record: ${id}`);
+
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.id !== "string" ||
+    typeof value.command !== "string" ||
+    !isStringArray(value.args) ||
+    !isStringRecord(value.env) ||
+    typeof value.createdAt !== "string" ||
+    typeof value.updatedAt !== "string"
+  ) {
+    throw dataError(`Invalid runner record: ${id}`);
+  }
+
+  return value as CustomRunner;
 }
 
 function parseComment(id: string, raw: string): TaskComment {
@@ -224,6 +305,14 @@ function parseJson(raw: string, message: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every((item) => typeof item === "string");
 }
 
 function isTaskStatus(status: unknown): status is TaskStatus {

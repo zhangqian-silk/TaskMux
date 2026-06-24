@@ -95,7 +95,7 @@ export class TmuxManager {
       role.name,
       "-c",
       role.workspace,
-      role.agent
+      roleShellCommand(role)
     ]);
   }
 
@@ -106,4 +106,21 @@ export class TmuxManager {
   private target(taskId: string, roleName: string): string {
     return `${this.sessionName(taskId)}:${roleName}`;
   }
+}
+
+function roleShellCommand(role: Role): string {
+  const command = role.command ?? role.agent;
+  const args = role.args ?? [];
+  const env = Object.entries(role.env ?? {}).map(([key, value]) => `${key}=${value}`);
+  const parts = env.length > 0 ? ["env", ...env, command, ...args] : [command, ...args];
+
+  return parts.map(shellQuote).join(" ");
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(value)) {
+    return value;
+  }
+
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }

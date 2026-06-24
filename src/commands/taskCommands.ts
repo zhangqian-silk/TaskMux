@@ -180,13 +180,13 @@ function assignTaskRoleCommand(args: string[], store: TaskStore): string {
     throw usageError("--workspace is required.");
   }
 
-  const runner = resolveRunner(agent);
+  const runner = resolveRunner(agent, store.listCustomRunners());
 
   if (runner === null) {
-    throw usageError(`Unsupported agent: ${agent}\nSupported agents: ${supportedRunnerIds().join(", ")}`);
+    throw usageError(`Unsupported agent: ${agent}\nSupported agents: ${supportedRunnerIds(store.listCustomRunners()).join(", ")}`);
   }
 
-  const role = createRole(roleName, runner.command, workspace, new Date());
+  const role = createRole(roleName, runner, workspace, new Date());
 
   store.saveRole(taskId, role);
 
