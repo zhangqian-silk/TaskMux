@@ -7,6 +7,15 @@ import assert from "node:assert/strict";
 
 const cli = join(process.cwd(), "dist", "cli.js");
 
+test("publishes package metadata with the taskmux command only", () => {
+  const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
+
+  assert.equal(packageJson.name, "@zq-silk/taskmux");
+  assert.deepEqual(packageJson.bin, {
+    taskmux: "./dist/cli.js"
+  });
+});
+
 function runTaskmux(args, env) {
   return execFileSync("node", [cli, ...args], {
     encoding: "utf8",
@@ -2128,7 +2137,7 @@ test("runs an interactive task shell", async () => {
   );
 
   assert.match(output, /Task: task-1/);
-  assert.match(output, /tb task-1>/);
+  assert.match(output, /taskmux task-1>/);
   assert.match(output, /Updated task task-1/);
   assert.match(output, /Priority: high/);
   assert.match(output, /Owner: shell-owner/);

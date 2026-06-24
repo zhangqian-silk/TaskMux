@@ -1,12 +1,11 @@
 {
-  "name": "@silk/taskmux",
+  "name": "@zq-silk/taskmux",
   "version": "0.0.0",
   "description": "Local task board for native agent CLI sessions backed by tmux.",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "taskmux": "./dist/cli.js",
-    "tb": "./dist/cli.js"
+    "taskmux": "./dist/cli.js"
   },
   "files": [
     "dist",

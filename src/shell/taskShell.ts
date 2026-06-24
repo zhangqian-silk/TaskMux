@@ -21,7 +21,7 @@ export async function runTaskShell(
   try {
     if (!input.isTTY) {
       for await (const line of rl) {
-        output.write(`tb ${taskId}> `);
+        output.write(`taskmux ${taskId}> `);
         if (handleShellLine(taskId, line, store, tmux) === "exit") {
           break;
         }
@@ -30,7 +30,7 @@ export async function runTaskShell(
     }
 
     while (true) {
-      const line = await rl.question(`tb ${taskId}> `);
+      const line = await rl.question(`taskmux ${taskId}> `);
       if (handleShellLine(taskId, line, store, tmux) === "exit") {
         break;
       }
