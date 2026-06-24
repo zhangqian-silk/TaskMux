@@ -163,7 +163,7 @@ test("reads edited task info from the user-editable info file", () => {
   assert.match(listOutput, /task-1\s+open\s+Edited task title/);
 });
 
-test("reads legacy task records with inline titles", () => {
+test("rejects task records with inline titles", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
   const taskDir = join(home, "tasks", "task-1");
   execFileSync("mkdir", ["-p", taskDir]);
@@ -179,11 +179,35 @@ test("reads legacy task records with inline titles", () => {
     })
   );
 
-  const output = runTaskmux(["task", "show", "task-1"], {
+  const result = runTaskmuxFailure(["task", "show", "task-1"], {
     TASKMUX_HOME: home
   });
 
-  assert.match(output, /Title: Legacy task title/);
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Invalid task record: task-1/);
+});
+
+test("rejects task records missing editable task info", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const taskDir = join(home, "tasks", "task-1");
+  execFileSync("mkdir", ["-p", taskDir]);
+  writeFileSync(
+    join(taskDir, "task.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      id: "task-1",
+      status: "open",
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z"
+    })
+  );
+
+  const result = runTaskmuxFailure(["task", "show", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Invalid task info record: task-1/);
 });
 
 test("lists tasks from the configured taskmux home", () => {
@@ -320,7 +344,7 @@ test("reads edited role info from the user-editable info file", () => {
   assert.match(detailOutput, /Role: engineer/);
 });
 
-test("reads legacy role records with inline names", () => {
+test("rejects role records with inline names", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
   const taskDir = join(home, "tasks", "task-1");
   const roleDir = join(taskDir, "roles", "rd");
@@ -330,10 +354,16 @@ test("reads legacy role records with inline names", () => {
     JSON.stringify({
       schemaVersion: 1,
       id: "task-1",
-      title: "Legacy task title",
       status: "open",
       createdAt: "2026-06-23T00:00:00.000Z",
       updatedAt: "2026-06-23T00:00:00.000Z"
+    })
+  );
+  writeFileSync(
+    join(taskDir, "info.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      title: "Current task title"
     })
   );
   writeFileSync(
@@ -349,12 +379,106 @@ test("reads legacy role records with inline names", () => {
     })
   );
 
-  const output = runTaskmux(["task", "detail", "task-1", "rd"], {
+  const result = runTaskmuxFailure(["task", "detail", "task-1", "rd"], {
     TASKMUX_HOME: home
   });
 
-  assert.match(output, /Role: rd/);
-  assert.match(output, /Agent: codex/);
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Invalid role record: rd/);
+});
+
+test("rejects role records missing editable role info", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const taskDir = join(home, "tasks", "task-1");
+  const roleDir = join(taskDir, "roles", "rd");
+  execFileSync("mkdir", ["-p", roleDir]);
+  writeFileSync(
+    join(taskDir, "task.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      id: "task-1",
+      status: "open",
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z"
+    })
+  );
+  writeFileSync(
+    join(taskDir, "info.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      title: "Current task title"
+    })
+  );
+  writeFileSync(
+    join(roleDir, "role.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      agent: "codex",
+      command: "codex",
+      args: [],
+      env: {},
+      workspace: "/tmp/project-a",
+      status: "idle",
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z"
+    })
+  );
+
+  const result = runTaskmuxFailure(["task", "detail", "task-1", "rd"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Invalid role info record: rd/);
+});
+
+test("rejects role records missing command contract", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const taskDir = join(home, "tasks", "task-1");
+  const roleDir = join(taskDir, "roles", "rd");
+  execFileSync("mkdir", ["-p", roleDir]);
+  writeFileSync(
+    join(taskDir, "task.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      id: "task-1",
+      status: "open",
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z"
+    })
+  );
+  writeFileSync(
+    join(taskDir, "info.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      title: "Current task title"
+    })
+  );
+  writeFileSync(
+    join(roleDir, "role.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      agent: "codex",
+      workspace: "/tmp/project-a",
+      status: "idle",
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z"
+    })
+  );
+  writeFileSync(
+    join(roleDir, "info.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      name: "rd"
+    })
+  );
+
+  const result = runTaskmuxFailure(["task", "detail", "task-1", "rd"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Invalid role record: rd/);
 });
 
 test("rejects unsupported role agents", () => {
@@ -1189,10 +1313,16 @@ test("returns a data error exit code for invalid role schema", () => {
     JSON.stringify({
       schemaVersion: 1,
       id: "task-1",
-      title: "Refactor login page",
       status: "open",
       createdAt: "2026-06-23T00:00:00.000Z",
       updatedAt: "2026-06-23T00:00:00.000Z"
+    })
+  );
+  writeFileSync(
+    join(taskDir, "info.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      title: "Refactor login page"
     })
   );
   writeFileSync(join(roleDir, "role.json"), JSON.stringify({ schemaVersion: 2 }));

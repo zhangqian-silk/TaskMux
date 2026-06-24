@@ -133,6 +133,8 @@ Editable task and role labels are separated from runtime state. Task title lives
 
 Assigned roles are stored under the task directory. Each role runtime record stores `schemaVersion`, agent, command, args, env, workspace, status, and timestamps.
 
+Runtime records with inline task titles or role names are invalid in the current schema.
+
 Task comments are appended to `comments.jsonl` under the task directory and can be listed without entering a role session. Each comment record includes `schemaVersion`.
 
 Task events are appended to `events.jsonl` under the task directory. The current event stream records `task.created`, `task.status_changed`, `role.assigned`, and `comment.added`; each event record includes `schemaVersion`, `id`, `type`, `payload`, and `createdAt`.

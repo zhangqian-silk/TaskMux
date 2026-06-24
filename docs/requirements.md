@@ -156,7 +156,7 @@ Task and role user-editable labels are isolated from runtime state:
 - Role name lives in `tasks/<task-id>/roles/<role>/info.json`.
 - Runtime records do not require title or role name fields.
 - Users may edit `info.json` directly; TaskMux reads the edited title or role name on the next command.
-- Existing older records with inline task title or role name remain readable for compatibility.
+- Runtime records containing inline task title or role name are invalid in the current schema.
 
 Task ids use the stable `task-<number>` format in the first version. The next id is derived from existing local task directories.
 

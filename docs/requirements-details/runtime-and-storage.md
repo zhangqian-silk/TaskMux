@@ -183,4 +183,4 @@ Custom runner record:
 
 Allowed task statuses are `open`, `active`, `done`, and `archived`. Allowed role statuses are `idle`, `running`, `detached`, `exited`, and `failed`.
 
-Task and role `info.json` files are the supported direct-edit surface. Runtime records remain managed by TaskMux. Older task and role runtime records with inline `title` or `name` remain readable.
+Task and role `info.json` files are the supported direct-edit surface. Runtime records remain managed by TaskMux. Task runtime records with inline `title` and role runtime records with inline `name` are invalid in the current schema.

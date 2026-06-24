@@ -6,25 +6,8 @@ import { dataError } from "../errors/cliError.js";
 import type { TaskEvent } from "../event/taskEvent.js";
 import type { Role } from "../role/role.js";
 import type { CustomRunner } from "../runner/runner.js";
-import type { Task, TaskStatus } from "../task/task.js";
-
-type TaskInfo = {
-  schemaVersion: 1;
-  title: string;
-};
-
-type TaskRecord = Omit<Task, "title"> & {
-  title?: string;
-};
-
-type RoleInfo = {
-  schemaVersion: 1;
-  name: string;
-};
-
-type RoleRecord = Omit<Role, "name"> & {
-  name?: string;
-};
+import type { Task } from "../task/task.js";
+import { taskRecordCodec } from "./taskRecordCodec.js";
 
 export type TaskStore = {
   nextTaskId(): string;
@@ -69,9 +52,11 @@ export class FileTaskStore implements TaskStore {
 
   saveTask(task: Task): void {
     const taskDir = this.taskDir(task.id);
+    const encoded = taskRecordCodec.encodeTask(task);
+
     mkdirSync(taskDir, { recursive: true });
-    writeFileSync(this.taskFile(task.id), `${JSON.stringify(taskRecord(task), null, 2)}\n`);
-    writeFileSync(this.taskInfoFile(task.id), `${JSON.stringify(taskInfo(task), null, 2)}\n`);
+    writeFileSync(this.taskFile(task.id), `${JSON.stringify(encoded.runtime, null, 2)}\n`);
+    writeFileSync(this.taskInfoFile(task.id), `${JSON.stringify(encoded.info, null, 2)}\n`);
   }
 
   listTasks(): Task[] {
@@ -86,32 +71,25 @@ export class FileTaskStore implements TaskStore {
   }
 
   getTask(id: string): Task | null {
-    try {
-      const taskRecordValue = parseTaskRecord(id, readFileSync(this.taskFile(id), "utf8"));
-      const taskInfoRaw = this.readOptionalText(this.taskInfoFile(id));
-      const info = taskInfoRaw === null
-        ? legacyTaskInfo(id, taskRecordValue)
-        : parseTaskInfo(id, taskInfoRaw);
+    const runtimeRaw = this.readOptionalText(this.taskFile(id));
 
-      return {
-        ...taskRecordValue,
-        title: info.title
-      };
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-        return null;
-      }
-
-      throw error;
+    if (runtimeRaw === null) {
+      return null;
     }
+
+    const infoRaw = this.readOptionalText(this.taskInfoFile(id));
+
+    return taskRecordCodec.decodeTask(id, runtimeRaw, infoRaw);
   }
 
   saveRole(taskId: string, role: Role): void {
     const storageName = this.resolveRoleStorageName(taskId, role.name) ?? role.name;
     const roleDir = this.roleDir(taskId, storageName);
+    const encoded = taskRecordCodec.encodeRole(role);
+
     mkdirSync(roleDir, { recursive: true });
-    writeFileSync(this.roleFile(taskId, storageName), `${JSON.stringify(roleRecord(role), null, 2)}\n`);
-    writeFileSync(this.roleInfoFile(taskId, storageName), `${JSON.stringify(roleInfo(role), null, 2)}\n`);
+    writeFileSync(this.roleFile(taskId, storageName), `${JSON.stringify(encoded.runtime, null, 2)}\n`);
+    writeFileSync(this.roleInfoFile(taskId, storageName), `${JSON.stringify(encoded.info, null, 2)}\n`);
   }
 
   listRoles(taskId: string): Role[] {
@@ -291,24 +269,15 @@ export class FileTaskStore implements TaskStore {
   }
 
   private getRoleByStorageName(taskId: string, storageName: string): Role | null {
-    try {
-      const roleRecordValue = parseRoleRecord(storageName, readFileSync(this.roleFile(taskId, storageName), "utf8"));
-      const roleInfoRaw = this.readOptionalText(this.roleInfoFile(taskId, storageName));
-      const info = roleInfoRaw === null
-        ? legacyRoleInfo(storageName, roleRecordValue)
-        : parseRoleInfo(storageName, roleInfoRaw);
+    const runtimeRaw = this.readOptionalText(this.roleFile(taskId, storageName));
 
-      return {
-        ...roleRecordValue,
-        name: info.name
-      };
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-        return null;
-      }
-
-      throw error;
+    if (runtimeRaw === null) {
+      return null;
     }
+
+    const infoRaw = this.readOptionalText(this.roleInfoFile(taskId, storageName));
+
+    return taskRecordCodec.decodeRole(storageName, runtimeRaw, infoRaw);
   }
 
   private findRoleByInfoName(taskId: string, name: string): Role | null {
@@ -356,126 +325,7 @@ export class FileTaskStore implements TaskStore {
       throw error;
     }
   }
-}
 
-function taskRecord(task: Task): TaskRecord {
-  return {
-    schemaVersion: task.schemaVersion,
-    id: task.id,
-    status: task.status,
-    createdAt: task.createdAt,
-    updatedAt: task.updatedAt
-  };
-}
-
-function taskInfo(task: Task): TaskInfo {
-  return {
-    schemaVersion: 1,
-    title: task.title
-  };
-}
-
-function parseTaskRecord(id: string, raw: string): TaskRecord {
-  const value = parseJson(raw, `Invalid task record: ${id}`);
-
-  if (
-    !isRecord(value) ||
-    value.schemaVersion !== 1 ||
-    typeof value.id !== "string" ||
-    (value.title !== undefined && typeof value.title !== "string") ||
-    !isTaskStatus(value.status) ||
-    typeof value.createdAt !== "string" ||
-    typeof value.updatedAt !== "string"
-  ) {
-    throw dataError(`Invalid task record: ${id}`);
-  }
-
-  return value as TaskRecord;
-}
-
-function parseTaskInfo(id: string, raw: string): TaskInfo {
-  const value = parseJson(raw, `Invalid task info record: ${id}`);
-
-  if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.title !== "string") {
-    throw dataError(`Invalid task info record: ${id}`);
-  }
-
-  return value as TaskInfo;
-}
-
-function legacyTaskInfo(id: string, task: TaskRecord): TaskInfo {
-  if (typeof task.title !== "string") {
-    throw dataError(`Invalid task info record: ${id}`);
-  }
-
-  return {
-    schemaVersion: 1,
-    title: task.title
-  };
-}
-
-function roleRecord(role: Role): RoleRecord {
-  return {
-    schemaVersion: role.schemaVersion,
-    agent: role.agent,
-    command: role.command,
-    args: role.args,
-    env: role.env,
-    workspace: role.workspace,
-    status: role.status,
-    createdAt: role.createdAt,
-    updatedAt: role.updatedAt
-  };
-}
-
-function roleInfo(role: Role): RoleInfo {
-  return {
-    schemaVersion: 1,
-    name: role.name
-  };
-}
-
-function parseRoleRecord(name: string, raw: string): RoleRecord {
-  const value = parseJson(raw, `Invalid role record: ${name}`);
-
-  if (
-    !isRecord(value) ||
-    value.schemaVersion !== 1 ||
-    (value.name !== undefined && typeof value.name !== "string") ||
-    typeof value.agent !== "string" ||
-    (value.command !== undefined && typeof value.command !== "string") ||
-    (value.args !== undefined && !isStringArray(value.args)) ||
-    (value.env !== undefined && !isStringRecord(value.env)) ||
-    typeof value.workspace !== "string" ||
-    !["idle", "running", "detached", "exited", "failed"].includes(String(value.status)) ||
-    typeof value.createdAt !== "string" ||
-    typeof value.updatedAt !== "string"
-  ) {
-    throw dataError(`Invalid role record: ${name}`);
-  }
-
-  return value as RoleRecord;
-}
-
-function parseRoleInfo(name: string, raw: string): RoleInfo {
-  const value = parseJson(raw, `Invalid role info record: ${name}`);
-
-  if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.name !== "string") {
-    throw dataError(`Invalid role info record: ${name}`);
-  }
-
-  return value as RoleInfo;
-}
-
-function legacyRoleInfo(name: string, role: RoleRecord): RoleInfo {
-  if (typeof role.name !== "string") {
-    throw dataError(`Invalid role info record: ${name}`);
-  }
-
-  return {
-    schemaVersion: 1,
-    name: role.name
-  };
 }
 
 function parseCustomRunner(id: string, raw: string): CustomRunner {
@@ -548,8 +398,4 @@ function isStringArray(value: unknown): value is string[] {
 
 function isStringRecord(value: unknown): value is Record<string, string> {
   return isRecord(value) && Object.values(value).every((item) => typeof item === "string");
-}
-
-function isTaskStatus(status: unknown): status is TaskStatus {
-  return ["open", "active", "done", "archived"].includes(String(status));
 }
