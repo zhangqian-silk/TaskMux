@@ -116,6 +116,17 @@ process.stdout.write(${JSON.stringify(output)});
   return executable;
 }
 
+function writeStorageSchema(home, storageVersion) {
+  writeFileSync(
+    join(home, "schema.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      storageVersion,
+      updatedAt: "2026-06-24T00:00:00.000Z"
+    })
+  );
+}
+
 test("creates a task in the configured taskmux home", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
 
@@ -139,6 +150,52 @@ test("creates a task in the configured taskmux home", () => {
   assert.equal(task.title, undefined);
   assert.equal(taskInfo.schemaVersion, 1);
   assert.equal(taskInfo.title, "Refactor login page");
+});
+
+test("initializes the latest storage schema manifest on first startup", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Refactor login page"], {
+    TASKMUX_HOME: home
+  });
+
+  const schema = JSON.parse(readFileSync(join(home, "schema.json"), "utf8"));
+
+  assert.equal(schema.schemaVersion, 1);
+  assert.equal(schema.storageVersion, 1);
+  assert.equal(typeof schema.updatedAt, "string");
+});
+
+test("blocks normal commands when storage schema requires migration", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  writeStorageSchema(home, 0);
+
+  const result = runTaskmuxFailure(["task", "list"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /DATA_ERROR: Storage schema upgrade required: 0 -> 1/);
+  assert.match(result.stderr, /Run `taskmux migrate`/);
+});
+
+test("migrates storage schema to the latest version", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  writeStorageSchema(home, 0);
+
+  const output = runTaskmux(["migrate"], {
+    TASKMUX_HOME: home
+  });
+  const schema = JSON.parse(readFileSync(join(home, "schema.json"), "utf8"));
+
+  assert.match(output, /Migrated storage schema 0 -> 1/);
+  assert.equal(schema.schemaVersion, 1);
+  assert.equal(schema.storageVersion, 1);
+  assert.equal(typeof schema.updatedAt, "string");
+  assert.match(
+    runTaskmux(["task", "list"], { TASKMUX_HOME: home }),
+    /No tasks found/
+  );
 });
 
 test("reads edited task info from the user-editable info file", () => {
@@ -1539,7 +1596,25 @@ test("runs doctor checks with configured executables", () => {
   assert.match(output, /codex\s+ok\s+codex 1\.0\.0/);
   assert.match(output, /claude\s+ok\s+claude 2\.0\.0/);
   assert.match(output, /taskmux home\s+ok/);
+  assert.match(output, /storage schema\s+ok\s+latest=1/);
   assert.match(output, new RegExp(home.replaceAll("\\", "\\\\")));
+});
+
+test("doctor guides users when storage schema needs migration", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeTmux = createFakeExecutable(home, "fake-tmux.js", "tmux 3.4\n");
+  const fakeCodex = createFakeExecutable(home, "fake-codex.js", "codex 1.0.0\n");
+  const fakeClaude = createFakeExecutable(home, "fake-claude.js", "claude 2.0.0\n");
+  writeStorageSchema(home, 0);
+
+  const output = runTaskmux(["doctor"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    TASKMUX_CODEX_BIN: fakeCodex,
+    TASKMUX_CLAUDE_BIN: fakeClaude
+  });
+
+  assert.match(output, /storage schema\s+upgrade-required\s+current=0 latest=1; run taskmux migrate/);
 });
 
 test("runs doctor checks for custom runner executables", () => {

@@ -91,6 +91,22 @@ Non-interactive commands write errors to stderr as `<ERROR_CODE>: <message>` and
 
 TaskMux storage records are local JSON or JSONL files. Every first-version record includes `schemaVersion: 1`.
 
+The TaskMux data directory also contains a global storage schema manifest:
+
+```json
+{
+  "schemaVersion": 1,
+  "storageVersion": 1,
+  "updatedAt": "2026-06-24T00:00:00.000Z"
+}
+```
+
+Normal task and runner commands check the manifest before reading domain records. Missing manifests are initialized to the current storage schema version. Older manifests stop the command with `DATA_ERROR: Storage schema upgrade required: <current> -> <latest>. Run \`taskmux migrate\`.` Newer or invalid manifests also fail with `DATA_ERROR`.
+
+`taskmux migrate` runs registered storage migrations in order and writes the latest manifest only after successful migration. Current business stores do not include fallback readers for older storage layouts; older storage is handled by migration scripts.
+
+`doctor` includes a `storage schema` check. Outdated storage is reported as `upgrade-required` with `current`, `latest`, and `run taskmux migrate` guidance.
+
 Task info record:
 
 ```json

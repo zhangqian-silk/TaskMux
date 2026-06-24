@@ -135,6 +135,7 @@ Suggested layout:
 
 ```text
 ~/.taskmux/
+  schema.json
   tasks/
     task-42/
       info.json
@@ -149,6 +150,17 @@ Suggested layout:
 ```
 
 Task, role, comment, and event records are versioned with `schemaVersion: 1`. TaskMux validates loaded records before using them. Invalid JSON, missing required fields, unsupported schema versions, or invalid status values must fail with `DATA_ERROR` rather than being treated as empty state.
+
+The data directory has a global storage schema manifest at `schema.json`. Normal task and runner commands run a storage preflight on startup:
+
+- Missing manifests are initialized to the current storage schema version.
+- Current manifests allow the command to continue.
+- Older manifests fail with `DATA_ERROR` and instruct the user to run `taskmux migrate`.
+- Newer or invalid manifests fail with `DATA_ERROR`.
+
+`taskmux migrate` is the only place where older storage schemas are upgraded. Migrations run in version order and update `schema.json` after all required steps succeed. Business stores read and write only the latest schema.
+
+`doctor` reports storage schema status. Outdated storage is reported as `upgrade-required` with `current`, `latest`, and `run taskmux migrate` guidance.
 
 Task and role user-editable labels are isolated from runtime state:
 

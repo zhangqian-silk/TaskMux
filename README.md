@@ -62,6 +62,7 @@ tb task restart task-1 rd
 tb task cleanup task-1
 tb runner remove agent-js
 tb doctor
+tb migrate
 ```
 
 Inside the task shell:
@@ -125,6 +126,7 @@ tb task restart task-1 rd
 tb task cleanup task-1
 tb runner remove agent-js
 tb doctor
+tb migrate
 ```
 
 Runner definitions can be built in or user configured. Built-in runner ids are `codex` and `claude`. Custom runners are managed with `runner add/list/show/remove`, stored under the TaskMux data directory, and can define a command, repeated args, and environment variables.
@@ -149,11 +151,25 @@ Task events are appended to `events.jsonl` under the task directory. The current
 
 `task open` prints a task context summary for outer-shell workflows. `task detach` asks tmux to detach clients from the task session while leaving role processes running and records the role as `detached`. `task stop` sends `C-c` to the role window; `task kill` kills the role window. `task restart` kills an existing role window when present, recreates the role window from stored role metadata, attaches to it, and records the role as `running`.
 
-`doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runner commands, and the configured TaskMux data directory. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
+TaskMux maintains a global storage schema manifest at `schema.json` under the configured data directory. Normal task and runner commands check that manifest on startup. If the local storage version is older than the CLI's latest storage version, the command fails with `DATA_ERROR` and tells the user to run `taskmux migrate`.
+
+`migrate` runs storage migrations in version order and updates `schema.json` after a successful upgrade. Current task and runner stores only read and write the latest schema; older layouts are handled by migration scripts instead of fallback branches in business commands.
+
+`doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runner commands, the configured TaskMux data directory, and storage schema status. When storage is outdated, `doctor` reports `upgrade-required` and points to `taskmux migrate`. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
 
 ## Data Schema
 
 TaskMux stores versioned local JSON records. Current records use `schemaVersion: 1`.
+
+Storage schema manifest:
+
+```json
+{
+  "schemaVersion": 1,
+  "storageVersion": 1,
+  "updatedAt": "2026-06-24T00:00:00.000Z"
+}
+```
 
 Task info record:
 
