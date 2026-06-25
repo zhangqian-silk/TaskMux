@@ -89,7 +89,16 @@ TaskMux currently provides:
 TaskMux should also provide future commands for:
 
 - Dedicated transcript export formats
-- Release automation around npm publishing
+
+## Release Automation
+
+TaskMux publishes `@zq-silk/taskmux` through npm Trusted Publishing from GitHub Actions.
+
+- Releases are triggered by `v*` git tags.
+- The release tag must exactly match `package.json` version.
+- Publishing runs in the GitHub `npm` environment.
+- The workflow uses OIDC with `id-token: write` and must not use long-lived npm tokens.
+- The workflow must complete install, build, tests, lint, package dry-run, and `npm publish --access public`.
 
 ## Execution Semantics
 
