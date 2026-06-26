@@ -18,6 +18,28 @@ tmux owns persistent terminal execution. TaskMux owns task state, role metadata,
 
 TaskMux is developed as a standalone npm package. The package exports CLI entrypoints only in the first version.
 
+## Release Pipeline
+
+TaskMux publishes to npm through GitHub Actions Trusted Publishing.
+
+The release workflow is `.github/workflows/publish.yml` and runs on `v*` tag pushes. It uses the GitHub `npm` environment and grants `id-token: write` so npm can verify the workflow identity through OIDC. The workflow does not read npm tokens, npm passwords, or OTP values.
+
+Release tags are guarded by `scripts/verify-release-tag.mjs`. The script reads `package.json`, expects `GITHUB_REF_NAME` to equal `v<package.version>`, and exits with a non-zero status when the tag format or version does not match.
+
+The publish job runs:
+
+```text
+npm ci
+npm run verify:release-tag
+npm run build
+npm test
+npm run lint
+npm run pack:dry-run
+npm publish --access public
+```
+
+`npm publish --access public` is required because `@zq-silk/taskmux` is a scoped public package.
+
 ## Tmux Manager
 
 The Tmux Manager wraps tmux commands for:

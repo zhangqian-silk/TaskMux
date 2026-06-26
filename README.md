@@ -274,7 +274,11 @@ MIT
 
 ## Release
 
+TaskMux publishes through npm Trusted Publishing from GitHub Actions.
+
 ```sh
-npm run pack:dry-run
-npm publish --access public
+npm version patch
+git push origin master --follow-tags
 ```
+
+The publish workflow runs on `v*` tags, verifies the tag matches `package.json`, runs build, tests, lint, package dry-run, and publishes `@zq-silk/taskmux` with `npm publish --access public`.

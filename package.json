@@ -16,6 +16,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "node --test test/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
+    "verify:release-tag": "node scripts/verify-release-tag.mjs",
     "prepack": "npm run build",
     "pack:dry-run": "npm pack --dry-run --cache ./.npm-cache"
   },
