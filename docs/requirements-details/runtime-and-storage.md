@@ -81,6 +81,22 @@ Runner ids may contain letters, numbers, hyphens, and underscores. Custom runner
 
 `doctor` checks custom runner commands with `--version` and reports them as `runner:<runner-id>`.
 
+## Defaults And Templates
+
+TaskMux stores user defaults in `config.json` under the TaskMux home. The first supported keys are `defaultAgent` and `defaultWorkspace`, managed through `taskmux config show/set/unset`.
+
+Templated task creation assigns common roles and metadata:
+
+| Template | Metadata | Roles |
+| --- | --- | --- |
+| `feature` | `priority=medium`, `tag=feature` | `rd`, `reviewer` |
+| `bug` | `priority=high`, `tag=bug` | `rd`, `tester` |
+| `review` | `priority=medium`, `tag=review` | `reviewer` |
+
+`task create --template <name>` may override template metadata with explicit task options. Template roles use explicit `--agent` / `--workspace`, then configured defaults, then `codex` and the current working directory for templated creation.
+
+`task assign-many` accepts repeated `--role` values and uses explicit or configured default agent/workspace values.
+
 ## Error Codes
 
 CLI errors are structured for automation and shell scripts.
@@ -116,6 +132,12 @@ Normal task and runner commands check the manifest before reading domain records
 
 `taskmux migrate` runs registered storage migrations in order and writes the latest manifest only after successful migration. When upgrading from an older manifest, TaskMux creates a backup before applying migration steps and prints the backup path. Current business stores do not include fallback readers for older storage layouts; older storage is handled by migration scripts.
 
+`taskmux migrate --dry-run` reports the migration plan without creating backups, running migration steps, or writing `schema.json`.
+
+`taskmux export --output <file>` writes a JSON snapshot containing config, custom runners, active tasks, roles, comments, events, and stored transcripts. `taskmux import <file>` restores that snapshot into the configured TaskMux home. Importing into non-empty storage overwrites tasks and roles with the same ids and appends imported comments and events.
+
+`taskmux prune --trash` removes deleted task directories under `trash/tasks`. `taskmux prune --backups --keep-backups <count>` removes older backups after keeping the newest backup directories.
+
 `doctor` includes `storage schema`, `storage permissions`, and `storage records` checks. Outdated storage is reported as `upgrade-required` with `current`, `latest`, and `run taskmux migrate` guidance. Invalid stored records are reported as `storage records invalid` without aborting the doctor report.
 
 Task info record:
@@ -129,6 +151,16 @@ Task info record:
   "tags": ["frontend", "auth"],
   "owner": "alex",
   "dueAt": "2026-07-01"
+}
+```
+
+Config record:
+
+```json
+{
+  "schemaVersion": 1,
+  "defaultAgent": "codex",
+  "defaultWorkspace": "/path/to/project"
 }
 ```
 
@@ -160,6 +192,10 @@ The default format is text. `--format json` emits:
 ```
 
 When transcripts are included, each role may include `transcript` with the stored `transcript.log` content or `null` when no transcript has been captured. `task context` does not call tmux; users capture fresh output with `task transcript <task-id> <role>` first.
+
+`task transcript export <task-id> <role>` renders an already stored transcript as text, JSON, or Markdown and can write the rendered output to a file. Export does not call tmux.
+
+`task activity <task-id>` summarizes assigned roles with agent, status, stored transcript line count, and last update timestamp. `task timeline <task-id>` merges stored events and comments into one chronological view.
 
 Task runtime record:
 

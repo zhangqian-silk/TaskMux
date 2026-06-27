@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { runConfigCommand } from "./commands/configCommands.js";
+import { runExportCommand, runImportCommand, runPruneCommand } from "./commands/maintenanceCommands.js";
 import { runTaskCommand } from "./commands/taskCommands.js";
 import { runBackupCommand, runMigrateCommand } from "./commands/migrationCommands.js";
 import { runRunnerCommand } from "./commands/runnerCommands.js";
@@ -22,12 +24,18 @@ Usage:
   taskmux --version
   taskmux doctor
   taskmux backup
-  taskmux migrate
+  taskmux migrate [--dry-run]
+  taskmux export --output <file>
+  taskmux import <file>
+  taskmux prune [--trash] [--backups] [--keep-backups <count>]
+  taskmux config show
+  taskmux config set default-agent <runner-id>
+  taskmux config set default-workspace <path>
   taskmux runner add <runner-id> --command <command> [--arg <arg> ...] [--env KEY=value ...]
   taskmux runner list
   taskmux runner show <runner-id>
   taskmux runner remove <runner-id>
-  taskmux task create <title> [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
+  taskmux task create <title> [--template feature|bug|review] [--agent <agent>] [--workspace <path>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
   taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD] [--clear-description] [--clear-priority] [--clear-tags] [--clear-owner] [--clear-due]
   taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
   taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>] [--with-roles]
@@ -41,6 +49,7 @@ Usage:
   taskmux task shell <task-id>
   taskmux task context <task-id> [--format text|json] [--include-transcripts]
   taskmux task assign <task-id> <role> --agent <agent> --workspace <path>
+  taskmux task assign-many <task-id> --role <role> ... [--agent <agent>] [--workspace <path>]
   taskmux task role update <task-id> <role> [--agent <agent>] [--workspace <path>]
   taskmux task role rename <task-id> <role> <new-role>
   taskmux task roles <task-id>
@@ -50,6 +59,9 @@ Usage:
   taskmux task status <task-id> <role>
   taskmux task refresh <task-id>
   taskmux task transcript <task-id> <role>
+  taskmux task transcript export <task-id> <role> [--format text|json|markdown] [--output <file>]
+  taskmux task activity <task-id>
+  taskmux task timeline <task-id>
   taskmux task detach <task-id> <role>
   taskmux task stop <task-id> <role>
   taskmux task kill <task-id> <role>
@@ -93,12 +105,39 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "migrate") {
-    console.log(runMigrateCommand(rootDir).trimEnd());
+    console.log(runMigrateCommand(rootDir, args.slice(1)).trimEnd());
     return;
   }
 
   if (args[0] === "backup") {
     console.log(runBackupCommand(rootDir).trimEnd());
+    return;
+  }
+
+  if (args[0] === "config") {
+    ensureStorageSchema(rootDir);
+    const store = new FileTaskStore(rootDir);
+    console.log(runConfigCommand(args.slice(1), store).trimEnd());
+    return;
+  }
+
+  if (args[0] === "export") {
+    ensureStorageSchema(rootDir);
+    const store = new FileTaskStore(rootDir);
+    console.log(runExportCommand(args.slice(1), store).trimEnd());
+    return;
+  }
+
+  if (args[0] === "import") {
+    ensureStorageSchema(rootDir);
+    const store = new FileTaskStore(rootDir);
+    console.log(runImportCommand(args.slice(1), store).trimEnd());
+    return;
+  }
+
+  if (args[0] === "prune") {
+    ensureStorageSchema(rootDir);
+    console.log(runPruneCommand(args.slice(1), rootDir).trimEnd());
     return;
   }
 
