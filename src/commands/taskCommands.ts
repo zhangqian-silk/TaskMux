@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { createTaskComment } from "../comment/comment.js";
 import { roleNotFound, runtimeError, taskNotFound, usageError } from "../errors/cliError.js";
 import { createTaskEvent } from "../event/taskEvent.js";
@@ -45,6 +47,8 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return taskRoleCommand(rest, store, tmux);
     case "assign":
       return assignTaskRoleCommand(rest, store);
+    case "assign-many":
+      return assignManyTaskRolesCommand(rest, store);
     case "roles":
       return listTaskRolesCommand(rest, store);
     case "enter":
@@ -75,24 +79,46 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return listTaskCommentsCommand(rest, store);
     case "events":
       return listTaskEventsCommand(rest, store);
+    case "activity":
+      return taskActivityCommand(rest, store);
+    case "timeline":
+      return taskTimelineCommand(rest, store);
     default:
       return taskUsage();
   }
 }
 
 function createTaskCommand(args: string[], store: TaskStore): string {
-  const input = parseTaskBoardInput(args, { requireTitle: true });
+  const input = parseTaskBoardInput(args, {
+    requireTitle: true,
+    extraKnownOptions: new Set(["--template", "--agent", "--workspace"])
+  });
   const title = input.title ?? "";
 
   if (title.length === 0) {
     throw usageError("Task title is required.");
   }
 
-  const task = createTask(store.nextTaskId(), title, new Date(), input.metadata);
+  const template = parseTaskTemplate(readOptionalOption(args, "--template"));
+  const metadata = template === undefined ? input.metadata : mergeTemplateMetadata(input.metadata, template);
+  const task = createTask(store.nextTaskId(), title, new Date(), metadata);
   store.saveTask(task);
   recordTaskEvent(store, task.id, "task.created", { title: task.title });
 
-  return `Created task ${task.id}: ${task.title}\n`;
+  if (template === undefined) {
+    return `Created task ${task.id}: ${task.title}\n`;
+  }
+
+  const config = store.getConfig();
+  const agent = readOptionalOption(args, "--agent")?.trim() ?? config.defaultAgent ?? "codex";
+  const workspace = readOptionalOption(args, "--workspace")?.trim() ?? config.defaultWorkspace ?? process.cwd();
+  const assignedRoles = template.roles.map((roleName) => saveResolvedRole(task.id, roleName, agent, workspace, store));
+
+  return [
+    `Created task ${task.id}: ${task.title}`,
+    `Template: ${template.name}`,
+    `Assigned roles: ${assignedRoles.join(", ")}`
+  ].join("\n").concat("\n");
 }
 
 function listTaskCommand(args: string[], store: TaskStore): string {
@@ -310,22 +336,49 @@ function assignTaskRoleCommand(args: string[], store: TaskStore): string {
     throw usageError("--workspace is required.");
   }
 
-  const runner = resolveRunner(agent, store.listCustomRunners());
-
-  if (runner === null) {
-    throw usageError(`Unsupported agent: ${agent}\nSupported agents: ${supportedRunnerIds(store.listCustomRunners()).join(", ")}`);
-  }
-
-  const role = createRole(roleName, runner, workspace, new Date());
-
-  store.saveRole(taskId, role);
-  recordTaskEvent(store, taskId, "role.assigned", { role: role.name, agent: role.agent });
+  const roleNameResult = saveResolvedRole(taskId, roleName, agent, workspace, store);
 
   return [
-    `Assigned role ${role.name} to ${taskId}`,
-    `Agent: ${role.agent}`,
-    `Workspace: ${role.workspace}`
+    `Assigned role ${roleNameResult} to ${taskId}`,
+    `Agent: ${agent}`,
+    `Workspace: ${workspace}`
   ].join("\n").concat("\n");
+}
+
+function assignManyTaskRolesCommand(args: string[], store: TaskStore): string {
+  const [taskId, ...rest] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  if (store.getTask(taskId) === null) {
+    throw taskNotFound(taskId);
+  }
+
+  assertKnownOptions(rest, new Set(["--role", "--agent", "--workspace"]));
+
+  const roleNames = readRepeatedOption(rest, "--role").map((role) => role.trim()).filter((role) => role.length > 0);
+
+  if (roleNames.length === 0) {
+    throw usageError("At least one --role is required.");
+  }
+
+  const config = store.getConfig();
+  const agent = readOptionalOption(rest, "--agent")?.trim() ?? config.defaultAgent;
+  const workspace = readOptionalOption(rest, "--workspace")?.trim() ?? config.defaultWorkspace;
+
+  if (agent === undefined || agent.length === 0) {
+    throw usageError("--agent is required.");
+  }
+
+  if (workspace === undefined || workspace.length === 0) {
+    throw usageError("--workspace is required.");
+  }
+
+  const assignedRoles = roleNames.map((roleName) => saveResolvedRole(taskId, roleName, agent, workspace, store));
+
+  return `Assigned roles to ${taskId}: ${assignedRoles.join(", ")}\n`;
 }
 
 function updateTaskRoleCommand(args: string[], store: TaskStore): string {
@@ -485,6 +538,10 @@ function tailTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManage
 }
 
 function transcriptTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
+  if (args[0] === "export") {
+    return exportTranscriptCommand(args.slice(1), store);
+  }
+
   const roleLookup = findRole(args, store);
 
   if (typeof roleLookup === "string") {
@@ -499,6 +556,35 @@ function transcriptTaskRoleCommand(args: string[], store: TaskStore, tmux?: Tmux
   store.saveTranscript(roleLookup.taskId, roleLookup.role.name, transcript);
 
   return transcript;
+}
+
+function exportTranscriptCommand(args: string[], store: TaskStore): string {
+  const roleLookup = findRole(args, store);
+
+  if (typeof roleLookup === "string") {
+    throw usageError(roleLookup.trim());
+  }
+
+  const rest = args.slice(2);
+  assertKnownOptions(rest, new Set(["--format", "--output"]));
+
+  const format = parseTranscriptExportFormat(readOptionalOption(rest, "--format"));
+  const transcript = store.readTranscript(roleLookup.taskId, roleLookup.role.name);
+
+  if (transcript === null) {
+    return "No transcript captured.\n";
+  }
+
+  const rendered = renderTranscriptExport(roleLookup.taskId, roleLookup.role.name, transcript, format);
+  const output = readOptionalOption(rest, "--output")?.trim();
+
+  if (output !== undefined && output.length > 0) {
+    mkdirSync(dirname(output), { recursive: true });
+    writeFileSync(output, rendered);
+    return `Exported transcript ${roleLookup.taskId} ${roleLookup.role.name} to ${output}\n`;
+  }
+
+  return rendered;
 }
 
 function detailTaskRoleCommand(args: string[], store: TaskStore): string {
@@ -726,6 +812,67 @@ function listTaskEventsCommand(args: string[], store: TaskStore): string {
     .join("\n")}\n`;
 }
 
+function taskActivityCommand(args: string[], store: TaskStore): string {
+  const [taskId] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  if (store.getTask(taskId) === null) {
+    throw taskNotFound(taskId);
+  }
+
+  const roles = store.listRoles(taskId);
+
+  if (roles.length === 0) {
+    return `Task activity: ${taskId}\nNo roles assigned.\n`;
+  }
+
+  return [
+    `Task activity: ${taskId}`,
+    ...roles.map((role) => {
+      const transcript = store.readTranscript(taskId, role.name);
+      return [
+        role.name,
+        role.agent,
+        role.status,
+        `transcriptLines=${countTranscriptLines(transcript)}`,
+        `updated=${role.updatedAt}`
+      ].join("\t");
+    })
+  ].join("\n").concat("\n");
+}
+
+function taskTimelineCommand(args: string[], store: TaskStore): string {
+  const [taskId] = args;
+
+  if (taskId === undefined || taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  if (store.getTask(taskId) === null) {
+    throw taskNotFound(taskId);
+  }
+
+  const lines = [
+    ...store.listEvents(taskId).map((event) => ({
+      createdAt: event.createdAt,
+      line: `${event.createdAt}\tevent\t${event.type}\t${renderEventPayload(event.payload)}`
+    })),
+    ...store.listComments(taskId).map((comment) => ({
+      createdAt: comment.createdAt,
+      line: `${comment.createdAt}\tcomment\t${comment.id}\t${comment.body}`
+    }))
+  ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+
+  if (lines.length === 0) {
+    return `Task timeline: ${taskId}\nNo timeline entries.\n`;
+  }
+
+  return [`Task timeline: ${taskId}`, ...lines.map((entry) => entry.line)].join("\n").concat("\n");
+}
+
 type TaskContextFormat = "text" | "json";
 
 type TaskContextOptions = {
@@ -847,6 +994,27 @@ function recordTaskEvent(
   store.saveEvent(taskId, createTaskEvent(store.nextEventId(taskId), type, payload, new Date()));
 }
 
+function saveResolvedRole(
+  taskId: string,
+  roleName: string,
+  agent: string,
+  workspace: string,
+  store: TaskStore
+): string {
+  const runner = resolveRunner(agent, store.listCustomRunners());
+
+  if (runner === null) {
+    throw usageError(`Unsupported agent: ${agent}\nSupported agents: ${supportedRunnerIds(store.listCustomRunners()).join(", ")}`);
+  }
+
+  const role = createRole(roleName, runner, workspace, new Date());
+
+  store.saveRole(taskId, role);
+  recordTaskEvent(store, taskId, "role.assigned", { role: role.name, agent: role.agent });
+
+  return role.name;
+}
+
 function renderEventPayload(payload: Record<string, string>): string {
   return Object.entries(payload)
     .map(([key, value]) => `${key}=${value}`)
@@ -895,6 +1063,16 @@ type TaskBoardInput = {
   metadata: TaskMetadata;
 };
 
+type TaskTemplateName = "feature" | "bug" | "review";
+
+type TaskTemplate = {
+  name: TaskTemplateName;
+  metadata: TaskMetadata;
+  roles: string[];
+};
+
+type TranscriptExportFormat = "text" | "json" | "markdown";
+
 type TaskListFilters = {
   status?: TaskStatus;
   owner?: string;
@@ -910,7 +1088,7 @@ type TaskBoardViewOptions = {
 
 function parseTaskBoardInput(
   args: string[],
-  options: { requireTitle: boolean; allowTitleOption?: boolean; allowClear?: boolean }
+  options: { requireTitle: boolean; allowTitleOption?: boolean; allowClear?: boolean; extraKnownOptions?: Set<string> }
 ): TaskBoardInput {
   const optionStart = args.findIndex((arg) => arg.startsWith("--"));
   const titleParts = optionStart === -1 ? args : args.slice(0, optionStart);
@@ -925,6 +1103,10 @@ function parseTaskBoardInput(
   const dueAt = readOptionalOption(optionArgs, "--due")?.trim();
 
   const knownOptions = new Set(["--title", "--description", "--priority", "--tag", "--owner", "--due"]);
+
+  for (const option of options.extraKnownOptions ?? []) {
+    knownOptions.add(option);
+  }
 
   if (options.allowClear === true) {
     knownOptions.add("--clear-description");
@@ -987,6 +1169,87 @@ function parseTaskBoardInput(
     title: title.length === 0 ? undefined : title,
     metadata
   };
+}
+
+function parseTaskTemplate(value: string | undefined): TaskTemplate | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "feature") {
+    return {
+      name: value,
+      metadata: { priority: "medium", tags: ["feature"] },
+      roles: ["rd", "reviewer"]
+    };
+  }
+
+  if (value === "bug") {
+    return {
+      name: value,
+      metadata: { priority: "high", tags: ["bug"] },
+      roles: ["rd", "tester"]
+    };
+  }
+
+  if (value === "review") {
+    return {
+      name: value,
+      metadata: { priority: "medium", tags: ["review"] },
+      roles: ["reviewer"]
+    };
+  }
+
+  throw usageError("--template must be one of feature, bug, review.");
+}
+
+function mergeTemplateMetadata(input: TaskMetadata, template: TaskTemplate): TaskMetadata {
+  return {
+    ...template.metadata,
+    ...input,
+    tags: uniqueStrings([...(template.metadata.tags ?? []), ...(input.tags ?? [])])
+  };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function parseTranscriptExportFormat(value: string | undefined): TranscriptExportFormat {
+  if (value === undefined) {
+    return "text";
+  }
+
+  if (value !== "text" && value !== "json" && value !== "markdown") {
+    throw usageError("--format must be one of text, json, markdown.");
+  }
+
+  return value;
+}
+
+function renderTranscriptExport(
+  taskId: string,
+  roleName: string,
+  transcript: string,
+  format: TranscriptExportFormat
+): string {
+  if (format === "json") {
+    return `${JSON.stringify({ taskId, role: roleName, transcript }, null, 2)}\n`;
+  }
+
+  if (format === "markdown") {
+    return `# Transcript ${taskId} ${roleName}\n\n\`\`\`text\n${transcript.trimEnd()}\n\`\`\`\n`;
+  }
+
+  return transcript;
+}
+
+function countTranscriptLines(transcript: string | null): number {
+  if (transcript === null || transcript.trimEnd().length === 0) {
+    return 0;
+  }
+
+  return transcript.trimEnd().split("\n").length;
 }
 
 function parseTaskListFilters(args: string[]): TaskListFilters {
@@ -1221,7 +1484,7 @@ function assertDueAt(value: string): void {
 
 export function taskUsage(): string {
   return `Task commands:
-  taskmux task create <title> [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
+  taskmux task create <title> [--template feature|bug|review] [--agent <agent>] [--workspace <path>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]
   taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD] [--clear-description] [--clear-priority] [--clear-tags] [--clear-owner] [--clear-due]
   taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
   taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>] [--with-roles]
@@ -1235,6 +1498,7 @@ export function taskUsage(): string {
   taskmux task open <task-id>
   taskmux task context <task-id> [--format text|json] [--include-transcripts]
   taskmux task assign <task-id> <role> --agent <agent> --workspace <path>
+  taskmux task assign-many <task-id> --role <role> ... [--agent <agent>] [--workspace <path>]
   taskmux task role update <task-id> <role> [--agent <agent>] [--workspace <path>]
   taskmux task role rename <task-id> <role> <new-role>
   taskmux task roles <task-id>
@@ -1244,6 +1508,9 @@ export function taskUsage(): string {
   taskmux task status <task-id> <role>
   taskmux task refresh <task-id>
   taskmux task transcript <task-id> <role>
+  taskmux task transcript export <task-id> <role> [--format text|json|markdown] [--output <file>]
+  taskmux task activity <task-id>
+  taskmux task timeline <task-id>
   taskmux task detach <task-id> <role>
   taskmux task stop <task-id> <role>
   taskmux task kill <task-id> <role>

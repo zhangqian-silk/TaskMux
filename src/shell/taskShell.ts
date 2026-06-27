@@ -91,6 +91,8 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
     case "roles":
     case "comments":
     case "events":
+    case "activity":
+    case "timeline":
       return [name, taskId];
     case "context":
       return [name, taskId, ...args];
@@ -101,12 +103,18 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
     case "comment":
       return [name, taskId, ...args];
     case "assign":
+    case "assign-many":
+      return [name, taskId, ...args];
+    case "transcript":
+      if (args[0] === "export") {
+        return [name, "export", taskId, ...args.slice(1)];
+      }
+
       return [name, taskId, ...args];
     case "enter":
     case "tail":
     case "detail":
     case "status":
-    case "transcript":
     case "detach":
     case "stop":
     case "kill":
@@ -146,16 +154,20 @@ function shellHelp(): string {
   delete
   comments
   events
+  activity
+  timeline
   context [--format text|json] [--include-transcripts]
   role update <role> [--agent <agent>] [--workspace <path>]
   role rename <role> <new-role>
   comment <body>
   assign <role> --agent <agent> --workspace <path>
+  assign-many --role <role> ... [--agent <agent>] [--workspace <path>]
   enter <role>
   tail <role>
   detail <role>
   status <role>
   transcript <role>
+  transcript export <role> [--format text|json|markdown] [--output <file>]
   detach <role>
   stop <role>
   kill <role>

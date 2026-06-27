@@ -1,4 +1,4 @@
-import { runStorageMigrations } from "../storage/storageSchema.js";
+import { inspectStorageSchema, runStorageMigrations } from "../storage/storageSchema.js";
 import { createStorageBackup } from "../storage/storageBackup.js";
 
 export function runBackupCommand(rootDir: string): string {
@@ -7,7 +7,11 @@ export function runBackupCommand(rootDir: string): string {
   return `Created backup ${backup.path}\n`;
 }
 
-export function runMigrateCommand(rootDir: string): string {
+export function runMigrateCommand(rootDir: string, args: string[] = []): string {
+  if (args.includes("--dry-run")) {
+    return dryRunMigrateCommand(rootDir);
+  }
+
   const result = runStorageMigrations(rootDir);
 
   if (!result.changed) {
@@ -25,4 +29,24 @@ export function runMigrateCommand(rootDir: string): string {
     .filter((line): line is string => line !== null)
     .join("\n")
     .concat("\n");
+}
+
+function dryRunMigrateCommand(rootDir: string): string {
+  const state = inspectStorageSchema(rootDir);
+
+  switch (state.status) {
+    case "uninitialized":
+      return `Storage migration dry run uninitialized -> ${state.latestVersion}\nSchema would be initialized\n`;
+    case "current":
+      return `Storage schema already up to date: ${state.currentVersion}\n`;
+    case "upgrade-required":
+      return [
+        `Storage migration dry run ${state.currentVersion} -> ${state.latestVersion}`,
+        "Backup would be created"
+      ].join("\n").concat("\n");
+    case "unsupported":
+      return `Unsupported storage schema version: ${state.currentVersion}. This TaskMux supports storage schema ${state.latestVersion}.\n`;
+    case "invalid":
+      return `Invalid storage schema manifest: ${state.manifestPath}.\n`;
+  }
 }

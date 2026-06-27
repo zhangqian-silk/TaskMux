@@ -50,7 +50,12 @@ TaskMux currently provides:
 - `taskmux runner list` lists built-in and custom runner definitions
 - `taskmux runner show <runner-id>` shows one runner definition
 - `taskmux runner remove <runner-id>` removes a custom runner definition
+- `taskmux config show` shows local defaults
+- `taskmux config set default-agent <runner-id>` stores the default runner id
+- `taskmux config set default-workspace <path>` stores the default role workspace
+- `taskmux config unset default-agent|default-workspace` removes one default
 - `taskmux task create <title> [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD]` creates a local task with status `open` and optional task board metadata
+- `taskmux task create <title> --template feature|bug|review [--agent <agent>] [--workspace <path>]` creates a task from a built-in template and assigns default roles
 - `taskmux task update <task-id> [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD] [--clear-description] [--clear-priority] [--clear-tags] [--clear-owner] [--clear-due]` updates or clears task board metadata
 - `taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]` lists local tasks in id order with optional filters
 - `taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>] [--with-roles]` renders local tasks grouped by lifecycle status with optional filters and role status counts
@@ -65,6 +70,7 @@ TaskMux currently provides:
 - `taskmux task context <task-id> [--format text|json] [--include-transcripts]` renders a task handoff snapshot across metadata, roles, comments, events, and optional stored role transcripts
 - `taskmux task shell <task-id>` opens an interactive task control shell
 - `taskmux task assign <task-id> <role> --agent <agent> --workspace <path>` assigns a role to an existing task with status `idle`
+- `taskmux task assign-many <task-id> --role <role> ... [--agent <agent>] [--workspace <path>]` assigns multiple roles at once
 - `taskmux task role update <task-id> <role> [--agent <agent>] [--workspace <path>]` updates a role's runner contract or workspace
 - `taskmux task role rename <task-id> <role> <new-role>` renames a role and attempts to rename the matching tmux window
 - `taskmux task roles <task-id>` lists roles assigned to a task
@@ -74,6 +80,9 @@ TaskMux currently provides:
 - `taskmux task status <task-id> <role>` inspects tmux role window state, updates stored role status when detection succeeds, and shows role status plus tmux target information
 - `taskmux task refresh <task-id>` inspects every assigned role for a task and writes detected statuses to storage
 - `taskmux task transcript <task-id> <role>` reads the current tmux capture stream for the role
+- `taskmux task transcript export <task-id> <role> [--format text|json|markdown] [--output <file>]` renders a stored role transcript
+- `taskmux task activity <task-id>` summarizes role status, agent, transcript line count, and update time
+- `taskmux task timeline <task-id>` renders task events and comments in one chronological view
 - `taskmux task detach <task-id> <role>` detaches tmux clients from the task session without stopping role processes
 - `taskmux task stop <task-id> <role>` sends `C-c` to the role tmux window and records the role as `exited`
 - `taskmux task kill <task-id> <role>` kills the role tmux window and records the role as `exited`
@@ -85,10 +94,10 @@ TaskMux currently provides:
 - `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runners, TaskMux home, storage schema, storage permissions, and stored record health
 - `taskmux backup` creates a timestamped raw storage backup
 - `taskmux migrate` upgrades older local storage schemas after creating a backup
-
-TaskMux should also provide future commands for:
-
-- Dedicated transcript export formats
+- `taskmux migrate --dry-run` reports migration work without writing storage
+- `taskmux export --output <file>` writes a local JSON snapshot
+- `taskmux import <file>` imports a local JSON snapshot
+- `taskmux prune --trash [--backups] [--keep-backups <count>]` prunes deleted tasks and old backups
 
 ## Release Automation
 
@@ -144,6 +153,16 @@ TaskMux supports built-in and custom runner ids.
 - A role stores the resolved runner command, args, and env so later `enter` and `restart` use the same execution contract even if the runner definition changes.
 - Built-in runners cannot be removed or replaced by custom runner definitions.
 
+## Template And Defaults
+
+TaskMux stores local defaults in `config.json` under the TaskMux home.
+
+- `default-agent` is used when a template or multi-role assignment does not specify `--agent`.
+- `default-workspace` is used when a template or multi-role assignment does not specify `--workspace`.
+- `task create --template feature` creates `rd` and `reviewer` roles and adds the `feature` tag with medium priority unless overridden.
+- `task create --template bug` creates `rd` and `tester` roles and adds the `bug` tag with high priority unless overridden.
+- `task create --template review` creates the `reviewer` role and adds the `review` tag with medium priority unless overridden.
+
 ## Data Storage
 
 TaskMux stores data in a user-level application directory. It does not write task state into the project workspace by default.
@@ -154,6 +173,7 @@ Suggested layout:
 
 ```text
 ~/.taskmux/
+  config.json
   schema.json
   backups/
     backup-<timestamp>/
@@ -185,6 +205,12 @@ The data directory has a global storage schema manifest at `schema.json`. Normal
 `taskmux backup` creates a timestamped raw copy of the current data directory under `backups/`. Backup creation excludes the `backups/` directory itself so backups do not recursively copy previous backups.
 
 `taskmux migrate` is the only place where older storage schemas are upgraded. Migrations run in version order and update `schema.json` after all required steps succeed. When a migration upgrades an older schema, TaskMux creates a backup before applying migration steps and prints the backup path. Business stores read and write only the latest schema.
+
+`taskmux migrate --dry-run` reports whether schema initialization or upgrade would happen without writing `schema.json` or creating a backup.
+
+`taskmux export --output <file>` writes a JSON snapshot with config, custom runners, active tasks, roles, comments, events, and stored transcripts. `taskmux import <file>` restores that snapshot into the configured TaskMux home.
+
+`taskmux prune --trash` removes deleted task directories under `trash/tasks`. `taskmux prune --backups --keep-backups <count>` removes older backup directories after keeping the newest entries.
 
 `doctor` reports storage schema status, storage directory read/write permission, and stored record health. Outdated storage is reported as `upgrade-required` with `current`, `latest`, and `run taskmux migrate` guidance. Invalid stored records are reported as `storage records invalid` without aborting the rest of the doctor report.
 

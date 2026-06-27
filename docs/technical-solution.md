@@ -145,6 +145,24 @@ Tmux starts roles with one shell-command argument assembled from the stored role
 env TASKMUX_MODE=dev /path/to/agent-js --model review
 ```
 
+## Config And Templates
+
+`config.json` lives at the TaskMux home root and is read through `FileTaskStore.getConfig`.
+
+The first config schema stores:
+
+```json
+{
+  "schemaVersion": 1,
+  "defaultAgent": "codex",
+  "defaultWorkspace": "/path/to/project"
+}
+```
+
+`src/commands/configCommands.ts` owns `config show/set/unset`. `task create --template` and `task assign-many` read these defaults through the `TaskStore` boundary.
+
+Built-in templates live in `src/commands/taskCommands.ts` because they compose task metadata and role assignment in one use case. Templates do not introduce a new storage record type; they create normal task, role, and event records.
+
 ## Interactive Task Shell
 
 The interactive shell is implemented in `src/shell/taskShell.ts`. It loads a task, prints the same summary as `task open`, then maps shell commands to existing task commands.
@@ -168,6 +186,10 @@ role rename <role> <new-role> -> task role rename <task-id> <role> <new-role>
 comment <body> -> task comment <task-id> <body>
 enter <role> -> task enter <task-id> <role>
 restart <role> -> task restart <task-id> <role>
+activity -> task activity <task-id>
+timeline -> task timeline <task-id>
+assign-many --role <role> ... -> task assign-many <task-id> --role <role> ...
+transcript export <role> ... -> task transcript export <task-id> <role> ...
 ```
 
 The shell does not implement separate business logic and does not intercept native Codex or Claude input after `enter`.
@@ -184,6 +206,7 @@ The current storage implementation uses:
 
 ```text
 TASKMUX_HOME or ~/.taskmux
+  config.json
   schema.json
   backups/
     backup-<timestamp>/
@@ -199,9 +222,15 @@ TASKMUX_HOME or ~/.taskmux
 
 `schema.json` stores the global storage schema manifest: `schemaVersion`, `storageVersion`, and `updatedAt`. `info.json` stores the user-editable task title and task board metadata: `description`, `priority`, `tags`, `owner`, and `dueAt`. `task.json` stores runtime state: `schemaVersion`, `id`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
 
+`config.json` stores local defaults for agent and workspace. The config parser validates `schemaVersion: 1` and optional string fields before returning values to commands.
+
 Task board commands live in `src/commands/taskCommands.ts`. `task create` and `task update` compose task title and metadata writes before saving through `TaskStore`; clear flags write `undefined` optional metadata so JSON encoding omits those fields. `task list` and `task board` share one filter parser for status, owner, tag, priority, and search. `task list` renders tab-separated rows; `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`. `task board --with-roles` reads stored roles and appends status counts without tmux probes.
 
+`task create --template` composes task metadata and role assignment in one command. It saves the task first, records `task.created`, then creates each template role through the same runner resolution path as normal role assignment and records `role.assigned` events.
+
 `task context` composes a handoff snapshot from the same store boundary. It reads the task, roles, comments, and events, then renders either text or JSON. `--include-transcripts` reads persisted `roles/<role>/transcript.log` files through `TaskStore.readTranscript`; it does not call tmux or mutate transcript state.
+
+`task transcript export` also reads persisted transcript files only. It renders text, JSON, or Markdown and optionally writes the rendered output to a user-provided path. `task activity` reads roles and stored transcripts to compute transcript line counts. `task timeline` merges event and comment records by timestamp.
 
 `task delete` and `task restore` are implemented as directory moves in `FileTaskStore`. Delete moves `tasks/<task-id>` into `trash/tasks/<task-id>` and active task reads no longer see it. Restore moves the same directory back and preserves nested roles, comments, events, and transcripts.
 
@@ -264,7 +293,11 @@ Invalid records raise `DATA_ERROR` instead of being skipped silently.
 
 Storage migrations live under `src/storage/migrations/` and are registered by the migration runner. Each migration handles one version step. `taskmux migrate` runs the required steps in order and writes the latest `schema.json` only after all required migrations complete.
 
+`taskmux migrate --dry-run` uses the schema inspector only. It does not call the migration runner, create backups, or write the manifest.
+
 `src/storage/storageBackup.ts` owns raw storage backups. `taskmux backup` creates `backups/backup-<timestamp>/` under the TaskMux home and copies all current storage entries except `backups/`. `taskmux migrate` creates a backup before applying migrations from an older schema version and includes that backup path in command output.
+
+`src/commands/maintenanceCommands.ts` owns export, import, and prune. Export builds a JSON snapshot through store APIs. Import restores config, custom runners, tasks, roles, transcripts, comments, and events through the same store write APIs. Prune removes trash task directories and old backup directories by filesystem path under the configured TaskMux home.
 
 `doctor` calls the storage schema inspector without upgrading storage. It reports `ok`, `upgrade-required`, `unsupported`, or `invalid` and keeps upgrade execution behind the explicit `taskmux migrate` command. Doctor also checks storage read/write permission with a temporary probe file and scans stored task, role, and runner records through the current store validators. Record validation failures are reported as `storage records invalid` instead of aborting the doctor report.
 

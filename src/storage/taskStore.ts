@@ -10,6 +10,8 @@ import type { Task } from "../task/task.js";
 import { taskRecordCodec } from "./taskRecordCodec.js";
 
 export type TaskStore = {
+  getConfig(): TaskmuxConfig;
+  saveConfig(config: TaskmuxConfig): void;
   nextTaskId(): string;
   saveTask(task: Task): void;
   deleteTask(id: string): boolean;
@@ -34,12 +36,33 @@ export type TaskStore = {
   removeCustomRunner(id: string): boolean;
 };
 
+export type TaskmuxConfig = {
+  schemaVersion: 1;
+  defaultAgent?: string;
+  defaultWorkspace?: string;
+};
+
 export function resolveTaskmuxHome(env: NodeJS.ProcessEnv): string {
   return env.TASKMUX_HOME ?? join(homedir(), ".taskmux");
 }
 
 export class FileTaskStore implements TaskStore {
   constructor(private readonly rootDir: string) {}
+
+  getConfig(): TaskmuxConfig {
+    const raw = this.readOptionalText(this.configFile());
+
+    if (raw === null) {
+      return { schemaVersion: 1 };
+    }
+
+    return parseTaskmuxConfig(raw);
+  }
+
+  saveConfig(config: TaskmuxConfig): void {
+    mkdirSync(this.rootDir, { recursive: true });
+    writeFileSync(this.configFile(), `${JSON.stringify(config, null, 2)}\n`);
+  }
 
   nextTaskId(): string {
     const maxId = this.listTasks().reduce((max, task) => {
@@ -268,6 +291,10 @@ export class FileTaskStore implements TaskStore {
     return join(this.rootDir, "tasks");
   }
 
+  private configFile(): string {
+    return join(this.rootDir, "config.json");
+  }
+
   private taskDir(id: string): string {
     return join(this.tasksDir(), id);
   }
@@ -421,6 +448,21 @@ function parseCustomRunner(id: string, raw: string): CustomRunner {
   return value as CustomRunner;
 }
 
+function parseTaskmuxConfig(raw: string): TaskmuxConfig {
+  const value = parseJson(raw, "Invalid config record");
+
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !isOptionalString(value.defaultAgent) ||
+    !isOptionalString(value.defaultWorkspace)
+  ) {
+    throw dataError("Invalid config record");
+  }
+
+  return value as TaskmuxConfig;
+}
+
 function parseComment(id: string, raw: string): TaskComment {
   const value = parseJson(raw, `Invalid comment record: ${id}`);
 
@@ -468,6 +510,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {

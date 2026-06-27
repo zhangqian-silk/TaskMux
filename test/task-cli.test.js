@@ -232,6 +232,66 @@ test("creates explicit storage backups", () => {
   );
 });
 
+test("exports imports and prunes local data", () => {
+  const sourceHome = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const targetHome = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const exportPath = join(sourceHome, "snapshot.json");
+
+  runTaskmux(["config", "set", "default-agent", "codex"], {
+    TASKMUX_HOME: sourceHome
+  });
+  runTaskmux(["task", "create", "Portable task", "--priority", "high"], {
+    TASKMUX_HOME: sourceHome
+  });
+  runTaskmux(["task", "assign", "task-1", "rd", "--agent", "codex", "--workspace", "/tmp/project-a"], {
+    TASKMUX_HOME: sourceHome
+  });
+  runTaskmux(["task", "comment", "task-1", "Ship it"], {
+    TASKMUX_HOME: sourceHome
+  });
+
+  const exportOutput = runTaskmux(["export", "--output", exportPath], {
+    TASKMUX_HOME: sourceHome
+  });
+  assert.match(exportOutput, /Exported TaskMux data/);
+  assert.equal(existsSync(exportPath), true);
+
+  const importOutput = runTaskmux(["import", exportPath], {
+    TASKMUX_HOME: targetHome
+  });
+  assert.match(importOutput, /Imported TaskMux data/);
+
+  assert.match(runTaskmux(["task", "show", "task-1"], { TASKMUX_HOME: targetHome }), /Portable task/);
+  assert.match(runTaskmux(["task", "roles", "task-1"], { TASKMUX_HOME: targetHome }), /rd\tcodex/);
+  assert.match(runTaskmux(["task", "comments", "task-1"], { TASKMUX_HOME: targetHome }), /Ship it/);
+  assert.match(runTaskmux(["config", "show"], { TASKMUX_HOME: targetHome }), /Default agent: codex/);
+
+  runTaskmux(["task", "delete", "task-1"], {
+    TASKMUX_HOME: targetHome
+  });
+  assert.equal(existsSync(join(targetHome, "trash", "tasks", "task-1")), true);
+
+  const pruneOutput = runTaskmux(["prune", "--trash"], {
+    TASKMUX_HOME: targetHome
+  });
+  assert.match(pruneOutput, /Pruned trash tasks: 1/);
+  assert.equal(existsSync(join(targetHome, "trash", "tasks", "task-1")), false);
+});
+
+test("dry-runs storage migrations without writing schema", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  writeStorageSchema(home, 0);
+
+  const output = runTaskmux(["migrate", "--dry-run"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Storage migration dry run 0 -> 1/);
+  assert.match(output, /Backup would be created/);
+  assert.match(readFileSync(join(home, "schema.json"), "utf8"), /"storageVersion":0/);
+});
+
 test("reads edited task info from the user-editable info file", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
 
@@ -293,6 +353,43 @@ test("creates tasks with task board metadata", () => {
   assert.match(showOutput, /Tags: frontend, auth/);
   assert.match(showOutput, /Owner: alex/);
   assert.match(showOutput, /Due: 2026-07-01/);
+});
+
+test("stores defaults and creates templated tasks with default roles", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["config", "set", "default-agent", "codex"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["config", "set", "default-workspace", "/tmp/project-a"], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(["task", "create", "Build export flow", "--template", "feature"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Created task task-1: Build export flow/);
+  assert.match(output, /Template: feature/);
+  assert.match(output, /Assigned roles: rd, reviewer/);
+
+  const task = runTaskmux(["task", "show", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  assert.match(task, /Priority: medium/);
+  assert.match(task, /Tags: feature/);
+
+  const roles = runTaskmux(["task", "roles", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  assert.match(roles, /rd\tcodex\tidle\t\/tmp\/project-a/);
+  assert.match(roles, /reviewer\tcodex\tidle\t\/tmp\/project-a/);
+
+  const config = runTaskmux(["config", "show"], {
+    TASKMUX_HOME: home
+  });
+  assert.match(config, /Default agent: codex/);
+  assert.match(config, /Default workspace: \/tmp\/project-a/);
 });
 
 test("updates task board metadata", () => {
@@ -647,6 +744,39 @@ test("assigns a role to an existing task", () => {
   assert.equal(role.status, "idle");
   assert.equal(roleInfo.schemaVersion, 1);
   assert.equal(roleInfo.name, "rd");
+});
+
+test("assigns multiple roles with one command", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Coordinate release"], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(
+    [
+      "task",
+      "assign-many",
+      "task-1",
+      "--role",
+      "rd",
+      "--role",
+      "reviewer",
+      "--agent",
+      "codex",
+      "--workspace",
+      "/tmp/project-a"
+    ],
+    { TASKMUX_HOME: home }
+  );
+
+  assert.match(output, /Assigned roles to task-1: rd, reviewer/);
+
+  const roles = runTaskmux(["task", "roles", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  assert.match(roles, /rd\tcodex\tidle\t\/tmp\/project-a/);
+  assert.match(roles, /reviewer\tcodex\tidle\t\/tmp\/project-a/);
 });
 
 test("reads edited role info from the user-editable info file", () => {
@@ -1177,6 +1307,75 @@ test("opens a task context summary", () => {
   assert.match(output, /Roles: 1/);
   assert.match(output, /Comments: 1/);
   assert.match(output, /Next: taskmux task enter task-1 <role>/);
+});
+
+test("exports transcripts in markdown and json formats", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+  const markdownPath = join(home, "reviewer.md");
+
+  runTaskmux(["task", "create", "Review checkout flow"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(
+    ["task", "assign", "task-1", "reviewer", "--agent", "claude", "--workspace", "/tmp/project-a"],
+    { TASKMUX_HOME: home }
+  );
+  runTaskmux(["task", "transcript", "task-1", "reviewer"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  const markdownOutput = runTaskmux(
+    ["task", "transcript", "export", "task-1", "reviewer", "--format", "markdown", "--output", markdownPath],
+    { TASKMUX_HOME: home }
+  );
+  assert.match(markdownOutput, /Exported transcript task-1 reviewer/);
+  assert.match(readFileSync(markdownPath, "utf8"), /# Transcript task-1 reviewer/);
+  assert.match(readFileSync(markdownPath, "utf8"), /recent reviewer output/);
+
+  const jsonOutput = runTaskmux(
+    ["task", "transcript", "export", "task-1", "reviewer", "--format", "json"],
+    { TASKMUX_HOME: home }
+  );
+  const parsed = JSON.parse(jsonOutput);
+  assert.equal(parsed.taskId, "task-1");
+  assert.equal(parsed.role, "reviewer");
+  assert.match(parsed.transcript, /recent reviewer output/);
+});
+
+test("renders role activity and task timeline", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const { fakeTmux, logFile } = createFakeTmux(home);
+
+  runTaskmux(["task", "create", "Review checkout flow"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["task", "assign", "task-1", "reviewer", "--agent", "claude", "--workspace", "/tmp/project-a"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["task", "comment", "task-1", "Ready for review"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["task", "transcript", "task-1", "reviewer"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    FAKE_TMUX_LOG: logFile
+  });
+
+  const activity = runTaskmux(["task", "activity", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  assert.match(activity, /Task activity: task-1/);
+  assert.match(activity, /reviewer\tclaude\tidle\ttranscriptLines=1/);
+
+  const timeline = runTaskmux(["task", "timeline", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  assert.match(timeline, /task.created/);
+  assert.match(timeline, /role.assigned/);
+  assert.match(timeline, /comment\tcomment-1\tReady for review/);
 });
 
 test("renders a task handoff context as text", () => {
