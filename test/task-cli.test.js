@@ -392,6 +392,55 @@ test("stores defaults and creates templated tasks with default roles", () => {
   assert.match(config, /Default workspace: \/tmp\/project-a/);
 });
 
+test("tracks current and last tasks for shorter workflows", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "First task"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["task", "create", "Second task"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(runTaskmux(["task", "last"], { TASKMUX_HOME: home }), /task-2\tSecond task/);
+
+  const setCurrent = runTaskmux(["task", "current", "task-1"], {
+    TASKMUX_HOME: home
+  });
+  assert.match(setCurrent, /Current task: task-1/);
+  assert.match(runTaskmux(["task", "current"], { TASKMUX_HOME: home }), /task-1\tFirst task/);
+});
+
+test("clones tasks with metadata and roles", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+
+  runTaskmux(["task", "create", "Original task", "--priority", "high", "--tag", "frontend", "--owner", "alex"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["task", "assign", "task-1", "rd", "--agent", "codex", "--workspace", "/tmp/project-a"], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(["task", "clone", "task-1", "--title", "Cloned task"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Cloned task task-1 -> task-2/);
+
+  const task = runTaskmux(["task", "show", "task-2"], {
+    TASKMUX_HOME: home
+  });
+  assert.match(task, /Title: Cloned task/);
+  assert.match(task, /Priority: high/);
+  assert.match(task, /Tags: frontend/);
+  assert.match(task, /Owner: alex/);
+
+  const roles = runTaskmux(["task", "roles", "task-2"], {
+    TASKMUX_HOME: home
+  });
+  assert.match(roles, /rd\tcodex\tidle\t\/tmp\/project-a/);
+});
+
 test("updates task board metadata", () => {
   const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
 
@@ -2331,7 +2380,7 @@ test("runs an interactive task shell", async () => {
 
   const output = await runTaskmuxInteractive(
     ["task", "shell", "task-1"],
-    "summary\nupdate --priority high --owner shell-owner\nsummary\nroles\ncomment hello from shell\ncomments\nevents\ncontext\nexit\n",
+    "summary\nupdate --priority high --owner shell-owner\nsummary\nr\ncomment hello from shell\nc\ne\na\nt\ncontext\nq\n",
     { TASKMUX_HOME: home }
   );
 
@@ -2346,5 +2395,7 @@ test("runs an interactive task shell", async () => {
   assert.match(output, /task\.created/);
   assert.match(output, /role\.assigned/);
   assert.match(output, /comment\.added/);
+  assert.match(output, /Task activity: task-1/);
+  assert.match(output, /Task timeline: task-1/);
   assert.match(output, /Task Context/);
 });

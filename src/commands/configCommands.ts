@@ -24,7 +24,9 @@ function showConfigCommand(store: TaskStore): string {
   return [
     "TaskMux config",
     `Default agent: ${config.defaultAgent ?? "(none)"}`,
-    `Default workspace: ${config.defaultWorkspace ?? "(none)"}`
+    `Default workspace: ${config.defaultWorkspace ?? "(none)"}`,
+    `Current task: ${config.currentTaskId ?? "(none)"}`,
+    `Last task: ${config.lastTaskId ?? "(none)"}`
   ].join("\n").concat("\n");
 }
 
@@ -78,4 +80,3 @@ function configUsage(): string {
   taskmux config unset default-workspace
 `;
 }
-

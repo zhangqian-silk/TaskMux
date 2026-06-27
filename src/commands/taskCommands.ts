@@ -25,6 +25,12 @@ export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxMana
       return boardTaskCommand(rest, store);
     case "show":
       return showTaskCommand(rest, store);
+    case "current":
+      return currentTaskCommand(rest, store);
+    case "last":
+      return lastTaskCommand(store);
+    case "clone":
+      return cloneTaskCommand(rest, store);
     case "update":
       return updateTaskCommand(rest, store);
     case "start":
@@ -103,6 +109,7 @@ function createTaskCommand(args: string[], store: TaskStore): string {
   const metadata = template === undefined ? input.metadata : mergeTemplateMetadata(input.metadata, template);
   const task = createTask(store.nextTaskId(), title, new Date(), metadata);
   store.saveTask(task);
+  rememberTask(store, task.id);
   recordTaskEvent(store, task.id, "task.created", { title: task.title });
 
   if (template === undefined) {
@@ -152,6 +159,8 @@ function showTaskCommand(args: string[], store: TaskStore): string {
     throw taskNotFound(id);
   }
 
+  rememberTask(store, task.id);
+
   return [
     `Task: ${task.id}`,
     `Title: ${task.title}`,
@@ -159,6 +168,87 @@ function showTaskCommand(args: string[], store: TaskStore): string {
     ...renderTaskMetadataLines(task),
     `Created: ${task.createdAt}`,
     `Updated: ${task.updatedAt}`
+  ].join("\n").concat("\n");
+}
+
+function currentTaskCommand(args: string[], store: TaskStore): string {
+  const [taskId] = args;
+
+  if (taskId === undefined) {
+    return renderTaskPointer("Current task", store.getConfig().currentTaskId, store);
+  }
+
+  if (taskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  const task = store.getTask(taskId);
+
+  if (task === null) {
+    throw taskNotFound(taskId);
+  }
+
+  rememberTask(store, task.id, { current: true });
+
+  return `Current task: ${task.id}\t${task.title}\n`;
+}
+
+function lastTaskCommand(store: TaskStore): string {
+  return renderTaskPointer("Last task", store.getConfig().lastTaskId, store);
+}
+
+function cloneTaskCommand(args: string[], store: TaskStore): string {
+  const [sourceTaskId, ...rest] = args;
+
+  if (sourceTaskId === undefined || sourceTaskId.trim().length === 0) {
+    throw usageError("Task id is required.");
+  }
+
+  const sourceTask = store.getTask(sourceTaskId);
+
+  if (sourceTask === null) {
+    throw taskNotFound(sourceTaskId);
+  }
+
+  assertKnownOptions(rest, new Set(["--title"]));
+
+  const title = readOptionalOption(rest, "--title")?.trim() ?? `${sourceTask.title} copy`;
+  const clonedTask = createTask(store.nextTaskId(), title, new Date(), {
+    description: sourceTask.description,
+    priority: sourceTask.priority,
+    tags: sourceTask.tags,
+    owner: sourceTask.owner,
+    dueAt: sourceTask.dueAt
+  });
+
+  store.saveTask(clonedTask);
+  rememberTask(store, clonedTask.id);
+  recordTaskEvent(store, clonedTask.id, "task.created", { title: clonedTask.title });
+  recordTaskEvent(store, clonedTask.id, "task.cloned", { from: sourceTask.id });
+
+  const roles = store.listRoles(sourceTask.id).map((role) => {
+    const clonedRole = createRole(
+      role.name,
+      {
+        id: role.agent,
+        command: role.command,
+        args: role.args,
+        env: role.env,
+        source: "custom"
+      },
+      role.workspace,
+      new Date()
+    );
+
+    store.saveRole(clonedTask.id, clonedRole);
+    recordTaskEvent(store, clonedTask.id, "role.assigned", { role: clonedRole.name, agent: clonedRole.agent });
+    return clonedRole.name;
+  });
+
+  return [
+    `Cloned task ${sourceTask.id} -> ${clonedTask.id}`,
+    `Title: ${clonedTask.title}`,
+    `Roles: ${roles.length === 0 ? "none" : roles.join(", ")}`
   ].join("\n").concat("\n");
 }
 
@@ -230,6 +320,8 @@ function openTaskCommand(args: string[], store: TaskStore): string {
     throw taskNotFound(id);
   }
 
+  rememberTask(store, task.id);
+
   return [
     `Task: ${task.id}`,
     `Title: ${task.title}`,
@@ -253,6 +345,8 @@ function contextTaskCommand(args: string[], store: TaskStore): string {
   if (task === null) {
     throw taskNotFound(taskId);
   }
+
+  rememberTask(store, task.id);
 
   const options = parseTaskContextOptions(rest);
   const context = buildTaskContext(task, store, options.includeTranscripts);
@@ -1015,6 +1109,30 @@ function saveResolvedRole(
   return role.name;
 }
 
+function rememberTask(store: TaskStore, taskId: string, options: { current?: boolean } = {}): void {
+  const config = store.getConfig();
+
+  store.saveConfig({
+    ...config,
+    lastTaskId: taskId,
+    currentTaskId: options.current === true ? taskId : config.currentTaskId
+  });
+}
+
+function renderTaskPointer(label: string, taskId: string | undefined, store: TaskStore): string {
+  if (taskId === undefined) {
+    return `${label}: (none)\n`;
+  }
+
+  const task = store.getTask(taskId);
+
+  if (task === null) {
+    return `${label}: ${taskId}\tmissing\n`;
+  }
+
+  return `${label}: ${task.id}\t${task.title}\n`;
+}
+
 function renderEventPayload(payload: Record<string, string>): string {
   return Object.entries(payload)
     .map(([key, value]) => `${key}=${value}`)
@@ -1489,6 +1607,9 @@ export function taskUsage(): string {
   taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
   taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>] [--with-roles]
   taskmux task show <task-id>
+  taskmux task current [<task-id>]
+  taskmux task last
+  taskmux task clone <task-id> [--title <title>]
   taskmux task start <task-id>
   taskmux task done <task-id>
   taskmux task archive <task-id>

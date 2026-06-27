@@ -24,6 +24,7 @@ The current event stream records:
 | Event Type | Trigger | Payload |
 | --- | --- | --- |
 | `task.created` | `task create` succeeds | `title` |
+| `task.cloned` | `task clone` succeeds | `from` |
 | `task.updated` | `task update` succeeds | `title` |
 | `task.deleted` | `task delete` succeeds | `task` |
 | `task.restored` | `task restore` succeeds | `task` |
@@ -83,7 +84,9 @@ Runner ids may contain letters, numbers, hyphens, and underscores. Custom runner
 
 ## Defaults And Templates
 
-TaskMux stores user defaults in `config.json` under the TaskMux home. The first supported keys are `defaultAgent` and `defaultWorkspace`, managed through `taskmux config show/set/unset`.
+TaskMux stores user defaults and workflow pointers in `config.json` under the TaskMux home. The first supported user-managed keys are `defaultAgent` and `defaultWorkspace`, managed through `taskmux config show/set/unset`.
+
+`currentTaskId` and `lastTaskId` are TaskMux-managed pointers. `task current [<task-id>]` shows or sets the current pointer. `task last` shows the last touched task. Task creation, clone, show, open, context, and explicit current selection update `lastTaskId`.
 
 Templated task creation assigns common roles and metadata:
 
@@ -96,6 +99,23 @@ Templated task creation assigns common roles and metadata:
 `task create --template <name>` may override template metadata with explicit task options. Template roles use explicit `--agent` / `--workspace`, then configured defaults, then `codex` and the current working directory for templated creation.
 
 `task assign-many` accepts repeated `--role` values and uses explicit or configured default agent/workspace values.
+
+`task clone <task-id> [--title <title>]` creates a new task from the source task's editable metadata and assigned role execution contracts. Cloned roles are reset to `idle` so the user can start fresh native CLI sessions for the copied work.
+
+## Interactive Task Shell
+
+`task shell <task-id>` exposes task control commands without repeating the task id. It accepts the full command names and these aliases:
+
+| Alias | Command |
+| --- | --- |
+| `q` | `exit` |
+| `r` | `roles` |
+| `c` | `comments` |
+| `e` | `events` |
+| `a` | `activity` |
+| `t` | `timeline` |
+
+Aliases are normalized before dispatch so they reuse the same command handlers and error behavior as non-interactive commands.
 
 ## Error Codes
 
@@ -160,7 +180,9 @@ Config record:
 {
   "schemaVersion": 1,
   "defaultAgent": "codex",
-  "defaultWorkspace": "/path/to/project"
+  "defaultWorkspace": "/path/to/project",
+  "currentTaskId": "task-1",
+  "lastTaskId": "task-2"
 }
 ```
 

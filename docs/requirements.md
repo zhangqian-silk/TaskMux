@@ -50,6 +50,7 @@ TaskMux currently provides:
 - `taskmux runner list` lists built-in and custom runner definitions
 - `taskmux runner show <runner-id>` shows one runner definition
 - `taskmux runner remove <runner-id>` removes a custom runner definition
+- `taskmux completion bash|zsh|fish` prints shell completion for the selected shell
 - `taskmux config show` shows local defaults
 - `taskmux config set default-agent <runner-id>` stores the default runner id
 - `taskmux config set default-workspace <path>` stores the default role workspace
@@ -60,6 +61,9 @@ TaskMux currently provides:
 - `taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]` lists local tasks in id order with optional filters
 - `taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>] [--with-roles]` renders local tasks grouped by lifecycle status with optional filters and role status counts
 - `taskmux task show <task-id>` shows one task by id
+- `taskmux task current [<task-id>]` shows or sets the current task pointer
+- `taskmux task last` shows the most recently touched task pointer
+- `taskmux task clone <task-id> [--title <title>]` creates a new task from existing task metadata and assigned roles
 - `taskmux task start <task-id>` updates a task to status `active`
 - `taskmux task done <task-id>` updates a task to status `done`
 - `taskmux task archive <task-id>` updates a task to status `archived`
@@ -159,9 +163,13 @@ TaskMux stores local defaults in `config.json` under the TaskMux home.
 
 - `default-agent` is used when a template or multi-role assignment does not specify `--agent`.
 - `default-workspace` is used when a template or multi-role assignment does not specify `--workspace`.
+- `currentTaskId` stores the task selected by `task current <task-id>`.
+- `lastTaskId` stores the most recently touched task from creation, clone, show, open, context, or explicit current selection.
 - `task create --template feature` creates `rd` and `reviewer` roles and adds the `feature` tag with medium priority unless overridden.
 - `task create --template bug` creates `rd` and `tester` roles and adds the `bug` tag with high priority unless overridden.
 - `task create --template review` creates the `reviewer` role and adds the `review` tag with medium priority unless overridden.
+
+`task clone` copies the source task's editable metadata and assigned role execution contracts into a new task, resets cloned roles to `idle`, records the clone source in the new task's event log, and updates the last-task pointer.
 
 ## Data Storage
 
@@ -238,7 +246,9 @@ Task comments live in `tasks/<task-id>/comments.jsonl`. Each line stores one com
 
 Deleted tasks are moved to `trash/tasks/<task-id>` and are excluded from active task list, board, show, role, comment, event, and context commands. `task restore` moves the task directory back into `tasks/<task-id>` and preserves comments, events, roles, and transcripts.
 
-Task events live in `tasks/<task-id>/events.jsonl`. Each line stores one event object with `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. Event ids use `event-<number>` within the task. The first event set records `task.created`, `task.updated`, `task.deleted`, `task.restored`, `task.status_changed`, `role.assigned`, `role.updated`, `role.renamed`, and `comment.added`.
+Task events live in `tasks/<task-id>/events.jsonl`. Each line stores one event object with `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. Event ids use `event-<number>` within the task. The first event set records `task.created`, `task.cloned`, `task.updated`, `task.deleted`, `task.restored`, `task.status_changed`, `role.assigned`, `role.updated`, `role.renamed`, and `comment.added`.
+
+The interactive task shell supports short aliases for repeated task-board work: `q` exits, `r` lists roles, `c` lists comments, `e` lists events, `a` shows role activity, and `t` shows the timeline.
 
 ## Error Model
 

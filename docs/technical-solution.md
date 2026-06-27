@@ -18,6 +18,8 @@ tmux owns persistent terminal execution. TaskMux owns task state, role metadata,
 
 TaskMux is developed as a standalone npm package. The package exports CLI entrypoints only in the first version.
 
+`taskmux completion bash|zsh|fish` is implemented in the CLI entrypoint and prints static completion scripts for the current command surface. It does not read storage or require tmux.
+
 ## Release Pipeline
 
 TaskMux publishes to npm through GitHub Actions Trusted Publishing.
@@ -155,11 +157,13 @@ The first config schema stores:
 {
   "schemaVersion": 1,
   "defaultAgent": "codex",
-  "defaultWorkspace": "/path/to/project"
+  "defaultWorkspace": "/path/to/project",
+  "currentTaskId": "task-1",
+  "lastTaskId": "task-2"
 }
 ```
 
-`src/commands/configCommands.ts` owns `config show/set/unset`. `task create --template` and `task assign-many` read these defaults through the `TaskStore` boundary.
+`src/commands/configCommands.ts` owns `config show/set/unset`. `task create --template` and `task assign-many` read these defaults through the `TaskStore` boundary. Task workflow commands update `currentTaskId` and `lastTaskId` through the same config boundary so pointer state remains separate from task runtime records.
 
 Built-in templates live in `src/commands/taskCommands.ts` because they compose task metadata and role assignment in one use case. Templates do not introduce a new storage record type; they create normal task, role, and event records.
 
@@ -177,7 +181,11 @@ archive -> task archive <task-id>
 reopen -> task reopen <task-id>
 delete -> task delete <task-id>
 roles -> task roles <task-id>
+r -> task roles <task-id>
+comments -> task comments <task-id>
+c -> task comments <task-id>
 events -> task events <task-id>
+e -> task events <task-id>
 context -> task context <task-id>
 refresh -> task refresh <task-id>
 cleanup -> task cleanup <task-id>
@@ -187,9 +195,12 @@ comment <body> -> task comment <task-id> <body>
 enter <role> -> task enter <task-id> <role>
 restart <role> -> task restart <task-id> <role>
 activity -> task activity <task-id>
+a -> task activity <task-id>
 timeline -> task timeline <task-id>
+t -> task timeline <task-id>
 assign-many --role <role> ... -> task assign-many <task-id> --role <role> ...
 transcript export <role> ... -> task transcript export <task-id> <role> ...
+q -> exit
 ```
 
 The shell does not implement separate business logic and does not intercept native Codex or Claude input after `enter`.
@@ -222,11 +233,15 @@ TASKMUX_HOME or ~/.taskmux
 
 `schema.json` stores the global storage schema manifest: `schemaVersion`, `storageVersion`, and `updatedAt`. `info.json` stores the user-editable task title and task board metadata: `description`, `priority`, `tags`, `owner`, and `dueAt`. `task.json` stores runtime state: `schemaVersion`, `id`, `status`, `createdAt`, and `updatedAt`. `FileTaskStore` owns id allocation, task persistence, task listing, task lookup, and task lifecycle status writes. The CLI resolves the data directory once and passes the store into task command handlers.
 
-`config.json` stores local defaults for agent and workspace. The config parser validates `schemaVersion: 1` and optional string fields before returning values to commands.
+`config.json` stores local defaults for agent and workspace plus current and last task pointers. The config parser validates `schemaVersion: 1` and optional string fields before returning values to commands.
 
 Task board commands live in `src/commands/taskCommands.ts`. `task create` and `task update` compose task title and metadata writes before saving through `TaskStore`; clear flags write `undefined` optional metadata so JSON encoding omits those fields. `task list` and `task board` share one filter parser for status, owner, tag, priority, and search. `task list` renders tab-separated rows; `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`. `task board --with-roles` reads stored roles and appends status counts without tmux probes.
 
 `task create --template` composes task metadata and role assignment in one command. It saves the task first, records `task.created`, then creates each template role through the same runner resolution path as normal role assignment and records `role.assigned` events.
+
+`task current` and `task last` are pointer commands over `config.json`. `task current <task-id>` validates that the task exists, then writes both `currentTaskId` and `lastTaskId`. Commands that make a task the obvious focus, including create, clone, show, open, and context, update `lastTaskId`.
+
+`task clone` composes normal task and role records. It reads the source task and roles, creates a new task id, copies editable metadata unless `--title` is supplied, copies role runner contracts and workspace values, resets cloned role status to `idle`, and records `task.created`, `task.cloned`, and cloned `role.assigned` events on the new task.
 
 `task context` composes a handoff snapshot from the same store boundary. It reads the task, roles, comments, and events, then renders either text or JSON. `--include-transcripts` reads persisted `roles/<role>/transcript.log` files through `TaskStore.readTranscript`; it does not call tmux or mutate transcript state.
 
@@ -275,7 +290,7 @@ TASKMUX_HOME or ~/.taskmux
 
 Each event stores `schemaVersion`, `id`, `type`, `payload`, and `createdAt`. `src/event/taskEvent.ts` defines the event record shape. `FileTaskStore` derives event ids from the current event count for the task and validates every loaded event before returning it to command handlers.
 
-The command layer appends events only after the underlying user-visible mutation succeeds. Current event types are `task.created`, `task.updated`, `task.deleted`, `task.restored`, `task.status_changed`, `role.assigned`, `role.updated`, `role.renamed`, and `comment.added`.
+The command layer appends events only after the underlying user-visible mutation succeeds. Current event types are `task.created`, `task.cloned`, `task.updated`, `task.deleted`, `task.restored`, `task.status_changed`, `role.assigned`, `role.updated`, `role.renamed`, and `comment.added`.
 
 Storage reads validate JSON records before returning domain objects:
 
