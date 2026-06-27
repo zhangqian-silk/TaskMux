@@ -44,6 +44,9 @@ taskmux task list --priority high
 taskmux task list --search auth
 taskmux task board --owner alex --with-roles
 taskmux task show task-1
+taskmux task current task-1
+taskmux task last
+taskmux task clone task-1 --title "Follow-up export flow"
 taskmux task update task-1 --priority urgent --tag blocked
 taskmux task update task-1 --clear-due --clear-owner
 taskmux task start task-1
@@ -87,20 +90,25 @@ taskmux migrate --dry-run
 taskmux export --output taskmux-snapshot.json
 taskmux import taskmux-snapshot.json
 taskmux prune --trash
+taskmux completion bash
 ```
 
 Inside the task shell:
 
 ```text
 taskmux task-42> start
-taskmux task-42> roles
+taskmux task-42> r
 taskmux task-42> refresh
 taskmux task-42> comment "Keep old session compatibility."
-taskmux task-42> events
+taskmux task-42> c
+taskmux task-42> e
 taskmux task-42> context
+taskmux task-42> a
+taskmux task-42> t
 taskmux task-42> role rename rd developer
 taskmux task-42> enter rd
 taskmux task-42> restart rd
+taskmux task-42> q
 ```
 
 `enter rd` attaches to the tmux window for the `rd` role. Detaching returns to the task shell while the role process continues running.
@@ -132,6 +140,9 @@ taskmux task list --priority high
 taskmux task list --search auth
 taskmux task board --owner alex --with-roles
 taskmux task show task-1
+taskmux task current task-1
+taskmux task last
+taskmux task clone task-1 --title "Follow-up export flow"
 taskmux task update task-1 --priority urgent --tag blocked
 taskmux task update task-1 --clear-due --clear-owner
 taskmux task start task-1
@@ -166,13 +177,16 @@ taskmux runner remove agent-js
 taskmux doctor
 taskmux backup
 taskmux migrate
+taskmux completion zsh
 ```
 
 Runner definitions can be built in or user configured. Built-in runner ids are `codex` and `claude`. Custom runners are managed with `runner add/list/show/remove`, stored under the TaskMux data directory, and can define a command, repeated args, and environment variables.
 
-`config show/set/unset` manages local defaults in `config.json`. `default-agent` and `default-workspace` are used by templated task creation and `task assign-many` when explicit values are omitted.
+`config show/set/unset` manages local defaults in `config.json`. `default-agent` and `default-workspace` are used by templated task creation and `task assign-many` when explicit values are omitted. TaskMux also stores `currentTaskId` and `lastTaskId` workflow pointers in the same config record.
 
 `task create --template feature|bug|review` creates a task with template metadata and default roles. `feature` creates `rd` and `reviewer`, `bug` creates `rd` and `tester`, and `review` creates `reviewer`. Template roles use `--agent` and `--workspace`, falling back to configured defaults and then `codex` plus the current working directory for templated creation.
+
+`task current [<task-id>]` shows or sets the current task for shorter workflows. `task last` shows the most recently touched task. Task creation, show, open, context, and clone update the last-task pointer. `task clone <task-id> [--title <title>]` creates a new task from an existing task's metadata and assigned roles while resetting cloned roles to `idle`.
 
 Editable task and role labels are separated from runtime state. Task title and task board metadata live in `tasks/<task-id>/info.json`; role name lives in `tasks/<task-id>/roles/<role>/info.json`. Users can edit those `info.json` files directly, and TaskMux reads the edited values on the next command.
 
@@ -182,7 +196,7 @@ Runtime records with inline task titles or role names are invalid in the current
 
 Task comments are appended to `comments.jsonl` under the task directory and can be listed without entering a role session. Each comment record includes `schemaVersion`.
 
-Task events are appended to `events.jsonl` under the task directory. The current event stream records `task.created`, `task.updated`, `task.deleted`, `task.restored`, `task.status_changed`, `role.assigned`, `role.updated`, `role.renamed`, and `comment.added`; each event record includes `schemaVersion`, `id`, `type`, `payload`, and `createdAt`.
+Task events are appended to `events.jsonl` under the task directory. The current event stream records `task.created`, `task.cloned`, `task.updated`, `task.deleted`, `task.restored`, `task.status_changed`, `role.assigned`, `role.updated`, `role.renamed`, and `comment.added`; each event record includes `schemaVersion`, `id`, `type`, `payload`, and `createdAt`.
 
 `task start`, `task done`, `task archive`, and `task reopen` update the task lifecycle status.
 
@@ -192,7 +206,7 @@ Task events are appended to `events.jsonl` under the task directory. The current
 
 `task assign-many` assigns multiple roles in one command with repeated `--role` values.
 
-`task shell` opens an interactive TaskMux control prompt for the task. Shell commands reuse the same task command handlers as the non-interactive CLI, including task lifecycle, role refresh, cleanup, events, and restart commands.
+`task shell` opens an interactive TaskMux control prompt for the task. Shell commands reuse the same task command handlers as the non-interactive CLI, including task lifecycle, role refresh, cleanup, events, and restart commands. Common shell aliases are `q` for `exit`, `r` for `roles`, `c` for `comments`, `e` for `events`, `a` for `activity`, and `t` for `timeline`.
 
 `task detail` shows stored role metadata and tmux target information. `task status` probes `tmux list-windows`; when the role window exists it reports and persists `running`, when the session exists but the role window is absent it reports and persists `exited`, and when tmux cannot be inspected it keeps the stored status. `task refresh` applies the same detection to every role in a task. `task cleanup` marks stale stored roles according to the current tmux window state without deleting task data. `task transcript` reads tmux capture output and persists it to `roles/<role>/transcript.log`.
 
@@ -209,6 +223,8 @@ TaskMux maintains a global storage schema manifest at `schema.json` under the co
 `migrate --dry-run` reports the pending storage migration without writing `schema.json` or creating backups. `export` writes a local JSON snapshot containing config, runners, tasks, roles, comments, events, and stored transcripts. `import` restores that snapshot into the configured TaskMux home. `prune --trash` removes deleted task directories, and `prune --backups --keep-backups <count>` removes older backups after keeping the newest entries.
 
 `doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runner commands, the configured TaskMux data directory, storage schema status, storage directory read/write permissions, and stored record health. When storage is outdated, `doctor` reports `upgrade-required` and points to `taskmux migrate`. Invalid stored records are reported as `storage records invalid` without aborting the doctor report. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
+
+`completion bash|zsh|fish` prints a shell completion script for the selected shell.
 
 ## Data Schema
 
@@ -230,7 +246,9 @@ Config record:
 {
   "schemaVersion": 1,
   "defaultAgent": "codex",
-  "defaultWorkspace": "/path/to/project"
+  "defaultWorkspace": "/path/to/project",
+  "currentTaskId": "task-1",
+  "lastTaskId": "task-2"
 }
 ```
 

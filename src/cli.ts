@@ -22,6 +22,7 @@ Local task board for native agent CLI sessions backed by tmux.
 Usage:
   taskmux --help
   taskmux --version
+  taskmux completion bash|zsh|fish
   taskmux doctor
   taskmux backup
   taskmux migrate [--dry-run]
@@ -40,6 +41,9 @@ Usage:
   taskmux task list [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>]
   taskmux task board [--status <status>] [--owner <owner>] [--tag <tag>] [--priority <priority>] [--search <text>] [--with-roles]
   taskmux task show <task-id>
+  taskmux task current [<task-id>]
+  taskmux task last
+  taskmux task clone <task-id> [--title <title>]
   taskmux task start <task-id>
   taskmux task done <task-id>
   taskmux task archive <task-id>
@@ -92,6 +96,11 @@ async function main(): Promise<void> {
 
   if (args.includes("--version") || args.includes("-v")) {
     console.log(VERSION);
+    return;
+  }
+
+  if (args[0] === "completion") {
+    console.log(renderCompletion(args[1]).trimEnd());
     return;
   }
 
@@ -181,4 +190,38 @@ function listCustomRunnersForDoctor(store: FileTaskStore) {
   } catch {
     return [];
   }
+}
+
+function renderCompletion(shell: string | undefined): string {
+  const commands = [
+    "doctor", "backup", "migrate", "export", "import", "prune", "config", "runner", "task", "completion",
+    "create", "update", "list", "board", "show", "start", "done", "archive", "reopen", "delete", "restore",
+    "shell", "context", "assign", "assign-many", "role", "roles", "enter", "tail", "detail", "status",
+    "refresh", "transcript", "activity", "timeline", "detach", "stop", "kill", "restart", "cleanup",
+    "comment", "comments", "events", "current", "last", "clone"
+  ].join(" ");
+
+  if (shell === "bash") {
+    return `_taskmux() {
+  COMPREPLY=( $(compgen -W "${commands}" -- "\${COMP_WORDS[COMP_CWORD]}") )
+}
+complete -F _taskmux taskmux
+`;
+  }
+
+  if (shell === "zsh") {
+    return `#compdef taskmux
+_arguments '*::taskmux command:(${commands})'
+`;
+  }
+
+  if (shell === "fish") {
+    return commands
+      .split(" ")
+      .map((command) => `complete -c taskmux -f -a ${command}`)
+      .join("\n")
+      .concat("\n");
+  }
+
+  throw usageError("Completion shell must be one of bash, zsh, fish.");
 }

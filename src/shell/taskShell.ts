@@ -54,7 +54,7 @@ function handleShellLine(
 
   const [name, ...args] = command;
 
-  if (name === "exit" || name === "quit") {
+  if (name === "exit" || name === "quit" || name === "q") {
     return "exit";
   }
 
@@ -77,7 +77,9 @@ function handleShellLine(
 }
 
 function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
-  switch (name) {
+  const normalizedName = normalizeShellCommandName(name);
+
+  switch (normalizedName) {
     case "summary":
       return ["open", taskId];
     case "start":
@@ -87,30 +89,30 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
     case "refresh":
     case "cleanup":
     case "delete":
-      return [name, taskId];
+      return [normalizedName, taskId];
     case "roles":
     case "comments":
     case "events":
     case "activity":
     case "timeline":
-      return [name, taskId];
+      return [normalizedName, taskId];
     case "context":
-      return [name, taskId, ...args];
+      return [normalizedName, taskId, ...args];
     case "update":
-      return [name, taskId, ...args];
+      return [normalizedName, taskId, ...args];
     case "role":
-      return [name, args[0] ?? "", taskId, ...args.slice(1)];
+      return [normalizedName, args[0] ?? "", taskId, ...args.slice(1)];
     case "comment":
-      return [name, taskId, ...args];
+      return [normalizedName, taskId, ...args];
     case "assign":
     case "assign-many":
-      return [name, taskId, ...args];
+      return [normalizedName, taskId, ...args];
     case "transcript":
       if (args[0] === "export") {
-        return [name, "export", taskId, ...args.slice(1)];
+        return [normalizedName, "export", taskId, ...args.slice(1)];
       }
 
-      return [name, taskId, ...args];
+      return [normalizedName, taskId, ...args];
     case "enter":
     case "tail":
     case "detail":
@@ -119,9 +121,26 @@ function toTaskCommand(taskId: string, name: string, args: string[]): string[] {
     case "stop":
     case "kill":
     case "restart":
-      return [name, taskId, ...args];
+      return [normalizedName, taskId, ...args];
     default:
-      return [name, ...args];
+      return [normalizedName, ...args];
+  }
+}
+
+function normalizeShellCommandName(name: string): string {
+  switch (name) {
+    case "r":
+      return "roles";
+    case "c":
+      return "comments";
+    case "e":
+      return "events";
+    case "a":
+      return "activity";
+    case "t":
+      return "timeline";
+    default:
+      return name;
   }
 }
 
@@ -148,14 +167,19 @@ function shellHelp(): string {
   archive
   reopen
   roles
+  r
   refresh
   cleanup
   update [--title <title>] [--description <body>] [--priority low|medium|high|urgent] [--tag <tag> ...] [--owner <owner>] [--due YYYY-MM-DD] [--clear-description] [--clear-priority] [--clear-tags] [--clear-owner] [--clear-due]
   delete
   comments
+  c
   events
+  e
   activity
+  a
   timeline
+  t
   context [--format text|json] [--include-transcripts]
   role update <role> [--agent <agent>] [--workspace <path>]
   role rename <role> <new-role>
@@ -174,5 +198,6 @@ function shellHelp(): string {
   restart <role>
   help
   exit
+  q
 `;
 }

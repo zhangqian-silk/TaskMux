@@ -40,6 +40,8 @@ export type TaskmuxConfig = {
   schemaVersion: 1;
   defaultAgent?: string;
   defaultWorkspace?: string;
+  currentTaskId?: string;
+  lastTaskId?: string;
 };
 
 export function resolveTaskmuxHome(env: NodeJS.ProcessEnv): string {
@@ -455,7 +457,9 @@ function parseTaskmuxConfig(raw: string): TaskmuxConfig {
     !isRecord(value) ||
     value.schemaVersion !== 1 ||
     !isOptionalString(value.defaultAgent) ||
-    !isOptionalString(value.defaultWorkspace)
+    !isOptionalString(value.defaultWorkspace) ||
+    !isOptionalString(value.currentTaskId) ||
+    !isOptionalString(value.lastTaskId)
   ) {
     throw dataError("Invalid config record");
   }
