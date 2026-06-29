@@ -7,6 +7,7 @@ import { runBackupCommand, runMigrateCommand } from "./commands/migrationCommand
 import { runRunnerCommand } from "./commands/runnerCommands.js";
 import { runDoctor } from "./doctor/doctor.js";
 import { CliError, usageError } from "./errors/cliError.js";
+import { runSetupCommand } from "./setup/setupCommand.js";
 import { runTaskShell } from "./shell/taskShell.js";
 import { FileTaskStore, resolveTaskmuxHome } from "./storage/taskStore.js";
 import { ensureStorageSchema, inspectStorageSchema, type StorageSchemaState } from "./storage/storageSchema.js";
@@ -24,6 +25,7 @@ Usage:
   taskmux --version
   taskmux completion bash|zsh|fish
   taskmux doctor
+  taskmux setup [tmux] [--yes]
   taskmux backup
   taskmux migrate [--dry-run]
   taskmux export --output <file>
@@ -113,6 +115,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args[0] === "setup") {
+    console.log(runSetupCommand(args.slice(1), process.env, new NodeCommandRunner()).trimEnd());
+    return;
+  }
+
   if (args[0] === "migrate") {
     console.log(runMigrateCommand(rootDir, args.slice(1)).trimEnd());
     return;
@@ -194,7 +201,7 @@ function listCustomRunnersForDoctor(store: FileTaskStore) {
 
 function renderCompletion(shell: string | undefined): string {
   const commands = [
-    "doctor", "backup", "migrate", "export", "import", "prune", "config", "runner", "task", "completion",
+    "doctor", "setup", "backup", "migrate", "export", "import", "prune", "config", "runner", "task", "completion",
     "create", "update", "list", "board", "show", "start", "done", "archive", "reopen", "delete", "restore",
     "shell", "context", "assign", "assign-many", "role", "roles", "enter", "tail", "detail", "status",
     "refresh", "transcript", "activity", "timeline", "detach", "stop", "kill", "restart", "cleanup",

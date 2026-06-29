@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -120,6 +120,15 @@ function createFakeExecutable(home, name, output) {
 process.stdout.write(${JSON.stringify(output)});
 `
   );
+  chmodSync(executable, 0o755);
+
+  return executable;
+}
+
+function createPathExecutable(dir, name, body) {
+  const executable = join(dir, name);
+
+  writeFileSync(executable, `#!/usr/bin/env node\n${body}\n`);
   chmodSync(executable, 0o755);
 
   return executable;
@@ -2356,6 +2365,86 @@ test("runs doctor checks for custom runner executables", () => {
   });
 
   assert.match(output, /runner:agent-js\s+ok\s+custom agent 1\.0/);
+});
+
+test("setup prints a tmux install plan without changing the system", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeBin = join(home, "bin");
+  mkdirSync(fakeBin);
+  createPathExecutable(fakeBin, "apt-get", "process.stdout.write('apt 2.0\\n');");
+
+  const output = runTaskmux(["setup"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: join(home, "missing-tmux"),
+    PATH: `${fakeBin}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`
+  });
+
+  assert.match(output, /TaskMux setup/);
+  assert.match(output, /tmux\s+missing\s+install with apt-get/);
+  assert.match(output, /tmux\s+plan\s+(sudo )?apt-get update/);
+  assert.match(output, /tmux\s+plan\s+(sudo )?apt-get install -y tmux/);
+  assert.match(output, /taskmux setup --yes/);
+});
+
+test("setup --yes installs tmux through the detected package manager", () => {
+  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const fakeBin = join(home, "bin");
+  const logFile = join(home, "setup.log");
+  const installedMarker = join(home, "tmux-installed");
+  const fakeTmux = join(home, "tmux");
+  mkdirSync(fakeBin);
+
+  writeFileSync(
+    fakeTmux,
+    `#!/usr/bin/env node
+const { existsSync } = require("node:fs");
+if (!existsSync(${JSON.stringify(installedMarker)})) process.exit(1);
+process.stdout.write("tmux 3.4\\n");
+`
+  );
+  chmodSync(fakeTmux, 0o755);
+
+  createPathExecutable(
+    fakeBin,
+    "apt-get",
+    `const { appendFileSync, writeFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "--version") {
+  process.stdout.write("apt 2.0\\n");
+  process.exit(0);
+}
+appendFileSync(${JSON.stringify(logFile)}, JSON.stringify(["apt-get", ...args]) + "\\n");
+if (args.join(" ") === "install -y tmux") writeFileSync(${JSON.stringify(installedMarker)}, "ok\\n");
+process.stdout.write("apt 2.0\\n");
+`
+  );
+  createPathExecutable(
+    fakeBin,
+    "sudo",
+    `const { appendFileSync, writeFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "--version") {
+  process.stdout.write("sudo 1.0\\n");
+  process.exit(0);
+}
+appendFileSync(${JSON.stringify(logFile)}, JSON.stringify(args) + "\\n");
+if (args.join(" ") === "apt-get install -y tmux") writeFileSync(${JSON.stringify(installedMarker)}, "ok\\n");
+`
+  );
+
+  const output = runTaskmux(["setup", "--yes"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: fakeTmux,
+    PATH: `${fakeBin}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`
+  });
+  const log = readFileSync(logFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+
+  assert.match(output, /TaskMux setup/);
+  assert.match(output, /tmux\s+ok\s+installed/);
+  assert.deepEqual(log, [
+    ["apt-get", "update"],
+    ["apt-get", "install", "-y", "tmux"]
+  ]);
 });
 
 test("runs an interactive task shell", async () => {

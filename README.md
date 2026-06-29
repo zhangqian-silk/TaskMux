@@ -84,6 +84,7 @@ taskmux task restart task-1 rd
 taskmux task cleanup task-1
 taskmux runner remove agent-js
 taskmux doctor
+taskmux setup
 taskmux backup
 taskmux migrate
 taskmux migrate --dry-run
@@ -175,6 +176,7 @@ taskmux task restart task-1 rd
 taskmux task cleanup task-1
 taskmux runner remove agent-js
 taskmux doctor
+taskmux setup --yes
 taskmux backup
 taskmux migrate
 taskmux completion zsh
