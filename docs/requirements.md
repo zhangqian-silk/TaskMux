@@ -96,6 +96,7 @@ TaskMux currently provides:
 - `taskmux task comments <task-id>` lists comments for a task
 - `taskmux task events <task-id>` lists the local event history for a task
 - `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runners, TaskMux home, storage schema, storage permissions, and stored record health
+- `taskmux setup [tmux] [--yes]` checks installable system dependencies and installs tmux through a supported package manager only when `--yes` is provided
 - `taskmux backup` creates a timestamped raw storage backup
 - `taskmux migrate` upgrades older local storage schemas after creating a backup
 - `taskmux migrate --dry-run` reports migration work without writing storage
