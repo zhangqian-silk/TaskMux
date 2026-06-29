@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
 import { runConfigCommand } from "./commands/configCommands.js";
 import { runExportCommand, runImportCommand, runPruneCommand } from "./commands/maintenanceCommands.js";
 import { runTaskCommand } from "./commands/taskCommands.js";
@@ -14,7 +15,7 @@ import { ensureStorageSchema, inspectStorageSchema, type StorageSchemaState } fr
 import { NodeCommandRunner } from "./tmux/commandRunner.js";
 import { TmuxManager } from "./tmux/tmuxManager.js";
 
-const VERSION = "0.0.0";
+const VERSION = readPackageVersion();
 
 const usage = `TaskMux ${VERSION}
 
@@ -98,6 +99,11 @@ async function main(): Promise<void> {
 
   if (args.includes("--version") || args.includes("-v")) {
     console.log(VERSION);
+    return;
+  }
+
+  if (args.includes("--help") || args.includes("-h") || args.includes("-help")) {
+    console.log(usage);
     return;
   }
 
@@ -185,6 +191,22 @@ async function main(): Promise<void> {
   }
 
   console.log(usage);
+}
+
+function readPackageVersion(): string {
+  try {
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      version?: unknown;
+    };
+
+    if (typeof packageJson.version === "string" && packageJson.version.length > 0) {
+      return packageJson.version;
+    }
+  } catch {
+    // Keep the CLI usable even if package metadata is unavailable.
+  }
+
+  return "0.0.0";
 }
 
 function canReadStore(state: StorageSchemaState): boolean {
