@@ -24,7 +24,7 @@ type InstallPlan = {
 export function runSetupCommand(args: string[], env: NodeJS.ProcessEnv, runner: CommandRunner): string {
   const options = parseSetupOptions(args);
   const dependencies: SetupDependency[] = options.dependency === undefined ? ["tmux"] : [options.dependency];
-  const lines = ["TaskMux setup"];
+  const lines = ["TaskMux setup", ...setupCliBindingGuide()];
 
   for (const dependency of dependencies) {
     if (dependency === "tmux") {
@@ -33,6 +33,17 @@ export function runSetupCommand(args: string[], env: NodeJS.ProcessEnv, runner: 
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function setupCliBindingGuide(): string[] {
+  return [
+    "owner\tbuiltin\tEvery task includes the owner role.",
+    "cli\toption\ttaskmux runner add codex --command codex",
+    "cli\toption\ttaskmux runner add claude --command claude",
+    "cli\tcustom\ttaskmux runner add <runner-id> --command <command>",
+    "owner\tnext\tSet default-agent to the runner id that should back owner.",
+    "owner\tnext\tSet default-workspace or pass --workspace when creating a task."
+  ];
 }
 
 function parseSetupOptions(args: string[]): SetupOptions {

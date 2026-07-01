@@ -1,7 +1,7 @@
 import { runnerNotFound, usageError } from "../errors/cliError.js";
 import { createCustomRunner } from "../runner/runner.js";
 import type { RunnerDefinition, RunnerEnvironment } from "../runner/runner.js";
-import { isBuiltinRunnerId, listRunnerDefinitions, resolveRunner } from "../runner/runnerRegistry.js";
+import { listRunnerDefinitions, resolveRunner } from "../runner/runnerRegistry.js";
 import type { TaskStore } from "../storage/taskStore.js";
 
 export function runRunnerCommand(args: string[], store: TaskStore): string {
@@ -32,10 +32,6 @@ function addRunnerCommand(args: string[], store: TaskStore): string {
     throw usageError("Runner id may only contain letters, numbers, hyphens, and underscores.");
   }
 
-  if (isBuiltinRunnerId(id)) {
-    throw usageError(`Runner ${id} is built in and cannot be replaced.`);
-  }
-
   const command = readOption(rest, "--command").trim();
 
   if (command.length === 0) {
@@ -63,6 +59,10 @@ function addRunnerCommand(args: string[], store: TaskStore): string {
 function listRunnerCommand(store: TaskStore): string {
   const runners = listRunnerDefinitions(store.listCustomRunners());
 
+  if (runners.length === 0) {
+    return "No runners configured.\n";
+  }
+
   return `${runners.map((runner) => `${runner.id}\t${runner.source}\t${runnerCommandSummary(runner)}`).join("\n")}\n`;
 }
 
@@ -87,10 +87,6 @@ function removeRunnerCommand(args: string[], store: TaskStore): string {
 
   if (id === undefined || id.trim().length === 0) {
     throw usageError("Runner id is required.");
-  }
-
-  if (isBuiltinRunnerId(id)) {
-    throw usageError(`Runner ${id} is built in and cannot be removed.`);
   }
 
   if (!store.removeCustomRunner(id)) {

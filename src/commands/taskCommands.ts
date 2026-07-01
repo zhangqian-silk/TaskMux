@@ -13,6 +13,8 @@ import type { TaskStore } from "../storage/taskStore.js";
 import type { Task, TaskMetadata, TaskPriority, TaskStatus } from "../task/task.js";
 import type { TmuxManager } from "../tmux/tmuxManager.js";
 
+const BUILTIN_OWNER_ROLE = "owner";
+
 export function runTaskCommand(args: string[], store: TaskStore, tmux?: TmuxManager): string {
   const [command, ...rest] = args;
 
@@ -108,23 +110,28 @@ function createTaskCommand(args: string[], store: TaskStore): string {
   const template = parseTaskTemplate(readOptionalOption(args, "--template"));
   const metadata = template === undefined ? input.metadata : mergeTemplateMetadata(input.metadata, template);
   const task = createTask(store.nextTaskId(), title, new Date(), metadata);
+  const config = store.getConfig();
+  const agent = requireOwnerRoleAgent(readOptionalOption(args, "--agent")?.trim() ?? config.defaultAgent);
+  const workspace = readOptionalOption(args, "--workspace")?.trim() ?? config.defaultWorkspace ?? process.cwd();
+  const assignedRoles = uniqueStrings([BUILTIN_OWNER_ROLE, ...(template?.roles ?? [])])
+    .map((roleName) => createResolvedRole(roleName, agent, workspace, store));
+
   store.saveTask(task);
   rememberTask(store, task.id);
   recordTaskEvent(store, task.id, "task.created", { title: task.title });
+  assignedRoles.forEach((role) => saveRoleAndRecordEvent(task.id, role, store));
 
   if (template === undefined) {
-    return `Created task ${task.id}: ${task.title}\n`;
+    return [
+      `Created task ${task.id}: ${task.title}`,
+      `Assigned roles: ${assignedRoles.map((role) => role.name).join(", ")}`
+    ].join("\n").concat("\n");
   }
-
-  const config = store.getConfig();
-  const agent = readOptionalOption(args, "--agent")?.trim() ?? config.defaultAgent ?? "codex";
-  const workspace = readOptionalOption(args, "--workspace")?.trim() ?? config.defaultWorkspace ?? process.cwd();
-  const assignedRoles = template.roles.map((roleName) => saveResolvedRole(task.id, roleName, agent, workspace, store));
 
   return [
     `Created task ${task.id}: ${task.title}`,
     `Template: ${template.name}`,
-    `Assigned roles: ${assignedRoles.join(", ")}`
+    `Assigned roles: ${assignedRoles.map((role) => role.name).join(", ")}`
   ].join("\n").concat("\n");
 }
 
@@ -551,6 +558,10 @@ function renameTaskRoleCommand(args: string[], store: TaskStore, tmux?: TmuxMana
 
   if (newName === undefined || newName.trim().length === 0) {
     throw usageError("New role name is required.");
+  }
+
+  if (oldName === BUILTIN_OWNER_ROLE || newName.trim() === BUILTIN_OWNER_ROLE) {
+    throw usageError("Built-in owner role cannot be renamed.");
   }
 
   if (store.getTask(taskId) === null) {
@@ -1095,18 +1106,48 @@ function saveResolvedRole(
   workspace: string,
   store: TaskStore
 ): string {
+  const role = createResolvedRole(roleName, agent, workspace, store);
+
+  saveRoleAndRecordEvent(taskId, role, store);
+
+  return role.name;
+}
+
+function createResolvedRole(
+  roleName: string,
+  agent: string,
+  workspace: string,
+  store: TaskStore
+): Role {
   const runner = resolveRunner(agent, store.listCustomRunners());
 
   if (runner === null) {
-    throw usageError(`Unsupported agent: ${agent}\nSupported agents: ${supportedRunnerIds(store.listCustomRunners()).join(", ")}`);
+    throwUnsupportedAgent(agent, store);
   }
 
-  const role = createRole(roleName, runner, workspace, new Date());
+  return createRole(roleName, runner, workspace, new Date());
+}
 
+function saveRoleAndRecordEvent(taskId: string, role: Role, store: TaskStore): void {
   store.saveRole(taskId, role);
   recordTaskEvent(store, taskId, "role.assigned", { role: role.name, agent: role.agent });
+}
 
-  return role.name;
+function requireOwnerRoleAgent(agent: string | undefined): string {
+  if (agent !== undefined && agent.length > 0) {
+    return agent;
+  }
+
+  throw usageError("Owner role requires a runner. Run taskmux setup, then set default-agent or pass --agent <runner-id>.");
+}
+
+function throwUnsupportedAgent(agent: string, store: TaskStore): never {
+  const supportedAgents = supportedRunnerIds(store.listCustomRunners());
+  const supportedText = supportedAgents.length === 0
+    ? "none configured. Run taskmux setup, then add a runner."
+    : supportedAgents.join(", ");
+
+  throw usageError(`Unsupported agent: ${agent}\nSupported agents: ${supportedText}`);
 }
 
 function rememberTask(store: TaskStore, taskId: string, options: { current?: boolean } = {}): void {

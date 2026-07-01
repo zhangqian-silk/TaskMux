@@ -114,22 +114,16 @@ Current checks:
 
 - Node.js version from the current process
 - tmux executable using `tmux -V`
-- Codex CLI executable using `codex --version`
-- Claude Code executable using `claude --version`
+- configured runner executables using `<runner command> --version`
 - resolved TaskMux home directory
 
-Executable paths can be overridden with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN` for tests and managed environments.
+The tmux executable path can be overridden with `TASKMUX_TMUX_BIN` for tests and managed environments.
 
 ## Runner Adapter
 
 Runner adapters describe how to start a native CLI for a role.
 
-Initial runners:
-
-- Codex CLI
-- Claude Code
-
-`src/runner/runnerRegistry.ts` is the single source for built-in runner ids and merges custom runner records from storage for command resolution. Role assignment rejects unsupported agents before writing `role.json`.
+`src/runner/runnerRegistry.ts` resolves user-configured runner records from storage. Fresh installs have no configured runners. Role assignment rejects unsupported agents before writing `role.json`, and task creation rejects missing owner runner configuration before saving the task.
 
 Runner definitions provide:
 
@@ -137,9 +131,11 @@ Runner definitions provide:
 - Command
 - Ordered args
 - Environment variables
-- Source metadata: `builtin` or `custom`
+- Source metadata: `custom`
 
 Custom runner records live in `TASKMUX_HOME/runners/<runner-id>/runner.json`. Existing roles store the resolved command contract so later runner edits do not silently change already assigned roles.
+
+`taskmux setup` prints owner-role binding guidance and copyable runner commands for Codex, Claude, and arbitrary custom CLIs. It does not create runner records; durable bindings are written through `runner add` and `config set default-agent`.
 
 Tmux starts roles with one shell-command argument assembled from the stored role command, env, and args. Example:
 
@@ -163,9 +159,9 @@ The first config schema stores:
 }
 ```
 
-`src/commands/configCommands.ts` owns `config show/set/unset`. `task create --template` and `task assign-many` read these defaults through the `TaskStore` boundary. Task workflow commands update `currentTaskId` and `lastTaskId` through the same config boundary so pointer state remains separate from task runtime records.
+`src/commands/configCommands.ts` owns `config show/set/unset`. `task create`, `task create --template`, and `task assign-many` read these defaults through the `TaskStore` boundary. Task workflow commands update `currentTaskId` and `lastTaskId` through the same config boundary so pointer state remains separate from task runtime records.
 
-Built-in templates live in `src/commands/taskCommands.ts` because they compose task metadata and role assignment in one use case. Templates do not introduce a new storage record type; they create normal task, role, and event records.
+Built-in templates live in `src/commands/taskCommands.ts` because they compose task metadata and role assignment in one use case. Templates do not introduce a new storage record type; they create normal task, role, and event records. Every task creation includes the system `owner` role before template roles are added. `owner` cannot be renamed.
 
 ## Interactive Task Shell
 
@@ -237,7 +233,7 @@ TASKMUX_HOME or ~/.taskmux
 
 Task board commands live in `src/commands/taskCommands.ts`. `task create` and `task update` compose task title and metadata writes before saving through `TaskStore`; clear flags write `undefined` optional metadata so JSON encoding omits those fields. `task list` and `task board` share one filter parser for status, owner, tag, priority, and search. `task list` renders tab-separated rows; `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`. `task board --with-roles` reads stored roles and appends status counts without tmux probes.
 
-`task create --template` composes task metadata and role assignment in one command. It saves the task first, records `task.created`, then creates each template role through the same runner resolution path as normal role assignment and records `role.assigned` events.
+`task create` composes task metadata and role assignment in one command. It resolves the owner runner before saving task data, saves the task, records `task.created`, then creates the system `owner` role and any template roles through the same runner resolution path as normal role assignment. Each role write records a `role.assigned` event.
 
 `task current` and `task last` are pointer commands over `config.json`. `task current <task-id>` validates that the task exists, then writes both `currentTaskId` and `lastTaskId`. Commands that make a task the obvious focus, including create, clone, show, open, and context, update `lastTaskId`.
 
@@ -266,7 +262,7 @@ TASKMUX_HOME or ~/.taskmux
 
 `runner.json` stores `schemaVersion`, `id`, `command`, `args`, `env`, `createdAt`, and `updatedAt`.
 
-`info.json` stores the user-editable role name. `role.json` stores runtime state: `schemaVersion`, `agent`, `command`, `args`, `env`, `workspace`, `status`, `createdAt`, and `updatedAt`. Runtime records containing inline task title or role name are rejected by the current schema. Role runtime records must include the resolved command contract (`command`, `args`, and `env`) so tmux can restart roles from persisted state without consulting mutable runner definitions. `task role update` overwrites that command contract or workspace while preserving status and created time. `task role rename` updates the role info record in its existing storage directory and calls `TmuxManager.renameRole` best effort. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
+`info.json` stores the user-editable role name. `role.json` stores runtime state: `schemaVersion`, `agent`, `command`, `args`, `env`, `workspace`, `status`, `createdAt`, and `updatedAt`. Runtime records containing inline task title or role name are rejected by the current schema. Role runtime records must include the resolved command contract (`command`, `args`, and `env`) so tmux can restart roles from persisted state without consulting mutable runner definitions. `task role update` overwrites that command contract or workspace while preserving status and created time. `task role rename` updates the role info record in its existing storage directory and calls `TmuxManager.renameRole` best effort, except the system `owner` role cannot be renamed. The first stable role status is `idle`; `task enter` writes `running`, `task detach` writes `detached`, and `task stop` / `task kill` write `exited`. `task status`, `task refresh`, and `task cleanup` refresh role status from tmux when possible and write detected changes back to `role.json`; `task detail` reads stored role metadata without probing tmux.
 
 Task comments are append-only JSONL records:
 
