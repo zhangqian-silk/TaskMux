@@ -54,6 +54,9 @@ Detected status changes are written back to `role.json` with a refreshed `update
 
 ## Role Lifecycle Actions
 
+- Every new task receives the system `owner` role before `task create` returns.
+- `owner` uses the explicit `--agent` / `--workspace` values when present, then `default-agent` / `default-workspace`. Workspace falls back to the current directory; agent must resolve to a configured runner.
+- `task role rename` rejects attempts to rename `owner` or rename another role to `owner`.
 - `task enter <task-id> <role>` records the role as `running` after a successful tmux attach command returns.
 - `task detach <task-id> <role>` records the role as `detached` after tmux detaches clients from the task session.
 - `task stop <task-id> <role>` records the role as `exited` after sending `C-c`.
@@ -64,23 +67,18 @@ Detected status changes are written back to `role.json` with a refreshed `update
 
 ## Runner Configuration
 
-Built-in runners are always available:
-
-- `codex`
-- `claude`
-
-Custom runners are managed with:
+Runner definitions are managed with:
 
 - `runner add <runner-id> --command <command> [--arg <arg> ...] [--env KEY=value ...]`
 - `runner list`
 - `runner show <runner-id>`
 - `runner remove <runner-id>`
 
-Runner ids may contain letters, numbers, hyphens, and underscores. Custom runner ids cannot replace built-in runner ids.
+Fresh installs have no configured runners. Runner ids may contain letters, numbers, hyphens, and underscores. `codex` and `claude` are normal runner ids that users may bind to Codex CLI and Claude Code through `runner add`.
 
 `task assign --agent <runner-id>` resolves the runner before writing `role.json`. Role records store the resolved `agent`, `command`, `args`, and `env`. Later changes to the runner definition do not mutate already assigned roles. `task role update --agent <runner-id>` resolves the current runner definition and overwrites the role's stored execution contract.
 
-`doctor` checks custom runner commands with `--version` and reports them as `runner:<runner-id>`.
+`setup` prints copyable runner bindings for Codex, Claude, and custom CLIs, and states that every task includes the system `owner` role. `doctor` checks configured runner commands with `--version` and reports them as `runner:<runner-id>`.
 
 ## Defaults And Templates
 
@@ -92,11 +90,12 @@ Templated task creation assigns common roles and metadata:
 
 | Template | Metadata | Roles |
 | --- | --- | --- |
-| `feature` | `priority=medium`, `tag=feature` | `rd`, `reviewer` |
-| `bug` | `priority=high`, `tag=bug` | `rd`, `tester` |
-| `review` | `priority=medium`, `tag=review` | `reviewer` |
+| none | explicit task metadata only | `owner` |
+| `feature` | `priority=medium`, `tag=feature` | `owner`, `rd`, `reviewer` |
+| `bug` | `priority=high`, `tag=bug` | `owner`, `rd`, `tester` |
+| `review` | `priority=medium`, `tag=review` | `owner`, `reviewer` |
 
-`task create --template <name>` may override template metadata with explicit task options. Template roles use explicit `--agent` / `--workspace`, then configured defaults, then `codex` and the current working directory for templated creation.
+`task create --template <name>` may override template metadata with explicit task options. Task creation and template roles use explicit `--agent` / `--workspace`, then configured defaults. Workspace falls back to the current working directory; agent has no built-in fallback and must resolve to a configured runner.
 
 `task assign-many` accepts repeated `--role` values and uses explicit or configured default agent/workspace values.
 
@@ -126,7 +125,7 @@ CLI errors are structured for automation and shell scripts.
 | 2 | `USAGE_ERROR` | Missing task id, missing role name, missing option values, unsupported agent, empty title, or empty comment |
 | 3 | `TASK_NOT_FOUND` | The requested task record does not exist |
 | 3 | `ROLE_NOT_FOUND` | The requested role record does not exist under an existing task |
-| 3 | `RUNNER_NOT_FOUND` | The requested custom or built-in runner id cannot be resolved |
+| 3 | `RUNNER_NOT_FOUND` | The requested runner id cannot be resolved |
 | 4 | `DATA_ERROR` | Stored task, role, comment, event, or runner JSON cannot be parsed or does not match the active schema |
 | 5 | `RUNTIME_ERROR` | Unexpected runtime failure |
 

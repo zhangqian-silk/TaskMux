@@ -14,8 +14,6 @@ export function runDoctor(
   const checks = [
     checkNode(),
     checkExecutable("tmux", env.TASKMUX_TMUX_BIN ?? "tmux", ["-V"], runner),
-    checkExecutable("codex", env.TASKMUX_CODEX_BIN ?? "codex", ["--version"], runner),
-    checkExecutable("claude", env.TASKMUX_CLAUDE_BIN ?? "claude", ["--version"], runner),
     ...customRunners.map((customRunner) =>
       checkExecutable(`runner:${customRunner.id}`, customRunner.command, ["--version"], runner)
     ),

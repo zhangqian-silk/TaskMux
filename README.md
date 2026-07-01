@@ -22,18 +22,22 @@ taskmux
 - One task maps to one tmux session.
 - One role maps to one tmux window.
 - Each role window runs one native agent CLI process.
+- Every task includes the system `owner` role. `owner` is created with the task and cannot be renamed.
 - Leaving a role means detaching from tmux, not exiting the agent CLI.
 - `task status` checks tmux window state and writes detected role status back to storage.
 - `task events` lists the append-only local event history for task creation, lifecycle changes, role assignment, and comments.
 - `task context` renders a task handoff snapshot across task metadata, roles, comments, events, and optional stored transcripts.
-- Codex CLI and Claude Code keep their native terminal behavior.
+- Runner ids are user configured. `setup` shows ready-to-copy bindings for Codex CLI, Claude Code, or any other native CLI.
 
 ## Example
 
 ```sh
-taskmux task create "Refactor login page" --description "Update the auth form" --priority high --tag frontend --owner alex --due 2026-07-01
+taskmux setup
+taskmux runner add codex --command codex
+taskmux runner add claude --command claude
 taskmux config set default-agent codex
 taskmux config set default-workspace ~/projects/app
+taskmux task create "Refactor login page" --description "Update the auth form" --priority high --tag frontend --owner alex --due 2026-07-01
 taskmux task create "Add export flow" --template feature
 taskmux runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
 taskmux runner list
@@ -125,12 +129,18 @@ TaskMux stores task data in the user-level data directory:
 Tests, automation, and isolated runs can override this location:
 
 ```sh
-TASKMUX_HOME=/tmp/taskmux-demo taskmux task create "Try TaskMux"
+TASKMUX_HOME=/tmp/taskmux-demo taskmux runner add codex --command codex
+TASKMUX_HOME=/tmp/taskmux-demo taskmux config set default-agent codex
+TASKMUX_HOME=/tmp/taskmux-demo taskmux task create "Try TaskMux" --workspace "$PWD"
 ```
 
 The current task command surface is:
 
 ```sh
+taskmux setup
+taskmux runner add codex --command codex
+taskmux config set default-agent codex
+taskmux config set default-workspace ~/projects/app
 taskmux task create "Refactor login page" --description "Update the auth form" --priority high --tag frontend --owner alex --due 2026-07-01
 taskmux runner add agent-js --command ~/bin/agent-js --arg --model --arg review --env TASKMUX_MODE=dev
 taskmux runner list
@@ -182,11 +192,11 @@ taskmux migrate
 taskmux completion zsh
 ```
 
-Runner definitions can be built in or user configured. Built-in runner ids are `codex` and `claude`. Custom runners are managed with `runner add/list/show/remove`, stored under the TaskMux data directory, and can define a command, repeated args, and environment variables.
+Runner definitions are user configured with `runner add/list/show/remove`, stored under the TaskMux data directory, and can define a command, repeated args, and environment variables. Fresh installs do not include built-in CLI runners; `codex` and `claude` are normal runner ids that users can bind with `taskmux runner add codex --command codex` and `taskmux runner add claude --command claude`.
 
-`config show/set/unset` manages local defaults in `config.json`. `default-agent` and `default-workspace` are used by templated task creation and `task assign-many` when explicit values are omitted. TaskMux also stores `currentTaskId` and `lastTaskId` workflow pointers in the same config record.
+`config show/set/unset` manages local defaults in `config.json`. `default-agent` is required for task creation unless `--agent` is provided, because TaskMux creates the system `owner` role for every task. `default-workspace` is used by task creation and `task assign-many` when explicit values are omitted. TaskMux also stores `currentTaskId` and `lastTaskId` workflow pointers in the same config record.
 
-`task create --template feature|bug|review` creates a task with template metadata and default roles. `feature` creates `rd` and `reviewer`, `bug` creates `rd` and `tester`, and `review` creates `reviewer`. Template roles use `--agent` and `--workspace`, falling back to configured defaults and then `codex` plus the current working directory for templated creation.
+`task create` creates the `owner` role before returning. `task create --template feature|bug|review` adds template metadata and template roles on top of `owner`: `feature` adds `rd` and `reviewer`, `bug` adds `rd` and `tester`, and `review` adds `reviewer`. Creation uses `--agent` / `--workspace` when provided, then configured defaults; workspace falls back to the current working directory, while the agent must resolve to a configured runner.
 
 `task current [<task-id>]` shows or sets the current task for shorter workflows. `task last` shows the most recently touched task. Task creation, show, open, context, and clone update the last-task pointer. `task clone <task-id> [--title <title>]` creates a new task from an existing task's metadata and assigned roles while resetting cloned roles to `idle`.
 
@@ -204,7 +214,7 @@ Task events are appended to `events.jsonl` under the task directory. The current
 
 `task update` edits task board metadata and supports `--clear-description`, `--clear-priority`, `--clear-tags`, `--clear-owner`, and `--clear-due`. `task delete` moves a task into `trash/tasks/<task-id>`; `task restore` moves it back without losing task files. `task list` supports `--status`, `--owner`, `--tag`, `--priority`, and `--search` filters. `task board` renders the same filtered task set grouped by `open`, `active`, `done`, and `archived`; `--with-roles` adds stored role status counts.
 
-`task assign` resolves `--agent` against built-in and custom runner ids. `task role update` can replace a role's runner contract and workspace. `task role rename` updates the role info record and attempts to rename the matching tmux window when it exists. `task enter` uses tmux to create or reuse a task session and role window, starts the resolved runner command with its args and env, attaches the user to that role's native agent CLI, and records the role as `running` after a successful attach. `task tail` reads recent role output with `tmux capture-pane`.
+`task assign` resolves `--agent` against configured runner ids. `task role update` can replace a role's runner contract and workspace. `task role rename` updates the role info record and attempts to rename the matching tmux window when it exists; the system `owner` role cannot be renamed. `task enter` uses tmux to create or reuse a task session and role window, starts the resolved runner command with its args and env, attaches the user to that role's native agent CLI, and records the role as `running` after a successful attach. `task tail` reads recent role output with `tmux capture-pane`.
 
 `task assign-many` assigns multiple roles in one command with repeated `--role` values.
 
@@ -224,7 +234,7 @@ TaskMux maintains a global storage schema manifest at `schema.json` under the co
 
 `migrate --dry-run` reports the pending storage migration without writing `schema.json` or creating backups. `export` writes a local JSON snapshot containing config, runners, tasks, roles, comments, events, and stored transcripts. `import` restores that snapshot into the configured TaskMux home. `prune --trash` removes deleted task directories, and `prune --backups --keep-backups <count>` removes older backups after keeping the newest entries.
 
-`doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runner commands, the configured TaskMux data directory, storage schema status, storage directory read/write permissions, and stored record health. When storage is outdated, `doctor` reports `upgrade-required` and points to `taskmux migrate`. Invalid stored records are reported as `storage records invalid` without aborting the doctor report. Test and managed environments can override executable paths with `TASKMUX_TMUX_BIN`, `TASKMUX_CODEX_BIN`, and `TASKMUX_CLAUDE_BIN`.
+`setup` checks tmux and prints owner-role CLI binding guidance, including Codex, Claude, and custom CLI examples. `doctor` checks Node.js, tmux, configured runner commands, the configured TaskMux data directory, storage schema status, storage directory read/write permissions, and stored record health. When storage is outdated, `doctor` reports `upgrade-required` and points to `taskmux migrate`. Invalid stored records are reported as `storage records invalid` without aborting the doctor report. Test and managed environments can override the tmux executable with `TASKMUX_TMUX_BIN`.
 
 `completion bash|zsh|fish` prints a shell completion script for the selected shell.
 

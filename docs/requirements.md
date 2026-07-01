@@ -33,6 +33,7 @@ TaskMux uses tmux as the only role execution substrate in the first version.
 - One task maps to one tmux session.
 - One role maps to one tmux window.
 - One role window runs one native agent CLI process.
+- Every task includes the system `owner` role. `owner` is created during task creation and cannot be renamed.
 
 Example:
 
@@ -47,7 +48,7 @@ reviewer -> tmux window taskmux-task-42:reviewer
 TaskMux currently provides:
 
 - `taskmux runner add <runner-id> --command <command> [--arg <arg> ...] [--env KEY=value ...]` creates or replaces a custom runner definition
-- `taskmux runner list` lists built-in and custom runner definitions
+- `taskmux runner list` lists configured runner definitions
 - `taskmux runner show <runner-id>` shows one runner definition
 - `taskmux runner remove <runner-id>` removes a custom runner definition
 - `taskmux completion bash|zsh|fish` prints shell completion for the selected shell
@@ -95,8 +96,8 @@ TaskMux currently provides:
 - `taskmux task comment <task-id> <body>` appends a comment to a task
 - `taskmux task comments <task-id>` lists comments for a task
 - `taskmux task events <task-id>` lists the local event history for a task
-- `taskmux doctor` checks Node.js, tmux, Codex CLI, Claude Code, configured custom runners, TaskMux home, storage schema, storage permissions, and stored record health
-- `taskmux setup [tmux] [--yes]` checks installable system dependencies and installs tmux through a supported package manager only when `--yes` is provided
+- `taskmux doctor` checks Node.js, tmux, configured runners, TaskMux home, storage schema, storage permissions, and stored record health
+- `taskmux setup [tmux] [--yes]` checks installable system dependencies, installs tmux through a supported package manager only when `--yes` is provided, and prints owner-role CLI binding guidance
 - `taskmux backup` creates a timestamped raw storage backup
 - `taskmux migrate` upgrades older local storage schemas after creating a backup
 - `taskmux migrate --dry-run` reports migration work without writing storage
@@ -148,27 +149,27 @@ When tmux cannot be inspected, TaskMux keeps the stored status instead of overwr
 
 ## Runner Semantics
 
-TaskMux supports built-in and custom runner ids.
+TaskMux supports user-configured runner ids.
 
-- Built-in runner ids are `codex` and `claude`.
-- Custom runners are stored locally and are task-independent.
-- A custom runner defines a command, ordered args, and environment variables.
+- Runner definitions are stored locally and are task-independent.
+- A runner defines a command, ordered args, and environment variables.
+- Fresh installs have no default runner definitions. `codex` and `claude` are ordinary runner ids users may bind with `runner add`.
 - `task assign --agent <runner-id>` resolves the runner id before writing role state.
 - `task role update --agent <runner-id>` resolves the runner id and overwrites that role's stored command, args, env, and agent id.
 - A role stores the resolved runner command, args, and env so later `enter` and `restart` use the same execution contract even if the runner definition changes.
-- Built-in runners cannot be removed or replaced by custom runner definitions.
 
 ## Template And Defaults
 
 TaskMux stores local defaults in `config.json` under the TaskMux home.
 
-- `default-agent` is used when a template or multi-role assignment does not specify `--agent`.
-- `default-workspace` is used when a template or multi-role assignment does not specify `--workspace`.
+- `default-agent` is used when task creation, a template, or multi-role assignment does not specify `--agent`.
+- `default-workspace` is used when task creation, a template, or multi-role assignment does not specify `--workspace`.
 - `currentTaskId` stores the task selected by `task current <task-id>`.
 - `lastTaskId` stores the most recently touched task from creation, clone, show, open, context, or explicit current selection.
-- `task create --template feature` creates `rd` and `reviewer` roles and adds the `feature` tag with medium priority unless overridden.
-- `task create --template bug` creates `rd` and `tester` roles and adds the `bug` tag with high priority unless overridden.
-- `task create --template review` creates the `reviewer` role and adds the `review` tag with medium priority unless overridden.
+- `task create` creates the system `owner` role for every task.
+- `task create --template feature` creates `owner`, `rd`, and `reviewer` roles and adds the `feature` tag with medium priority unless overridden.
+- `task create --template bug` creates `owner`, `rd`, and `tester` roles and adds the `bug` tag with high priority unless overridden.
+- `task create --template review` creates `owner` and `reviewer` roles and adds the `review` tag with medium priority unless overridden.
 
 `task clone` copies the source task's editable metadata and assigned role execution contracts into a new task, resets cloned roles to `idle`, records the clone source in the new task's event log, and updates the last-task pointer.
 

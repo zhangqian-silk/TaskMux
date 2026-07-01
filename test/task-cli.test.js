@@ -125,6 +125,31 @@ process.stdout.write(${JSON.stringify(output)});
   return executable;
 }
 
+function addRunner(home, id, command = id) {
+  return runTaskmux(["runner", "add", id, "--command", command], {
+    TASKMUX_HOME: home
+  });
+}
+
+function createTaskmuxHome() {
+  return mkdtempSync(join(tmpdir(), "taskmux-test-"));
+}
+
+function createConfiguredHome() {
+  const home = createTaskmuxHome();
+
+  addRunner(home, "codex", "codex");
+  addRunner(home, "claude", "claude");
+  runTaskmux(["config", "set", "default-agent", "codex"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["config", "set", "default-workspace", "/tmp/project-a"], {
+    TASKMUX_HOME: home
+  });
+
+  return home;
+}
+
 function createPathExecutable(dir, name, body) {
   const executable = join(dir, name);
 
@@ -146,7 +171,7 @@ function writeStorageSchema(home, storageVersion) {
 }
 
 test("creates a task in the configured taskmux home", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   const output = runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -170,8 +195,43 @@ test("creates a task in the configured taskmux home", () => {
   assert.equal(taskInfo.title, "Refactor login page");
 });
 
+test("creates tasks with the built-in owner role from configured runner defaults", () => {
+  const home = createConfiguredHome();
+  const ownerCli = createFakeExecutable(home, "owner-agent.js", "owner agent 1.0\n");
+
+  addRunner(home, "owner-cli", ownerCli);
+  runTaskmux(["config", "set", "default-agent", "owner-cli"], {
+    TASKMUX_HOME: home
+  });
+  runTaskmux(["config", "set", "default-workspace", "/tmp/project-a"], {
+    TASKMUX_HOME: home
+  });
+
+  const output = runTaskmux(["task", "create", "Ownable task"], {
+    TASKMUX_HOME: home
+  });
+  const roles = runTaskmux(["task", "roles", "task-1"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(output, /Assigned roles: owner/);
+  assert.match(roles, /owner\towner-cli\tidle\t\/tmp\/project-a/);
+});
+
+test("requires an owner role runner before creating a task", () => {
+  const home = createTaskmuxHome();
+
+  const result = runTaskmuxFailure(["task", "create", "Missing owner runner"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /USAGE_ERROR: Owner role requires a runner/);
+  assert.match(result.stderr, /taskmux setup/);
+});
+
 test("initializes the latest storage schema manifest on first startup", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -185,7 +245,7 @@ test("initializes the latest storage schema manifest on first startup", () => {
 });
 
 test("blocks normal commands when storage schema requires migration", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   writeStorageSchema(home, 0);
 
   const result = runTaskmuxFailure(["task", "list"], {
@@ -198,7 +258,7 @@ test("blocks normal commands when storage schema requires migration", () => {
 });
 
 test("migrates storage schema to the latest version", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   writeStorageSchema(home, 0);
 
   const output = runTaskmux(["migrate"], {
@@ -221,7 +281,7 @@ test("migrates storage schema to the latest version", () => {
 });
 
 test("creates explicit storage backups", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -242,8 +302,8 @@ test("creates explicit storage backups", () => {
 });
 
 test("exports imports and prunes local data", () => {
-  const sourceHome = mkdtempSync(join(tmpdir(), "taskmux-test-"));
-  const targetHome = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const sourceHome = createConfiguredHome();
+  const targetHome = createConfiguredHome();
   const exportPath = join(sourceHome, "snapshot.json");
 
   runTaskmux(["config", "set", "default-agent", "codex"], {
@@ -288,7 +348,7 @@ test("exports imports and prunes local data", () => {
 });
 
 test("dry-runs storage migrations without writing schema", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   writeStorageSchema(home, 0);
 
@@ -302,7 +362,7 @@ test("dry-runs storage migrations without writing schema", () => {
 });
 
 test("reads edited task info from the user-editable info file", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -324,7 +384,7 @@ test("reads edited task info from the user-editable info file", () => {
 });
 
 test("creates tasks with task board metadata", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   const output = runTaskmux(
     [
@@ -365,7 +425,7 @@ test("creates tasks with task board metadata", () => {
 });
 
 test("stores defaults and creates templated tasks with default roles", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["config", "set", "default-agent", "codex"], {
     TASKMUX_HOME: home
@@ -380,7 +440,7 @@ test("stores defaults and creates templated tasks with default roles", () => {
 
   assert.match(output, /Created task task-1: Build export flow/);
   assert.match(output, /Template: feature/);
-  assert.match(output, /Assigned roles: rd, reviewer/);
+  assert.match(output, /Assigned roles: owner, rd, reviewer/);
 
   const task = runTaskmux(["task", "show", "task-1"], {
     TASKMUX_HOME: home
@@ -391,6 +451,7 @@ test("stores defaults and creates templated tasks with default roles", () => {
   const roles = runTaskmux(["task", "roles", "task-1"], {
     TASKMUX_HOME: home
   });
+  assert.match(roles, /owner\tcodex\tidle\t\/tmp\/project-a/);
   assert.match(roles, /rd\tcodex\tidle\t\/tmp\/project-a/);
   assert.match(roles, /reviewer\tcodex\tidle\t\/tmp\/project-a/);
 
@@ -402,7 +463,7 @@ test("stores defaults and creates templated tasks with default roles", () => {
 });
 
 test("tracks current and last tasks for shorter workflows", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "First task"], {
     TASKMUX_HOME: home
@@ -421,7 +482,7 @@ test("tracks current and last tasks for shorter workflows", () => {
 });
 
 test("clones tasks with metadata and roles", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Original task", "--priority", "high", "--tag", "frontend", "--owner", "alex"], {
     TASKMUX_HOME: home
@@ -451,7 +512,7 @@ test("clones tasks with metadata and roles", () => {
 });
 
 test("updates task board metadata", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -493,7 +554,7 @@ test("updates task board metadata", () => {
 });
 
 test("clears task board metadata", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(
     [
@@ -547,7 +608,7 @@ test("clears task board metadata", () => {
 });
 
 test("filters and searches tasks on board metadata", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(
     ["task", "create", "Refactor login page", "--tag", "frontend", "--owner", "alex", "--priority", "high"],
@@ -579,7 +640,7 @@ test("filters and searches tasks on board metadata", () => {
 });
 
 test("renders a grouped task board with metadata filters", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(
     ["task", "create", "Plan checkout work", "--tag", "frontend", "--owner", "alex", "--priority", "high"],
@@ -608,7 +669,7 @@ test("renders a grouped task board with metadata filters", () => {
 });
 
 test("renders role status counts on the grouped task board", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Coordinate checkout flow"], { TASKMUX_HOME: home });
   runTaskmux(
@@ -623,11 +684,11 @@ test("renders role status counts on the grouped task board", () => {
 
   const output = runTaskmux(["task", "board", "--with-roles"], { TASKMUX_HOME: home });
 
-  assert.match(output, /task-1\s+Coordinate checkout flow\s+roles idle=2/);
+  assert.match(output, /task-1\s+Coordinate checkout flow\s+roles idle=3/);
 });
 
 test("deletes and restores tasks without losing task data", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page", "--owner", "alex"], {
     TASKMUX_HOME: home
@@ -659,7 +720,7 @@ test("deletes and restores tasks without losing task data", () => {
 });
 
 test("rejects task records with inline titles", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const taskDir = join(home, "tasks", "task-1");
   execFileSync("mkdir", ["-p", taskDir]);
   writeFileSync(
@@ -683,7 +744,7 @@ test("rejects task records with inline titles", () => {
 });
 
 test("rejects task records missing editable task info", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const taskDir = join(home, "tasks", "task-1");
   execFileSync("mkdir", ["-p", taskDir]);
   writeFileSync(
@@ -706,7 +767,7 @@ test("rejects task records missing editable task info", () => {
 });
 
 test("lists tasks from the configured taskmux home", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "First task"], { TASKMUX_HOME: home });
   runTaskmux(["task", "create", "Second task"], { TASKMUX_HOME: home });
@@ -718,7 +779,7 @@ test("lists tasks from the configured taskmux home", () => {
 });
 
 test("shows a task by id", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Review checkout flow"], {
     TASKMUX_HOME: home
@@ -734,7 +795,7 @@ test("shows a task by id", () => {
 });
 
 test("updates task lifecycle status", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Review checkout flow"], {
     TASKMUX_HOME: home
@@ -764,7 +825,7 @@ test("updates task lifecycle status", () => {
 });
 
 test("assigns a role to an existing task", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -805,7 +866,7 @@ test("assigns a role to an existing task", () => {
 });
 
 test("assigns multiple roles with one command", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Coordinate release"], {
     TASKMUX_HOME: home
@@ -838,7 +899,7 @@ test("assigns multiple roles with one command", () => {
 });
 
 test("reads edited role info from the user-editable info file", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -873,7 +934,7 @@ test("reads edited role info from the user-editable info file", () => {
 });
 
 test("rejects role records with inline names", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const taskDir = join(home, "tasks", "task-1");
   const roleDir = join(taskDir, "roles", "rd");
   execFileSync("mkdir", ["-p", roleDir]);
@@ -916,7 +977,7 @@ test("rejects role records with inline names", () => {
 });
 
 test("rejects role records missing editable role info", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const taskDir = join(home, "tasks", "task-1");
   const roleDir = join(taskDir, "roles", "rd");
   execFileSync("mkdir", ["-p", roleDir]);
@@ -961,7 +1022,7 @@ test("rejects role records missing editable role info", () => {
 });
 
 test("rejects role records missing command contract", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const taskDir = join(home, "tasks", "task-1");
   const roleDir = join(taskDir, "roles", "rd");
   execFileSync("mkdir", ["-p", roleDir]);
@@ -1010,7 +1071,7 @@ test("rejects role records missing command contract", () => {
 });
 
 test("rejects unsupported role agents", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -1032,11 +1093,11 @@ test("rejects unsupported role agents", () => {
 
   assert.equal(result.status, 2);
   assert.match(result.stderr, /USAGE_ERROR: Unsupported agent: unknown/);
-  assert.match(result.stderr, /Supported agents: codex, claude/);
+  assert.match(result.stderr, /Supported agents: (codex, claude|claude, codex)/);
 });
 
 test("returns a usage exit code for unsupported agents", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -1061,7 +1122,7 @@ test("returns a usage exit code for unsupported agents", () => {
 });
 
 test("lists roles for a task", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -1102,7 +1163,7 @@ test("lists roles for a task", () => {
 });
 
 test("updates role runner and workspace", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
 
   runTaskmux(["runner", "add", "agent-js", "--command", fakeAgent, "--arg", "--mode", "--arg", "review"], {
@@ -1134,7 +1195,7 @@ test("updates role runner and workspace", () => {
 });
 
 test("renames roles and tmux windows", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1164,8 +1225,25 @@ test("renames roles and tmux windows", () => {
   assert.deepEqual(calls[0], ["rename-window", "-t", "taskmux-task-1:rd", "developer"]);
 });
 
+test("rejects renaming the built-in owner role", () => {
+  const home = createConfiguredHome();
+  const ownerCli = createFakeExecutable(home, "owner-agent.js", "owner agent 1.0\n");
+
+  addRunner(home, "owner-cli", ownerCli);
+  runTaskmux(["task", "create", "Refactor login page", "--agent", "owner-cli", "--workspace", "/tmp/project-a"], {
+    TASKMUX_HOME: home
+  });
+
+  const result = runTaskmuxFailure(["task", "role", "rename", "task-1", "owner", "developer"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /USAGE_ERROR: Built-in owner role cannot be renamed/);
+});
+
 test("enters a role through tmux without requiring real tmux", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1220,7 +1298,7 @@ test("enters a role through tmux without requiring real tmux", () => {
 });
 
 test("tails role output through tmux capture-pane", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Review checkout flow"], {
@@ -1264,7 +1342,7 @@ test("tails role output through tmux capture-pane", () => {
 });
 
 test("shows role detail for a task", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -1296,7 +1374,7 @@ test("shows role detail for a task", () => {
 });
 
 test("reads role transcript through tmux capture-pane", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Review checkout flow"], {
@@ -1334,7 +1412,7 @@ test("reads role transcript through tmux capture-pane", () => {
 );
 
 test("opens a task context summary", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -1362,13 +1440,13 @@ test("opens a task context summary", () => {
 
   assert.match(output, /Task: task-1/);
   assert.match(output, /Title: Refactor login page/);
-  assert.match(output, /Roles: 1/);
+  assert.match(output, /Roles: 2/);
   assert.match(output, /Comments: 1/);
   assert.match(output, /Next: taskmux task enter task-1 <role>/);
 });
 
 test("exports transcripts in markdown and json formats", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
   const markdownPath = join(home, "reviewer.md");
 
@@ -1404,7 +1482,7 @@ test("exports transcripts in markdown and json formats", () => {
 });
 
 test("renders role activity and task timeline", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Review checkout flow"], {
@@ -1437,7 +1515,7 @@ test("renders role activity and task timeline", () => {
 });
 
 test("renders a task handoff context as text", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(
     [
@@ -1498,7 +1576,7 @@ test("renders a task handoff context as text", () => {
 });
 
 test("renders a task handoff context as json with stored transcripts", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Review checkout flow"], {
@@ -1533,14 +1611,15 @@ test("renders a task handoff context as json with stored transcripts", () => {
 
   assert.equal(context.task.id, "task-1");
   assert.equal(context.task.title, "Review checkout flow");
-  assert.equal(context.roles[0].name, "reviewer");
-  assert.equal(context.roles[0].transcript, "recent reviewer output\n");
+  const reviewerContext = context.roles.find((role) => role.name === "reviewer");
+  assert.ok(reviewerContext);
+  assert.equal(reviewerContext.transcript, "recent reviewer output\n");
   assert.equal(context.comments[0].body, "Check edge cases.");
   assert.equal(context.events[0].type, "task.created");
 });
 
 test("detaches a task role through tmux", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1582,7 +1661,7 @@ test("detaches a task role through tmux", () => {
 });
 
 test("shows role status", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -1611,7 +1690,7 @@ test("shows role status", () => {
 });
 
 test("detects running role status from tmux", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const fakeTmux = createStatusTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1645,7 +1724,7 @@ test("detects running role status from tmux", () => {
 });
 
 test("detects exited role status when tmux window is absent", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1680,7 +1759,7 @@ test("detects exited role status when tmux window is absent", () => {
 });
 
 test("refreshes every role status for a task", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const fakeTmux = createStatusTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1733,7 +1812,7 @@ test("refreshes every role status for a task", () => {
 });
 
 test("restarts a role through tmux and updates status", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1780,7 +1859,7 @@ test("restarts a role through tmux and updates status", () => {
 });
 
 test("cleans stale role windows into exited status", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1816,7 +1895,7 @@ test("cleans stale role windows into exited status", () => {
 });
 
 test("stops a role through tmux and updates status", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1857,7 +1936,7 @@ test("stops a role through tmux and updates status", () => {
 });
 
 test("kills a role tmux window and updates status", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const { fakeTmux, logFile } = createFakeTmux(home);
 
   runTaskmux(["task", "create", "Refactor login page"], {
@@ -1898,7 +1977,7 @@ test("kills a role tmux window and updates status", () => {
 });
 
 test("adds and lists task comments", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -1932,7 +2011,7 @@ test("adds and lists task comments", () => {
 });
 
 test("records and lists task event history", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -1966,25 +2045,28 @@ test("records and lists task event history", () => {
   assert.equal(events[0].id, "event-1");
   assert.equal(events[0].type, "task.created");
   assert.equal(events[0].payload.title, "Refactor login page");
-  assert.equal(events[1].type, "task.status_changed");
-  assert.deepEqual(events[1].payload, { from: "open", to: "active" });
-  assert.equal(events[2].type, "role.assigned");
-  assert.deepEqual(events[2].payload, { role: "rd", agent: "codex" });
-  assert.equal(events[3].type, "comment.added");
-  assert.deepEqual(events[3].payload, { comment: "comment-1" });
+  assert.equal(events[1].type, "role.assigned");
+  assert.deepEqual(events[1].payload, { role: "owner", agent: "codex" });
+  assert.equal(events[2].type, "task.status_changed");
+  assert.deepEqual(events[2].payload, { from: "open", to: "active" });
+  assert.equal(events[3].type, "role.assigned");
+  assert.deepEqual(events[3].payload, { role: "rd", agent: "codex" });
+  assert.equal(events[4].type, "comment.added");
+  assert.deepEqual(events[4].payload, { comment: "comment-1" });
 
   const output = runTaskmux(["task", "events", "task-1"], {
     TASKMUX_HOME: home
   });
 
   assert.match(output, /event-1\s+.+\s+task\.created\s+title=Refactor login page/);
-  assert.match(output, /event-2\s+.+\s+task\.status_changed\s+from=open to=active/);
-  assert.match(output, /event-3\s+.+\s+role\.assigned\s+role=rd agent=codex/);
-  assert.match(output, /event-4\s+.+\s+comment\.added\s+comment=comment-1/);
+  assert.match(output, /event-2\s+.+\s+role\.assigned\s+role=owner agent=codex/);
+  assert.match(output, /event-3\s+.+\s+task\.status_changed\s+from=open to=active/);
+  assert.match(output, /event-4\s+.+\s+role\.assigned\s+role=rd agent=codex/);
+  assert.match(output, /event-5\s+.+\s+comment\.added\s+comment=comment-1/);
 });
 
 test("returns a data error exit code for invalid event schema", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -2000,7 +2082,7 @@ test("returns a data error exit code for invalid event schema", () => {
 });
 
 test("returns a not found exit code for missing tasks", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   const result = runTaskmuxFailure(["task", "show", "task-404"], {
     TASKMUX_HOME: home
@@ -2011,7 +2093,7 @@ test("returns a not found exit code for missing tasks", () => {
 });
 
 test("returns a role not found exit code for missing roles", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -2026,7 +2108,7 @@ test("returns a role not found exit code for missing roles", () => {
 });
 
 test("returns a usage exit code for missing task shell ids", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   const result = runTaskmuxFailure(["task", "shell"], {
     TASKMUX_HOME: home
@@ -2037,7 +2119,7 @@ test("returns a usage exit code for missing task shell ids", () => {
 });
 
 test("returns a data error exit code for invalid task schema", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const taskDir = join(home, "tasks", "task-1");
   execFileSync("mkdir", ["-p", taskDir]);
   writeFileSync(join(taskDir, "task.json"), JSON.stringify({ id: "task-1" }));
@@ -2051,7 +2133,7 @@ test("returns a data error exit code for invalid task schema", () => {
 });
 
 test("returns a data error exit code for invalid task info schema", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -2067,7 +2149,7 @@ test("returns a data error exit code for invalid task info schema", () => {
 });
 
 test("returns a data error exit code for invalid role schema", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const taskDir = join(home, "tasks", "task-1");
   const roleDir = join(taskDir, "roles", "rd");
   execFileSync("mkdir", ["-p", roleDir]);
@@ -2099,7 +2181,7 @@ test("returns a data error exit code for invalid role schema", () => {
 });
 
 test("returns a data error exit code for invalid role info schema", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -2131,7 +2213,7 @@ test("returns a data error exit code for invalid role info schema", () => {
 });
 
 test("returns a data error exit code for invalid comment schema", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -2147,7 +2229,7 @@ test("returns a data error exit code for invalid comment schema", () => {
 });
 
 test("adds lists and shows custom runners", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createTaskmuxHome();
   const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
 
   const addOutput = runTaskmux(
@@ -2179,8 +2261,6 @@ test("adds lists and shows custom runners", () => {
   assert.deepEqual(runner.env, { TASKMUX_MODE: "dev" });
 
   const listOutput = runTaskmux(["runner", "list"], { TASKMUX_HOME: home });
-  assert.match(listOutput, /codex\s+builtin\s+codex/);
-  assert.match(listOutput, /claude\s+builtin\s+claude/);
   assert.match(listOutput, new RegExp(`agent-js\\s+custom\\s+${fakeAgent.replaceAll("\\", "\\\\")}`));
 
   const showOutput = runTaskmux(["runner", "show", "agent-js"], { TASKMUX_HOME: home });
@@ -2190,8 +2270,20 @@ test("adds lists and shows custom runners", () => {
   assert.match(showOutput, /Env: TASKMUX_MODE=dev/);
 });
 
+test("does not expose codex or claude as default runners", () => {
+  const home = createTaskmuxHome();
+
+  const listOutput = runTaskmux(["runner", "list"], {
+    TASKMUX_HOME: home
+  });
+
+  assert.match(listOutput, /No runners configured/);
+  assert.doesNotMatch(listOutput, /codex\s+builtin/);
+  assert.doesNotMatch(listOutput, /claude\s+builtin/);
+});
+
 test("assigns custom runners and starts configured commands", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
   const { fakeTmux, logFile } = createFakeTmux(home);
 
@@ -2263,7 +2355,7 @@ test("assigns custom runners and starts configured commands", () => {
 });
 
 test("removes custom runners", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
 
   runTaskmux(["runner", "add", "agent-js", "--command", fakeAgent], {
@@ -2284,23 +2376,19 @@ test("removes custom runners", () => {
 });
 
 test("runs doctor checks with configured executables", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createTaskmuxHome();
   const fakeTmux = createFakeExecutable(home, "fake-tmux.js", "tmux 3.4\n");
-  const fakeCodex = createFakeExecutable(home, "fake-codex.js", "codex 1.0.0\n");
-  const fakeClaude = createFakeExecutable(home, "fake-claude.js", "claude 2.0.0\n");
 
   const output = runTaskmux(["doctor"], {
     TASKMUX_HOME: home,
-    TASKMUX_TMUX_BIN: fakeTmux,
-    TASKMUX_CODEX_BIN: fakeCodex,
-    TASKMUX_CLAUDE_BIN: fakeClaude
+    TASKMUX_TMUX_BIN: fakeTmux
   });
 
   assert.match(output, /TaskMux doctor/);
   assert.match(output, /node\s+ok\s+v/);
   assert.match(output, /tmux\s+ok\s+tmux 3\.4/);
-  assert.match(output, /codex\s+ok\s+codex 1\.0\.0/);
-  assert.match(output, /claude\s+ok\s+claude 2\.0\.0/);
+  assert.doesNotMatch(output, /codex\s+ok/);
+  assert.doesNotMatch(output, /claude\s+ok/);
   assert.match(output, /taskmux home\s+ok/);
   assert.match(output, /storage schema\s+ok\s+latest=1/);
   assert.match(output, /storage permissions\s+ok\s+read-write/);
@@ -2309,27 +2397,21 @@ test("runs doctor checks with configured executables", () => {
 });
 
 test("doctor guides users when storage schema needs migration", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createTaskmuxHome();
   const fakeTmux = createFakeExecutable(home, "fake-tmux.js", "tmux 3.4\n");
-  const fakeCodex = createFakeExecutable(home, "fake-codex.js", "codex 1.0.0\n");
-  const fakeClaude = createFakeExecutable(home, "fake-claude.js", "claude 2.0.0\n");
   writeStorageSchema(home, 0);
 
   const output = runTaskmux(["doctor"], {
     TASKMUX_HOME: home,
-    TASKMUX_TMUX_BIN: fakeTmux,
-    TASKMUX_CODEX_BIN: fakeCodex,
-    TASKMUX_CLAUDE_BIN: fakeClaude
+    TASKMUX_TMUX_BIN: fakeTmux
   });
 
   assert.match(output, /storage schema\s+upgrade-required\s+current=0 latest=1; run taskmux migrate/);
 });
 
 test("doctor reports invalid storage records without failing", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
   const fakeTmux = createFakeExecutable(home, "fake-tmux.js", "tmux 3.4\n");
-  const fakeCodex = createFakeExecutable(home, "fake-codex.js", "codex 1.0.0\n");
-  const fakeClaude = createFakeExecutable(home, "fake-claude.js", "claude 2.0.0\n");
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home
@@ -2338,19 +2420,15 @@ test("doctor reports invalid storage records without failing", () => {
 
   const output = runTaskmux(["doctor"], {
     TASKMUX_HOME: home,
-    TASKMUX_TMUX_BIN: fakeTmux,
-    TASKMUX_CODEX_BIN: fakeCodex,
-    TASKMUX_CLAUDE_BIN: fakeClaude
+    TASKMUX_TMUX_BIN: fakeTmux
   });
 
   assert.match(output, /storage records\s+invalid\s+Invalid task record: task-1/);
 });
 
 test("runs doctor checks for custom runner executables", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createTaskmuxHome();
   const fakeTmux = createFakeExecutable(home, "fake-tmux.js", "tmux 3.4\n");
-  const fakeCodex = createFakeExecutable(home, "fake-codex.js", "codex 1.0.0\n");
-  const fakeClaude = createFakeExecutable(home, "fake-claude.js", "claude 2.0.0\n");
   const fakeAgent = createFakeExecutable(home, "custom-agent.js", "custom agent 1.0\n");
 
   runTaskmux(["runner", "add", "agent-js", "--command", fakeAgent], {
@@ -2359,16 +2437,14 @@ test("runs doctor checks for custom runner executables", () => {
 
   const output = runTaskmux(["doctor"], {
     TASKMUX_HOME: home,
-    TASKMUX_TMUX_BIN: fakeTmux,
-    TASKMUX_CODEX_BIN: fakeCodex,
-    TASKMUX_CLAUDE_BIN: fakeClaude
+    TASKMUX_TMUX_BIN: fakeTmux
   });
 
   assert.match(output, /runner:agent-js\s+ok\s+custom agent 1\.0/);
 });
 
 test("setup prints a tmux install plan without changing the system", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createTaskmuxHome();
   const fakeBin = join(home, "bin");
   mkdirSync(fakeBin);
   createPathExecutable(fakeBin, "apt-get", "process.stdout.write('apt 2.0\\n');");
@@ -2386,8 +2462,23 @@ test("setup prints a tmux install plan without changing the system", () => {
   assert.match(output, /taskmux setup --yes/);
 });
 
+test("setup guides binding a cli for the built-in owner role", () => {
+  const home = createTaskmuxHome();
+
+  const output = runTaskmux(["setup"], {
+    TASKMUX_HOME: home,
+    TASKMUX_TMUX_BIN: join(home, "missing-tmux")
+  });
+
+  assert.match(output, /owner\tbuiltin\tEvery task includes the owner role/);
+  assert.match(output, /cli\toption\ttaskmux runner add codex --command codex/);
+  assert.match(output, /cli\toption\ttaskmux runner add claude --command claude/);
+  assert.match(output, /cli\tcustom\ttaskmux runner add <runner-id> --command <command>/);
+  assert.match(output, /owner\tnext\tSet default-agent to the runner id that should back owner/);
+});
+
 test("setup --yes installs tmux through the detected package manager", () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createTaskmuxHome();
   const fakeBin = join(home, "bin");
   const logFile = join(home, "setup.log");
   const installedMarker = join(home, "tmux-installed");
@@ -2448,7 +2539,7 @@ if (args.join(" ") === "apt-get install -y tmux") writeFileSync(${JSON.stringify
 });
 
 test("runs an interactive task shell", async () => {
-  const home = mkdtempSync(join(tmpdir(), "taskmux-test-"));
+  const home = createConfiguredHome();
 
   runTaskmux(["task", "create", "Refactor login page"], {
     TASKMUX_HOME: home

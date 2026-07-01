@@ -15,7 +15,7 @@ export type RunnerDefinition = {
   command: string;
   args: string[];
   env: RunnerEnvironment;
-  source: "builtin" | "custom";
+  source: "custom";
 };
 
 export function createCustomRunner(
