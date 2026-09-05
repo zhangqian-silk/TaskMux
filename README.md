@@ -909,7 +909,11 @@ Session/Driver lifecycle facts.
 Global Operator and global Role sessions remain native interactive CLIs. Codex
 connects that TUI to the default shared App Server, so the same thread can move
 between Yui and Desktop without transferring a rollout writer or losing its
-Global Context entry:
+Global Context entry. A thin Host in the same pane transparently forwards the
+native TUI's App Server connection and acknowledges its exact `thread/start`
+or `thread/resume` response. Yui records that Thread ID before the first user
+Turn, without depending on `notify`, scanning history, or creating a bootstrap
+message. The attachment outlives Controller restarts but exits with the TUI:
 
 ```sh
 yui session enter <global-role>
@@ -934,6 +938,12 @@ running, Yui asks before stopping it and switching the conversation. On a
 cross-Agent switch, the saved model and effort are reused unless the user
 explicitly chooses to update them.
 
+Window existence does not imply a running Agent: `pane_dead=0` is live and
+`pane_dead=1` is an exited, retained diagnostic pane. Status reads never delete
+that evidence, and unreadable state is an error rather than proof of exit.
+An explicit launch can rebuild the exact dead window; tmux refuses to replace
+a live pane. An unidentified live Operator still cannot be overwritten.
+
 The Role's active binding is desired state for the next compatible launch. A
 running Turn and its native Session continue under their immutable
 effective snapshot even if the Role is edited or switched. Resume is allowed
@@ -949,8 +959,9 @@ Use `yui config role unbind <global-role> <agent-id>` or `yui task role unbind <
 
 Claude session IDs are preallocated at launch. Codex discovers its native
 thread identity from App Server responses. Managed Task Turns use structured
-Provider observations for both CLIs. Global interactive Codex sessions may
-still use its `notify` callback for conversation presentation.
+Provider observations for both CLIs. Global Codex uses the native TUI's exact
+App Server startup response and the existing Host acknowledgement. Legacy
+global `notify` callbacks cannot register a Session or change its lifecycle.
 
 Automated lifecycle and delivery decisions use structured Provider events or
 supported Hook payloads, persisted identities, usage snapshots, tmux process state, receipts, and pane

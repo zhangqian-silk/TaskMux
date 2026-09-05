@@ -179,10 +179,23 @@ export class TmuxManager {
     launch?: TmuxLaunchPlan
   ): boolean {
     if (this.windowNames(taskId).includes(role.name)) {
+      const pane = this.inspectPane(taskId, role.name);
+      if (pane.dead && launch === undefined) {
+        throw runtimeError(`Role ${role.name} has an exited-retained pane; a launch plan is required to restart it.`);
+      }
       this.recordRoleTarget(taskId, role.name);
       this.configureServerHistory();
+      if (pane.dead) {
+        // Without -k tmux refuses to replace a live process, even if the pane
+        // changed after inspection. Reads alone never discard the exit scene.
+        this.run([
+          "respawn-window", "-t", this.exactTarget(taskId, role.name),
+          "-c", safeValue(role.cwd ?? role.workspace, "Role cwd"),
+          "--", ...launchCommand(launch!)
+        ]);
+      }
       this.configureRoleWindowSizing(taskId, role.name);
-      return false;
+      return pane.dead;
     }
     if (launch === undefined) {
       throw runtimeError(`Agent launch plan is required to create Role window: ${role.name}.`);
@@ -232,10 +245,21 @@ export class TmuxManager {
   ): Promise<boolean> {
     const snapshot = await this.sessionWindowNamesAsync(taskId);
     if (snapshot.names.includes(role.name)) {
+      const pane = await this.inspectPaneAsync(taskId, role.name);
+      if (pane.dead && launch === undefined) {
+        throw runtimeError(`Role ${role.name} has an exited-retained pane; a launch plan is required to restart it.`);
+      }
       this.recordRoleTarget(taskId, role.name);
       await this.configureServerHistoryAsync();
+      if (pane.dead) {
+        await this.runAsync([
+          "respawn-window", "-t", this.exactTarget(taskId, role.name),
+          "-c", safeValue(role.cwd ?? role.workspace, "Role cwd"),
+          "--", ...launchCommand(launch!)
+        ]);
+      }
       await this.configureRoleWindowSizingAsync(taskId, role.name);
-      return false;
+      return pane.dead;
     }
     if (launch === undefined) {
       throw runtimeError(`Agent launch plan is required to create Role window: ${role.name}.`);
@@ -536,7 +560,7 @@ export class TmuxManager {
   inspectPane(taskId: string, roleName: string): TmuxPaneState {
     const target = this.target(taskId, roleName);
     const output = this.run([
-      "display-message", "-p", "-t", target,
+      "display-message", "-p", "-t", this.exactTarget(taskId, roleName),
       [
         "#{pane_dead}",
         "#{pane_pid}",
@@ -551,6 +575,9 @@ export class TmuxManager {
       throw runtimeError(`Tmux returned an invalid pane state for ${roleName}.`);
     }
     const dead = output.slice(0, separator);
+    if (dead !== "0" && dead !== "1") {
+      throw runtimeError(`Tmux returned an invalid pane state for ${roleName}.`);
+    }
     const pidText = output.slice(separator + 1, secondSeparator);
     const currentCommand = output.slice(secondSeparator + 1, lastSeparator);
     const exitStatusText = output.slice(lastSeparator + 1);
@@ -583,7 +610,7 @@ export class TmuxManager {
       : deliveryReceiptOption(receiptId);
     const receiptFormat = receiptOption === undefined ? "" : `#{${receiptOption}}`;
     const output = await this.runAsync([
-      "display-message", "-p", "-t", target,
+      "display-message", "-p", "-t", this.exactTarget(taskId, roleName),
       [
         PANE_STATE_MARKER,
         "#{pane_dead}",
@@ -1030,7 +1057,7 @@ export class TmuxManager {
   detectRoleStatus(
     taskId: string,
     roleName: string,
-    fallback: string = "exited"
+    fallback: string = "unknown"
   ): string {
     try {
       return this.probeRoleStatus(taskId, roleName);
@@ -1040,8 +1067,8 @@ export class TmuxManager {
   }
 
   probeRoleStatus(taskId: string, roleName: string): "running" | "exited" {
-    if (!this.hasSession(taskId)) return "exited";
-    return this.windowNames(taskId).includes(roleName) ? "running" : "exited";
+    if (!this.windowNames(taskId).includes(roleName)) return "exited";
+    return this.inspectPane(taskId, roleName).dead ? "exited" : "running";
   }
 
   async probeRoleStatusAsync(
@@ -1049,7 +1076,8 @@ export class TmuxManager {
     roleName: string
   ): Promise<"running" | "exited"> {
     const snapshot = await this.sessionWindowNamesAsync(taskId);
-    return snapshot.names.includes(roleName) ? "running" : "exited";
+    if (!snapshot.names.includes(roleName)) return "exited";
+    return (await this.inspectPaneAsync(taskId, roleName)).dead ? "exited" : "running";
   }
 
   /** Exact pane process state for one Role, used by owner-identity recording. */
@@ -1156,9 +1184,6 @@ export class TmuxManager {
       return true;
     } catch (error) {
       if (isExplicitlyAbsentTmuxSession(error)) return false;
-      // Older/fake executors do not expose stderr. A failed has-session is the
-      // tmux absence contract; other operations remain strict.
-      if (!(error instanceof CommandExecutionError)) return false;
       throw error;
     }
   }
@@ -1169,7 +1194,6 @@ export class TmuxManager {
       return true;
     } catch (error) {
       if (isExplicitlyAbsentTmuxSession(error)) return false;
-      if (!(error instanceof CommandExecutionError)) return false;
       throw error;
     }
   }
@@ -1181,7 +1205,7 @@ export class TmuxManager {
         "list-windows", "-t", this.sessionName(taskId), "-F", "#{window_name}"
       ]).split("\n").map((name) => name.trim()).filter(Boolean);
     } catch (error) {
-      if (isUnavailableTmuxStatus(error)) return [];
+      if (isExplicitlyAbsentTmuxSession(error)) return [];
       throw error;
     }
   }
@@ -1195,7 +1219,7 @@ export class TmuxManager {
       ])).split("\n").map((name) => name.trim()).filter(Boolean);
       return { exists: true, names };
     } catch (error) {
-      if (isUnavailableTmuxStatus(error)) return { exists: false, names: [] };
+      if (isExplicitlyAbsentTmuxSession(error)) return { exists: false, names: [] };
       throw error;
     }
   }
@@ -1250,6 +1274,12 @@ export class TmuxManager {
 
   private target(taskId: string, roleName: string): string {
     return yuiTmuxTarget(this.#yuiHome, taskId, roleName);
+  }
+
+  private exactTarget(taskId: string, roleName: string): string {
+    // tmux otherwise accepts prefix/glob matches after the selected Role
+    // disappears. Keep identity inspection and dead-pane replacement exact.
+    return `=${this.sessionName(taskId)}:=${safeValue(roleName, "Role name")}`;
   }
 
   private recordRoleTarget(taskId: string, roleName: string): void {
@@ -1552,12 +1582,6 @@ function isExplicitlyAbsentTmuxSession(error: unknown): boolean {
   if (!(error instanceof CommandExecutionError)) return false;
   return /can't find (?:session|window|pane)|no server running|no current target|session not found|error connecting to .+ \(No such file or directory\)/i
     .test(error.stderr);
-}
-
-function isUnavailableTmuxStatus(error: unknown): boolean {
-  return isExplicitlyAbsentTmuxSession(error)
-    || (error instanceof CommandExecutionError
-      && /server exited unexpectedly/i.test(error.stderr));
 }
 
 function tmuxWord(value: string): string {

@@ -39,7 +39,7 @@ export class RuntimeHostContentionError extends Error {
   constructor(
     readonly reason: Extract<
       RuntimeLaunchRetryReason,
-      "writable-client" | "provider-child-active"
+      "writable-client" | "provider-child-active" | "previous-process"
     >,
     message: string
   ) {

@@ -61,6 +61,7 @@ import {
   AGENT_HOST_READY_TIMEOUT_MS
 } from "./runtimeDeadlines.js";
 import { serializeAgentErrorRaw } from "./agentError.js";
+import { runCodexInteractiveHost } from "./codexInteractiveHost.js";
 
 export const AGENT_HOST_CONTROL_PROTOCOL = "yui-agent-host/v4" as const;
 const HOST_CONTROL_MAX_BYTES = 32 * 1024;
@@ -167,6 +168,11 @@ export async function runAgentHost(input: Readonly<{
   const hostInstanceId = randomUUID();
   let hostSequence = 0;
   let payload = await redeem(input.home, input.runtimeGenerationId, input.ticket);
+  if (payload.environment.YUI_SESSION_SCOPE === "global"
+    && payload.environment.YUI_ADAPTER_ID === "codex"
+    && payload.providerControl === undefined) {
+    return runCodexInteractiveHost(input.home, payload);
+  }
   let session: StructuredProviderSession | undefined;
   let sessionPayload: AgentHostLaunchPayload | undefined;
   let activeTurnPayload: AgentHostLaunchPayload | undefined;
@@ -1080,6 +1086,8 @@ export async function waitForAgentHostLaunchAck(input: Readonly<{
   runtimeGenerationId: string;
   requireTurnAck?: boolean;
   timeoutMs?: number;
+  /** Exact process check while the existing startup acknowledgement is unavailable. */
+  assertHostRunning?: () => Promise<void>;
 }>): Promise<AgentHostSnapshot> {
   const deadline = Date.now() + (input.timeoutMs ?? AGENT_HOST_READY_TIMEOUT_MS);
   let lastError: unknown;
@@ -1104,6 +1112,7 @@ export async function waitForAgentHostLaunchAck(input: Readonly<{
       lastError = error;
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "ENOENT" && code !== "ECONNREFUSED") throw error;
+      await input.assertHostRunning?.();
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
   }

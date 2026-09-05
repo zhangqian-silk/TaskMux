@@ -407,7 +407,9 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
           : undefined,
         trustWorkspace: true
       });
-      assertCodexLaunchOverridesAvailable(codexConfig, ["developerInstructions", "notify"]);
+      assertCodexLaunchOverridesAvailable(codexConfig, owner.scope === "global"
+        ? ["developerInstructions"]
+        : ["developerInstructions", "notify"]);
     }
     const runtimeIsolation = input.runtimeIsolation === undefined
       ? undefined
@@ -568,10 +570,10 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       args.push("--plugin-dir", ensureClaudeLifecyclePlugin(this.home, this.#cliPath));
     }
     if (binding.adapterId === "codex") {
-      // Global/interactive Codex sessions still use notify for presentation.
+      // Interactive Task sessions may use notify for presentation.
       // Managed Turns receive lifecycle facts through their ordinary App Server
       // subscription, avoiding a second Hook channel for the same Turn.
-      if (owner.scope !== "task" || input.turnId === undefined) {
+      if (owner.scope === "task" && input.turnId === undefined) {
         args = addCodexSessionNotify(args, launchMode, this.#cliPath);
       }
       // Managed Codex Turns use disposable proxy clients against the shared
@@ -683,6 +685,9 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         YUI_WORKSPACE: effectiveWorkspace,
         YUI_SESSION_MANIFEST: sessionContext.sessionManifestPath,
         YUI_SESSION_CLI: sessionContext.sessionCliPath,
+        ...(owner.scope === "global" && configured.adapterId === "codex"
+          ? { YUI_AGENT_BASE_ARGS: JSON.stringify(configured.baseArgs) }
+          : {}),
         ...(jobCallerKey === undefined ? {} : { YUI_JOB_CALLER_KEY: jobCallerKey }),
         ...(owner.scope !== "task"
           ? {}
