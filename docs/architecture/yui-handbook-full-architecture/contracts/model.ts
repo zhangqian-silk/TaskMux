@@ -13,7 +13,14 @@ export type Scope =
 export type Actor = Readonly<{
   id: Id; kind: 'user' | 'operator' | 'leader' | 'worker' | 'reviewer';
 }>;
-export type TaskState = 'draft' | 'active' | 'completed' | 'cancelled';
+export type TaskState = 'draft' | 'active' | 'completed' | 'cancelled' | 'archived';
+// Target lifecycle only; not a migration or a production authorization check.
+export type TaskArchive = Readonly<{
+  previousState: 'completed' | 'cancelled';
+  outcomeRef: Id; // retained completion/cancellation evidence, not duplicated text
+  archivedAt: Time;
+  actorId: Id;
+}>;
 export interface TaskRecord {
   readonly id: Id;
   readonly title: string;
@@ -24,6 +31,7 @@ export interface TaskRecord {
   readonly revision: Revision;
   readonly createdAt: Time;
   readonly updatedAt: Time;
+  readonly archive?: TaskArchive; // required iff state === 'archived'
 }
 export interface BriefRecord {
   readonly id: Id;

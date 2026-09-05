@@ -163,6 +163,34 @@
       "requestIdRequired": true
     },
     {
+      "name": "task.reopen",
+      "summary": "显式重开 completed/cancelled；不重播历史输入，拒绝 archived",
+      "version": "1",
+      "effect": "local-mutation",
+      "inputSchema": {
+        "type": "object",
+        "required": ["taskId"],
+        "properties": { "taskId": { "type": "string" } }
+      },
+      "outputContract": "TaskRecord",
+      "authority": "user/operator; authorized leader for completed only",
+      "requestIdRequired": true
+    },
+    {
+      "name": "task.archive",
+      "summary": "在独立授权及资源处置后记录归档，保留原结束事实和成果；不执行资源删除",
+      "version": "1",
+      "effect": "local-mutation",
+      "inputSchema": {
+        "type": "object",
+        "required": ["taskId"],
+        "properties": { "taskId": { "type": "string" } }
+      },
+      "outputContract": "TaskRecord",
+      "authority": "user/operator or explicitly delegated archive authority",
+      "requestIdRequired": true
+    },
+    {
       "name": "brief.update",
       "summary": "维护当前任务认知",
       "version": "1",

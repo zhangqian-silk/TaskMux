@@ -19,11 +19,27 @@ Review → Candidate + Reviewer Turn
 
 ## 2. Task 生命周期
 
-生命周期是 draft、active、completed、cancelled。它描述用户是否计划、执行或结束该目标，不表达每种内部活动。
+生命周期是 draft、active、completed、cancelled、archived。它描述用户是否计划、执行、结束或归档该目标，不表达每种内部活动。
 
 Draft 可以进行对话、编辑与授权的规划实验。Active 允许正式交付。Completed 表示受权负责人明确确认结果；Cancelled 表示明确停止追求该目标。历史内容仍然可读。
 
-结束任务会停止新的自动派发，不证明旧进程已经停止。迟到结果进入原记录，不自动重开 Task。需要继续时由用户／Operator／受权 Leader 显式重开，并明确选择哪些待处理工作继续，不重放全部历史通知。
+结束任务会停止新的自动派发，不证明旧进程已经停止。迟到结果保存到原 Turn，不自动重开 Task，也不把保存结果称为 Task 归档。
+
+| 起点 | 允许的目标 | 条件 |
+|---|---|---|
+| draft | active、cancelled | 显式激活并采用所需环境，或受权取消 |
+| active | completed、cancelled | 负责人确认交付，或受权停止追求目标 |
+| completed | active、archived | 显式重开，或独立获得归档授权且满足下述前置 |
+| cancelled | active、archived | 用户／Operator 显式恢复目标，或独立获得归档授权且满足下述前置 |
+| archived | 无 | 不重开、不激活；重复归档仅返回既有事实 |
+
+重开必须明确选择继续的工作和输入；历史 accepted、pending、unknown 投递均不自动重播。再次追求 archived 目标应创建新 Task 并显式引用已有结果，不篡改归档历史。受权 Leader 可重开 completed；cancelled 的恢复和归档需要用户／Operator 授权，不由结束状态推导新权限。
+
+归档前置：相关执行已结清，有实际停止或隔离证据；WorkItem 结果已集成或明确放弃；未决 InputRequest、Integration、外部操作已有明确处置；受管理工作区干净且可安全移除。若无法确认写入者停止、结果独立保存或操作处置，则保留 completed／cancelled 并返回具体阻碍，由负责人决定下一步。不增加自动清理或恢复协议。
+
+归档记录保留先前 completed／cancelled 的身份、时间、操作者和结束证据引用；它本身不删除 Task 或成果。清理只作用于明确拥有且已无写入者的执行资源，不能删除用户目录、共享 Provider 服务或仍被引用的结果。历史正文和必要来源通过普通查询继续读取，不依赖旧插件可执行，也不暗示 Git 已推送或合并。
+
+这是目标契约。当前版本使用 `retired` 而非 `cancelled`，并有额外隔离证据；后续 T03 必须通过中央存储迁移保留有效历史与权限保护，不直接将枚举改名或删除字段。
 
 ## 3. Brief 编辑
 
@@ -69,7 +85,7 @@ Task 级 direct 结果可以直接形成完成说明及引用，不强制创建�
 
 ## 8. 原子能力
 
-主要能力为 task.create/edit/activate/complete/cancel、brief.read/update、decision.record、work.create/edit/retire/dispatch/accept、candidate.submit/read、review.request/read。具体 CLI 层次可以沿现有命令组织。
+主要能力为 task.create/edit/activate/complete/cancel/reopen/archive、brief.read/update、decision.record、work.create/edit/retire/dispatch/accept、candidate.submit/read、review.request/read。具体 CLI 层次可以沿现有命令组织。
 
 这些能力返回记录或操作引用，不在返回前等待整个任务闭环。派发和评审请求交给 Execution；结果由通知让 Leader 读取。
 

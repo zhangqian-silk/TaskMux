@@ -4,7 +4,9 @@
 
 [model.ts](model.ts) 定义模块之间最少需要共享的结构；[examples.ts](examples.ts) 展示配置切换、结果引用、调用和插件配置；[capabilities.json](capabilities.json) 是设计级能力目录。
 
-这些是目标接口，不是当前发布 SDK。接口展示哪些信息应有明确所有权，不要求建立相同名称的类、服务或数据库表。已有实现可以通过 adapter 满足契约。
+这些是目标接口，不是当前发布 SDK。接口展示哪些信息应有明确所有权，不要求建立相同名称的类、服务或数据库表。已有实现可通过无持久化双写的边界包装满足契约；实现并存的限制见 [T00 实施基线](../implementation/designs/T00-current-baseline.md)。
+
+TaskState 包含 draft／active／completed／cancelled／archived。`archive` 仅在 archived 时必需，引用先前结束事实；TypeScript 的可选字段不代替运行时关联校验。允许转换、归档前置和不可重开规则由 [Task 模块](../modules/02-task.md) 唯一定义。Turn 的 cancelled 与 Task 的 cancelled 不是同一事实。
 
 ## 设计边界
 

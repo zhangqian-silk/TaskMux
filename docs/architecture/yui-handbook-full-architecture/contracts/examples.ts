@@ -14,6 +14,18 @@ export const brief: BriefRecord = {
   id: 'brief-1', taskId: task.id, revision: 1, objective: '形成可交付说明',
   currentFocus: '先理解材料'
 };
+// Both outcomes can be archived; neither transition is automatic.
+export const archivedCompletedTask: TaskRecord = {
+  ...task, state: 'archived', revision: 3,
+  archive: { previousState: 'completed', outcomeRef: 'completion-1',
+    archivedAt: '2026-09-06T09:00:00Z', actorId: 'operator-1' }
+};
+export const archivedCancelledTask: TaskRecord = {
+  ...archivedCompletedTask, id: 'task-2',
+  archive: { previousState: 'cancelled', outcomeRef: 'cancellation-2',
+    archivedAt: '2026-09-06T09:00:00Z', actorId: 'operator-1' }
+};
+// Archive does not remove Brief, results, or provenance; it cannot be reopened.
 export const role: RoleRecord = {
   id: 'worker-1', kind: 'worker', taskId: task.id, revision: 1,
   current: {
