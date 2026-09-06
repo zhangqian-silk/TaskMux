@@ -2349,6 +2349,10 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       if (!isDeepStrictEqual(preparedTurn?.workspace, observedTurn?.workspace)) {
         throw new Error("Runtime terminal workspace changed during result preparation.");
       }
+      if (workspace !== undefined && observedTurn?.workspace !== undefined
+        && !isDeepStrictEqual(store.getManagedWorkspace(observedTurn.workspace.owner), observedTurn.workspace)) {
+        throw new Error("Runtime terminal workspace ownership changed during result preparation.");
+      }
       let sessions = store.getTaskRoleSessionSet(input.taskId, input.roleName)
         ?? createRoleSessionSet(
           { scope: "task", taskId: input.taskId, roleName: input.roleName },

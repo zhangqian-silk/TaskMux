@@ -23,9 +23,8 @@ export type ExecutionLaneGitSnapshotResult =
 
 /**
  * Freeze the exact committed heads of a durable managed Lane workspace at the
- * synchronous runtime-terminalization boundary. Runtime event folds are
- * synchronous inside the SQLite aggregate transaction, so this small Git read
- * cannot use the asynchronous workspace-preparation port.
+ * synchronous runtime-terminalization boundary, before opening the result
+ * transaction. The committing fold revalidates durable workspace ownership.
  */
 export function snapshotExecutionLaneWorkspaceSync(
   store: Pick<TaskStore, "getManagedWorkspace">,
@@ -96,6 +95,8 @@ function git(cwd: string, args: readonly string[]): string | undefined {
     return execFileSync("git", args, {
       cwd,
       encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 512 * 1024,
       stdio: ["ignore", "pipe", "pipe"]
     }).trim();
   } catch {

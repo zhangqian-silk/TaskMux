@@ -37,6 +37,8 @@ Session、Activation 与原请求，不能根据当前 active Turn 猜测。
 准确终态可以证明先前 submitting/unknown 输入已经被接受。
 
 Git 工作区证据在业务事务外有界读取，提交时复核原 Turn 工作区。
+终态也不进入 inbox 的外层批量事务；非终态仍可批处理。Git 子调用有5秒超时
+和512KiB输出上限，事务内再校验 managed workspace 的持久化所有权。
 同一 Store 事务完成 Provider 输入结清、Turn 结果/终态、必要通知和原始观察。
 任何写入异常整体回滚；文件 inbox 不确认该事件，后续显式处理同一事件可以
 完成业务写入，不新增恢复 worker、applied 标志或第二协调协议。
@@ -95,7 +97,7 @@ Task13 event-4725 是原 implementer 报告，不是最终 Review。保留 turn-
 
 - `npm run build`、`npm run lint`、`npm test`：通过；现有 core 82/82，
   最近一次 test 阶段 4.20 秒，未增加永久测试数量。
-- 临时 `node --test test/task13-evidence.mjs`：13/13；真实 SQLite、inbox、
+- 临时 `node --test test/task13-evidence.mjs`：14/14；真实 SQLite、inbox、
   processor，包含接受前终态、无 native ID、重复/冲突、三处事务中断、迟到报告、
   detach 前未确认输入、1→2 升级及 v1 备份的实际读取。报告与 failed 记录不变。
 - 临时 `node test/task13-host-chain-evidence.mjs`：两个真实 Host 子进程、

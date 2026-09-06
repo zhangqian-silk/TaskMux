@@ -190,6 +190,22 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
         const wave = selectTaskOrderedWave(selected, offset, failedTaskIds);
         offset = wave.nextOffset;
         if (wave.candidates.length === 0) continue;
+        if (ownsResultTransaction(wave.candidates[0]!.event)) {
+          // Terminal preparation may inspect external workspace resources.
+          // Its observer owns the atomic result commit after that inspection;
+          // never enclose preparation in the cross-Task batch transaction.
+          const candidate = wave.candidates[0]!;
+          try {
+            stateTransactions += 1;
+            const failure = this.finalizeOne(
+              this.foldOne(candidate, now), acknowledgedEventIds, deferred
+            );
+            if (failure !== undefined) recordDrainFailure(failure, failed, failedTaskIds);
+          } catch (error) {
+            recordDrainFailure(candidateDrainFailure(candidate.event, error), failed, failedTaskIds);
+          }
+          continue;
+        }
         try {
           stateTransactions += 1;
           const folded = this.observer.withRuntimeEventTransaction(() => (
@@ -661,12 +677,20 @@ function selectTaskOrderedWave(
       nextOffset += 1;
       continue;
     }
+    if (ownsResultTransaction(candidate.event) && selected.length > 0) break;
     if (taskId !== undefined && selectedTaskIds.has(taskId)) break;
     selected.push(candidate);
     if (taskId !== undefined) selectedTaskIds.add(taskId);
     nextOffset += 1;
+    if (ownsResultTransaction(candidate.event)) break;
   }
   return { candidates: selected, nextOffset };
+}
+
+function ownsResultTransaction(event: RuntimeLifecycleEvent): boolean {
+  return event.type === "native-turn-terminal"
+    || (event.type === "runtime-observation"
+      && ["turn.completed", "turn.failed", "turn.cancelled"].includes(event.observation.kind));
 }
 
 function recordDrainFailure(
