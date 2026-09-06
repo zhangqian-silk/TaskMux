@@ -61,9 +61,11 @@ Controller 在同一事务中按 owner 找回唯一原 Job，再核对输入与�
 重复请求读原记录不依赖当前 workspace HEAD 仍相同。
 
 Caller 明文 key 不进入 Job 或输入摘要；Task authorityRef 是 caller-key
-哈希、当前 Agent/adapter、runtime generation 和 native Session 的组合指纹，
+哈希、当前 Agent/adapter 和 native Session 的组合指纹，
 不可用作 bearer。管理入口要求 live Session；发送前重新核对，
-Session 结束或 generation 改变均拒绝旧请求，不能只凭残留 key 哈希执行。
+Session 结束、更换或 caller key 轮换均拒绝旧请求，不能只凭残留 key 哈希执行。
+Host generation 是可丢弃的执行身份：同一 Session 的 Host detach/重新绑定
+不撤销已经接受的排队 Job；新管理请求仍通过原入口的当前身份认证。
 此处是现有 opaque authorityRef 的当前绑定计算，无新存储字段或版本。
 
 Job 规格只支持可持久化的非秘密 command/env；可信调用方不能提交凭据值。
@@ -167,9 +169,25 @@ possible/confirmed 的既有请求仍由原采集路径处理。
 review-round-3 / turn-7 的四项发现已由 Leader 核实：
 Task Session 失效、合成私钥持久化、Integration 跨调用者重复 Job、
 以及离线阅读版/清单缺项。新增的临时 port 探针在修复前复现缺失拒绝
-与第二个 Job；修复后验证 Session 结束、generation 改变、
+与第二个 Job；当时修复后验证 Session 结束、generation 改变、
 私钥环境变量/argv、URL 凭据、Integration 换调用者恢复共六个场景。
 Integration 原请求返回 created=false，输入改变返回冲突；
 秘密输入零 Job 保存。探针只使用合成数据和临时 Git，无真实凭据或外部效果。
 文档包按其官方生成与检查脚本同步，结果见 `tools/verification.json`。
 该自查不代替修复候选的独立复审，最终处置仍以 Task 持久记录为准。
+
+review-round-4 / turn-12 在 `9d05604355fe142598011f1636af65607d798b4b`
+给出 0 P1、1 P2：Host detach 保留 native Session，却因 generation 被纳入
+authorityRef 而误拒排队 Job。Leader 接受该发现，修正前述 generation
+绑定判断：已接受 Job 绑定耐久调用者身份，不绑定可丢弃 Host。
+Task 与 Global 指纹均移除 runtimeGenerationId；入口认证、目标检查和
+迟到结果采集不变，无新增字段、迁移或恢复协议。
+
+临时 port 探针调用真实 startJob、authorizeJobStart、Session 创建与 detach
+函数，使用一次性本地 Git 和内存 Store port。旧构建在 detach 后复现
+CoreJobError；修复后两种 scope 的完整目标检查均通过，detach/重新绑定
+允许，native Session 更换/缺失拒绝，Task caller key 轮换拒绝。
+Job 保持 queued/effect=none，无 spawn；该探针交付前移除。
+既有隔离 runner、迁移备份/恢复证据保留，未重复执行未改变的路径；
+Reviewer 未复跑的项目由 Leader 基于原始自查证据承担验收判断，
+不把本地 install-local 或一次性 runner 误当成真实 Provider 验证。

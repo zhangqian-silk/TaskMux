@@ -240,6 +240,9 @@ export function authorizeJobStart(store: TaskStore, job: DurableJob): void {
 }
 
 function jobAuthorityBinding(store: TaskStore, scope: string, roleName: string, taskId: string): string {
+  // A Host detach/reattach preserves the native Session and its queued work.
+  // Authenticate the live launch at ingress, but bind accepted Jobs to the
+  // caller's durable Session identity, not its disposable Host generation.
   if (scope === "task") {
     const role = store.getRole(taskId, roleName);
     const sessions = store.getTaskRoleSessionSet(taskId, roleName);
@@ -250,14 +253,14 @@ function jobAuthorityBinding(store: TaskStore, scope: string, roleName: string, 
       throw jobDomainError("Current Job caller Session is unavailable.");
     }
     return createHash("sha256").update(JSON.stringify([
-      hash, session.agentId, session.adapterId, session.runtimeGenerationId, session.nativeSessionId
+      hash, session.agentId, session.adapterId, session.nativeSessionId
     ])).digest("hex");
   }
   const role = store.getGlobalRole(roleName);
   const session = activeLiveRoleAgentSession(store.getGlobalRoleSessionSet(roleName));
   if (role === null || session === null) throw jobDomainError("Current Job caller binding is unavailable.");
   return createHash("sha256").update(JSON.stringify([
-    role.activeAgentId, session.agentId, session.runtimeGenerationId, session.nativeSessionId
+    role.activeAgentId, session.agentId, session.nativeSessionId
   ])).digest("hex");
 }
 
