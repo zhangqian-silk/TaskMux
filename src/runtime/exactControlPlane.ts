@@ -165,35 +165,17 @@ export async function assertExactControlPlanePreflight(
   assertSamePath(descriptor.cliEntry, input.actualCliEntry, "Control-plane CLI entry");
   assertSamePath(descriptor.yuiHome, input.actualHome, "Control-plane YUI_HOME");
 
-  const localIdentity = validateVersionIdentity(options.identity ?? yuiVersionIdentity());
-  assertContinuityIdentity("Local CLI", descriptor.identity, localIdentity);
-  const storage = (options.inspectStorage ?? inspectStorageSchema)(descriptor.yuiHome);
-  if (storage.status !== "current") {
-    throw new Error(`Exact control-plane storage is not current: ${storage.status}.`);
-  }
-  if (storage.currentVersion !== descriptor.identity.storageVersion) {
-    throw new Error(
-      "Exact control-plane storage version does not match its frozen descriptor "
-        + `(expected ${descriptor.identity.storageVersion}, found `
-        + `${storage.currentVersion ?? "unknown"}).`
-    );
-  }
-
-  // A frozen descriptor authenticates the command that created it; it no
-  // longer pins the Home's deployment pointer for the lifetime of a Session.
-  // Continuity is the protocol/storage contract checked above and the durable
-  // Task/Role/Turn identity checked below. This lets a compatible Controller or
-  // active release advance without invalidating a still-current Session.
-
-  if (options.checkController !== false) {
-    const call = options.callController ?? defaultCallController;
-    try {
-      const status = await call(descriptor.yuiHome, "controller.status", {});
-      assertControllerContinuityIdentity(status, descriptor.identity);
-    } catch (error) {
-      if (!isDefinitelyNotRunning(error)) throw error;
-    }
-  }
+  // A frozen descriptor can only assert what cannot legitimately change for a
+  // Session: which Home it belongs to, and which installation launched it. The
+  // protocol and storage numbers it also captured describe the world at launch
+  // time, and Yui upgrades that world on purpose. Asking today's Home to still
+  // match yesterday's snapshot would silence a healthy Session's callbacks the
+  // moment a migration lands, so runtime coherence is proven against the
+  // current CLI, Home, and Controller instead.
+  await assertCompatibleControlPlanePreflight(
+    { actualHome: descriptor.yuiHome },
+    options
+  );
   return descriptor;
 }
 
@@ -283,25 +265,6 @@ function validateVersionIdentity(value: unknown): YuiVersionIdentity {
     storageVersion,
     minimumStorageVersion
   };
-}
-
-/** Managed continuity is a protocol/storage contract, not a package pin. */
-function assertContinuityIdentity(
-  label: string,
-  expected: YuiVersionIdentity,
-  actual: YuiVersionIdentity
-): void {
-  for (const field of [
-    "controllerProtocolVersion",
-    "storageVersion"
-  ] as const) {
-    if (expected[field] !== actual[field]) {
-      throw new Error(
-        `${label} ${field} does not match the frozen control plane `
-          + `(expected ${expected[field]}, found ${actual[field]}).`
-      );
-    }
-  }
 }
 
 function assertControllerContinuityIdentity(
