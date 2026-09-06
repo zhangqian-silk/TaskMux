@@ -91,6 +91,7 @@ import {
 } from "./jobSupervisor.js";
 import { authorizeJobStart } from "./jobControl.js";
 import { createKernelPorts } from "../kernel/kernelPorts.js";
+import { createCapabilityDispatcher } from "./capabilityBridge.js";
 import { FileRuntimeEventInbox } from "./runtimeEventInbox.js";
 import { AgentRuntimeObserver } from "./agentRuntimeObserver.js";
 import {
@@ -534,7 +535,9 @@ export async function startFileTaskControllerRuntime(
   // supervisor enqueues a durable-job-terminal event; the processor drains it
   // on the next pass, waking the Controller immediately instead of waiting for
   // the poll interval.
-  const kernel = createKernelPorts(store, createLinuxProcessPort());
+  const kernel = createKernelPorts(store, createLinuxProcessPort(), (taskId) => {
+    runningRuntime?.signal(`task:${taskId}`);
+  });
   const jobSupervisor = new DurableJobSupervisor({
     store: schedulerStore,
     process: kernel.runner,
@@ -604,6 +607,7 @@ export async function startFileTaskControllerRuntime(
       lifecycleHost,
       jobSupervisor,
       jobControl,
+      capabilityDispatcher: createCapabilityDispatcher(kernel.capabilities),
       ...(continuationReconciler === undefined ? {} : { continuationReconciler }),
       ...(resourceReaper === undefined ? {} : { resourceReaper }),
       resourceAutoGc,

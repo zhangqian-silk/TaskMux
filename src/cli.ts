@@ -43,6 +43,7 @@ import {
   type GlobalRoleCommandOptions
 } from "./commands/globalRoleCommands.js";
 import { runConfigCommand } from "./commands/configCommands.js";
+import { runCapabilityCommand } from "./commands/capabilityCommands.js";
 import { CONFIG_DOMAINS, type ConfigDomain } from "./config/configCatalog.js";
 import { runConfigOverview } from "./commands/configOverview.js";
 import {
@@ -425,6 +426,14 @@ export async function main(): Promise<void> {
     return;
   }
 
+  if (args[0] === "capability") {
+    const result = await runCapabilityCommand(args.slice(1), home, process.env);
+    emit(JSON.stringify(result, null, 2), false, result);
+    const kind = (result as Record<string, unknown> | null)?.kind;
+    if (typeof result === "object" && result !== null && !Array.isArray(result)
+      && typeof kind === "string" && !["value", "operation"].includes(kind)) process.exitCode = 5;
+    return;
+  }
   if (args[0] === "setup") {
     if (jsonOutput) throw usageError("Setup does not support --json.");
     await assertFileTaskControllerStorageCompatible(home);

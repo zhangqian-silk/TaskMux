@@ -183,6 +183,7 @@ export type ControllerRuntimeOptions = Readonly<{
   }>;
   /** Serves the socket `job.*` methods; absent methods report METHOD_NOT_FOUND. */
   jobControl?: DurableJobControlPort;
+  capabilityDispatcher?: ControllerDispatcher;
 }>;
 
 export interface ControllerConfigurationPort {
@@ -2314,6 +2315,14 @@ export async function startFileTaskController(
         requireEmptySchedulerConfigureParams(params);
         const intervalMs = runtime.reloadReconciliationInterval();
         return { configured: true, reconciliationIntervalMs: intervalMs };
+      }
+      if (method === "capability.search" || method === "capability.describe" || method === "capability.call") {
+        if (options.capabilityDispatcher === undefined) {
+          throw controllerApplicationError("METHOD_NOT_FOUND", "Capability ingress is unavailable.");
+        }
+        const request = Promise.resolve(options.capabilityDispatcher(method, params));
+        lifecycleRequests.add(request);
+        try { return await request; } finally { lifecycleRequests.delete(request); }
       }
       if (method === "job.start" || method === "job.get" || method === "job.cancel" || method === "job.acknowledge") {
         const control = options.jobControl;
