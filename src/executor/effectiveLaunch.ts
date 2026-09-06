@@ -172,7 +172,12 @@ function claudeConfigFromSnapshot(
   };
 }
 
-export function effectiveLaunchSnapshotsCompatible(
+/**
+ * Exactness fence for one launch: the same resolved launch must be observed by
+ * every participant of that launch. Desired-revision bookkeeping is provenance
+ * and never part of the resolved launch itself.
+ */
+export function sameEffectiveLaunch(
   existing: EffectiveLaunchSnapshot,
   desired: EffectiveLaunchSnapshot
 ): boolean {
@@ -192,24 +197,29 @@ export function effectiveLaunchSnapshotsCompatible(
 }
 
 /**
- * Task Role Sessions keep one physical workspace while Turn-scoped facts move.
- * Candidate commits, ReviewRound identity and desired-revision bookkeeping do
- * not define a native Session. Agent, adapter, permission, model, sandbox,
- * manifest, Role context and physical workspace identity still do.
+ * Whether a live native Session can still serve the next launch request.
+ *
+ * Only facts that make continuation impossible participate: the Session
+ * protocol, the provider identity that owns the conversation, and the physical
+ * workspace the Session runs in. Launch configuration such as model, effort,
+ * permission, Role context, declared write scope, and Turn-scoped facts like
+ * ReviewRound identity or candidate commits shape the next Host activation
+ * instead of ending the Session; that divergence is acknowledged where the
+ * configuration changes and stays visible as launch provenance.
+ *
+ * Session kind needs no separate check: a Role's review Turns run in their own
+ * ReviewRound workspace, so the physical workspace already separates a review
+ * Session from an execution Session.
  */
-export function effectiveLaunchSnapshotsCompatibleForTaskSession(
+export function roleSessionMayContinue(
   existing: EffectiveLaunchSnapshot,
   desired: EffectiveLaunchSnapshot
 ): boolean {
-  if (effectiveLaunchSnapshotsCompatible(existing, desired)) return true;
   validateEffectiveLaunchSnapshot(existing);
   validateEffectiveLaunchSnapshot(desired);
-  if ((existing.reviewRoundId === undefined) !== (desired.reviewRoundId === undefined)) {
-    return false;
-  }
   return isDeepStrictEqual(
-    taskSessionCompatibleSnapshot(existing),
-    taskSessionCompatibleSnapshot(desired)
+    sessionContinuitySnapshot(existing),
+    sessionContinuitySnapshot(desired)
   );
 }
 
@@ -232,23 +242,21 @@ export function effectiveLaunchWithTaskMainWorkspace(
   });
 }
 
-function taskSessionCompatibleSnapshot(snapshot: EffectiveLaunchSnapshot): unknown {
-  const {
-    sourceDesiredRevision: _sourceDesiredRevision,
-    reviewRoundId: _reviewRoundId,
-    reviewBaseCommit: _reviewBaseCommit,
-    workspace,
-    ...launch
-  } = snapshot;
+function sessionContinuitySnapshot(snapshot: EffectiveLaunchSnapshot): unknown {
   return {
-    ...launch,
+    schemaVersion: snapshot.schemaVersion,
+    contextProtocolVersion: snapshot.contextProtocolVersion,
+    agentId: snapshot.agentId,
+    adapterId: snapshot.adapterId,
     workspace: {
-      root: workspace.root,
-      entries: workspace.entries.map(({
-        baseCommit: _baseCommit,
-        baseRef: _baseRef,
-        ...entry
-      }) => entry)
+      root: snapshot.workspace.root,
+      entries: snapshot.workspace.entries.map((entry) => ({
+        projectId: entry.projectId,
+        directory: entry.directory,
+        access: entry.access,
+        path: entry.path,
+        branch: entry.branch
+      }))
     }
   };
 }

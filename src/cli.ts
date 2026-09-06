@@ -2734,11 +2734,11 @@ async function executeOperatorSessionControl(
   if (role === null) throw usageError("Operator is not configured. Run yui setup first.");
   const sessionSet = store.getGlobalRoleSessionSet(role.name);
   const active = sessionSet?.sessions[sessionSet.activeAgentId];
-  const paneRunning = tmux.detectRoleStatus("operator", "operator") === "running";
+  const paneRunning = tmux.probeRoleStatus("operator", "operator") === "running";
   if (paneRunning && active === undefined) {
     throw usageError(
       "Operator is running but its native session has not been recorded yet. "
-      + "Wait for the first turn to settle before switching sessions."
+      + "Record the exact native session before switching sessions."
     );
   }
   if (
