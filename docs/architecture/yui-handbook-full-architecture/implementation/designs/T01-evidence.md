@@ -62,7 +62,10 @@ Caller 明文 key 不进入 Job 或输入摘要；只保存既有绑定的不可
 也不承诺对任意恶意程序输出进行保密隔离。
 
 发起新 runner 前重新检查绑定、Task 执行权限、managed workspace 写权限、
-owner 和实际 HEAD；已撤权请求保留原记录并返回诊断。采集原 runner 的
+owner 和实际 HEAD；明确拒绝的未尝试请求保留原记录和 effect:none，
+以 failed 保存诊断，并在同一事务唤醒 Leader。不会因每次调度重复报错，
+也不擅自重试。非领域拒绝（例如存储异常）仍返回运行错误，不推断为撤权。
+采集原 runner 的
 回执不经过这道管理授权，不因原调用者撤权丢失既有结果。
 
 ## 存储 1 → 2
@@ -126,3 +129,24 @@ HTTP 场景通过受控 process/artifact port 注入故障，不冒充真实 Pro
 接受写回 Task；本报告的自查和通过测试不能代替它。
 后继仅由 Operator 核实完成与合法采用路径后启动。本成果未授权
 push/merge/release/archive；本地 commit 不代表远端 master 已包含。
+
+## 独立审查修复
+
+review-round-1 / turn-2 独立审查 `e53018e3af00ed435a039b2f164e76a4b32a3726`，
+未发现 P1，发现一项需修复 P2：撤权后 queued Job 只有运行错误，
+没有持久诊断，持续占用 active 列表。Leader 接受该发现并直接修复：
+复用 failed 结果与原子终态唤醒，不引入新状态、字段、迁移或恢复机制。
+本次仅允许 effect:none 的 queued 请求走明确拒绝路径；
+possible/confirmed 的既有请求仍由原采集路径处理。
+
+临时 Supervisor port 验证先在原实现重现 queued 未收敛，再验证修复后四个场景：
+启动前撤权、第二次发送前检查撤权、已 possible 请求、非领域存储异常。
+每个场景执行十次 reconcile；前两者均零 spawn、一次 failed/持久唤醒，
+保留请求和效果事实；possible 不重发；存储异常不误写失败。
+`npm run build`、`npm run lint`、`npm run test:core` 与
+`git diff --check` 通过；core 82/82，测试阶段 4.26 秒。
+专项脚本交付前移除，最终修复提交的复审状态以 Task 持久记录为准。
+
+审查的凭据过滤建议保留为边界说明：环境变量名过滤是启发式，
+会拒绝部分非秘密名称，也不保证识别 URL userinfo 等所有秘密形式。
+调用方必须提供非秘密规格；本次不扩展凭据服务或声称完整秘密检测。

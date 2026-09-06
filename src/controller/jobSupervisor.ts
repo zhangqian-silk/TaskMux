@@ -33,6 +33,7 @@ import {
   isDurableJobTerminal,
   markDurableJobUnknown,
   markDurableJobWakeupNotified,
+  rejectQueuedDurableJob,
   startDurableJob,
   touchDurableJobHeartbeat,
   type DurableJob,
@@ -320,7 +321,12 @@ export class DurableJobSupervisor {
   }
 
   #startJob(job: DurableJob, now: Date): void {
-    this.#authorizeStart(job);
+    try {
+      this.#authorizeStart(job);
+    } catch (error) {
+      this.#rejectStart(job, error, now);
+      return;
+    }
     const spec: DurableJobSpec = {
       jobId: job.id,
       taskId: job.taskId,
@@ -332,20 +338,26 @@ export class DurableJobSupervisor {
       head: job.head
     };
     const specPath = this.#artifacts.writeSpec(job.taskId, job.id, spec);
-    const attempted = this.#store.transitionDurableJob(
-      job.taskId, job.id,
-      (current) => {
-        if (current.status !== "queued" || current.operation.effect !== "none") {
-          throw new Error("Job already attempted; inspect the original request.");
-        }
-        this.#authorizeStart(current);
-        return {
-          ...current,
-          operation: recordOperationEvidence(current.operation, { effect: "possible" }),
-          updatedAt: now.toISOString()
-        };
-      }, now
-    );
+    let attempted: DurableJob | null;
+    try {
+      attempted = this.#store.transitionDurableJob(
+        job.taskId, job.id,
+        (current) => {
+          if (current.status !== "queued" || current.operation.effect !== "none") {
+            throw new Error("Job already attempted; inspect the original request.");
+          }
+          this.#authorizeStart(current);
+          return {
+            ...current,
+            operation: recordOperationEvidence(current.operation, { effect: "possible" }),
+            updatedAt: now.toISOString()
+          };
+        }, now
+      );
+    } catch (error) {
+      this.#rejectStart(job, error, now);
+      return;
+    }
     if (attempted === null) return;
     // Both the request and possible-effect boundary precede spawn. A missing
     // acceptance after this point is unknown, never permission to respawn.
@@ -373,6 +385,20 @@ export class DurableJobSupervisor {
     // idle — each wake is a single event-driven signal.
     spawned.onExit?.(() => this.#wake(job.taskId));
     this.#wake(job.taskId);
+  }
+
+  #rejectStart(job: DurableJob, error: unknown, now: Date): void {
+    // Only an explicit domain refusal is a known failure. Storage/CAS/runtime
+    // errors still propagate; never infer rejection from an unavailable read.
+    if (!(error instanceof Error) || error.name !== "CoreJobError") throw error;
+    const terminal = this.#store.transitionDurableJob(
+      job.taskId, job.id,
+      (current) => markDurableJobWakeupNotified(
+        rejectQueuedDurableJob(current, error.message, now), now
+      ),
+      now, { reason: wakeReason("job-finished"), refs: wakeupRefs(job) }
+    );
+    this.#deliverTerminalEvent(terminal);
   }
 
   #superviseRunning(job: DurableJob, now: Date): void {

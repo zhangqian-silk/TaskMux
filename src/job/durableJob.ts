@@ -292,6 +292,29 @@ export function completeDurableJob(
   });
 }
 
+/** A refused, unattempted request has a known failed outcome, not an unknown effect. */
+export function rejectQueuedDurableJob(
+  job: DurableJob,
+  reason: string,
+  now: Date
+): DurableJob {
+  validateDurableJob(job);
+  if (job.status !== "queued" || job.operation.effect !== "none") {
+    throw new Error("Only an unattempted queued Job can be rejected.");
+  }
+  const timestamp = now.toISOString();
+  return validateDurableJob({
+    ...job,
+    status: "failed",
+    result: {
+      outcome: "failed", exitCode: null, signal: null,
+      unknownReason: requireText(reason, "DurableJob rejection reason"), steps: []
+    },
+    terminalAt: timestamp,
+    updatedAt: timestamp
+  });
+}
+
 export function markDurableJobUnknown(
   job: DurableJob,
   unknownReason: string,
@@ -602,7 +625,11 @@ export function validDurableJobTransition(
       && (before.acknowledgedAt === after.acknowledgedAt || acknowledgeFlip);
   }
   const allowed: Readonly<Record<string, readonly DurableJobStatus[]>> = {
-    queued: ["queued", "running", "cancelled", "unknown-needs-attention"],
+    queued: [
+      "queued", "running", "cancelled", "unknown-needs-attention",
+      ...(before.operation.effect === "none" && after.operation.effect === "none"
+        ? ["failed" as const] : [])
+    ],
     running: [
       "running",
       "succeeded",
