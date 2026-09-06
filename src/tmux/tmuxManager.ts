@@ -1054,18 +1054,6 @@ export class TmuxManager {
     this.enterRole(taskId, role, launch);
   }
 
-  detectRoleStatus(
-    taskId: string,
-    roleName: string,
-    fallback: string = "unknown"
-  ): string {
-    try {
-      return this.probeRoleStatus(taskId, roleName);
-    } catch {
-      return fallback;
-    }
-  }
-
   probeRoleStatus(taskId: string, roleName: string): "running" | "exited" {
     if (!this.windowNames(taskId).includes(roleName)) return "exited";
     return this.inspectPane(taskId, roleName).dead ? "exited" : "running";
