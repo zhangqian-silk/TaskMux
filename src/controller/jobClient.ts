@@ -181,6 +181,7 @@ export function createControllerIntegrationJobPort(
       const caller = resolveJobCaller(clientOptions.environment, input.taskId);
       const { job } = await startDurableJob(home, {
         taskId: input.taskId,
+        requestId: `integration:${input.integrationId}`,
         owner,
         projectId: input.projectId,
         head: input.head,

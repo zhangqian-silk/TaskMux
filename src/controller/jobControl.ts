@@ -124,6 +124,27 @@ export function createDurableJobControl(store: TaskStore): DurableJobControlPort
           : retryDurableJobIdempotencyKey(baseKey, params.retryOf);
         const requestId = params.requestId === undefined ? inputDigest
           : requiredId(params.requestId, "job.start requestId");
+        // An IntegrationAttempt already is a durable operation identity.
+        // Recovery by another authorized Role must find its original Job,
+        // including the window before Integration persisted the returned id.
+        if (params.owner.kind === "integration-attempt") {
+          const integrationId = params.owner.integrationAttemptId;
+          const owned = tx.listDurableJobs(params.taskId).filter((job) => (
+            job.owner.kind === "integration-attempt"
+            && job.owner.integrationAttemptId === integrationId
+          ));
+          if (owned.length > 1) {
+            throw jobDomainError("IntegrationAttempt has multiple Jobs; inspect its existing records.");
+          }
+          const original = owned[0];
+          if (original !== undefined) {
+            if (original.operation.inputDigest !== inputDigest
+              || original.operation.targetId !== params.workspace) {
+              throw jobDomainError(`Integration Job input conflicts with its original request: ${original.id}.`);
+            }
+            return { job: original, created: false };
+          }
+        }
         const key = createHash("sha256").update(JSON.stringify([
           context.actorId, requestId
         ])).digest("hex");
@@ -221,9 +242,16 @@ export function authorizeJobStart(store: TaskStore, job: DurableJob): void {
 function jobAuthorityBinding(store: TaskStore, scope: string, roleName: string, taskId: string): string {
   if (scope === "task") {
     const role = store.getRole(taskId, roleName);
+    const sessions = store.getTaskRoleSessionSet(taskId, roleName);
+    const session = activeLiveRoleAgentSession(sessions);
     const hash = role === null ? null : store.getJobCallerKeyHash(taskId, roleName, role.activeAgentId);
-    if (hash === null) throw jobDomainError("Current Job caller binding is unavailable.");
-    return hash;
+    if (hash === null || role === null || sessions?.activeAgentId !== role.activeAgentId
+      || session === null || session.agentId !== role.activeAgentId) {
+      throw jobDomainError("Current Job caller Session is unavailable.");
+    }
+    return createHash("sha256").update(JSON.stringify([
+      hash, session.agentId, session.adapterId, session.runtimeGenerationId, session.nativeSessionId
+    ])).digest("hex");
   }
   const role = store.getGlobalRole(roleName);
   const session = activeLiveRoleAgentSession(store.getGlobalRoleSessionSet(roleName));
@@ -237,7 +265,7 @@ function assertNonSecretJobInput(params: DurableJobStartParams): void {
   // Existing Jobs persist commands and environments. This boundary accepts
   // non-secret executable specifications only; credential resolution is not a
   // Job feature. Never hash a known secret then call the digest sanitized.
-  const secretKey = /api[_-]?key|token|secret|password|passwd|cookie|credential|authorization/i;
+  const secretKey = /api[_-]?key|private[_-]?key|token|secret|password|passwd|cookie|credential|authorization/i;
   for (const env of [params.env, ...params.steps.map((step) => step.env ?? {})]) {
     if (Object.keys(env).some((key) => secretKey.test(key))) {
       throw jobDomainError("Job input cannot persist credentials; use a non-secret specification.");
@@ -246,7 +274,11 @@ function assertNonSecretJobInput(params: DurableJobStartParams): void {
   const input = JSON.stringify({
     env: params.env, steps: params.steps, requestId: params.requestId
   });
-  if (redactLaunchText(input) !== input) {
+  // Reject recognizable key material regardless of the parameter name, and
+  // URL userinfo before either hashing or persisting the specification.
+  const privateKey = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
+  const urlCredential = /[a-z][a-z0-9+.-]*:\/\/[^\s/"<>]+:[^\s/"<>]*@/i;
+  if (privateKey.test(input) || urlCredential.test(input) || redactLaunchText(input) !== input) {
     throw jobDomainError("Job input cannot persist credentials; use a non-secret specification.");
   }
 }
@@ -494,6 +526,12 @@ function assertCallerAuthorized(
       "UNAUTHORIZED",
       "A managed Task Session's Role is not bound to an active Turn."
     );
+  }
+  const sessions = store.getTaskRoleSessionSet(taskId, currentRole.name);
+  const session = activeLiveRoleAgentSession(sessions);
+  if (sessions?.activeAgentId !== currentRole.activeAgentId || session === null
+    || session.agentId !== run.effective.agentId || session.adapterId !== run.effective.adapterId) {
+    throw jobControlError("UNAUTHORIZED", "DurableJob control requires the current live Task Session.");
   }
   // rr13: Verify the non-replayable per-Session caller key. The key is injected
   // at native Session launch and never persisted in plaintext; only its SHA-256

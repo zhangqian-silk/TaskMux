@@ -52,14 +52,27 @@ T02 的插件/Surface 桥应从实际可信入口认证，不能把 capability i
 
 新请求身份在同一 Task 和调用主体内去重，目标或输入不同返回原 Job id
 及明确冲突。原调用者、目标、具体 runner、输入摘要和绑定指纹不可改写。
+Integration 检查以既有 IntegrationAttempt 为领域操作身份：
+Controller 在同一事务中按 owner 找回唯一原 Job，再核对输入与目标，
+跨 Leader / Operator 的 bind-window 恢复不会创建第二个 Job；
+不一致返回冲突，已有多个 Job 返回诊断，不猜测应选哪个。
 省略 requestId 的既有调用者使用内容身份；有意再执行必须显式提供新身份
 或使用原有显式 retry 操作。未知结果、正常 pending 和输出失败均不自动重发。
 重复请求读原记录不依赖当前 workspace HEAD 仍相同。
 
-Caller 明文 key 不进入 Job 或输入摘要；只保存既有绑定的不可用作 bearer
-的指纹。Job 规格仍是可持久化的非秘密 command/env，入口拒绝识别出的
-凭据参数和秘密环境变量。不要用它传递秘密值；本次未实现凭据解析服务，
-也不承诺对任意恶意程序输出进行保密隔离。
+Caller 明文 key 不进入 Job 或输入摘要；Task authorityRef 是 caller-key
+哈希、当前 Agent/adapter、runtime generation 和 native Session 的组合指纹，
+不可用作 bearer。管理入口要求 live Session；发送前重新核对，
+Session 结束或 generation 改变均拒绝旧请求，不能只凭残留 key 哈希执行。
+此处是现有 opaque authorityRef 的当前绑定计算，无新存储字段或版本。
+
+Job 规格只支持可持久化的非秘密 command/env；可信调用方不能提交凭据值。
+入口在计算摘要与保存前拒绝已识别的凭据参数、秘密变量名
+（含 SSH_PRIVATE_KEY）、PEM 私钥内容与带 userinfo 凭据的 URL。
+这些检查是常见误用防护，不是对任意字符串的秘密识别证明，
+也不是不可信插件的隔离边界。没有凭据解析或秘密输入 API；
+需要凭据的后续 capability 必须采用独立的引用/执行时解析设计，
+不能把凭据复制到现有 Job 规格或输出中。
 
 发起新 runner 前重新检查绑定、Task 执行权限、managed workspace 写权限、
 owner 和实际 HEAD；明确拒绝的未尝试请求保留原记录和 effect:none，
@@ -148,5 +161,15 @@ possible/confirmed 的既有请求仍由原采集路径处理。
 专项脚本交付前移除，最终修复提交的复审状态以 Task 持久记录为准。
 
 审查的凭据过滤建议保留为边界说明：环境变量名过滤是启发式，
-会拒绝部分非秘密名称，也不保证识别 URL userinfo 等所有秘密形式。
+会拒绝部分非秘密名称，不能识别任意伪装或编码的秘密。
 调用方必须提供非秘密规格；本次不扩展凭据服务或声称完整秘密检测。
+
+review-round-3 / turn-7 的四项发现已由 Leader 核实：
+Task Session 失效、合成私钥持久化、Integration 跨调用者重复 Job、
+以及离线阅读版/清单缺项。新增的临时 port 探针在修复前复现缺失拒绝
+与第二个 Job；修复后验证 Session 结束、generation 改变、
+私钥环境变量/argv、URL 凭据、Integration 换调用者恢复共六个场景。
+Integration 原请求返回 created=false，输入改变返回冲突；
+秘密输入零 Job 保存。探针只使用合成数据和临时 Git，无真实凭据或外部效果。
+文档包按其官方生成与检查脚本同步，结果见 `tools/verification.json`。
+该自查不代替修复候选的独立复审，最终处置仍以 Task 持久记录为准。
