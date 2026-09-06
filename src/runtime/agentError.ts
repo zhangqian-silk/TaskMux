@@ -85,8 +85,15 @@ export function standardAgentError(input: Readonly<{
     phase: input.phase,
     category: classification.category,
     code: requiredErrorText(classification.code, "Agent error code"),
-    message: requiredErrorText(input.message, "Agent error message"),
-    raw: requiredErrorText(input.raw, "Agent error raw payload"),
+    // Both readable fields pass the same redaction boundary. `message` is
+    // often a Provider string interpolated by a caller, so it can carry a
+    // credential even when `raw` is already clean.
+    message: redactAgentErrorText(
+      requiredErrorText(input.message, "Agent error message")
+    ),
+    raw: redactAgentErrorText(
+      requiredErrorText(input.raw, "Agent error raw payload")
+    ),
     inputDisposition: input.inputDisposition
       ?? classification.inputDisposition
       ?? "unknown",
@@ -101,6 +108,81 @@ export const UNKNOWN_AGENT_ERROR_CLASSIFICATION: AgentErrorClassification = Obje
   category: "unknown",
   code: "unknown"
 });
+
+/**
+ * Why a managed Provider write did not reach `delivered`.
+ *
+ * The Agent Host owns these facts; every layer above it forwards this record
+ * unchanged instead of re-deriving a reason from a collapsed string enum. It
+ * deliberately carries no `category`/`code`: driver classification stays at
+ * the single `recordAgentError` boundary that already owns it.
+ *
+ * `inputDisposition` is the load-bearing field. `not-accepted` means the
+ * Provider provably never saw the input and the attempt may be retried;
+ * `unknown` forbids automatic replay.
+ */
+export type ProviderDeliveryFailure = Readonly<{
+  /** Host-supplied cause, already redacted and bounded. */
+  detail: string;
+  /** Failure class name (e.g. `ProviderTurnRejectedError`) when the Host knew it. */
+  errorName?: string;
+  phase: AgentErrorPhase;
+  /** Observed Agent Host provider state at the failure. */
+  hostState?: string;
+  expectedRuntimeGenerationId?: string;
+  observedRuntimeGenerationId?: string;
+  attemptId?: string;
+  inputDisposition: AgentErrorInputDisposition;
+  sessionDisposition?: AgentErrorSessionDisposition;
+}>;
+
+export function providerDeliveryFailure(
+  input: ProviderDeliveryFailure
+): ProviderDeliveryFailure {
+  return Object.freeze({
+    ...definedDeliveryFields(input),
+    detail: redactAgentErrorText(
+      requiredErrorText(input.detail, "Provider delivery failure detail")
+    ),
+    phase: input.phase,
+    inputDisposition: input.inputDisposition
+  });
+}
+
+/**
+ * Renders a delivery failure as one readable line for a Turn summary. The
+ * complete record stays available on `runtime.agent-error`; this is the
+ * bounded projection, never a replacement for the original cause.
+ */
+export function formatProviderDeliveryFailure(
+  failure: ProviderDeliveryFailure
+): string {
+  const fields = [
+    `phase=${failure.phase}`,
+    `inputDisposition=${failure.inputDisposition}`
+  ];
+  if (failure.hostState !== undefined) fields.push(`hostState=${failure.hostState}`);
+  if (failure.errorName !== undefined) fields.push(`error=${failure.errorName}`);
+  if (failure.expectedRuntimeGenerationId !== undefined) {
+    fields.push(`expectedGeneration=${failure.expectedRuntimeGenerationId}`);
+  }
+  if (failure.observedRuntimeGenerationId !== undefined) {
+    fields.push(`observedGeneration=${failure.observedRuntimeGenerationId}`);
+  }
+  if (failure.attemptId !== undefined) fields.push(`attemptId=${failure.attemptId}`);
+  if (failure.sessionDisposition !== undefined) {
+    fields.push(`sessionDisposition=${failure.sessionDisposition}`);
+  }
+  return `${failure.detail} (${fields.join(" ")})`;
+}
+
+function definedDeliveryFields(
+  value: ProviderDeliveryFailure
+): ProviderDeliveryFailure {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, member]) => member !== undefined)
+  ) as unknown as ProviderDeliveryFailure;
+}
 
 export function isAgentErrorCategory(value: unknown): value is AgentErrorCategory {
   return typeof value === "string"
@@ -132,8 +214,30 @@ export function isStandardAgentError(value: unknown): value is StandardAgentErro
       || (Number.isSafeInteger(error.retryAfterMs) && error.retryAfterMs >= 0));
 }
 
+/**
+ * Upper bound for one persisted raw payload. A Provider stack trace or a
+ * transport dump stays readable well below this; anything larger is truncated
+ * with an explicit marker so a reader never mistakes a clipped payload for the
+ * complete cause.
+ */
+const MAX_RAW_CHARS = 16_000;
+
+/**
+ * Serializes any failure into one bounded, secret-redacted payload.
+ *
+ * `raw` is the authoritative cause and is persisted verbatim on
+ * `runtime.agent-error`, so it is the last boundary before a Provider
+ * credential could reach durable storage or a public read. Redaction happens
+ * here rather than at each call site: an unredacted path added later would
+ * otherwise silently leak. `cause` chains and non-enumerable Error fields are
+ * retained because they usually carry the real reason.
+ */
 export function serializeAgentErrorRaw(value: unknown): string {
-  if (typeof value === "string") return requiredErrorText(value, "Agent error raw payload");
+  return boundRawPayload(redactAgentErrorText(rawPayloadText(value)));
+}
+
+function rawPayloadText(value: unknown): string {
+  if (typeof value === "string") return value;
   if (value === undefined) return "Agent operation failed without an error payload.";
   try {
     const seen = new WeakSet<object>();
@@ -143,6 +247,8 @@ export function serializeAgentErrorRaw(value: unknown): string {
         if (seen.has(member)) return "[Circular]";
         seen.add(member);
         if (member instanceof Error) {
+          // Error's own fields are non-enumerable, and `cause` is where a
+          // wrapped transport/controller failure keeps its real reason.
           return Object.fromEntries(Object.getOwnPropertyNames(member).map((name) => [
             name,
             (member as unknown as Record<string, unknown>)[name]
@@ -151,12 +257,35 @@ export function serializeAgentErrorRaw(value: unknown): string {
       }
       return member;
     });
-    return serialized === undefined
-      ? String(value)
-      : requiredErrorText(serialized, "Agent error raw payload");
+    return serialized === undefined ? String(value) : serialized;
   } catch {
-    return requiredErrorText(String(value), "Agent error raw payload");
+    return String(value);
   }
+}
+
+const SECRET_ASSIGNMENT_PATTERN =
+  /(api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|passwd|cookie|authorization)(\\?["']?\s*[=:]\s*\\?["']?)([^\s,;"'\\]+)/gi;
+// Word boundary keeps "task-5-…" workspace paths from being mistaken for keys.
+const PROVIDER_KEY_PATTERN = /\b(?:sk|pat|ghp|gho|ghs|github_pat)-[A-Za-z0-9_-]{6,}/gu;
+const BEARER_PATTERN = /\b(bearer\s+)[A-Za-z0-9._~+/-]{8,}=*/gi;
+
+/**
+ * Redacts credential-shaped text from a failure payload. This mirrors the
+ * launch-diagnostic redaction but is applied to the Agent error chain, whose
+ * payloads are persisted and publicly readable through the Task event.
+ */
+export function redactAgentErrorText(value: string): string {
+  return value
+    .replace(PROVIDER_KEY_PATTERN, "[REDACTED]")
+    .replace(BEARER_PATTERN, "$1[REDACTED]")
+    .replace(SECRET_ASSIGNMENT_PATTERN, "$1$2[REDACTED]");
+}
+
+function boundRawPayload(value: string): string {
+  const text = isErrorText(value) ? value : "Agent operation failed without a readable error payload.";
+  if (text.length <= MAX_RAW_CHARS) return text;
+  // Keep the head: a Provider failure states its reason before its stack.
+  return `${text.slice(0, MAX_RAW_CHARS)}…[truncated ${text.length - MAX_RAW_CHARS} chars of ${text.length}]`;
 }
 
 function isErrorText(value: unknown): value is string {

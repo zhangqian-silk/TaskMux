@@ -31,7 +31,8 @@ import type {
   AgentErrorInputDisposition,
   AgentErrorPhase,
   AgentErrorSessionDisposition,
-  AgentErrorSource
+  AgentErrorSource,
+  ProviderDeliveryFailure
 } from "../runtime/agentError.js";
 import {
   isTaskOwnedWorkspace,
@@ -612,6 +613,34 @@ export type ReadyRoleDelivery = Readonly<{
   session: SchedulerRoleSession | null;
 }>;
 
+export type RoleDeliveryStatus =
+  | "sent"
+  | "already-sent"
+  | "busy"
+  | "rejected"
+  | "delivery-unknown"
+  | "unavailable";
+
+/**
+ * A delivery status plus the Host's original cause when it did not send.
+ *
+ * A bare status cannot say why a Provider write failed, so callers that had
+ * only the status were forced to substitute a guess. Implementations may still
+ * return the bare status; `roleDeliveryOutcome` normalizes both shapes.
+ */
+export type RoleDeliveryReport = Readonly<{
+  status: RoleDeliveryStatus;
+  failure?: ProviderDeliveryFailure;
+}>;
+
+export type RoleDeliveryOutcome = RoleDeliveryStatus | RoleDeliveryReport;
+
+export function roleDeliveryOutcome(
+  outcome: RoleDeliveryOutcome
+): RoleDeliveryReport {
+  return typeof outcome === "string" ? { status: outcome } : outcome;
+}
+
 /**
  * The Scheduler never reads stdin and never writes terminal bytes itself.
  * A tmux-owned Host implementation launches/resumes the role, establishes the
@@ -640,9 +669,7 @@ export interface TmuxDeliveryPort {
     /** Stable Provider request id. Repeating it must not create another Turn. */
     receiptId: string;
     text: string;
-  }>): Promise<
-    "sent" | "already-sent" | "busy" | "rejected" | "delivery-unknown" | "unavailable"
-  >;
+  }>): Promise<RoleDeliveryOutcome>;
   steerOnce(input: Readonly<{
     taskId: string;
     roleName: string;
@@ -654,9 +681,7 @@ export interface TmuxDeliveryPort {
     authority: import("../runtime/providerAuthorityFence.js").ProviderAuthorityFence;
     receiptId: string;
     text: string;
-  }>): Promise<
-    "sent" | "already-sent" | "busy" | "rejected" | "delivery-unknown" | "unavailable"
-  >;
+  }>): Promise<RoleDeliveryOutcome>;
   /**
    * Drops transient prepared bindings after authoritative terminal/absence
    * state. Omitting turnId clears every prepared generation for the Role.

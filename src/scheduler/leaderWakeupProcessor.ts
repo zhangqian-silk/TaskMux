@@ -14,7 +14,8 @@ import type {
   SchedulerStorePort,
   TmuxDeliveryPort
 } from "./ports.js";
-import { isSchedulerTaskWorkspaceReady } from "./ports.js";
+import { isSchedulerTaskWorkspaceReady, roleDeliveryOutcome } from "./ports.js";
+import { formatProviderDeliveryFailure } from "../runtime/agentError.js";
 
 export type LeaderWakeupProcessingResult = Readonly<{
   taskId: string;
@@ -236,7 +237,7 @@ async function forceLeaderSteer(
       directive,
       deltaRefIds: []
     });
-    const outcome = await delivery.steerOnce({
+    const outcome = roleDeliveryOutcome(await delivery.steerOnce({
       taskId,
       roleName,
       agentId: active.effective.agentId,
@@ -251,15 +252,19 @@ async function forceLeaderSteer(
       },
       receiptId: `turn-input:${taskId}/${active.id}/${batchId}`,
       text: directive
-    });
-    if (outcome !== "sent" && outcome !== "already-sent") {
-      if (outcome !== "delivery-unknown") store.releaseWorkMailbox(target, batchId);
+    }));
+    if (outcome.status !== "sent" && outcome.status !== "already-sent") {
+      if (outcome.status !== "delivery-unknown") store.releaseWorkMailbox(target, batchId);
       return {
         taskId,
         turnId: active.id,
-        status: outcome === "busy" ? "skipped" : "failed",
-        reason: outcome === "busy" ? "busy" : "not-ready",
-        error: outcome
+        status: outcome.status === "busy" ? "skipped" : "failed",
+        reason: outcome.status === "busy" ? "busy" : "not-ready",
+        // Report the Host's cause when it supplied one; the bare status word
+        // alone cannot distinguish a rejection from a lost transport.
+        error: outcome.failure === undefined
+          ? outcome.status
+          : `${outcome.status}: ${formatProviderDeliveryFailure(outcome.failure)}`
       };
     }
     const saved = store.saveLeaderSteer({ taskId, turnId: active.id, batchId, input, now });

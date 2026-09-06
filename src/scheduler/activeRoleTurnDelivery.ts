@@ -5,7 +5,10 @@ import {
 } from "../executor/effectiveLaunch.js";
 import { RuntimeLifecycleBusyError } from "../runtime/lifecycleReservation.js";
 import { managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
-import { serializeAgentErrorRaw } from "../runtime/agentError.js";
+import {
+  formatProviderDeliveryFailure,
+  serializeAgentErrorRaw
+} from "../runtime/agentError.js";
 import { RuntimeLaunchFailure } from "../runtime/launchDiagnostics.js";
 import { RuntimeLaunchError, type RuntimeLaunchPreflight } from "../runtime/ports.js";
 import { formatTurnReceiptId } from "../task/taskRecordReference.js";
@@ -25,6 +28,7 @@ import type {
 } from "./ports.js";
 import {
   isSchedulerTaskWorkspaceReady,
+  roleDeliveryOutcome,
   selectedActiveSchedulerTasks,
   selectedSchedulerRoles,
   type SchedulerReconcileSelection
@@ -170,37 +174,60 @@ async function deliverActiveTurn(
       now
     });
     submitted = true;
-    const outcome = await delivery.sendOnce({
+    const outcome = roleDeliveryOutcome(await delivery.sendOnce({
       delivery: ready,
       receiptId: attemptId,
       text: serializeTurnInputEnvelope(turnInputEnvelope(turn))
-    });
+    }));
 
-    if (outcome === "busy" || outcome === "unavailable") {
+    if (outcome.status === "busy" || outcome.status === "unavailable") {
       forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
       return {
         ...base,
         status: "skipped",
-        reason: outcome === "busy" ? "not-ready" : "runtime-unavailable"
+        reason: outcome.status === "busy" ? "not-ready" : "runtime-unavailable"
       };
     }
-    if (outcome === "rejected" || outcome === "delivery-unknown") {
+    if (outcome.status === "rejected" || outcome.status === "delivery-unknown") {
       forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
+      const unknown = outcome.status === "delivery-unknown";
+      const failure = outcome.failure;
+      // The Host's own account of the failure. Without it the only honest
+      // statement is that delivery did not complete — never that the Provider
+      // rejected the input, which is one specific cause among many.
+      const cause = failure === undefined
+        ? `The Agent Host did not deliver the managed Turn (${outcome.status}) and reported no cause.`
+        : formatProviderDeliveryFailure(failure);
+      // This path is the common Provider write failure and previously left no
+      // durable fact at all, so the cause was unrecoverable after the fact.
+      store.recordAgentError?.({
+        taskId: task.id,
+        roleName: role.name,
+        turnId: turn.id,
+        source: "host",
+        phase: failure?.phase ?? "turn-submit",
+        message: cause,
+        raw: serializeAgentErrorRaw(failure ?? cause),
+        inputDisposition: failure?.inputDisposition ?? (unknown ? "unknown" : "not-accepted"),
+        ...(failure?.sessionDisposition === undefined
+          ? {}
+          : { sessionDisposition: failure.sessionDisposition })
+      }, now);
       return failTurnDelivery(
         store,
         turn,
         now,
-        outcome === "delivery-unknown" ? "delivery-unknown" : "runtime-failed",
-        outcome === "delivery-unknown"
-          ? "Provider Turn delivery is ambiguous; Yui will not replay it automatically."
-          : "Provider rejected the managed Turn."
+        unknown ? "delivery-unknown" : "runtime-failed",
+        unknown
+          ? `Provider Turn delivery is ambiguous; Yui will not replay it automatically. ${cause}`
+          : cause
       );
     }
     forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
     settleAcceptedRoleTurnDispatch(store, turn, dispatchToken);
     return {
       ...base,
-      status: outcome === "sent" ? "delivered" : "already-delivered"
+      status: outcome.status === "sent" ? "delivered" : "already-delivered"
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

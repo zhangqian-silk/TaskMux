@@ -1,4 +1,5 @@
 import type { PromptEnvelope } from "./promptEnvelope.js";
+import type { ProviderDeliveryFailure } from "./agentError.js";
 import type { RuntimeBinding } from "./runtimeBinding.js";
 import type { ProviderAuthorityFence } from "./providerAuthorityFence.js";
 import type { RuntimeOwner } from "./runtimeOwner.js";
@@ -167,6 +168,28 @@ export type PromptPushResult =
   | "delivery-unknown"
   | "unavailable";
 
+/**
+ * A push outcome plus the Host's structured cause when it did not deliver.
+ *
+ * The bare `PromptPushResult` says only what happened, not why. Callers that
+ * persist a failure fact need the original cause, so the port returns both
+ * and never forces a consumer to reconstruct a reason from the status alone.
+ */
+export type PromptPushOutcome = Readonly<{
+  result: PromptPushResult;
+  failure?: ProviderDeliveryFailure;
+}>;
+
+export function promptPushOutcome(
+  result: PromptPushResult,
+  failure?: ProviderDeliveryFailure
+): PromptPushOutcome {
+  return Object.freeze({
+    result,
+    ...(failure === undefined ? {} : { failure })
+  });
+}
+
 export type ActivePromptPushRequest = Readonly<{
   binding: RuntimeBinding;
   envelope: PromptEnvelope;
@@ -184,6 +207,6 @@ export type ActivePromptSteerRequest = Readonly<{
 }>;
 
 export interface ActivePromptPushPort {
-  tryPush(request: ActivePromptPushRequest): Promise<PromptPushResult>;
-  trySteer(request: ActivePromptSteerRequest): Promise<PromptPushResult>;
+  tryPush(request: ActivePromptPushRequest): Promise<PromptPushOutcome>;
+  trySteer(request: ActivePromptSteerRequest): Promise<PromptPushOutcome>;
 }
