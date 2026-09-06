@@ -2129,7 +2129,11 @@ async function preflightManagedGlobalControlPlane(
   digest?: string
 ): Promise<ManagedTaskControlPlanePreflight> {
   if (process.env.YUI_SESSION_SCOPE !== "global") {
-    throw new Error("Exact Task control-plane invocation requires its frozen runtime descriptors.");
+    throw new Error(
+      "A control-plane digest was supplied outside a managed Session runtime. "
+        + "Run the command through the Role's own Session entry point, or use the "
+        + "ordinary yui command."
+    );
   }
   if (taskFinalReviewInvocation.request !== undefined) {
     throw new Error(

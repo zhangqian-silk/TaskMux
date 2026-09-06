@@ -690,7 +690,7 @@ const MIGRATIONS: readonly StorageMigration[] = Object.freeze([
   {
     version: 2,
     name: "job-operation-facts",
-    introducedIn: "0.15.1",
+    introducedIn: "0.15.2",
     // Historical records never carried caller identity or external effect
     // evidence. Preserve that uncertainty rather than inventing attribution.
     // No old executable implementation or runtime dual-read is needed.
