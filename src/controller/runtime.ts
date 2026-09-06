@@ -89,7 +89,8 @@ import {
   createLinuxProcessPort,
   DurableJobSupervisor
 } from "./jobSupervisor.js";
-import { createDurableJobControl } from "./jobControl.js";
+import { authorizeJobStart } from "./jobControl.js";
+import { createKernelPorts } from "../kernel/kernelPorts.js";
 import { FileRuntimeEventInbox } from "./runtimeEventInbox.js";
 import { AgentRuntimeObserver } from "./agentRuntimeObserver.js";
 import {
@@ -156,6 +157,7 @@ export type RunningFileTaskControllerRuntime = RunningFileTaskController & Reado
   promptPush: ActivePromptPushPort;
   runtimeIsolation: TaskRuntimeIsolationPort & Partial<TaskRuntimeLifecycleCleanupPort>;
   workspacePreparer: TaskWorkspacePreparer;
+  kernel: ReturnType<typeof createKernelPorts>;
 }>;
 
 /** Production composition root for the current SQLite TaskStore + tmux Controller. */
@@ -532,10 +534,12 @@ export async function startFileTaskControllerRuntime(
   // supervisor enqueues a durable-job-terminal event; the processor drains it
   // on the next pass, waking the Controller immediately instead of waiting for
   // the poll interval.
+  const kernel = createKernelPorts(store, createLinuxProcessPort());
   const jobSupervisor = new DurableJobSupervisor({
     store: schedulerStore,
-    process: createLinuxProcessPort(),
+    process: kernel.runner,
     artifacts: createFileArtifactPort(home),
+    authorizeStart: (job) => authorizeJobStart(store, job),
     // rr6/f1: Bounded supervision wake. The supervisor signals the Controller
     // after spawning a runner (queued→running adoption) and when a runner
     // exits (terminal harvest), so a quick job converges without waiting for
@@ -568,7 +572,7 @@ export async function startFileTaskControllerRuntime(
     },
     onError: options.onError
   });
-  const jobControl = createDurableJobControl(store);
+  const jobControl = kernel.jobs;
   const continuationReconciler = options.continuationMetadata === undefined
     ? undefined
     : new ProviderContinuationReconciliationService(
@@ -656,6 +660,7 @@ export async function startFileTaskControllerRuntime(
   let resourceClose: Promise<void> | undefined;
   const closeResources = (): Promise<void> => {
     resourceClose ??= Promise.all([
+      kernel.close(),
       asyncStoreClient?.close() ?? Promise.resolve(),
       inventoryClient?.close() ?? Promise.resolve()
     ]).then(() => undefined);
@@ -664,6 +669,7 @@ export async function startFileTaskControllerRuntime(
   const closed = running.closed.then(closeResources);
   return {
     ...running,
+    kernel,
     closed,
     close: async () => {
       try {

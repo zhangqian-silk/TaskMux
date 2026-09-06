@@ -686,6 +686,34 @@ const MIGRATIONS: readonly StorageMigration[] = Object.freeze([
     name: "v0.15.0-baseline",
     introducedIn: "0.15.0",
     sql: MIGRATION_1_SQL
+  },
+  {
+    version: 2,
+    name: "job-operation-facts",
+    introducedIn: "0.15.1",
+    // Historical records never carried caller identity or external effect
+    // evidence. Preserve that uncertainty rather than inventing attribution.
+    // No old executable implementation or runtime dual-read is needed.
+    sql: `
+UPDATE durable_jobs SET payload = json_set(payload,
+  '$.schemaVersion', 2,
+  '$.operation', json_object(
+    'requestId', json_extract(payload, '$.idempotencyKey'),
+    'inputDigest', json_extract(payload, '$.idempotencyKey'),
+    'actorId', 'historical:unrecorded',
+    'authorityRef', 'historical:unrecorded',
+    'targetId', json_extract(payload, '$.workspace'),
+    'capability', 'job.start',
+    'implementation', json_object('id', 'yui:job-runner', 'generation', '1'),
+    'effect', 'possible',
+    'receiptRefs', json('[]'),
+    'partialResultRefs', json('[]')
+  )
+);
+CREATE UNIQUE INDEX idx_durable_jobs_request
+ON durable_jobs(task_id, json_extract(payload, '$.operation.actorId'),
+  json_extract(payload, '$.operation.requestId'));
+`
   }
 ]);
 

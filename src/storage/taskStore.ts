@@ -448,7 +448,12 @@ export type TaskStore = {
 };
 
 export class StorageRecordError extends Error { constructor(message: string) { super(message); this.name = "StorageRecordError"; } }
-export class StorageConflictError extends Error { constructor(message: string) { super(message); this.name = "StorageConflictError"; } }
+export class StorageConflictError extends Error {
+  constructor(message: string, readonly currentRevision?: number) {
+    super(message);
+    this.name = "StorageConflictError";
+  }
+}
 /**
  * Raised by the persistence worker when an `AbortSignal` cancels an in-flight
  * command batch. The open transaction is rolled back; the database is unchanged.

@@ -87,6 +87,11 @@
       "sha256": "bcd086c19dffa498bc3993a743c5edad30a99629141733c2c5fa0055192e072b"
     },
     {
+      "path": "implementation/designs/T01-evidence.md",
+      "bytes": 12940,
+      "sha256": "5d81ff11123967ad709858153ec2c3e12e8b72404f8562bc88ff01e00e4668c3"
+    },
+    {
       "path": "implementation/designs/T01-kernel-host.md",
       "bytes": 3576,
       "sha256": "18da985463d9f5ad8aa75557414c3e7834f5a922e9771a8bfc01a1921f3b9547"
@@ -208,8 +213,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 431851,
-      "sha256": "ae46d67ce8124aa0070f88734567d35d0716a3235b903fcd70e865cc15e94f9a"
+      "bytes": 446948,
+      "sha256": "a48190a5a0d83d470b66af6a243e7c3caccda2c20ffcbb0c7e09cebf2a79de72"
     },
     {
       "path": "modules/01-kernel.md",

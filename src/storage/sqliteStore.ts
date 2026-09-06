@@ -476,13 +476,22 @@ export class SqliteTaskStore implements TaskStore {
    * and the increment happen in the same write transaction.
    */
   transactionWithRevisionCas<T>(expectedRevision: number, execute: (store: SqliteTaskStore) => T, options?: SqliteTransactionOptions): T {
-    if (this.#inTransaction) return execute(this);
+    if (this.#inTransaction) {
+      const current = this.getRevision();
+      if (current !== expectedRevision) {
+        throw new StorageConflictError(
+          `Storage revision conflict (expected ${expectedRevision}, found ${current}).`, current
+        );
+      }
+      return execute(this);
+    }
     this.#begin();
     try {
       const current = this.getRevision();
       if (current !== expectedRevision) {
         throw new StorageConflictError(
-          `Storage revision conflict (expected ${expectedRevision}, found ${current}).`
+          `Storage revision conflict (expected ${expectedRevision}, found ${current}).`,
+          current
         );
       }
       const result = execute(this);
@@ -533,6 +542,9 @@ export class SqliteTaskStore implements TaskStore {
     if (this.#inTransaction) {
       // Nested inside a synchronous transaction: run without yielding (the
       // caller already holds the write lock).
+      if (options.expectedRevision !== undefined && this.getRevision() !== options.expectedRevision) {
+        throw new StorageConflictError("Storage revision conflict.", this.getRevision());
+      }
       return commands.map((command) => this.#executeCommand(command.op, command.args));
     }
     this.#begin();
@@ -543,7 +555,8 @@ export class SqliteTaskStore implements TaskStore {
         const current = this.getRevision();
         if (current !== options.expectedRevision) {
           throw new StorageConflictError(
-            `Storage revision conflict (expected ${options.expectedRevision}, found ${current}).`
+            `Storage revision conflict (expected ${options.expectedRevision}, found ${current}).`,
+            current
           );
         }
       }
