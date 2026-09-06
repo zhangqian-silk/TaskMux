@@ -631,19 +631,29 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
           // durable WorkItem or ReviewRound workspace owns that cwd; Task-main
           // preparation must not move a Reviewer Session out from under an
           // active or retained ReviewRound. Other Roles use Task main.
-          // Prefer the active Turn's exact WorkItem for this Role; fall back
-          // to the first queued WorkItem only when no active Turn owns the Role.
+          // Prefer the active Turn's exact WorkItem, then a retained direct
+          // WorkItem owning this cwd, before considering queued assignments.
           const activeRoleTurn = tx.getActiveTurn(task.id, role.name);
           const activeTurnItem = activeRoleTurn !== null
             && activeRoleTurn.purpose === "execution"
             && activeRoleTurn.workItemId !== undefined
             ? tx.getWorkItem(task.id, activeRoleTurn.workItemId)
             : null;
+          // Rejection ends an execution iteration, not its workspace ownership.
+          // Preserve this direct WorkItem's existing cwd while dispatch prepares
+          // the Task before atomically reopening the failed WorkItem. Merely
+          // reading Task context must not migrate its resumable Worker either.
+          const retainedItem = tx.listWorkItems(task.id).find((candidate) => (
+            candidate.assignee === role.name
+              && candidate.status === "failed"
+              && currentWorkItemExecutionGroup(candidate) === undefined
+              && tx.getWorkItemWorkspace(task.id, candidate.id)?.root === role.workspace
+          ));
           const assignedItem = activeTurnItem !== null
             && activeTurnItem.assignee === role.name
             && !["completed", "failed", "retired"].includes(activeTurnItem.status)
             ? activeTurnItem
-            : tx.listWorkItems(task.id).find((candidate) => (
+            : retainedItem ?? tx.listWorkItems(task.id).find((candidate) => (
               candidate.assignee === role.name
                 && !["completed", "failed", "retired"]
                   .includes(candidate.status)
