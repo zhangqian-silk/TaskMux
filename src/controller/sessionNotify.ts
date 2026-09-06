@@ -43,6 +43,10 @@ export async function runSessionNotifyCommand(
   setThreadName: CodexThreadNameSetter = setCodexThreadName
 ): Promise<void> {
   const params = parseCodexSessionNotification(payloadArgument, environment);
+  // Old global TUIs can still emit their invocation-local hook. It is not
+  // evidence of a shared-daemon Thread's identity or process lifecycle.
+  // Global identity is committed from App Server at successful host start.
+  if (params.scope === "global") return;
   const home = requireText(environment.YUI_HOME, "YUI_HOME");
   // A Codex process outlives its Turn, so the notify envelope cannot say which
   // Turn or runtime generation is current. Durable Session state answers both;

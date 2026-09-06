@@ -638,6 +638,8 @@ yui task role release <task-id> <role>
 
 Codex Role thread 可在 Desktop 中直接查看和操作；Desktop 已有 active Turn 时，Yui 只保留待投递工作并等待，不会失败或重复投递。`view`、`takeover`、`release` 继续作为 Claude 等独立进程 Provider 的人工控制入口。Yui 不写入全局 Hook/config，也不启动、重启或停止共享 daemon；Codex CLI/daemon 故障由 Task 生命周期之外修复。Global Operator 与 global Role 继续使用原生交互式 CLI，不属于受管理 Task Provider 协议；Yui 在内部将 Codex 的 Global TUI 连接到同一个默认 App Server，用户不能通过 Agent 或 Role 参数覆盖该连接，Session Manifest 自带不依赖启动进程环境的 Global Context 命令，因此同一 thread 可直接切换到 Desktop 继续对话。
 
+Global Codex 的薄 Host 与原生 TUI 位于同一个 pane，透明转发 App Server 连接，并从该 TUI 自己的 `thread/start` 或 `thread/resume` 成功响应取得 Thread ID。Yui 在首条用户消息之前通过既有启动回执登记身份，不依赖 `notify`、历史目录扫描或 bootstrap 消息；旧的 global `notify` 不能登记或修改 Session 生命周期。连接随 TUI 退出，不依赖 Controller 的持续运行。tmux 窗口存在不等于 Agent 存活：`pane_dead=0` 才是运行中，`pane_dead=1` 是保留的退出现场，读取失败则报错。状态查询不删除现场；显式启动可重建精确的死亡窗口，但不能覆盖身份未知的活 Operator。
+
 `yui update` 会用目标版本先做只读预检，在停住精确的旧 Controller 后自动执行
 所需的离线迁移，再校验并启动新 Controller。若升级前希望结束所有 Agent
 活动，可先执行 `yui session stop --all`；这不是存储版本链的一部分。
