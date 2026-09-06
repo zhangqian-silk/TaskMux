@@ -385,7 +385,7 @@ export function runTaskContextCommand(
                   `      Review policy: ${candidate.reviewPolicy === undefined ? "none" : `${candidate.reviewPolicy.roleName} (${candidate.reviewPolicy.trigger})`}`,
                   `      Task-final contract: ${candidate.taskFinalReviewContract === undefined
                     ? "none"
-                    : `${candidate.taskFinalReviewContract.digest} via control ${candidate.taskFinalReviewContract.controlPlaneDigest}`}`,
+                    : `Reviewer ${candidate.taskFinalReviewContract.reviewerRoleName}`}`,
                   `      Frozen Git: ${candidate.gitSnapshot === undefined
                     ? "unavailable"
                     : `${candidate.gitSnapshot.reviewBaseCommit} (${candidate.gitSnapshot.projects.length} Projects)`}`,
@@ -567,7 +567,9 @@ function renderReviewRounds(
       ? [
           `      Frozen Task heads: ${latest.taskCandidate?.projects
             .map(({ projectId, commit }) => `${projectId}@${commit}`).join(", ") ?? "unavailable"}`,
-          `      Task-final contract: ${latest.taskFinalReviewContract?.digest ?? "global policy"}`,
+          `      Task-final contract: ${latest.taskFinalReviewContract === undefined
+            ? "global policy"
+            : `Reviewer ${latest.taskFinalReviewContract.reviewerRoleName}`}`,
           ...(latest.deltaRecheck === undefined
             ? [`      Review mode: full`]
             : [
