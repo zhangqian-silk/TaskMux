@@ -26,6 +26,7 @@ import { validateAgentProfile } from "../../profile/agentProfile.js";
 import { validateRoleSessionSet } from "../../executor/agentExecutor.js";
 import { validateReviewRound } from "../../review/reviewRound.js";
 import { validateTurn } from "../../turn/turn.js";
+import { validateDurableJob } from "../../job/durableJob.js";
 import { validateWorkItem } from "../../workItem/workItem.js";
 import { SqliteTaskStore } from "../sqliteStore.js";
 import {
@@ -337,6 +338,7 @@ function validateCurrentStore(home: string): void {
       }
     }
     for (const taskId of store.listTasks().map(({ id }) => id)) {
+      for (const job of store.listDurableJobs(taskId)) validateDurableJob(job);
       for (const item of store.listWorkItems(taskId)) validateWorkItem(item);
       for (const round of store.listReviewRounds(taskId)) validateReviewRound(round);
       for (const turn of store.listTurns(taskId)) validateTurn(turn);

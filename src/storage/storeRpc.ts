@@ -212,7 +212,7 @@ function isReadOnlyMethod(method: string): boolean {
 
 function deserializeError(serialized: SerializedError): Error {
   const { name, message } = serialized;
-  if (name === "StorageConflictError") return new StorageConflictError(message);
+  if (name === "StorageConflictError") return new StorageConflictError(message, serialized.currentRevision);
   if (name === "StorageRecordError") return new StorageRecordError(message);
   if (name === "StorageCancelledError" || name === "AbortError") {
     return new StorageCancelledError(message);

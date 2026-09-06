@@ -35,6 +35,7 @@ export type SerializedError = Readonly<{
   message: string;
   stack?: string;
   code?: string;
+  currentRevision?: number;
 }>;
 
 export function serializeError(error: unknown): SerializedError {
@@ -45,7 +46,9 @@ export function serializeError(error: unknown): SerializedError {
       ...(error.stack === undefined ? {} : { stack: error.stack }),
       ...("code" in error && typeof (error as { code?: unknown }).code === "string"
         ? { code: (error as { code: string }).code }
-        : {})
+        : {}),
+      ...("currentRevision" in error && typeof error.currentRevision === "number"
+        ? { currentRevision: error.currentRevision } : {})
     };
   }
   return { name: "Error", message: String(error) };

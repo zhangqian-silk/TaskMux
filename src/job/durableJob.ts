@@ -6,8 +6,12 @@ import {
   requireTimestamp
 } from "../domain/validation.js";
 import { validateTaskRecordReference } from "../task/taskRecordReference.js";
+import {
+  recordOperationEvidence, validateOperationFacts, type OperationFacts
+} from "../kernel/operationFacts.js";
 
-export const CURRENT_DURABLE_JOB_SCHEMA_VERSION = 1 as const;
+export const CURRENT_DURABLE_JOB_SCHEMA_VERSION = 2 as const;
+export const JOB_RUNNER_IMPLEMENTATION = Object.freeze({ id: "yui:job-runner", generation: "1" });
 
 export type DurableJobStatus =
   | "queued"
@@ -102,6 +106,7 @@ export type DurableJob = Readonly<{
   env: Readonly<Record<string, string>>;
   steps: readonly DurableJobStep[];
   idempotencyKey: string;
+  operation: OperationFacts;
   status: DurableJobStatus;
   artifactsLocator: string;
   createdAt: string;
@@ -161,11 +166,12 @@ export function createDurableJob(
     steps: readonly DurableJobStep[];
     artifactsLocator: string;
     retryOf?: string;
+    operation?: Pick<OperationFacts, "requestId" | "actorId" | "authorityRef" | "inputDigest">;
   }>,
   now: Date
 ): DurableJob {
   const timestamp = now.toISOString();
-  const idempotencyKey = input.retryOf === undefined
+  const contentKey = input.retryOf === undefined
     ? durableJobIdempotencyKey({
         owner: input.owner,
         projectId: input.projectId,
@@ -185,6 +191,10 @@ export function createDurableJob(
         }),
         input.retryOf
       );
+  const idempotencyKey = input.operation === undefined ? contentKey
+    : createHash("sha256").update(JSON.stringify([
+      input.operation.actorId, input.operation.requestId
+    ])).digest("hex");
   return validateDurableJob({
     schemaVersion: CURRENT_DURABLE_JOB_SCHEMA_VERSION,
     id: input.id,
@@ -196,6 +206,18 @@ export function createDurableJob(
     env: { ...input.env },
     steps: input.steps.map((step) => ({ ...step })),
     idempotencyKey,
+    operation: {
+      requestId: input.operation?.requestId ?? idempotencyKey,
+      inputDigest: input.operation?.inputDigest ?? idempotencyKey,
+      actorId: input.operation?.actorId ?? "internal:job",
+      authorityRef: input.operation?.authorityRef ?? "internal:job",
+      targetId: input.workspace,
+      capability: "job.start",
+      implementation: JOB_RUNNER_IMPLEMENTATION,
+      effect: "none",
+      receiptRefs: [],
+      partialResultRefs: []
+    },
     status: "queued",
     artifactsLocator: input.artifactsLocator,
     createdAt: timestamp,
@@ -217,6 +239,10 @@ export function startDurableJob(
   return validateDurableJob({
     ...job,
     status: "running",
+    operation: recordOperationEvidence(job.operation, {
+      effect: "confirmed",
+      receiptRefs: [`${job.artifactsLocator}/start.json`]
+    }),
     process: { ...process },
     startedAt: timestamp,
     heartbeatAt: timestamp,
@@ -255,6 +281,11 @@ export function completeDurableJob(
   return validateDurableJob({
     ...job,
     status: result.outcome,
+    operation: recordOperationEvidence(job.operation, {
+      partialResultRefs: result.steps.map((step) => step.logPath),
+      receiptRefs: result.evidenceSource === undefined ? []
+        : [`${job.artifactsLocator}/${result.evidenceSource === "checkpoint" ? "checkpoint.json" : "exit.json"}`]
+    }),
     result: normalizeDurableJobResult(result),
     terminalAt: timestamp,
     updatedAt: timestamp
@@ -268,13 +299,16 @@ export function markDurableJobUnknown(
   now: Date
 ): DurableJob {
   validateDurableJob(job);
-  if (job.status !== "running") {
-    throw new Error(`DurableJob can only be marked unknown from running: ${job.status}.`);
+  if (job.status !== "running" && !(job.status === "queued" && job.operation.effect !== "none")) {
+    throw new Error(`DurableJob can only be marked unknown after an attempted effect: ${job.status}.`);
   }
   const timestamp = now.toISOString();
   return validateDurableJob({
     ...job,
     status: "unknown-needs-attention",
+    operation: recordOperationEvidence(job.operation, {
+      partialResultRefs: completedSteps.map((step) => step.logPath)
+    }),
     result: {
       outcome: "unknown-needs-attention",
       exitCode: null,
@@ -408,6 +442,7 @@ export function validateDurableJob(job: DurableJob): DurableJob {
       `DurableJob must use schemaVersion ${CURRENT_DURABLE_JOB_SCHEMA_VERSION}.`
     );
   }
+  validateOperationFacts(job.operation);
   validateTaskRecordReference({
     taskId: job.taskId,
     localId: job.id
@@ -538,6 +573,16 @@ export function validDurableJobTransition(
     || !isDeepStrictEqual(before.owner, after.owner)
     || !isDeepStrictEqual(before.env, after.env)
     || !isDeepStrictEqual(before.steps, after.steps)
+    || before.operation.requestId !== after.operation.requestId
+    || before.operation.inputDigest !== after.operation.inputDigest
+    || before.operation.actorId !== after.operation.actorId
+    || before.operation.authorityRef !== after.operation.authorityRef
+    || before.operation.targetId !== after.operation.targetId
+    || before.operation.capability !== after.operation.capability
+    || !isDeepStrictEqual(before.operation.implementation, after.operation.implementation)
+    || !isDeepStrictEqual(
+      recordOperationEvidence(before.operation, after.operation), after.operation
+    )
   ) return false;
   if (isDurableJobTerminal(before.status)) {
     // A terminal job is immutable except for two one-way flags:
@@ -551,12 +596,13 @@ export function validDurableJobTransition(
       && after.acknowledgedAt !== undefined;
     return before.status === after.status
       && isDeepStrictEqual(before.result, after.result)
+      && isDeepStrictEqual(before.operation, after.operation)
       && before.terminalAt === after.terminalAt
       && (before.wakeupNotified === after.wakeupNotified || wakeupFlip)
       && (before.acknowledgedAt === after.acknowledgedAt || acknowledgeFlip);
   }
   const allowed: Readonly<Record<string, readonly DurableJobStatus[]>> = {
-    queued: ["queued", "running", "cancelled"],
+    queued: ["queued", "running", "cancelled", "unknown-needs-attention"],
     running: [
       "running",
       "succeeded",

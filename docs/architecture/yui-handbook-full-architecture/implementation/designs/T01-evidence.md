@@ -1,0 +1,128 @@
+# T01 实现、验证与 T02 交接
+
+Task：task-11。采用基线：
+`6c8ce1e39c5cb6cbafd3652d2f5fa0fa498b27ee`（T00 经 PR #299 squash）。
+日期：2026-09-06。实现提交与独立 Review 的精确引用以 Task 持久记录为准。
+本报告不是远端合并或 Task 验收记录。
+
+## 采用决定
+
+首个真实采用者为现有 `job.start`，不是另造通用 Operation 表。
+它已有请求、执行状态、checkpoint、exit 与日志；缺失的是调用者绑定、
+独立请求身份及不随失败消失的效果证据。现在扩展同一 DurableJob payload，
+仍由 Job Control 和现有 Supervisor 经同一个 SQLite Store 写入。
+Integration、CLI 和 Controller Job RPC 继续共用这个写入者，没有旁路账本。
+
+`effect` 在这里描述 **runner 发起这一外部操作**：
+未尝试为 none，发出前提交 possible，观察到 runner 为 confirmed。
+confirmed 不表示任意 shell 命令的所有业务效果均成功；
+命令内部效果仍须读原始回执、step 结果及业务系统证据。不能据此声称
+Provider 接受、邮件发送或远端发布已经成功。
+
+Task 五态、archived 合同、Agent Runtime 协议、Provider Sessions 与
+原 Turn 采集器未改。未采用 task-9 的私有增量。没有新调度器、恢复 worker、
+备用 Operator、自动 Provider 切换或第二 Controller。
+
+## T02 的最小公开入口
+
+- `src/kernel/instanceHost.ts`：`attach`、`acquire`、句柄 `release`、
+  `use`、`detach`、`close`。`use` 在 finally 释放短调用；Session
+  保存具体句柄，关闭时释放。detach 当即拒绝新 acquire，等所有引用结束再
+  调用拥有者 disposer。清理按逆序执行，某项失败不跳过其他清理。
+- `src/kernel/kernelPorts.ts`：Controller 的唯一装配入口
+  `createKernelPorts(store, runner)`；返回 `host`、固定的 Job Control /
+  runner 引用与 `jobs`。生产 `startFileTaskControllerRuntime` 已使用它，
+  返回的 `kernel` 供 T02 接入；不要在每个 capability call 再创建一个 Host。
+  Controller 持有两个固定实现引用，关闭时释放。这里不杀 detached Job
+  或共享 Provider daemon。
+- `src/kernel/callAuthority.ts`：可信入口持有 `CallAuthority`，用该入口的
+  认证器产生 `TrustedCallContext`，每个新动作调用 `authorize` 再读当前权限。
+  JSON 复制、伪造 actor、跨实例的 context 不获授权。此对象不是插件沙箱；
+  认证器、凭据和 Store 不能交给任意插件作者代码。
+- `createJobCallAuthority` / `createDurableJobControl` 复用已有 Job 管理入口。
+  `jobs.startJob({...params, requestId}, now)` 返回 `{job, created}`；
+  `getJob` 与 `inspectJobOperation(job)` 直接读取原事实，无额外记录。
+  `recordOperationEvidence` 是所属模块保存原记录时使用的纯函数，
+  不是向插件开放的任意 Store 写权限。
+
+用户 CLI 的本地原子修改继续使用原有认证/handler；Job socket 保留原来的
+managed caller 要求，不因声明 `scope:user` 或 `actor:operator` 扩权。
+T02 的插件/Surface 桥应从实际可信入口认证，不能把 capability input
+转换为身份。新的通用插件认证协议不属于本次实现。
+
+新请求身份在同一 Task 和调用主体内去重，目标或输入不同返回原 Job id
+及明确冲突。原调用者、目标、具体 runner、输入摘要和绑定指纹不可改写。
+省略 requestId 的既有调用者使用内容身份；有意再执行必须显式提供新身份
+或使用原有显式 retry 操作。未知结果、正常 pending 和输出失败均不自动重发。
+重复请求读原记录不依赖当前 workspace HEAD 仍相同。
+
+Caller 明文 key 不进入 Job 或输入摘要；只保存既有绑定的不可用作 bearer
+的指纹。Job 规格仍是可持久化的非秘密 command/env，入口拒绝识别出的
+凭据参数和秘密环境变量。不要用它传递秘密值；本次未实现凭据解析服务，
+也不承诺对任意恶意程序输出进行保密隔离。
+
+发起新 runner 前重新检查绑定、Task 执行权限、managed workspace 写权限、
+owner 和实际 HEAD；已撤权请求保留原记录并返回诊断。采集原 runner 的
+回执不经过这道管理授权，不因原调用者撤权丢失既有结果。
+
+## 存储 1 → 2
+
+唯一 Home 版本由 1 升为 2，最低支持仍为 1（0.15.0 起）。
+在 `sqliteSchema.ts` 追加 migration `job-operation-facts`，不修改已发布
+version 1。DurableJob 当前 payload 为 schemaVersion 2，普通运行不双读旧格式。
+同表唯一索引保护调用主体与 requestId。
+
+有效历史 Job 保留全部旧状态、结果、checkpoint、日志位置和幂等键。
+旧版本没有记录调用主体及效果证据，因此迁移标记 historical:unrecorded /
+possible，不伪造凭据或回执。旧 queued Job 若没有可证明的发起证据，
+升级后可成为 unknown 而不会擅自执行；意图仍在原 Job 中。
+旧内容身份再次提交时返回原 Job 的诊断，需要先检查，不会隐式改用新身份重做。
+
+采用必须经现有 `upgrade --dry-run` / `upgrade` 或 update 的 staged-binary
+升级握手。保持停写，使用升级器生成的同级 `<home>-backups` SQLite 备份，
+迁移后严格校验。旧 binary 拒绝 version 2；代码换回去不降 schema。
+恢复旧备份不撤销外部效果，也会丢失备份后的本地事实，应独立授权并核对。
+本 Task 没有升级共享 Home，也没有更改 update preflight/apply 握手字段。
+
+## 实际隔离证据
+
+专项脚手架仅用于开发，不加入永久测试/CI；报告保留在此。
+使用临时 SQLite Home、本地 Git 仓库、loopback HTTP fixture、实际
+EventTarget listener/timer，以及一次真实 detached Job runner。
+HTTP 场景通过受控 process/artifact port 注入故障，不冒充真实 Provider。
+
+| 故障位置/状态 | fixture 收到请求 | fixture 内部效果 | 重入并重新打开 Store 后 |
+|---|---:|---:|---|
+| 发送前中断 | 0 | 0 | unknown，不新增请求 |
+| 接受后断开 | 1 | 0 | unknown，仍为 1 |
+| 效果发生后、回执前断开 | 1 | 1 | unknown，仍为 1 |
+| 回执输出 schema 错误 | 1 | 1 | failed，仍为 1，保留 exit 与部分日志引用 |
+| 正常 pending | 1 | 1 | running，仍为 1 |
+
+另已检查：
+
+- S25：A 的调用尚未结束时注册 B，新调用使用 B；A 的 Session 未释放时
+  不 dispose；最后引用结束才移除实际自有 listener/timer，共享 listener 仍响应。
+- S45：伪造 context 拒绝，撤回 fixture grant 后旧 context 也拒绝；
+  轮换 durable caller binding 后 queued/new Job 没有发出新请求，
+  原 running Job 的迟到回执仍成功归档。
+- S10：两个真实 SQLite 连接提交过期 CAS，返回 `currentRevision` 且不覆盖
+  首个 Brief；嵌套 CAS 与 persistence-worker RPC 也保留冲突与当前版本。
+  Job/operation 查询未增加 revision 或账本。
+- 实际 runner：经生产 Host/process port 执行一次非 shell argv 本地文件追加，
+  只有一行效果，原 Job 成功并保留回执，重复 start 返回 created=false。
+- S44：从精确基线代码构建的有效 version-1 Home/Job 升级到 2；
+  当前 loader 在升级前拒绝，旧 loader 在升级后拒绝。
+  升级备份在另一目录被旧代码成功打开；注入迁移后校验失败，
+  升级器恢复原始 version-1 数据库及原 Task/Job。
+- S20：完整差异直接检查，无 Operator 自动恢复机制。
+
+交付检查：`make install-local`、`npm run build`、`npm run lint`、
+`npm test` 均通过。现有测试 82/82，测试阶段约 4.23 秒（build 另计）；
+没有扩大 T00 已指出的现有测试规模，仅更新当前版本断言。
+包装配与启动检查通过；未执行真实模型、付费 API、生产资源或共享安装验证。
+
+独立最终 Review 单独由 Task 配置的 Reviewer 对固定提交执行，结果与 Leader
+接受写回 Task；本报告的自查和通过测试不能代替它。
+后继仅由 Operator 核实完成与合法采用路径后启动。本成果未授权
+push/merge/release/archive；本地 commit 不代表远端 master 已包含。
