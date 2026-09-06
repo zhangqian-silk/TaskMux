@@ -36,7 +36,6 @@ import { builtinAgentDriverRegistry } from "./builtinAgentDrivers.js";
 import { requireSafeIdentity } from "./validation.js";
 import type { EffectiveLaunchSnapshot } from "../executor/effectiveLaunch.js";
 import type { TaskRuntimeIsolationDescriptor } from "./taskRuntimeIsolation.js";
-import { YUI_CONTROL_PLANE_DESCRIPTOR } from "./exactControlPlane.js";
 import { launchBrokerForHome, type AgentHostLaunchPayload } from "./launchBroker.js";
 import {
   AGENT_HOST_CONTROL_PROTOCOL,
@@ -580,12 +579,10 @@ export class TmuxSessionHost implements SessionHostPort {
     }
     const broker = launchBrokerForHome(yuiHome);
     const sessionManifest = planned.launch.env.YUI_SESSION_MANIFEST;
-    const frozenControlPlane = planned.launch.env[YUI_CONTROL_PLANE_DESCRIPTOR];
     if (request.owner.scope === "task" && request.turnId !== undefined
-      && (sessionManifest === undefined
-        || frozenControlPlane === undefined)) {
+      && sessionManifest === undefined) {
       throw new Error(
-        "Managed Task Agent Host launch is missing its Session Manifest or frozen control descriptor."
+        "Managed Task Agent Host launch is missing its Session Manifest."
       );
     }
     const reservation = broker.reserve(Object.freeze({
@@ -627,10 +624,7 @@ export class TmuxSessionHost implements SessionHostPort {
           : { YUI_WORKSPACE: planned.launch.env.YUI_WORKSPACE }),
         ...(sessionManifest === undefined
           ? {}
-          : { YUI_SESSION_MANIFEST: sessionManifest }),
-        ...(frozenControlPlane === undefined
-          ? {}
-          : { [YUI_CONTROL_PLANE_DESCRIPTOR]: frozenControlPlane })
+          : { YUI_SESSION_MANIFEST: sessionManifest })
       }
     };
     let hostCreated = false;

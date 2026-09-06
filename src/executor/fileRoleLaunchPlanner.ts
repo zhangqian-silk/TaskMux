@@ -53,7 +53,6 @@ import {
   type EffectiveLaunchSnapshot
 } from "./effectiveLaunch.js";
 import {
-  YUI_CONTROL_PLANE_DESCRIPTOR,
   createExactControlPlaneDescriptor,
   exactControlPlaneDigest,
   serializeExactDescriptor,
@@ -683,11 +682,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
           ? { YUI_AGENT_BASE_ARGS: JSON.stringify(configured.baseArgs) }
           : {}),
         ...(jobCallerKey === undefined ? {} : { YUI_JOB_CALLER_KEY: jobCallerKey }),
-        ...(owner.scope !== "task"
-          ? {}
-          : {
-              [YUI_CONTROL_PLANE_DESCRIPTOR]: serializeExactDescriptor(this.#controlPlane)
-            }),
         ...(sessionTitle === undefined
           ? {}
           : {
@@ -999,6 +993,8 @@ function managedClaudeControlPlaneConfig(
 function isManagedYuiBashRule(rule: string): boolean {
   const normalized = rule.trim();
   return /^Bash\(yui(?:\s|:\*|\*|\))/u.test(normalized)
+    // Yui no longer writes a control-plane digest into a managed rule; this
+    // shape only clears one an earlier release left in a Provider config.
     || /^Bash\(.*\s--yui-control\s/u.test(normalized);
 }
 

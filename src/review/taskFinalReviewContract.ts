@@ -79,8 +79,8 @@ export function sameTaskFinalReviewContract(
 
 /**
  * The contract switch is an exact CLI prefix, never an environment variable.
- * It must immediately follow `--yui-control <digest>` so the preflight can
- * bind it to the one verified Task runtime before opening mutable storage.
+ * It must be the first CLI argument so the preflight can bind it to the
+ * Leader's managed Session before opening mutable storage.
  */
 export function extractTaskFinalReviewRequest(args: readonly string[]): Readonly<{
   request?: TaskFinalReviewRequest;

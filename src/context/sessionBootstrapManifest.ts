@@ -156,6 +156,9 @@ export function materializeSessionBootstrap(input: Readonly<{
   const home = resolve(input.yuiHome);
   const controlDigest = exactControlPlaneDigest(input.controlPlane);
   const descriptorPath = resolve(join(home, "runtime", "control-plane", `${controlDigest}.json`));
+  // Provenance for this launch, not a gate. Nothing reads it back to decide
+  // whether a command may run; the current CLI, Home, and Controller answer
+  // that, and the Session Manifest plus caller key answer who may act.
   writeImmutableText(descriptorPath, `${serializeExactDescriptor(input.controlPlane)}\n`);
 
   // Provider command runners may rebuild PATH independently of the managed
