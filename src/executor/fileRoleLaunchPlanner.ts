@@ -47,8 +47,7 @@ import {
 } from "./workspacePreflightClassification.js";
 import { activeLiveRoleAgentSession } from "./agentExecutor.js";
 import {
-  effectiveLaunchSnapshotsCompatibleForTaskSession,
-  effectiveLaunchSnapshotsCompatible,
+  roleSessionMayContinue,
   effectiveRoleForLaunch,
   resolveEffectiveLaunch,
   type EffectiveLaunchSnapshot
@@ -288,12 +287,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const effective = input.effective ?? resolvedEffective;
     const existing = sessionSet?.sessions[effective.agentId];
     const compatibleExisting = existing !== undefined
-      && (input.mode === "resume"
-        ? effectiveLaunchSnapshotsCompatibleForTaskSession(
-            existing.effective,
-            effective
-          )
-        : effectiveLaunchSnapshotsCompatible(existing.effective, effective));
+      && roleSessionMayContinue(existing.effective, effective);
     if (input.mode === "resume" && !compatibleExisting) {
       throw new Error(
         `Task Role resume effective snapshot drifted: ${task.id}/${role.name}.`
@@ -336,7 +330,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const effective = input.effective ?? resolvedEffective;
     const existing = sessionSet?.sessions[effective.agentId];
     const compatibleExisting = existing !== undefined
-      && effectiveLaunchSnapshotsCompatible(existing.effective, effective);
+      && roleSessionMayContinue(existing.effective, effective);
     if (input.mode === "resume" && !compatibleExisting) {
       throw new Error(`Global Role resume effective snapshot drifted: ${role.name}.`);
     }

@@ -18,6 +18,7 @@ import type {
 } from "../executor/agentExecutor.js";
 import type { AgentProfile } from "../profile/agentProfile.js";
 import type { GlobalRole, TaskRole } from "../role/role.js";
+import { LIVE_SESSION_ACKNOWLEDGEMENT_OPTION } from "./roleRuntimeGuard.js";
 import {
   hasRuntimeLifecycleWork,
   runtimeLifecycleTarget
@@ -139,7 +140,8 @@ function updateAgent(args: string[], store: AgentCommandStore): string {
   const [rawId, ...tail] = args;
   const id = agentId(rawId);
   const parsed = parseAgentOptions(tail, "update");
-  if (parsed.seen.size === 0) {
+  if (parsed.seen.size === 0
+    || [...parsed.seen].every((option) => option === LIVE_SESSION_ACKNOWLEDGEMENT_OPTION)) {
     throw usageError("Agent update requires at least one operational option.");
   }
   if (parsed.has("--arg") && parsed.has("--clear-args")) {
@@ -179,11 +181,14 @@ function updateAgent(args: string[], store: AgentCommandStore): string {
       );
     }
     const liveSession = findNonStoppedSessionReference(tx, id);
-    if (liveSession !== null) {
+    if (liveSession !== null && !parsed.has(LIVE_SESSION_ACKNOWLEDGEMENT_OPTION)) {
       throw usageError(
-        `Agent ${id} cannot be updated because ${describeReference(liveSession)} `
-        + `retains a non-stopped native session (${liveSession.status}). `
-        + "Stop that Role session before changing Agent launch settings."
+        `${describeReference(liveSession)} runs a live native session (${liveSession.status}) on `
+        + `Agent ${id}, so this change applies to its next Host activation instead of the `
+        + "running one.\n"
+        + `Re-run with ${LIVE_SESSION_ACKNOWLEDGEMENT_OPTION} to record the change and keep that `
+        + "session.\n"
+        + "Stop the affected Role session first to apply it to a fresh session instead."
       );
     }
     if (changes.adapter) {
@@ -415,7 +420,9 @@ function parseAgentOptions(args: string[], mode: "add" | "update"): ParsedOption
     ["--arg", { repeatable: true, allowOptionLikeValue: true }],
     ["--env", { repeatable: true, allowOptionLikeValue: false }]
   ]);
-  const flags = mode === "update" ? new Set(["--clear-args", "--clear-env"]) : new Set<string>();
+  const flags = mode === "update"
+    ? new Set(["--clear-args", "--clear-env", LIVE_SESSION_ACKNOWLEDGEMENT_OPTION])
+    : new Set<string>();
   const seen = new Set<string>();
   const values = new Map<string, string[]>();
   for (let index = 0; index < args.length; index += 1) {
