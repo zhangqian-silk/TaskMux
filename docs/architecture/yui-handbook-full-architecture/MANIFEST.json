@@ -8,8 +8,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 6638,
-      "sha256": "92631c205bf7a55c3671d43aa8f50939f549a7c1b25ed9d303112dada40ebb01"
+      "bytes": 6943,
+      "sha256": "8520ccc6eef5f655a85a8308b7982c854aa0f7a1dcf43a0d1257791f0e19ac3c"
     },
     {
       "path": "architecture/01-overview.md",
@@ -23,8 +23,8 @@
     },
     {
       "path": "architecture/03-state-and-configuration.md",
-      "bytes": 8722,
-      "sha256": "0e3454276bab96bafd93e4314ba1304d658d3587483346d2e1217daf9e0e15e0"
+      "bytes": 9398,
+      "sha256": "7f9ff6c50c51312c7617178bad43f6195186a2b1b0918c854a7d4c0c834bb773"
     },
     {
       "path": "architecture/04-runtime-and-replacement.md",
@@ -43,23 +43,23 @@
     },
     {
       "path": "contracts/README.md",
-      "bytes": 2167,
-      "sha256": "c2618fc742334fd65c293b47c3c02a469acb51c9612660bfb94eb36df8b67bbc"
+      "bytes": 2647,
+      "sha256": "a84fc9c949710cb9aeb177c9f826ad75c3feef7648840fbbea176ed16b887162"
     },
     {
       "path": "contracts/capabilities.json",
-      "bytes": 20915,
-      "sha256": "f1dd69a72c296a3ae34184c8a574531a8c370f78f24c6f41aa5aad08e216a83e"
+      "bytes": 21916,
+      "sha256": "600c77a23b23ae7a2f2cb5b6705df569ae3763c90bf97e4ee2515f9aed26c772"
     },
     {
       "path": "contracts/examples.ts",
-      "bytes": 3612,
-      "sha256": "aa52f28a9146ec1c29eb177f3e3663f6b04ce6c81c0c0c40a7766682d8362dd5"
+      "bytes": 4221,
+      "sha256": "1e44093500983e695379481dfac0cd6500a97f9984a28e7b2a6b4e089ea668fa"
     },
     {
       "path": "contracts/model.ts",
-      "bytes": 11931,
-      "sha256": "de058d9d755871098bdde482f65eb9dc11e98b40055d82186056fc3f7a207574"
+      "bytes": 12298,
+      "sha256": "08e86c202e90fd643ae38c9c4072b1316753f54298a834d284c6eab87801b7d6"
     },
     {
       "path": "full-architecture.html",
@@ -68,13 +68,23 @@
     },
     {
       "path": "implementation/README.md",
-      "bytes": 3687,
-      "sha256": "36c037863b931a2af10319658ecdd0af91b741adc5d7a033874bdd54f1076210"
+      "bytes": 4025,
+      "sha256": "703fcef1ac7050626a685fababb7324259f3bbc73833d863c5a9b65bc4f918c3"
+    },
+    {
+      "path": "implementation/designs/T00-current-baseline.md",
+      "bytes": 23236,
+      "sha256": "18ae918d52b601bc79446191a9065ea5cde973e9f5f29a9d8056218d0249827b"
+    },
+    {
+      "path": "implementation/designs/T00-evidence.md",
+      "bytes": 4910,
+      "sha256": "1009182c2c46461b7555eca1ee1017b01c6df8c50e7f0b73769165059f216570"
     },
     {
       "path": "implementation/designs/T00-implementation-baseline.md",
-      "bytes": 3846,
-      "sha256": "0a60629518f446037b079aea408a4fc4f6770e31c52ddc064c090313261326b5"
+      "bytes": 4083,
+      "sha256": "bcd086c19dffa498bc3993a743c5edad30a99629141733c2c5fa0055192e072b"
     },
     {
       "path": "implementation/designs/T01-kernel-host.md",
@@ -88,8 +98,8 @@
     },
     {
       "path": "implementation/designs/T03-task-context.md",
-      "bytes": 3803,
-      "sha256": "0872f1631e3b4097a4003f2d9247e80c3325c94cfe16e128a3a9f919fd303767"
+      "bytes": 4179,
+      "sha256": "c4c4b3665f78b4b1fde2a9cfa34c63cbf8e106a2b91a8126a2f27ce7a0d5f5fd"
     },
     {
       "path": "implementation/designs/T04-agent-endpoint.md",
@@ -138,8 +148,8 @@
     },
     {
       "path": "implementation/tasks/T00-implementation-baseline.md",
-      "bytes": 1676,
-      "sha256": "feee4f2fed7b1f171a6a4da557e5d4989bffab89ebdb8f63d43c0289735aa072"
+      "bytes": 1929,
+      "sha256": "33f2915463427aee18a5cde8c015e60e43262044ed8d143f1a4f61a434cc938a"
     },
     {
       "path": "implementation/tasks/T01-kernel-host.md",
@@ -198,8 +208,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 392677,
-      "sha256": "10a5ad8693eb3441124058798fcdd4a6fd7c9463469a8236800f3f03d96fb620"
+      "bytes": 431851,
+      "sha256": "ae46d67ce8124aa0070f88734567d35d0716a3235b903fcd70e865cc15e94f9a"
     },
     {
       "path": "modules/01-kernel.md",
@@ -208,8 +218,8 @@
     },
     {
       "path": "modules/02-task.md",
-      "bytes": 5685,
-      "sha256": "ae48e148f69987eeb18ad4204dfcf3e1966741ed9c687e4e2162d9b6c52a87bc"
+      "bytes": 7553,
+      "sha256": "85908aab1c61bc6156959c1a969c02b9e61819c07831695fab912d8962ada447"
     },
     {
       "path": "modules/03-agent-context.md",
@@ -243,8 +253,8 @@
     },
     {
       "path": "reference/acceptance-scenarios.md",
-      "bytes": 18480,
-      "sha256": "6bedb8698d6284144043ecad71fa3fe2a47c925bced0d81ab65be80bddb11728"
+      "bytes": 18887,
+      "sha256": "aa6a81a15ec6ae0ea810b54c1eb53d5a7c4e4e553043bab63478bb371650ab3f"
     },
     {
       "path": "reference/glossary.md",
@@ -263,13 +273,18 @@
     },
     {
       "path": "reference/scenarios.json",
-      "bytes": 18888,
-      "sha256": "1ac6f624a49f8078748a5019c8d3d4332170896bf4d564b76ad8de3b14fa165b"
+      "bytes": 19295,
+      "sha256": "bdfcf2f0c86d7dad9ec6a5f0feaedd3f8be1b2a26a65266f21d7c2acdec3a04d"
     },
     {
       "path": "tools/build_html.py",
       "bytes": 12444,
       "sha256": "4a205464300eb3a7a811940c3a873ba9080937828cf2c75f8b8bb55ff9987f04"
+    },
+    {
+      "path": "tools/capture_baseline.mjs",
+      "bytes": 11226,
+      "sha256": "5d765318fb748a3b7edc1c5ce0eccfdab64a2f0ef0065bc40b9860a86c026669"
     },
     {
       "path": "tools/check_docs.py",

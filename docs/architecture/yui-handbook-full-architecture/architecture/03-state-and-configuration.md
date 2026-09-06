@@ -33,7 +33,9 @@ Brief
   acceptance? / approach? / currentFocus?
 ```
 
-`draft / active / completed / cancelled` 是 Task 的通用生命周期。研究、编码、等待评审、重试中等不是新生命周期，而是 Agent 的工作语义或展示投影。
+`draft / active / completed / cancelled / archived` 是 Task 的通用生命周期。研究、编码、等待评审、重试中等不是新生命周期，而是 Agent 的工作语义或展示投影。
+
+`archived` 是显式终态，不是展示属性，也不是取消的别名。只有 completed 或 cancelled 在用户授权、活动和资源处置完成后才能归档；完成或取消不自动授权归档。归档保留原结束事实与结果来源，不能重开。完整转换和清理边界以 [Task 生命周期](../modules/02-task.md) 为准。
 
 结构可以固定到通用协调层，字段内容保持自由文本。Core 不解析 boundaries 是否是代码目录、预算或地域；需要强制执行的访问限制另通过授权和具体资源实现。
 
@@ -124,6 +126,8 @@ Message 保存发送方、接收方、Task、正文或引用及时间。Wake 只
 结果保留与执行环境保留是两个策略。历史 Candidate 需要结果内容和必要来源，不要求对应插件和依赖包永远可执行。插件代码由活跃调用、活跃或明确计划续用的 Session、未决操作以及用户显式保留决定。
 
 临时文件和未采用环境可以清理；清理不得删除仍被工作结果引用的内容，也不能对仍可能存在写入者的资源作破坏性处理。具体资源采用自己的清理能力，Core 不建立万能垃圾回收工作流。
+
+归档后的 Task、Brief、Decision、Turn 原始结果、Candidate、Review 引用、完成或取消说明及未决效果的最终处置仍经普通查询读取。清理工作目录前先保证引用内容可独立读取；“可恢复读取”不意味着恢复旧进程或允许 archived 回到 active。
 
 ## 10. 持久化契约
 

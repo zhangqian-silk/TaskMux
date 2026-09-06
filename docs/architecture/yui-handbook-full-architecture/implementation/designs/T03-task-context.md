@@ -8,7 +8,7 @@
 
 先定位当前 Task、Brief、WorkItem、Role、Turn 输出、Review、通知和 Context 的权威存储。通过公开接口提供目标视图，不为了让状态枚举变短立即删除已有历史或诊断字段。
 
-Task 对外生命周期为 draft／active／completed／cancelled；WorkItem 表达 open／accepted／retired，执行细节从 Turn 读取。已有复杂字段如果仍有证据价值可继续保存，但不成为新的业务必经路径。
+Task 对外生命周期为 draft／active／completed／cancelled／archived；WorkItem 表达 open／accepted／retired，执行细节从 Turn 读取。已有复杂字段如果仍有证据价值可继续保存，但不成为新的业务必经路径。转换、归档授权、保留与不可重开规则以 [Task 模块](../../modules/02-task.md) 为准；当前 retired 到 cancelled 的采用走中央迁移并保留原隔离及结束证据，不能作为普通读写的双形态 adapter。
 
 ## 2. Task 与结果
 
@@ -42,7 +42,7 @@ Brief 提供指定字段修改及 expectedRevision。Role 当前配置与实际�
 
 ## 6. 数据与兼容
 
-接口变化先由 adapter 提供，原记录仍是唯一事实。必要数据变化使用明确 migration，保留历史输出和验收。不要通过双写新旧 Review result 来做兼容。
+接口可在当前契约上用边界包装提供，原记录仍是唯一事实；是否需要包装及删除条件按 [T00 基线](T00-current-baseline.md) 判断，不强制先做 adapter。必要数据变化使用明确 migration，保留历史输出和验收。不要通过双写新旧 Review result 来做兼容。
 
 Core 不从自由文本推断“用户已经改变需求”。用户直接与 Leader 对话时，Role 指引要求持久化必要信息；无法观察原生对话的情况明确覆盖范围。
 

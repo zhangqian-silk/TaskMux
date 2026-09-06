@@ -3,13 +3,13 @@
   "scope": "documents-contracts-and-package-only",
   "yui_runtime_tests": "not-run",
   "checks": {
-    "markdown_documents": 45,
-    "relative_links": 98,
+    "markdown_documents": 47,
+    "relative_links": 114,
     "standalone_prose": "checked",
     "code_fences": "checked",
     "offline_html": {
-      "articles": 45,
-      "anchors": 464,
+      "articles": 47,
+      "anchors": 487,
       "remote_assets": 0
     },
     "complete_architecture_diagram": {
@@ -24,7 +24,7 @@
       "count": 46,
       "status": "planned"
     },
-    "capability_descriptors": 38,
+    "capability_descriptors": 40,
     "manifest": "checked",
     "typescript": "passed"
   },

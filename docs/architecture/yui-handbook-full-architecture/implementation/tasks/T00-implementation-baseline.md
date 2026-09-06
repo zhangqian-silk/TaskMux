@@ -37,4 +37,8 @@
 
 ## 实施入口
 
+已落实到固定源码的 [T00 实施基线与后继交接](../designs/T00-current-baseline.md)
+及 [验证记录](../designs/T00-evidence.md) 是 task-10 的具体交付。
+它们不改变下列目标方案，也不将未来场景标为已执行。
+
 [详细技术方案](../designs/T00-implementation-baseline.md)定义接口、改动位置的定位方法、存储影响、兼容路径和具体验证。共同执行约束见[实施路线](../README.md)。
