@@ -9,9 +9,12 @@ export const TASK_FINAL_REVIEW_ARGUMENT = "--yui-task-final-review";
  * config cannot weaken the Task's completion gate. Its identity is exactly what
  * it promises — this Task's final review belongs to this Reviewer Role — and
  * never the runtime that happened to establish it.
+ *
+ * It carries no record version tag: its required fields are its whole shape, so
+ * validating them is the same question a tag would ask. A tag earns its place
+ * only where a Home migration rewrites that record family and marks it.
  */
 export type TaskFinalReviewContract = Readonly<{
-  schemaVersion: 1;
   taskId: string;
   reviewerRoleName: string;
 }>;
@@ -31,7 +34,6 @@ export function createTaskFinalReviewContract(input: Readonly<{
     "Task final-review contract Reviewer Role"
   );
   return Object.freeze({
-    schemaVersion: 1,
     taskId,
     reviewerRoleName
   });
@@ -40,11 +42,12 @@ export function createTaskFinalReviewContract(input: Readonly<{
 export function validateTaskFinalReviewContract(
   value: TaskFinalReviewContract
 ): TaskFinalReviewContract {
-  if (typeof value !== "object" || value === null || value.schemaVersion !== 1) {
-    throw new Error("Task final-review contract must use schemaVersion 1.");
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Task final-review contract must be a record.");
   }
-  // A contract recorded by an earlier release also carried the runtime that
-  // established it. Those fields are historical evidence, never read again.
+  // A contract recorded by an earlier release also carried a version tag and the
+  // runtime that established it. Those fields are historical evidence and are
+  // never read again; the required fields below are the whole contract.
   createTaskFinalReviewContract(value);
   return value;
 }
