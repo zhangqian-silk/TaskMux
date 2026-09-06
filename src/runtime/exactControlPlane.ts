@@ -13,9 +13,13 @@ import {
   type YuiVersionIdentity
 } from "../version.js";
 
-export const EXACT_CONTROL_ARGUMENT = "--yui-control";
-export const YUI_CONTROL_PLANE_DESCRIPTOR = "YUI_CONTROL_PLANE_DESCRIPTOR";
-
+/**
+ * Provenance for one Session launch: which installation created it, at which
+ * Home, under which version identity. It is recorded as immutable audit
+ * material and is never a gate. Whether a command may run is proven against
+ * the current CLI, Home, and Controller, and who may act is proven by the
+ * Session Manifest plus the Session's caller key.
+ */
 export type ExactControlPlaneDescriptor = Readonly<{
   schemaVersion: 1;
   kind: "yui-control-plane";
@@ -31,14 +35,6 @@ export type ExactControlPlaneDescriptor = Readonly<{
   buildId?: string;
   /** Package SHA-256 of the active release, when known. */
   activeReleaseDigest?: string;
-}>;
-
-export type ExactControlPlanePreflightInput = Readonly<{
-  serializedDescriptor: string;
-  digest: string;
-  actualExecutable: string;
-  actualCliEntry: string;
-  actualHome: string;
 }>;
 
 export type ExactControlPlanePreflightOptions = Readonly<{
@@ -109,74 +105,6 @@ export function parseExactControlPlaneDescriptor(value: string): ExactControlPla
 
 export function exactControlPlaneDigest(descriptor: ExactControlPlaneDescriptor): string {
   return createHash("sha256").update(serializeExactDescriptor(descriptor)).digest("hex");
-}
-
-export function extractExactControlArgument(args: readonly string[]): Readonly<{
-  digest?: string;
-  args: readonly string[];
-  error?: string;
-}> {
-  const later = args.indexOf(EXACT_CONTROL_ARGUMENT);
-  if (later < 0) return { args: [...args] };
-  if (later !== 0) {
-    return {
-      args: [...args],
-      error: `${EXACT_CONTROL_ARGUMENT} must be the first CLI argument.`
-    };
-  }
-  const digest = args[1];
-  if (digest === undefined || !/^[a-f0-9]{64}$/u.test(digest)) {
-    return {
-      args: args.slice(2),
-      error: "Exact control-plane digest is invalid."
-    };
-  }
-  return { digest, args: args.slice(2) };
-}
-
-/**
- * One read-only gate shared by every managed Task control command. It verifies
- * the frozen executable/CLI/Home/digest, protocol and storage identity,
- * on-disk schema, and any live Controller before command routing may construct
- * a writable store. Package version alone may advance at the same managed path
- * so an existing Session can cross an explicitly compatible in-place update.
- */
-export async function assertExactControlPlanePreflight(
-  input: ExactControlPlanePreflightInput,
-  options: ExactControlPlanePreflightOptions = {}
-): Promise<ExactControlPlaneDescriptor> {
-  const descriptor = parseExactControlPlaneDescriptor(input.serializedDescriptor);
-  const frozenDigest = exactControlPlaneDigest(descriptor);
-  const requestedDigest = requireDigest(input.digest);
-  if (frozenDigest !== requestedDigest) {
-    throw new Error(
-      "Exact control-plane invocation names another runtime than this Session's frozen "
-        + `descriptor (requested ${requestedDigest}, Session ${frozenDigest}). `
-        + "Yui no longer pins package identity into a Session entry point: invoke the "
-        + "ordinary command for this Session, or start a new Session when the Session "
-        + "itself must move to a different runtime."
-    );
-  }
-  assertSamePath(
-    descriptor.executable,
-    input.actualExecutable,
-    "Control-plane executable"
-  );
-  assertSamePath(descriptor.cliEntry, input.actualCliEntry, "Control-plane CLI entry");
-  assertSamePath(descriptor.yuiHome, input.actualHome, "Control-plane YUI_HOME");
-
-  // A frozen descriptor can only assert what cannot legitimately change for a
-  // Session: which Home it belongs to, and which installation launched it. The
-  // protocol and storage numbers it also captured describe the world at launch
-  // time, and Yui upgrades that world on purpose. Asking today's Home to still
-  // match yesterday's snapshot would silence a healthy Session's callbacks the
-  // moment a migration lands, so runtime coherence is proven against the
-  // current CLI, Home, and Controller instead.
-  await assertCompatibleControlPlanePreflight(
-    { actualHome: descriptor.yuiHome },
-    options
-  );
-  return descriptor;
 }
 
 /**
@@ -301,13 +229,6 @@ function assertControllerField(
         + "Run controller restart through the matching exact control-plane invocation "
         + "before writing new Task records."
     );
-  }
-}
-
-function assertSamePath(expected: string, actual: string, label: string): void {
-  const normalized = canonicalPath(actual);
-  if (expected !== normalized) {
-    throw new Error(`${label} does not match the frozen control plane (expected ${expected}, found ${normalized}).`);
   }
 }
 

@@ -218,13 +218,8 @@ import {
 import { YUI_VERSION, yuiVersionIdentity } from "./version.js";
 import { SqliteSchemaMigrationError } from "./storage/sqliteSchema.js";
 import {
-  YUI_CONTROL_PLANE_DESCRIPTOR,
   assertCompatibleControlPlanePreflight,
-  assertExactControlPlanePreflight,
-  exactControlPlaneDigest,
-  extractExactControlArgument,
   createExactControlPlaneDescriptor,
-  parseExactControlPlaneDescriptor,
   type ExactControlPlaneDescriptor
 } from "./runtime/exactControlPlane.js";
 import {
@@ -252,8 +247,7 @@ import {
 } from "./workItem/workItem.js";
 
 const VERSION = YUI_VERSION;
-const exactControlInvocation = extractExactControlArgument(process.argv.slice(2));
-const taskFinalReviewInvocation = extractTaskFinalReviewRequest(exactControlInvocation.args);
+const taskFinalReviewInvocation = extractTaskFinalReviewRequest(process.argv.slice(2));
 const rawArgs = [...taskFinalReviewInvocation.args];
 const jsonOutput = rawArgs.includes("--json");
 const args = normalizeAliases(
@@ -294,8 +288,7 @@ export async function main(): Promise<void> {
   const home = resolveYuiHome(process.env);
   const routedForFence = args.length === 0 ? undefined : routeInvocation(args);
   const managedInvocation = process.env.YUI_SESSION_SCOPE === "task"
-    || process.env.YUI_SESSION_SCOPE === "global"
-    || process.env[YUI_CONTROL_PLANE_DESCRIPTOR] !== undefined;
+    || process.env.YUI_SESSION_SCOPE === "global";
   const homeFreeInvocation = args.length === 0
     || (args[0] === "version" && args.length === 1)
     || routedForFence?.kind === "help"
@@ -335,8 +328,7 @@ export async function main(): Promise<void> {
   }
   const {
     contract: taskFinalReviewContract,
-    verifiedStore,
-    controlPlane: exactCurrentControlPlane
+    verifiedStore
   } = await preflightManagedTaskControlPlane();
   if (args.length === 0) {
     emit(renderCommandHelp((await import("./cli/commandCatalog.js")).ROOT_COMMAND, VERSION));
@@ -1992,10 +1984,6 @@ function explicitReleaseActivationDriver(): string | null {
 
 type ManagedTaskControlPlanePreflight = Readonly<{
   contract: TaskFinalReviewContract | undefined;
-  controlPlane: Readonly<{
-    digest: string;
-    descriptor: ExactControlPlaneDescriptor;
-  }> | undefined;
   /**
    * The TaskStore instance the exact runtime preflight already opened and
    * read. A same-Home command reuses it instead of opening a second store, so
@@ -2007,77 +1995,37 @@ type ManagedTaskControlPlanePreflight = Readonly<{
 }>;
 
 async function preflightManagedTaskControlPlane(): Promise<ManagedTaskControlPlanePreflight> {
-  if (exactControlInvocation.error !== undefined) {
-    throw new Error(exactControlInvocation.error);
-  }
   if (taskFinalReviewInvocation.error !== undefined) {
     throw new Error(taskFinalReviewInvocation.error);
   }
-  const serializedControl = process.env[YUI_CONTROL_PLANE_DESCRIPTOR];
-  const exactAgentRuntime = serializedControl !== undefined;
-  if (process.env.YUI_SESSION_SCOPE === "task" && !exactAgentRuntime) {
-    throw new Error(
-      "Exact control-plane invocation requires its frozen descriptor in a managed Task runtime."
-    );
-  }
-  if (!exactAgentRuntime) {
-    if (exactControlInvocation.digest !== undefined
-      || process.env.YUI_SESSION_SCOPE === "global") {
-      return await preflightManagedGlobalControlPlane(exactControlInvocation.digest);
+  if (process.env.YUI_SESSION_SCOPE !== "task") {
+    if (process.env.YUI_SESSION_SCOPE === "global") {
+      return await preflightManagedGlobalControlPlane();
     }
     if (taskFinalReviewInvocation.request !== undefined) {
       throw new Error(
-        "Task final-review contract requires a verified exact Task control-plane invocation."
+        "Task final-review contract may only be established from the Task Leader's managed Session."
       );
     }
-    return { contract: undefined, controlPlane: undefined, verifiedStore: undefined };
+    return { contract: undefined, verifiedStore: undefined };
   }
-  if (process.env.YUI_SESSION_SCOPE !== "task") {
-    throw new Error("Exact Task control-plane invocation requires a managed Task runtime.");
-  }
-  if (serializedControl === undefined) {
-    throw new Error("Exact control-plane invocation is required for this managed Task runtime.");
-  }
-  const control = parseExactControlPlaneDescriptor(serializedControl);
   const internalCallback = args[0] === "internal"
     && ["agent-host", "session-notify", "runtime-hook"].includes(args[1] ?? "");
   const home = resolveYuiHome(process.env);
-  assertManagedSessionManifest(home, "task");
-  if (resolve(control.yuiHome) !== resolve(home)) {
-    throw new Error("Managed Task control-plane descriptor belongs to another YUI_HOME.");
-  }
-  const frozenDigest = exactControlPlaneDigest(control);
-  const exactCommand = internalCallback || exactControlInvocation.digest !== undefined;
-  let commandControl: ExactControlPlaneDescriptor;
-  let digest: string;
-  if (exactCommand) {
-    digest = exactControlInvocation.digest ?? frozenDigest;
-    await assertExactControlPlanePreflight({
-      serializedDescriptor: serializedControl,
-      digest,
-      actualExecutable: process.execPath,
-      actualCliEntry: fileURLToPath(import.meta.url),
-      actualHome: home
-    }, {
-      // Provider callbacks must remain able to append their immutable inbox fact
-      // while the Controller is offline. They still validate executable, CLI,
-      // Home, schema, and the exact Task runtime envelope first.
-      checkController: !internalCallback
-    });
-    commandControl = control;
-  } else {
-    await assertCompatibleControlPlanePreflight({ actualHome: home });
-    // Package/build identity is deliberately not part of ordinary Session
-    // continuity. Keep contracts on the Session's frozen digest while the
-    // current CLI is proven protocol/storage compatible.
-    commandControl = control;
-    digest = frozenDigest;
-  }
-  const verifiedStore = openCurrentTaskStore(control.yuiHome);
+  const manifest = assertManagedSessionManifest(home, "task");
+  // One gate for every managed command: the current CLI, Home, and Controller
+  // must agree. Internal callbacks must still be able to append their immutable
+  // fact while the Controller is offline.
+  await assertCompatibleControlPlanePreflight(
+    { actualHome: home },
+    { checkController: !internalCallback }
+  );
+  const digest = manifest.controlPlane.digest;
+  const verifiedStore = openCurrentTaskStore(home);
   // One authority for "may this process act as this Task Role?". Yui's own
-  // internal callbacks run in the Host process and authenticate through the
-  // exact control-plane digest verified above; an Agent command proves it is
-  // the Role's current runtime with its per-Session caller key. Nothing here
+  // internal callbacks run inside the Host process Yui itself launched; an Agent
+  // command proves it is the Role's current runtime with its per-Session caller
+  // key. Nothing here
   // gates on the current Turn: which Turn is active is durable state that the
   // command needing it reads, never a fact frozen into a process environment.
   const runtime: ManagedTaskCaller | undefined = internalCallback
@@ -2085,14 +2033,10 @@ async function preflightManagedTaskControlPlane(): Promise<ManagedTaskControlPla
     : requireManagedTaskCaller(verifiedStore, process.env);
   const request = taskFinalReviewInvocation.request;
   if (request === undefined) {
-    return {
-      contract: undefined,
-      controlPlane: { digest, descriptor: commandControl },
-      verifiedStore
-    };
+    return { contract: undefined, verifiedStore };
   }
   if (runtime === undefined || runtime.roleName !== "leader") {
-    throw new Error("Only the exact Task Leader invocation may establish a final-review contract.");
+    throw new Error("Only the Task Leader's managed Session may establish a final-review contract.");
   }
   if (request.taskId !== runtime.taskId) {
     throw new Error(
@@ -2120,29 +2064,15 @@ async function preflightManagedTaskControlPlane(): Promise<ManagedTaskControlPla
       // must not force a release rebind or invalidate delivery evidence.
       controlPlaneDigest: recordedContract?.controlPlaneDigest ?? digest
     }),
-    controlPlane: { digest, descriptor: commandControl },
     verifiedStore
   };
 }
 
-async function preflightManagedGlobalControlPlane(
-  digest?: string
-): Promise<ManagedTaskControlPlanePreflight> {
-  if (process.env.YUI_SESSION_SCOPE !== "global") {
-    throw new Error(
-      "A control-plane digest was supplied outside a managed Session runtime. "
-        + "Run the command through the Role's own Session entry point, or use the "
-        + "ordinary yui command."
-    );
-  }
+async function preflightManagedGlobalControlPlane(): Promise<ManagedTaskControlPlanePreflight> {
   if (taskFinalReviewInvocation.request !== undefined) {
     throw new Error(
-      "Task final-review contract establishment requires a verified exact Task control-plane invocation."
+      "Task final-review contract may only be established from the Task Leader's managed Session."
     );
-  }
-  const manifestPath = process.env.YUI_SESSION_MANIFEST;
-  if (manifestPath === undefined) {
-    throw new Error("Managed global control-plane invocation requires its Session Manifest.");
   }
   const home = resolveYuiHome(process.env);
   const manifest = assertManagedSessionManifest(home, "global");
@@ -2151,45 +2081,14 @@ async function preflightManagedGlobalControlPlane(
     || manifest.roleKind !== expectedRoleKind) {
     throw new Error("Managed global invocation does not match its Session Manifest.");
   }
-  const serializedDescriptor = readFileSync(manifest.controlPlane.descriptorPath, "utf8");
-  const descriptor = parseExactControlPlaneDescriptor(serializedDescriptor);
-  if (resolve(descriptor.yuiHome) !== resolve(home)) {
-    throw new Error("Managed global control-plane descriptor belongs to another YUI_HOME.");
-  }
-  const frozenDigest = exactControlPlaneDigest(descriptor);
-  if (frozenDigest !== manifest.controlPlane.digest
-    || resolve(manifest.controlPlane.descriptorPath) !== resolve(
-      join(descriptor.yuiHome, "runtime", "control-plane", `${frozenDigest}.json`)
-    )
-    || resolve(manifestPath) !== resolve(
-      join(descriptor.yuiHome, "runtime", "session-manifests", `${manifest.digest}.json`)
-    )) {
-    throw new Error("Exact global Session Manifest does not match its control-plane descriptor.");
-  }
-  let commandControl: ExactControlPlaneDescriptor;
-  let commandDigest: string;
-  if (digest !== undefined) {
-    await assertExactControlPlanePreflight({
-      serializedDescriptor,
-      digest,
-      actualExecutable: process.execPath,
-      actualCliEntry: fileURLToPath(import.meta.url),
-      actualHome: home
-    });
-    commandControl = descriptor;
-    commandDigest = digest;
-  } else {
-    await assertCompatibleControlPlanePreflight({ actualHome: home });
-    commandControl = currentInvocationControlPlane(home);
-    commandDigest = exactControlPlaneDigest(commandControl);
-  }
-  return {
-    contract: undefined,
-    controlPlane: { digest: commandDigest, descriptor: commandControl },
-    verifiedStore: openCurrentTaskStore(home)
-  };
+  await assertCompatibleControlPlanePreflight({ actualHome: home });
+  return { contract: undefined, verifiedStore: openCurrentTaskStore(home) };
 }
 
+/**
+ * The entry point the current invocation resolves to. Only its executable and
+ * CLI path are used, to retarget managed Session wrappers at this installation.
+ */
 function currentInvocationControlPlane(home: string): ExactControlPlaneDescriptor {
   return createExactControlPlaneDescriptor({
     executable: process.execPath,

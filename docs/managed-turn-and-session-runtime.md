@@ -147,15 +147,18 @@ ordinary Agent command is authorized by the compatible continuity contract plus
 the Session's caller key. Yui's own internal callbacks still authenticate against
 the exact frozen descriptor carried in the managed runtime environment.
 
-That frozen descriptor asserts only what cannot legitimately change for a
-Session: which Home it belongs to, and which installation launched it. It also
-captured the protocol and storage versions of the world at launch time, but Yui
-upgrades that world on purpose, so those numbers are never used as a gate.
-Runtime coherence is proven against the current CLI, Home, and Controller, which
-is what a storage migration keeps true. A Session therefore stays fully usable
-across an ordinary upgrade — including the internal callbacks that report its
-Turn terminals — while a real disagreement between CLI and Home still fails
-closed. An Agent never needs to know which storage version its Home is on.
+Nothing about a Session's launch-time snapshot gates a later command. One
+question has one authority: whether a command may run at all is proven against
+the current CLI, Home, and Controller; which Session and Role it speaks for is
+proven by the Session Manifest and the Session's caller key; what is currently
+true comes from durable Task, Role, and Turn records. The control-plane
+descriptor Yui records at launch is provenance for that launch, and Yui's own
+internal callbacks are trusted because they run inside the Host process Yui
+started, not because they replay a digest. A Session therefore stays fully usable
+across an ordinary upgrade — including the callbacks that report its Turn
+terminals — while a real disagreement between CLI and Home still fails closed.
+An Agent never needs to know which package version or storage version its Home
+is on.
 
 Before sending any input through a reused Agent Host, Yui requires the Host to
 acknowledge the requested `runtimeGenerationId` and an admissible Host state.
