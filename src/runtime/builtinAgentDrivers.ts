@@ -91,6 +91,11 @@ export const BUILTIN_AGENT_DRIVERS: readonly AgentDriver[] = Object.freeze([
     adapterId: "claude",
     capabilities: Object.freeze({
       ...STRUCTURED_CLI_CAPABILITIES,
+      input: Object.freeze({
+        ...STRUCTURED_CLI_CAPABILITIES.input,
+        // Serialized stream input is not exact native steering.
+        steer: "unavailable" as const
+      }),
       observation: Object.freeze({
         ...STRUCTURED_CLI_CAPABILITIES.observation,
         sessionBootstrap: "preallocated" as const,

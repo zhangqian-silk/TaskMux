@@ -298,8 +298,9 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
     if (taskId !== undefined) {
       const task = this.observer.getTask(taskId);
       if (task === null
-        || task.status !== "active"
-        || task.executionGate.state !== "enabled") return "obsolete";
+        || task.status === "archived"
+        || (!["turn.completed", "turn.failed", "turn.cancelled"].includes(event.observation.kind)
+          && (task.status !== "active" || task.executionGate.state !== "enabled"))) return "obsolete";
     }
     return this.observer.observeRuntimeObservation?.(event.observation, now) ?? "obsolete";
   }
@@ -871,8 +872,9 @@ export class AsyncRuntimeEventProcessor {
     if (taskId !== undefined) {
       const task = await this.observer.getTask(taskId);
       if (task === null
-        || task.status !== "active"
-        || task.executionGate.state !== "enabled") return "obsolete";
+        || task.status === "archived"
+        || (!["turn.completed", "turn.failed", "turn.cancelled"].includes(event.observation.kind)
+          && (task.status !== "active" || task.executionGate.state !== "enabled"))) return "obsolete";
     }
     const outcome = (await this.observer.observeRuntimeObservation?.(event.observation, now))
       ?? "obsolete";

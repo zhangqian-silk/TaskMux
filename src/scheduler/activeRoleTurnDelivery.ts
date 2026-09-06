@@ -121,7 +121,10 @@ async function deliverActiveTurn(
   if (currentProviderTurn !== null) {
     const reason = currentProviderTurn.terminalReason
       ?? `Provider Turn ended with status ${currentProviderTurn.status} without recording its Turn result.`;
-    return failTurnDelivery(store, turn, now, "missing-result", reason);
+    // A terminal Provider projection without an application result is a
+    // framework consistency failure, not evidence that the Agent omitted its
+    // report. Keep the exact input fenced; never submit it again.
+    return { ...base, status: "skipped", reason: "delivery-uncertain", error: reason };
   }
 
   const attemptId = initialAttemptId;

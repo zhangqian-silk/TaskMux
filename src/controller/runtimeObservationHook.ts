@@ -72,6 +72,7 @@ export async function runRuntimeObservationHookCommand(
     return;
   }
   const parsed = parseRuntimeObservationHook(stdinJson, environment, now, dependencies);
+  if (parsed.observations.length === 0) return;
   const inbox = new FileRuntimeEventInbox(parsed.home);
   for (const observation of parsed.observations) inbox.enqueueObservation(observation);
   // The immutable inbox write is authoritative. The socket call only reduces
@@ -170,6 +171,20 @@ export function parseRuntimeObservationHook(
   const driverId = requireIdentity(environment.YUI_DRIVER_ID, "Agent Driver id");
   const driver = drivers.require(driverId);
   const hookEventName = requireIdentity(payload.hook_event_name, "Agent Driver Hook event name");
+  if (environment.YUI_SESSION_SCOPE === "task" && driver.adapterId === "claude"
+    && environment.YUI_ADAPTER_ID === "claude") {
+    // Existing native Conversations may retain an old Yui observer plugin.
+    // Only the managed stream owns execution facts: Hooks do not expose its
+    // input attempt, and associating them with the currently active Turn can
+    // steal a successor's result. This observer is not a permission handler;
+    // Claude's configured tool policy and other user plugins remain intact.
+    return {
+      home: requireIdentity(environment.YUI_HOME, "YUI_HOME"),
+      taskId: requireIdentity(environment.YUI_TASK_ID, "Task id"),
+      roleName: requireIdentity(environment.YUI_ROLE, "Role name"),
+      observations: Object.freeze([])
+    };
+  }
   const receivedAt = now.toISOString();
   const sequence = (dependencies.sequence ?? monotonicSequence)();
   const occurrenceId = `${receivedAt}:${sequence}`;
@@ -220,7 +235,7 @@ export function parseRuntimeObservationHook(
       conversationId: fence.nativeSessionId,
       activationId: fence.runtimeGenerationId,
       nativeSessionId: fence.nativeSessionId,
-      nativeTurnId: nativeTurnId ?? fence.turnId,
+      ...(nativeTurnId === undefined ? {} : { nativeTurnId }),
       receiptId: fence.receiptId ?? formatTurnReceiptId(fence.taskId, fence.turnId)
     },
     payload

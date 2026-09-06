@@ -52,6 +52,7 @@ export {
   promptPushOutcome,
   RuntimeGenerationMismatchError,
   RuntimeHostContentionError,
+  RuntimeHostUnavailableError,
   RuntimeLaunchError,
   type RuntimeLaunchRetryReason,
   type RuntimeLaunchPersistence,

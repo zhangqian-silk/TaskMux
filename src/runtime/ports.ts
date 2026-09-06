@@ -27,9 +27,10 @@ export class RuntimeLaunchError extends Error {
     readonly retryable: boolean,
     readonly runtimeGenerationId: string,
     message: string,
-    readonly reason?: RuntimeLaunchRetryReason
+    readonly reason?: RuntimeLaunchRetryReason,
+    options?: ErrorOptions
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
@@ -59,6 +60,18 @@ export class RuntimeGenerationMismatchError extends Error {
     message: string
   ) {
     super(message);
+  }
+}
+
+/** A reused Host reported an unusable state; this operation did not create it. */
+export class RuntimeHostUnavailableError extends RuntimeLaunchError {
+  constructor(
+    runtimeGenerationId: string,
+    readonly hostState: string,
+    message: string,
+    options?: ErrorOptions
+  ) {
+    super(false, runtimeGenerationId, message, undefined, options);
   }
 }
 

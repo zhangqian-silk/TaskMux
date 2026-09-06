@@ -21,6 +21,8 @@ import { runtimeLifecycleSignalKey } from "../runtime/lifecycleReservation.js";
 import { isForeignHandoverLockHeld } from "../release/runtimeRelease.js";
 import { FileRuntimeEventInbox } from "./runtimeEventInbox.js";
 import { resolveRuntimeHookTurnFence } from "./runtimeHookTurnFence.js";
+import type { RuntimeHookTurnFence } from "./runtimeHookTurnFence.js";
+import { openCurrentTaskStore } from "../storage/currentTaskStore.js";
 
 let structuredSequence = 0;
 
@@ -98,39 +100,25 @@ export async function publishStructuredProviderAccepted(input: Readonly<{
     driverId: driver.id,
     runtimeGenerationId: fence.runtimeGenerationId,
     conversationId: input.receipt.conversationId,
-    activationId: requireIdentity(input.activationId, "Provider Activation id"),
+    activationId: executionActivationId(input.home, fence, input.activationId, input.receipt.nativeSessionId),
     nativeSessionId: input.receipt.nativeSessionId,
-    nativeTurnId: input.receipt.nativeTurnId,
+    ...(input.receipt.nativeTurnId === undefined ? {} : {
+      nativeTurnId: input.receipt.nativeTurnId
+    }),
     // The structured Host owns the exact input attempt identity. Runtime
     // descriptor receipts name the Turn bootstrap and must not overwrite a
     // continuation or human-takeover Turn.
     receiptId: input.receipt.attemptId
   };
   const baseSequence = nextStructuredSequence();
+  // Opening owns the Session/Activation lifecycle. A receipt arriving after
+  // its terminal must not reopen either lifecycle as an acceptance side effect.
   const observations = [observation({
-    kind: startupSession === "preallocated" ? "session.ready" : "session.started",
+    kind: "turn.accepted",
+    authority: input.receipt.acceptance === "transport" ? "transport" : "provider-structured",
     observedAt,
     sequence: baseSequence,
     ordinal: 0,
-    fence: commonFence
-  }), observation({
-    kind: "conversation.observed",
-    observedAt,
-    sequence: baseSequence,
-    ordinal: 1,
-    fence: commonFence,
-    payload: { recoverability: "recoverable" }
-  }), observation({
-    kind: "activation.started",
-    observedAt,
-    sequence: baseSequence,
-    ordinal: 2,
-    fence: commonFence
-  }), observation({
-    kind: "turn.accepted",
-    observedAt,
-    sequence: baseSequence,
-    ordinal: 3,
     fence: commonFence
   })];
   await persistAndApply(input.home, observations, fence.taskId, fence.roleName);
@@ -304,6 +292,7 @@ export async function publishStructuredProviderTerminal(input: Readonly<{
     {
       terminal: true,
       nativeTurnId: input.terminal.nativeTurnId,
+      attemptId: input.terminal.attemptId,
       ...(input.terminal.clientOwned ? {} : { sessionOnly: true })
     }
   );
@@ -316,7 +305,9 @@ export async function publishStructuredProviderTerminal(input: Readonly<{
         ...(input.terminal.input === undefined ? {} : { input: input.terminal.input }),
         ...(transported.status === "completed"
           ? { output: transported.output }
-          : { resultTransportDiagnostic: transported.diagnostic })
+          : transported.failureReason === "runtime-failed"
+            ? { resultTransportDiagnostic: transported.diagnostic }
+            : {})
       }
     : kind === "turn.failed"
       ? {
@@ -354,10 +345,14 @@ export async function publishStructuredProviderTerminal(input: Readonly<{
       driverId: driver.id,
       runtimeGenerationId: fence.runtimeGenerationId,
       conversationId: input.terminal.conversationId,
-      activationId: requireIdentity(input.activationId, "Provider Activation id"),
+      activationId: executionActivationId(input.home, fence, input.activationId, input.terminal.nativeSessionId),
       nativeSessionId: input.terminal.nativeSessionId,
-      nativeTurnId: input.terminal.nativeTurnId,
-      ...(fence.receiptId === undefined ? {} : { receiptId: fence.receiptId })
+      ...(input.terminal.nativeTurnId === undefined ? {} : {
+        nativeTurnId: input.terminal.nativeTurnId
+      }),
+      ...(input.terminal.attemptId === undefined
+        ? fence.receiptId === undefined ? {} : { receiptId: fence.receiptId }
+        : { receiptId: input.terminal.attemptId })
     },
     payload
   });
@@ -415,6 +410,7 @@ function observation(input: Readonly<{
   ordinal: number;
   fence: RuntimeObservation["fence"];
   payload?: RuntimeObservationPayload;
+  authority?: RuntimeObservation["authority"];
 }>): RuntimeObservation {
   const eventId = `agent-host-${randomUUID()}`;
   const partial = {
@@ -429,7 +425,7 @@ function observation(input: Readonly<{
     eventId,
     semanticKey: runtimeObservationSemanticKey(partial),
     kind: input.kind,
-    authority: "provider-structured",
+    authority: input.authority ?? "provider-structured",
     receivedAt: new Date().toISOString(),
     observedAt: input.observedAt,
     sequence: input.sequence,
@@ -455,6 +451,29 @@ function requireIdentity(value: unknown, label: string): string {
     throw new Error(`${label} is invalid.`);
   }
   return value.trim();
+}
+
+function executionActivationId(
+  home: string,
+  fence: RuntimeHookTurnFence,
+  sourceActivationId: string,
+  nativeSessionId: string
+): string {
+  const sourceId = requireIdentity(sourceActivationId, "Provider Activation id");
+  const store = openCurrentTaskStore(home);
+  try {
+    const binding = store.getTaskRoleSessionSet(fence.taskId, fence.roleName)?.providerBinding;
+    const source = binding?.activations.find(entry => entry.activationId === sourceId);
+    const original = binding?.activations.find(entry => entry.activationId === fence.runtimeGenerationId);
+    if (source?.conversationId !== nativeSessionId || original?.conversationId !== nativeSessionId) {
+      throw new Error("Structured execution observation source does not belong to its native Conversation.");
+    }
+    // A reattached collector can observe the old execution, but its current
+    // attachment must not replace that execution's durable Activation identity.
+    return original.activationId;
+  } finally {
+    store.close();
+  }
 }
 
 async function persistAndApply(

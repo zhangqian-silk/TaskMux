@@ -427,7 +427,12 @@ const SECRET_ASSIGNMENT_PATTERN = new RegExp(
 const AUTH_SCHEME_PATTERN =
   /((?:authorization|proxy-authorization)(?:\\?["']?\s*[=:]\s*\\?["']?)\s*)(basic|bearer|token|digest|negotiate)(\s+)[A-Za-z0-9._~+/=-]{4,}/gi;
 // Word boundary keeps "task-5-…" workspace paths from being mistaken for keys.
-const PROVIDER_KEY_PATTERN = /\b(?:sk|pat|ghp|gho|ghs|github_pat)-[A-Za-z0-9_-]{6,}/gu;
+const PROVIDER_KEY_PATTERN = /\b(?:(?:sk|pat)-|(?:ghp|gho|ghs|github_pat)_)[A-Za-z0-9_-]{6,}/gu;
+// Digest credentials are an entire parameter list, not a single scheme token.
+// Cover raw headers and escaped headers embedded in JSON error strings without
+// consuming the enclosing serialized error and its subsequent cause fields.
+const DIGEST_AUTH_PATTERN =
+  /((?:proxy-)?authorization(?:\\?["']?\s*[=:]\s*\\?["']?)\s*digest\s+)(?:[\w-]+\s*=\s*(?:\\"(?:[^"\\]|\\(?!"))*\\"|"(?:\\.|[^"\\])*"|'[^']*'|[^,\s"}]+)\s*(?:,\s*)?)+/gi;
 const BEARER_PATTERN = /\b(bearer\s+)[A-Za-z0-9._~+/-]{8,}=*/gi;
 
 /**
@@ -438,6 +443,7 @@ const BEARER_PATTERN = /\b(bearer\s+)[A-Za-z0-9._~+/-]{8,}=*/gi;
 export function redactAgentErrorText(value: string): string {
   return value
     .replace(PROVIDER_KEY_PATTERN, "[REDACTED]")
+    .replace(DIGEST_AUTH_PATTERN, "$1 [REDACTED]")
     .replace(AUTH_SCHEME_PATTERN, "$1$2$3[REDACTED]")
     .replace(BEARER_PATTERN, "$1[REDACTED]")
     .replace(QUOTED_SECRET_PATTERN, "$1$2$3[REDACTED]$5")

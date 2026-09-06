@@ -18,7 +18,7 @@ import type {
 import {
   RuntimeGenerationMismatchError,
   RuntimeHostContentionError,
-  RuntimeLaunchError,
+  RuntimeHostUnavailableError,
   promptPushOutcome,
   type ActivePromptPushPort,
   type ActivePromptPushRequest,
@@ -29,7 +29,7 @@ import {
   type SessionInspection
 } from "./ports.js";
 import {
-  providerDeliveryFailure,
+  providerDeliveryFailureFrom,
   type AgentErrorPhase,
   type ProviderDeliveryFailure
 } from "./agentError.js";
@@ -648,18 +648,13 @@ export class TmuxSessionHost implements SessionHostPort {
           broker.revoke(request.runtimeGenerationId);
         }
         // Identity and readiness are separate facts. Only a genuinely
-        // different generation is a conflict that must fail closed and stop
-        // the Host; a matching generation that is merely unsettled is this
+        // different generation is a conflict that must fail closed, not
+        // permission to stop the Host; a matching unsettled generation is this
         // exact activation still coming up, and stopping it would destroy a
         // healthy Session (and any Turn it is carrying).
         const observedGeneration = controlResult.snapshot.runtimeGenerationId;
         if (observedGeneration !== reservation.runtimeGenerationId) {
           broker.revoke(request.runtimeGenerationId);
-          try {
-            await stopExactRole(this.tmux, hostId, request.owner.roleName);
-          } catch {
-            // The coordinator will enqueue durable owner cleanup.
-          }
           throw new RuntimeGenerationMismatchError(
             reservation.runtimeGenerationId,
             observedGeneration,
@@ -687,18 +682,15 @@ export class TmuxSessionHost implements SessionHostPort {
               } on this exact generation${describeHostFailure(controlResult)}.`
             );
           }
-          // rejected/failed/exited: this activation is conclusively unusable.
-          try {
-            await stopExactRole(this.tmux, hostId, request.owner.roleName);
-          } catch {
-            // The coordinator will enqueue durable owner cleanup.
-          }
-          throw new RuntimeLaunchError(
-            false,
+          // This launch is unusable. It did not create this Host, so failure
+          // is not authority to clean its resources or unknown execution.
+          throw new RuntimeHostUnavailableError(
             reservation.runtimeGenerationId,
+            controlResult.snapshot.state,
             `Agent Host reached ${controlResult.snapshot.state} for ${
               reservation.runtimeGenerationId
-            }${describeHostFailure(controlResult)}.`
+            }${describeHostFailure(controlResult)}.`,
+            { cause: controlResult.failure ?? controlResult.snapshot }
           );
         }
         providerSnapshot = controlResult.snapshot;
@@ -966,9 +958,7 @@ function transportFailureOutcome(
   const unreachable = code === "ENOENT" || code === "ECONNREFUSED";
   return promptPushOutcome(
     unreachable ? "unavailable" : "delivery-unknown",
-    providerDeliveryFailure({
-      detail: error instanceof Error ? error.message : String(error),
-      ...(error instanceof Error ? { errorName: error.name } : {}),
+    providerDeliveryFailureFrom(error, {
       phase,
       attemptId,
       inputDisposition: unreachable ? "not-accepted" : "unknown"

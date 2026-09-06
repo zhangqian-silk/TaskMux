@@ -686,6 +686,16 @@ const MIGRATIONS: readonly StorageMigration[] = Object.freeze([
     name: "v0.15.0-baseline",
     introducedIn: "0.15.0",
     sql: MIGRATION_1_SQL
+  },
+  {
+    version: 2,
+    name: "exact-attempt-result-identity",
+    introducedIn: "0.15.1",
+    // Additive payload contract: accepted inputs and results can carry only
+    // an exact attempt when the protocol supplies no native Turn id.
+    // All valid v1 records remain valid, including historical opaque ids.
+    // Do not rewrite failed Turns, synthetic historical identities, or logs.
+    sql: "SELECT 1; -- exact attempt identity without a fabricated native Turn id"
   }
 ]);
 

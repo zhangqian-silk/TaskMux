@@ -48,7 +48,9 @@ export type TurnProviderResult = Readonly<{
   accountScope: string;
   conversationId: string;
   activationId: string;
-  nativeTurnId: string;
+  nativeTurnId?: string;
+  /** Exact local input identity; never masquerades as a Provider Turn id. */
+  attemptId?: string;
   status: "completed" | "failed" | "cancelled";
 }>;
 
@@ -518,7 +520,11 @@ function validateTurnProviderResult(
   requireText(provider.accountScope, "Provider account scope");
   requireText(provider.conversationId, "Provider Conversation id");
   requireText(provider.activationId, "Provider Activation id");
-  requireText(provider.nativeTurnId, "Provider native Turn id");
+  if (provider.nativeTurnId !== undefined) requireText(provider.nativeTurnId, "Provider native Turn id");
+  if (provider.attemptId !== undefined) requireText(provider.attemptId, "Provider attempt id");
+  if (provider.nativeTurnId === undefined && provider.attemptId === undefined) {
+    throw new Error("Provider result requires a native Turn or exact attempt identity.");
+  }
   if (!["completed", "failed", "cancelled"].includes(provider.status)) {
     throw new Error(`Provider Turn result status is invalid: ${String(provider.status)}.`);
   }
