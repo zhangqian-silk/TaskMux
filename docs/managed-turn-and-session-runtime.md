@@ -137,6 +137,16 @@ Session remains the way to apply the change immediately. Runtime status shows th
 Session's launch revision next to the desired revision, so the pending
 divergence stays visible until the next activation.
 
+The same rule governs a Session's own entry point. A managed Session invokes Yui
+through the wrapper its Manifest names, because a Provider command runner may
+rebuild `PATH` and a bare `yui` could resolve to another install or Home. That
+wrapper carries only the resolved entry point, never a package or build identity:
+version identity changes on every release while a Session legitimately outlives
+it. A compatible update retargets those wrappers to the activated install, and an
+ordinary Agent command is authorized by the compatible continuity contract plus
+the Session's caller key. Yui's own internal callbacks still authenticate against
+the exact frozen descriptor carried in the managed runtime environment.
+
 Before sending any input through a reused Agent Host, Yui requires the Host to
 acknowledge the requested `runtimeGenerationId` and an admissible Host state.
 An acknowledgement for another generation, or an otherwise invalid

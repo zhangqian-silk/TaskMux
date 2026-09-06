@@ -4,7 +4,6 @@ import { dirname, join, resolve } from "node:path";
 
 import type { ExactControlPlaneDescriptor } from "../runtime/exactControlPlane.js";
 import {
-  exactControlPlaneCommandPrefix,
   exactControlPlaneDigest,
   serializeExactDescriptor
 } from "../runtime/exactControlPlane.js";
@@ -61,10 +60,18 @@ export type SessionCliRefreshResult = Readonly<{
 
 const ordinarySessionCli = ["#!/bin/sh", "exec yui \"$@\"", ""].join("\n");
 
+/**
+ * A managed Session wrapper answers exactly one question: which installation
+ * runs this command. It therefore carries only the resolved entry point, never
+ * a package or build identity. Version identity changes on every release while
+ * a Session legitimately outlives it, so embedding it here would turn an
+ * ordinary update into a broken Session.
+ */
 function renderSessionCli(controlPlane: ExactControlPlaneDescriptor): string {
   return [
     "#!/bin/sh",
-    `exec ${exactControlPlaneCommandPrefix(controlPlane)} \"$@\"`,
+    `exec ${quoteShellWord(controlPlane.executable)} `
+      + `${quoteShellWord(controlPlane.cliEntry)} \"$@\"`,
     ""
   ].join("\n");
 }
@@ -152,9 +159,10 @@ export function materializeSessionBootstrap(input: Readonly<{
   writeImmutableText(descriptorPath, `${serializeExactDescriptor(input.controlPlane)}\n`);
 
   // Provider command runners may rebuild PATH independently of the managed
-  // process environment. Keep the Session entry point deterministic; the
-  // existing continuity preflight accepts compatible package replacement at
-  // this path without treating package version as Session identity.
+  // process environment, so a bare `yui` could resolve to another install or
+  // Home. The wrapper pins the resolved entry point instead. Package identity
+  // stays out of it: the compatible continuity preflight and the Session's
+  // caller key already authorize the command.
   const sessionCliContent = renderSessionCli(input.controlPlane);
   const sessionCliDigest = digest(sessionCliContent);
   const sessionCliPath = resolve(join(home, "runtime", "session-cli", `yui-${sessionCliDigest}.sh`));
@@ -259,7 +267,9 @@ function quoteShellWord(value: string): string {
 /**
  * Retargets known managed wrappers to the current resolved control plane after
  * a compatible update. Only a valid Session Manifest may nominate a wrapper,
- * and only Yui's ordinary or exact two-line wrapper shapes are changed.
+ * and only Yui's own two-line wrapper shapes are changed. A wrapper written by
+ * an earlier release may still pin a control-plane digest; retargeting it here
+ * is what removes that stale pin from a live Home.
  */
 export function refreshManagedSessionCliWrappers(
   homeInput: string,
@@ -308,7 +318,7 @@ export function refreshManagedSessionCliWrappers(
       current += 1;
       continue;
     }
-    if (content !== ordinarySessionCli && !isExactSessionCli(content)) {
+    if (content !== ordinarySessionCli && !isManagedSessionCli(content)) {
       skipped += 1;
       continue;
     }
@@ -319,8 +329,12 @@ export function refreshManagedSessionCliWrappers(
   return Object.freeze({ refreshed, current, skipped });
 }
 
-function isExactSessionCli(content: string): boolean {
-  return /^#!\/bin\/sh\nexec [^\n]+ '--yui-control' '[a-f0-9]{64}' "\$@"\n$/u.test(content);
+/**
+ * Both wrapper shapes Yui has written: the current entry-point-only form and
+ * the earlier form that also pinned a control-plane digest.
+ */
+function isManagedSessionCli(content: string): boolean {
+  return /^#!\/bin\/sh\nexec [^\n]+(?: '--yui-control' '[a-f0-9]{64}')? "\$@"\n$/u.test(content);
 }
 
 function writeImmutableText(path: string, content: string): void {

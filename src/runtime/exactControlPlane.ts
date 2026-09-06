@@ -111,17 +111,6 @@ export function exactControlPlaneDigest(descriptor: ExactControlPlaneDescriptor)
   return createHash("sha256").update(serializeExactDescriptor(descriptor)).digest("hex");
 }
 
-export function exactControlPlaneCommandPrefix(
-  descriptor: ExactControlPlaneDescriptor
-): string {
-  return [
-    descriptor.executable,
-    descriptor.cliEntry,
-    EXACT_CONTROL_ARGUMENT,
-    exactControlPlaneDigest(descriptor)
-  ].map(shellQuote).join(" ");
-}
-
 export function extractExactControlArgument(args: readonly string[]): Readonly<{
   digest?: string;
   args: readonly string[];
@@ -157,8 +146,16 @@ export async function assertExactControlPlanePreflight(
   options: ExactControlPlanePreflightOptions = {}
 ): Promise<ExactControlPlaneDescriptor> {
   const descriptor = parseExactControlPlaneDescriptor(input.serializedDescriptor);
-  if (exactControlPlaneDigest(descriptor) !== requireDigest(input.digest)) {
-    throw new Error("Exact control-plane digest does not match its frozen descriptor.");
+  const frozenDigest = exactControlPlaneDigest(descriptor);
+  const requestedDigest = requireDigest(input.digest);
+  if (frozenDigest !== requestedDigest) {
+    throw new Error(
+      "Exact control-plane invocation names another runtime than this Session's frozen "
+        + `descriptor (requested ${requestedDigest}, Session ${frozenDigest}). `
+        + "Yui no longer pins package identity into a Session entry point: invoke the "
+        + "ordinary command for this Session, or start a new Session when the Session "
+        + "itself must move to a different runtime."
+    );
   }
   assertSamePath(
     descriptor.executable,
