@@ -118,6 +118,25 @@ history, not the runtime generation. Yui changes the generation only when it
 establishes a new Host activation boundary; restoring a still-running exact
 Host retains its current generation.
 
+A Host activation id is therefore an opaque durable identity and never a digest
+of the launch configuration. Restoring a Session targets the activation recorded
+on the Role's Session; anything else would revive a historical activation. Only
+facts that make continuation impossible end a Session: no recoverable native
+Session, a different Agent or adapter, or a different physical workspace.
+Desired launch configuration such as model, effort, permission, Role context,
+Skills, or declared write scope shapes the next activation instead, exactly as a
+user editing that configuration would keep typing in the Session they already
+have. Turn-scoped facts—ReviewRound identity, candidate commits, workspace base
+commits, desired-revision bookkeeping—never affect activation reuse.
+
+Because a live Session keeps the configuration it started with, the divergence
+is reported where the configuration changes: `config role update`, `task role
+update`, and `config agent update` refuse once with the affected Session's facts
+and require `--yes` to record the change and keep that Session. Stopping the
+Session remains the way to apply the change immediately. Runtime status shows the
+Session's launch revision next to the desired revision, so the pending
+divergence stays visible until the next activation.
+
 Before sending any input through a reused Agent Host, Yui requires the Host to
 acknowledge the requested `runtimeGenerationId` and an admissible Host state.
 An acknowledgement for another generation, or an otherwise invalid

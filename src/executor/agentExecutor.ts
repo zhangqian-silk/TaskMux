@@ -6,8 +6,7 @@ import {
   validateRecentTurnIds
 } from "../runtime/recentTurnIds.js";
 import {
-  effectiveLaunchSnapshotsCompatible,
-  effectiveLaunchSnapshotsCompatibleForTaskSession,
+  roleSessionMayContinue,
   validateEffectiveLaunchSnapshot,
   type EffectiveLaunchSnapshot
 } from "./effectiveLaunch.js";
@@ -189,10 +188,11 @@ export function recordRoleAgentSession<TSet extends RoleSessionSet>(
     throw new Error(`Role Agent session effective identity is inconsistent: ${agentId}.`);
   }
   if (existing !== undefined && existing.nativeSessionId === nativeSessionId
-    && !effectiveLaunchSnapshotsCompatible(existing.effective, effective)
-    && !(set.owner.scope === "task"
-      && effectiveLaunchSnapshotsCompatibleForTaskSession(existing.effective, effective))) {
-    throw new Error(`Role Agent session effective launch cannot change: ${agentId}.`);
+    && !roleSessionMayContinue(existing.effective, effective)) {
+    throw new Error(
+      `Role Agent session cannot continue under this launch: ${agentId}. `
+      + "Its Agent, adapter or physical workspace changed."
+    );
   }
   if (existing !== undefined && existing.nativeSessionId !== nativeSessionId
     && existing.status === "active") {
@@ -455,13 +455,11 @@ export function roleAgentSessionResumeMode(
   if (session.status === "ended") {
     return "new";
   }
-  const compatible = set.owner.scope === "task"
-    ? effectiveLaunchSnapshotsCompatibleForTaskSession(session.effective, desired)
-    : effectiveLaunchSnapshotsCompatible(session.effective, desired);
-  if (compatible) return "resume";
+  if (roleSessionMayContinue(session.effective, desired)) return "resume";
   throw new Error(
-    `Role Agent session is incompatible with the next effective launch: ${agentId}. `
-    + "Stop the existing native process before starting a fresh Session."
+    `Role Agent session cannot continue under the next launch: ${agentId}. `
+    + "Its Agent, adapter or physical workspace changed; stop the existing native "
+    + "process before starting a fresh Session."
   );
 }
 

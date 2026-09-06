@@ -64,6 +64,14 @@ const AGENT_CONFIG_OPTIONS = new Set([
   ...AGENT_CLEAR_OPTIONS.map(([option]) => option)
 ]);
 
+/** Options that select a target or acknowledge a fact instead of changing the Role. */
+const NON_MUTATING_OPTIONS: readonly string[] = ["--agent", "--yes"];
+
+/** Whether the parsed options change nothing about the Role itself. */
+export function hasNoRoleMutation(parsed: ParsedRoleOptions): boolean {
+  return [...parsed.seen].every((option) => NON_MUTATING_OPTIONS.includes(option));
+}
+
 export function roleOptionSpecs(input: Readonly<{
   update: boolean;
   includeAgent?: boolean;
@@ -86,6 +94,7 @@ export function roleOptionSpecs(input: Readonly<{
   return new Map<string, RoleOptionKind>([
     ...(input.includeAgent === true ? [["--agent", "value"] as const] : []),
     ...(input.includeWorkspace === true ? [["--workspace", "value"] as const] : []),
+    ...(input.update ? [["--yes", "flag"] as const] : []),
     ...PROFILE_OPTIONS,
     ...agentValueOptions,
     ...agentRepeatableOptions,

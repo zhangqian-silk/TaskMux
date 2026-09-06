@@ -603,7 +603,11 @@ future launch. Each Turn and native Role Session stores the complete actual
 agent, adapter, model, effort, Profile access intent, exact writable Projects,
 permission strategy and native options, workspace, context, and source desired revision. Updating,
 switching, or clearing Role overrides never
-hot-mutates an existing process. `task context`, Role views, Turn history,
+hot-mutates an existing process. When the Role has a live Session,
+`task role update`, `config role update`, and `config agent update` report that
+Session once and require `--yes`, so the change is recorded in the knowledge
+that it applies to the next activation; stopping the Session applies it
+immediately instead. `task context`, Role views, Turn history,
 Events, and Web show desired/effective revisions, Profile intent, permission, and
 pending next-launch drift.
 
@@ -948,12 +952,17 @@ that evidence, and unreadable state is an error rather than proof of exit.
 An explicit launch can rebuild the exact dead window; tmux refuses to replace
 a live pane. An unidentified live Operator still cannot be overwritten.
 
-The Role's active binding is desired state for the next compatible launch. A
+The Role's active binding is desired state for the next launch. A
 running Turn and its native Session continue under their immutable
-effective snapshot even if the Role is edited or switched. Resume is allowed
-only when the complete effective snapshot and workspace remain compatible;
-otherwise Yui starts a new Session after the old process has stopped and keeps
-the terminal Session's immutable effective snapshot in history. Managed
+effective snapshot even if the Role is edited or switched. Resume is refused
+only when continuation is impossible: no recoverable native Session, a
+different Agent or adapter, or a different physical workspace. Desired launch
+configuration such as model, effort, permission, Role context, Skills, or
+declared write scope shapes the next activation instead of ending the Session,
+and Turn-scoped facts such as ReviewRound identity or candidate commits never
+affect reuse. When continuation is impossible Yui starts a new Session after
+the old process has stopped and keeps the terminal Session's immutable
+effective snapshot in history. Managed
 Sessions invoke the ordinary `yui` command; their Manifest and durable
 Role/Turn fences authenticate scope while protocol and storage compatibility
 allow a CLI package or Controller upgrade in place. Exact internal callbacks

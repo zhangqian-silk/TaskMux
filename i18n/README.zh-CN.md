@@ -622,6 +622,8 @@ Task 生命周期的交互选择只展示有效来源状态：activate 只展示
 
 Session、Activation 与 Turn 是独立身份。Session 可以跨多个 Turn 和客户端连接；Activation 只代表 Yui 当前的连接，而不是对 Provider thread 的独占所有权。每次 Provider 执行对应一个持久 Turn；写入超时或结果不明确会进入 `delivery-unknown`，不会自动重发。Codex 已存在的 active Turn 只会让 Yui 暂时等待，不会导致待投递 Turn 失败；Claude 等独立进程 Provider 继续通过 Yui 的 view/takeover 边界进行人工控制。
 
+恢复只在真的续不下去时被拦住：provider 侧没有可恢复的 Session、换了 Agent 或适配器、换了物理工作区。模型、推理强度、权限策略、Role 说明与 Skill、声明的写范围只决定下一次 activation 用什么，审查轮次、候选 commit、工作区基线这类每轮事实不影响复用。因此当 Role 存在活跃 Session 时，`task role update`、`config role update`、`config agent update` 会先报告该 Session 并要求 `--yes` 确认；需要立刻生效则先停止该 Session。
+
 Turn 是 Role 是否有工作正在执行的唯一持久调度状态，记录可见输入、来源/渠道与最终回复，不复制思考过程或工具调用。所有经 Yui 中转或生成的输入统一使用 `source: yui`；Provider UI 中直接输入的消息使用 `source: user`；显式 Goal continuation 使用 `source: provider`。Provider Turn 终态后 Yui 完成该 Turn，再把下一个 Turn 投递到同一 Session。TaskRole 本身只保存身份和期望启动配置，不再保存可写的运行状态；CLI/Web 展示的 Role 状态由活动 Turn 派生，并叠加 Session/Driver 生命周期事实用于诊断。
 
 Goal 是 Session 级显式 Provider 事实，可以跨越多个 Turn。Codex 通过 Goal API/事件提供，Claude 通过 `active_goal` 提供；Yui 不用静默等待来猜测 Goal 是否完成。Turn 结束不等于 Goal、WorkItem 或 Task 完成，只有 Leader 更新 WorkItem 与 Task 的持久语义。

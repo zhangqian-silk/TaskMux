@@ -199,7 +199,7 @@ const agentChildren: readonly NodeInput[] = [
     name: "update",
     summary: "Update a configured Agent.",
     usage: "yui config agent update <id> [--adapter <adapter>] [--command <command>] [--arg <arg> ... | --clear-args] [--env TARGET=PROCESS_NAME ... | --clear-env]",
-    options: ["--adapter", "--command", "--arg", "--clear-args", "--env", "--clear-env"],
+    options: ["--adapter", "--command", "--arg", "--clear-args", "--env", "--clear-env", "--yes"],
     optionValues: { "--adapter": supportedAgentAdapterIds() },
     executableOptions: ["--command"]
   },
@@ -253,7 +253,7 @@ const roleChildren: readonly NodeInput[] = [
     summary: "Update a global Role.",
     usage: "yui config role update <name> [profile options] [clear options]",
     options: ["--agent", "--workspace", ...roleProfileOptions, ...roleAgentOptions,
-      ...roleProfileClearOptions, ...roleAgentClearOptions],
+      ...roleProfileClearOptions, ...roleAgentClearOptions, "--yes"],
     optionValues: roleAgentOptionValues,
     fileOptions: ["--workspace"]
   },
@@ -665,7 +665,7 @@ const taskChildren: readonly NodeInput[] = [
         summary: "Update a Task Role; Agent settings target the named or active binding without switching it.",
         usage: "yui task role update <task> <role> [--profile <id>] [--agent <id>] [Role and Agent settings]",
         options: ["--profile", "--agent", ...roleProfileOptions, ...roleAgentOptions,
-          ...roleProfileClearOptions, ...roleAgentClearOptions],
+          ...roleProfileClearOptions, ...roleAgentClearOptions, "--yes"],
         optionValues: roleAgentOptionValues
       },
       { name: "remove", summary: "Remove a Task Role.", usage: "yui task role remove <task> <role>" },
@@ -1220,7 +1220,7 @@ export const ROOT_COMMAND = buildNode({
         ...CONFIG_DOMAINS.map(durableConfigDomainNode),
         {
           name: "agent",
-          summary: "Manage configured native Agent CLIs; launch-setting changes require affected Sessions to be stopped.",
+          summary: "Manage configured native Agent CLIs; launch-setting changes apply to the next Session activation.",
           examples: ["yui config agent list", "yui config agent capabilities codex"],
           sections: [
             { id: "inspect", title: "Inspect", entries: ["list", "show", "capabilities"] },
@@ -1240,7 +1240,7 @@ export const ROOT_COMMAND = buildNode({
         },
         {
           name: "role",
-          summary: "Manage reusable global Roles and desired Agent launch configuration for the next compatible Session.",
+          summary: "Manage reusable global Roles and desired Agent launch configuration for the next Host activation.",
           examples: ["yui config role list", "yui config role show operator"],
           sections: [
             { id: "inspect", title: "Inspect", entries: ["list", "show"] },

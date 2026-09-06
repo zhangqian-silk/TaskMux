@@ -7,7 +7,6 @@ import {
   resolveTmuxBin,
   resolveTmuxHistoryLimit
 } from "../config/yuiConfig.js";
-import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { controllerSocketPath } from "../core/controllerEndpoint.js";
@@ -35,8 +34,7 @@ import {
   roleAgentSessionResumeMode
 } from "../executor/agentExecutor.js";
 import {
-  effectiveLaunchSnapshotsCompatible,
-  effectiveLaunchSnapshotsCompatibleForTaskSession,
+  roleSessionMayContinue,
   effectiveLaunchConfig,
   resolveEffectiveLaunch,
   type EffectiveLaunchSnapshot
@@ -47,7 +45,6 @@ import {
 } from "../executor/agentConfigurationCatalog.js";
 import {
   isTaskOwnedWorkspace,
-  managedWorkspaceIdentity,
   sameManagedWorkspaceIdentity
 } from "../worktree/managedWorkspace.js";
 import { FileRoleLaunchPlanner } from "../executor/fileRoleLaunchPlanner.js";
@@ -382,9 +379,6 @@ export async function startFileTaskControllerRuntime(
       assertCurrent: (request) => {
         assertRuntimeLaunchRequestCurrent(store, request);
       },
-      launchFingerprint: (request) => (
-        runtimeLaunchFingerprint(store, request)
-      ),
       onCleanupRequired: signalRuntimeCleanup,
       runtimeIsolation
     }
@@ -707,9 +701,6 @@ export function createRuntimeLifecycleDispatcher(
       assertCurrent: (request) => {
         assertRuntimeLaunchRequestCurrent(store, request);
       },
-      launchFingerprint: (request) => (
-        runtimeLaunchFingerprint(store, request)
-      ),
       onCleanupRequired
     });
   const lifecycleTails = new Map<string, Promise<void>>();
@@ -1144,14 +1135,21 @@ function assertRuntimeLaunchRequestCurrent(
       || session.nativeSessionId !== request.nativeSessionId) {
       throw new Error(`Native session changed: ${request.owner.roleName}.`);
     }
-    const sessionEffectiveCompatible = request.owner.scope === "task"
-      ? effectiveLaunchSnapshotsCompatibleForTaskSession(
-          session.effective,
-          request.effective
-        )
-      : effectiveLaunchSnapshotsCompatible(session.effective, request.effective);
-    if (!sessionEffectiveCompatible) {
-      throw new Error(`Native session effective launch changed: ${request.owner.roleName}.`);
+    // The Role's durable Session record is the only authority for which Host
+    // activation may be restored. Targeting anything else would revive a
+    // historical activation.
+    if (request.hostActivationId !== undefined
+      && session.runtimeGenerationId !== request.hostActivationId) {
+      throw new Error(
+        `Session restore does not target the Role's current Host activation: ${
+          request.owner.roleName
+        }.`
+      );
+    }
+    if (!roleSessionMayContinue(session.effective, request.effective)) {
+      throw new Error(
+        `Native session cannot continue under this launch: ${request.owner.roleName}.`
+      );
     }
   }
 }
@@ -1179,25 +1177,6 @@ function currentDesiredEffective(
     ...(workspace === undefined ? {} : { workspace }),
     ...(item === null ? {} : { workItemWriteProjectIds: item.writeProjectIds })
   });
-}
-
-function runtimeLaunchFingerprint(
-  store: TaskStore,
-  request: CoordinatedRuntimeLaunchRequest
-): string {
-  const agent = store.getConfiguredAgent(request.effective.agentId);
-  if (agent === null) {
-    throw new Error(`Agent no longer exists: ${request.effective.agentId}.`);
-  }
-  return createHash("sha256").update(JSON.stringify([
-    request.owner,
-    request.effective,
-    request.managedWorkspace === undefined
-      ? undefined
-      : managedWorkspaceIdentity(request.managedWorkspace),
-    request.runtimePolicy,
-    agent
-  ])).digest("hex");
 }
 
 function currentDesiredManagedWorkspace(

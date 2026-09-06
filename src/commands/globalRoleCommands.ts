@@ -27,6 +27,7 @@ import type {
 } from "./agentCommands.js";
 import {
   hasAgentConfigOptions,
+  hasNoRoleMutation,
   parseRoleOptions,
   patchRoleAgentBinding,
   roleOptionSpecs,
@@ -38,7 +39,9 @@ import {
   validateConfiguredRoleSkills
 } from "./roleSkillValidation.js";
 import {
+  assertLiveRoleSessionAcknowledged,
   assertRoleRuntimeMutationAllowed,
+  LIVE_SESSION_ACKNOWLEDGEMENT_OPTION,
   type RoleRuntimeGuardStore
 } from "./roleRuntimeGuard.js";
 
@@ -262,7 +265,7 @@ function updateRole(
   if (parsed.has("--workspace") && trimmed(parsed.one("--workspace")) === undefined) {
     throw usageError("--workspace is required.");
   }
-  if ([...parsed.seen].every((option) => option === "--agent")) {
+  if (hasNoRoleMutation(parsed)) {
     throw usageError("At least one role update option is required.");
   }
   const workspace = trimmed(parsed.one("--workspace"));
@@ -275,6 +278,14 @@ function updateRole(
         scope: "global",
         roleName: role.name
       }, "desired launch configuration update");
+      assertLiveRoleSessionAcknowledged({
+        sessions: tx.getGlobalRoleSessionSet(role.name),
+        roleName: role.name,
+        desiredRevision: role.launchRevision,
+        acknowledged: parsed.has(LIVE_SESSION_ACKNOWLEDGEMENT_OPTION),
+        stopCommand: "yui session stop --all",
+        endsSession: workspace !== undefined && workspace !== role.workspace
+      });
     }
     let bindings = role.agentBindings;
     if (changesAgentConfig) {

@@ -776,7 +776,7 @@ test("a reused Host generation mismatch is terminal and settles the stale reserv
     "/tmp/yui-generation-mismatch",
     now
   );
-  const runtimeGenerationId = "runtime-fingerprint:generation:existing";
+  const runtimeGenerationId = "runtime-existing";
   let inspectCount = 0;
   let settled = 0;
   let cleanup = 0;
@@ -802,7 +802,7 @@ test("a reused Host generation mismatch is terminal and settles the stale reserv
     restore: async () => {
       throw new RuntimeGenerationMismatchError(
         runtimeGenerationId,
-        "runtime-fingerprint:generation:other",
+        "runtime-other",
         "ready",
         "generation acknowledgement mismatch"
       );
@@ -816,7 +816,6 @@ test("a reused Host generation mismatch is terminal and settles the stale reserv
     stopOwner: async () => true
   }, {
     createGenerationId: () => "new",
-    launchFingerprint: () => "fingerprint",
     now: () => now
   });
 
