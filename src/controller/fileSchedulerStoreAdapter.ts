@@ -1315,9 +1315,14 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
           agentId: run?.effective.agentId ?? sessions.activeAgentId,
           adapterId: run?.effective.adapterId ?? session?.adapterId ?? "unknown",
           driverId: driver?.id ?? "unknown",
-          runtimeGenerationId: session?.runtimeGenerationId ?? "",
-          nativeSessionId: session?.nativeSessionId ?? "",
-          nativeTurnId: "",
+          // No native Turn exists at submission resolution, and the Session
+          // facts may be absent. An unknown fact is an absent key: an empty
+          // string reads back as a real value and cannot be told apart from
+          // one the Provider genuinely reported.
+          ...optionalEventFields({
+            runtimeGenerationId: session?.runtimeGenerationId,
+            nativeSessionId: session?.nativeSessionId
+          }),
           source: error.source,
           phase: error.phase,
           category: error.category,
@@ -1418,6 +1423,13 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
     raw: string;
     inputDisposition?: import("../runtime/agentError.js").AgentErrorInputDisposition;
     sessionDisposition?: import("../runtime/agentError.js").AgentErrorSessionDisposition;
+    errorName?: string;
+    causeName?: string;
+    expectedRuntimeGenerationId?: string;
+    observedRuntimeGenerationId?: string;
+    attemptId?: string;
+    registrationDisposition?:
+      import("../runtime/agentError.js").AgentErrorRegistrationDisposition;
   }>, now: Date): string {
     return this.store.transaction((store) => {
       const duplicate = [...store.listEvents(input.taskId)].reverse().find((event) => (
@@ -1463,9 +1475,6 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
           agentId: run?.effective.agentId ?? session?.agentId ?? "unknown",
           adapterId: run?.effective.adapterId ?? session?.adapterId ?? "unknown",
           driverId: driver?.id ?? "unknown",
-          runtimeGenerationId: session?.runtimeGenerationId ?? "",
-          nativeSessionId: session?.nativeSessionId ?? "",
-          nativeTurnId: "",
           source: error.source,
           phase: error.phase,
           category: error.category,
@@ -1473,7 +1482,23 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
           message: error.message,
           raw: error.raw,
           inputDisposition: error.inputDisposition,
-          sessionDisposition: error.sessionDisposition
+          sessionDisposition: error.sessionDisposition,
+          // Structured facts from the failing operation. Absent keys stay
+          // absent rather than becoming an empty string, so a reader can tell
+          // "the Host did not report this" from "the Host reported nothing".
+          // The Session identities follow the same rule: this failure can
+          // happen before any Session record exists, and there is no native
+          // Turn to name at all.
+          ...optionalEventFields({
+            runtimeGenerationId: session?.runtimeGenerationId,
+            nativeSessionId: session?.nativeSessionId,
+            errorName: input.errorName,
+            causeName: input.causeName,
+            expectedRuntimeGenerationId: input.expectedRuntimeGenerationId,
+            observedRuntimeGenerationId: input.observedRuntimeGenerationId,
+            attemptId: input.attemptId,
+            registrationDisposition: input.registrationDisposition
+          })
         },
         now
       );
@@ -4067,6 +4092,22 @@ function turnLaunchEventPayload(turn: Turn): Record<string, string> {
     effectivePermission: turn.effective.permission.strategy,
     writeProjectIds: turn.effective.writeProjectIds.join(",") || "none"
   };
+}
+
+/**
+ * Keeps only the fields the caller actually knew. Event payloads are a
+ * string map, so an unknown fact has to be an absent key: writing `""` would
+ * claim the Host reported an empty value.
+ */
+function optionalEventFields(
+  fields: Readonly<Record<string, string | undefined>>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === "string" && entry[1].trim().length > 0
+    )
+  );
 }
 
 function runtimeObservationTelemetryEntry(

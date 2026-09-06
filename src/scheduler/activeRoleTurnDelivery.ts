@@ -5,9 +5,20 @@ import {
 } from "../executor/effectiveLaunch.js";
 import { RuntimeLifecycleBusyError } from "../runtime/lifecycleReservation.js";
 import { managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
-import { serializeAgentErrorRaw } from "../runtime/agentError.js";
+import {
+  formatProviderDeliveryFailure,
+  innermostCauseName,
+  serializeAgentErrorRaw,
+  type AgentErrorRegistrationDisposition,
+  type AgentErrorSessionDisposition,
+  type ProviderDeliveryFailure
+} from "../runtime/agentError.js";
 import { RuntimeLaunchFailure } from "../runtime/launchDiagnostics.js";
-import { RuntimeLaunchError, type RuntimeLaunchPreflight } from "../runtime/ports.js";
+import {
+  RuntimeGenerationMismatchError,
+  RuntimeLaunchError,
+  type RuntimeLaunchPreflight
+} from "../runtime/ports.js";
 import { formatTurnReceiptId } from "../task/taskRecordReference.js";
 import { turnInputEnvelope } from "../turn/turn.js";
 import {
@@ -176,34 +187,64 @@ async function deliverActiveTurn(
       text: serializeTurnInputEnvelope(turnInputEnvelope(turn))
     });
 
-    if (outcome === "busy" || outcome === "unavailable") {
+    if (outcome.status === "busy" || outcome.status === "unavailable") {
       forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
       return {
         ...base,
         status: "skipped",
-        reason: outcome === "busy" ? "not-ready" : "runtime-unavailable"
+        reason: outcome.status === "busy" ? "not-ready" : "runtime-unavailable"
       };
     }
-    if (outcome === "rejected" || outcome === "delivery-unknown") {
+    if (outcome.status === "rejected" || outcome.status === "delivery-unknown") {
       forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
+      const unknown = outcome.status === "delivery-unknown";
+      const failure = outcome.failure;
+      // The Host's own account of the failure. Without it the only honest
+      // statement is that delivery did not complete — never that the Provider
+      // rejected the input, which is one specific cause among many.
+      const cause = failure === undefined
+        ? `The Agent Host did not deliver the managed Turn (${outcome.status}) and reported no cause.`
+        : formatProviderDeliveryFailure(failure);
+      // This path is the common Provider write failure and previously left no
+      // durable fact at all, so the cause was unrecoverable after the fact.
+      store.recordAgentError?.({
+        taskId: task.id,
+        roleName: role.name,
+        turnId: turn.id,
+        source: "host",
+        phase: failure?.phase ?? "turn-submit",
+        message: cause,
+        // The Host already serialized the complete redacted chain. Re-serializing
+        // the failure object here would persist this layer's wrapper instead of
+        // the original cause, which is the detail an authorized reader needs.
+        raw: failure?.raw ?? serializeAgentErrorRaw(failure ?? cause),
+        inputDisposition: failure?.inputDisposition ?? (unknown ? "unknown" : "not-accepted"),
+        ...providerDeliveryFailureFacts(failure)
+      }, now);
       return failTurnDelivery(
         store,
         turn,
         now,
-        outcome === "delivery-unknown" ? "delivery-unknown" : "runtime-failed",
-        outcome === "delivery-unknown"
-          ? "Provider Turn delivery is ambiguous; Yui will not replay it automatically."
-          : "Provider rejected the managed Turn."
+        unknown ? "delivery-unknown" : "runtime-failed",
+        unknown
+          ? `Provider Turn delivery is ambiguous; Yui will not replay it automatically. ${cause}`
+          : cause
       );
     }
     forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
     settleAcceptedRoleTurnDispatch(store, turn, dispatchToken);
     return {
       ...base,
-      status: outcome === "sent" ? "delivered" : "already-delivered"
+      status: outcome.status === "sent" ? "delivered" : "already-delivered"
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // A launch failure carries its own structure — the class that threw, the
+    // innermost cause, and for a generation mismatch both generations. Recording
+    // only `message` flattened all of it into prose that no reader could
+    // reliably parse back.
+    const causeName = innermostCauseName(error);
+    const mismatch = error instanceof RuntimeGenerationMismatchError ? error : undefined;
     store.recordAgentError?.({
       taskId: task.id,
       roleName: role.name,
@@ -212,7 +253,22 @@ async function deliverActiveTurn(
       phase: submitted ? "turn-submit" : mode === "new" ? "session-start" : "session-restore",
       message,
       raw: serializeAgentErrorRaw(error),
-      inputDisposition: submitted ? "unknown" : "not-accepted"
+      inputDisposition: submitted ? "unknown" : "not-accepted",
+      // Nothing was submitted, so the Provider provably holds no registration
+      // for this attempt; after a submit the Host owns that fact, not this layer.
+      ...(submitted ? {} : { registrationDisposition: "not-committed" as const }),
+      ...(error instanceof Error ? { errorName: error.name } : {}),
+      ...(causeName === undefined ? {} : { causeName }),
+      ...(mismatch === undefined ? {} : {
+        expectedRuntimeGenerationId: mismatch.expectedRuntimeGenerationId,
+        ...(mismatch.observedRuntimeGenerationId === undefined
+          ? {}
+          : { observedRuntimeGenerationId: mismatch.observedRuntimeGenerationId })
+      }),
+      ...(error instanceof RuntimeLaunchError
+        ? { expectedRuntimeGenerationId: error.runtimeGenerationId }
+        : {}),
+      attemptId
     }, now);
     if (error instanceof RuntimeLifecycleBusyError
       || (error instanceof RuntimeLaunchError && error.retryable)) {
@@ -234,6 +290,42 @@ async function deliverActiveTurn(
       message
     );
   }
+}
+
+/**
+ * Forwards the Host's structured facts to the durable record. Each is a fact
+ * the Host observed and no layer above can re-derive: parsing them back out of
+ * the formatted message would be guessing at the Host's own account.
+ */
+function providerDeliveryFailureFacts(
+  failure: ProviderDeliveryFailure | undefined
+): Readonly<{
+  sessionDisposition?: AgentErrorSessionDisposition;
+  registrationDisposition?: AgentErrorRegistrationDisposition;
+  errorName?: string;
+  causeName?: string;
+  expectedRuntimeGenerationId?: string;
+  observedRuntimeGenerationId?: string;
+  attemptId?: string;
+}> {
+  if (failure === undefined) return {};
+  return {
+    ...(failure.sessionDisposition === undefined
+      ? {}
+      : { sessionDisposition: failure.sessionDisposition }),
+    ...(failure.registrationDisposition === undefined
+      ? {}
+      : { registrationDisposition: failure.registrationDisposition }),
+    ...(failure.errorName === undefined ? {} : { errorName: failure.errorName }),
+    ...(failure.causeName === undefined ? {} : { causeName: failure.causeName }),
+    ...(failure.expectedRuntimeGenerationId === undefined
+      ? {}
+      : { expectedRuntimeGenerationId: failure.expectedRuntimeGenerationId }),
+    ...(failure.observedRuntimeGenerationId === undefined
+      ? {}
+      : { observedRuntimeGenerationId: failure.observedRuntimeGenerationId }),
+    ...(failure.attemptId === undefined ? {} : { attemptId: failure.attemptId })
+  };
 }
 
 function failTurnDelivery(

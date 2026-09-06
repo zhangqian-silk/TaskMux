@@ -1662,7 +1662,7 @@ test("Leader wakeups aggregate for one minute and force-steer after ten", async 
           new Date(firstEventAt.getTime() + LEADER_WAKE_FORCE_MS)
         );
       }
-      return "sent";
+      return { status: "sent" };
     }
   };
   let results = await processLeaderWakeups(
@@ -1934,7 +1934,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
       }, nextAt), "applied");
       return { prepared, session: prepared.session };
     },
-    sendOnce: async () => "sent",
+    sendOnce: async () => ({ status: "sent" }),
     inspectRole: async () => "present"
   };
 
@@ -2039,7 +2039,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
         prepared: leaderPrepared,
         session: leaderPrepared.session
       }),
-      sendOnce: async () => "sent",
+      sendOnce: async () => ({ status: "sent" }),
       inspectRole: async () => "present"
     },
     nextAt,

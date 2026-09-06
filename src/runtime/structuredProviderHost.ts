@@ -99,9 +99,12 @@ export class ProviderDeliveryUnknownError extends Error {
 
   constructor(
     message: string,
-    readonly attemptId: string
+    readonly attemptId: string,
+    // Wrapping must not become the end of the causal chain: the original
+    // transport or Controller failure is the reason a reader needs.
+    options?: Readonly<{ cause?: unknown }>
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
@@ -110,9 +113,10 @@ export class ProviderTurnRejectedError extends Error {
 
   constructor(
     message: string,
-    readonly attemptId: string
+    readonly attemptId: string,
+    options?: Readonly<{ cause?: unknown }>
   ) {
-    super(message);
+    super(message, options);
   }
 }
 

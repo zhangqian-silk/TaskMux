@@ -168,6 +168,17 @@ export type AgentErrorAuditEntry = Readonly<{
   raw: string;
   inputDisposition: string;
   sessionDisposition: string;
+  /**
+   * Structured facts the Host reported. Absent when it did not report one:
+   * defaulting these to `"unknown"` would present a missing observation as an
+   * observed one.
+   */
+  registrationDisposition?: string;
+  errorName?: string;
+  causeName?: string;
+  expectedRuntimeGenerationId?: string;
+  observedRuntimeGenerationId?: string;
+  attemptId?: string;
   createdAt: string;
 }>;
 
@@ -391,6 +402,17 @@ function classifyTerminalSessionTurnRelation(
 
 function ok<T>(data: T): AuditSection<T> {
   return { status: "ok", data };
+}
+
+/** Keeps only the payload keys the record actually carries. */
+function definedAuditFields(
+  fields: Readonly<Record<string, string | undefined>>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined
+    )
+  );
 }
 
 function failed<T>(error: unknown): AuditSection<T> {
@@ -806,6 +828,14 @@ export function runExecutionAudit(
             raw: event.payload.raw ?? "",
             inputDisposition: event.payload.inputDisposition ?? "unknown",
             sessionDisposition: event.payload.sessionDisposition ?? "unknown",
+            ...definedAuditFields({
+              registrationDisposition: event.payload.registrationDisposition,
+              errorName: event.payload.errorName,
+              causeName: event.payload.causeName,
+              expectedRuntimeGenerationId: event.payload.expectedRuntimeGenerationId,
+              observedRuntimeGenerationId: event.payload.observedRuntimeGenerationId,
+              attemptId: event.payload.attemptId
+            }),
             createdAt: event.createdAt
           });
         }
