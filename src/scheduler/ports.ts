@@ -30,6 +30,7 @@ import type { RuntimeLaunchPreStart } from "../runtime/ports.js";
 import type {
   AgentErrorInputDisposition,
   AgentErrorPhase,
+  AgentErrorRegistrationDisposition,
   AgentErrorSessionDisposition,
   AgentErrorSource,
   ProviderDeliveryFailure
@@ -446,6 +447,19 @@ export interface SchedulerStorePort {
     raw: string;
     inputDisposition?: AgentErrorInputDisposition;
     sessionDisposition?: AgentErrorSessionDisposition;
+    /**
+     * Structured facts the failing operation knew and a message cannot carry:
+     * the failure class, the innermost cause, the generation the caller
+     * expected against the one the Host reported, and whether the durable
+     * registration committed. Persisted alongside the record so a reader does
+     * not have to parse them back out of prose.
+     */
+    errorName?: string;
+    causeName?: string;
+    expectedRuntimeGenerationId?: string;
+    observedRuntimeGenerationId?: string;
+    attemptId?: string;
+    registrationDisposition?: AgentErrorRegistrationDisposition;
   }>, now: Date): string;
   queueTaskProgress(taskId: string, reason: string, now: Date): void;
 
@@ -624,22 +638,14 @@ export type RoleDeliveryStatus =
 /**
  * A delivery status plus the Host's original cause when it did not send.
  *
- * A bare status cannot say why a Provider write failed, so callers that had
- * only the status were forced to substitute a guess. Implementations may still
- * return the bare status; `roleDeliveryOutcome` normalizes both shapes.
+ * A bare status cannot say why a Provider write failed, so a caller holding
+ * only the status was forced to substitute a guess. This is the single
+ * delivery contract; there is no bare-status form.
  */
 export type RoleDeliveryReport = Readonly<{
   status: RoleDeliveryStatus;
   failure?: ProviderDeliveryFailure;
 }>;
-
-export type RoleDeliveryOutcome = RoleDeliveryStatus | RoleDeliveryReport;
-
-export function roleDeliveryOutcome(
-  outcome: RoleDeliveryOutcome
-): RoleDeliveryReport {
-  return typeof outcome === "string" ? { status: outcome } : outcome;
-}
 
 /**
  * The Scheduler never reads stdin and never writes terminal bytes itself.
@@ -669,7 +675,7 @@ export interface TmuxDeliveryPort {
     /** Stable Provider request id. Repeating it must not create another Turn. */
     receiptId: string;
     text: string;
-  }>): Promise<RoleDeliveryOutcome>;
+  }>): Promise<RoleDeliveryReport>;
   steerOnce(input: Readonly<{
     taskId: string;
     roleName: string;
@@ -681,7 +687,7 @@ export interface TmuxDeliveryPort {
     authority: import("../runtime/providerAuthorityFence.js").ProviderAuthorityFence;
     receiptId: string;
     text: string;
-  }>): Promise<RoleDeliveryOutcome>;
+  }>): Promise<RoleDeliveryReport>;
   /**
    * Drops transient prepared bindings after authoritative terminal/absence
    * state. Omitting turnId clears every prepared generation for the Role.

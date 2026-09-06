@@ -280,6 +280,8 @@ export function renderExecutionAudit(
             { header: "Role", minWidth: 8, maxWidth: 12 },
             { header: "Category", minWidth: 12, maxWidth: 20 },
             { header: "Code", minWidth: 16, maxWidth: 32 },
+            { header: "Input", minWidth: 12, maxWidth: 14 },
+            { header: "Registered", minWidth: 12, maxWidth: 14 },
             { header: "Session", minWidth: 12, maxWidth: 16 }
           ],
           errors.entries.map((entry) => [
@@ -288,6 +290,10 @@ export function renderExecutionAudit(
             entry.roleName,
             entry.category,
             entry.code,
+            entry.inputDisposition,
+            // Blank, not "unknown": the Host reports "unknown" as a real
+            // observation, and a reader must be able to tell the two apart.
+            entry.registrationDisposition ?? "—",
             entry.sessionDisposition
           ]),
           width

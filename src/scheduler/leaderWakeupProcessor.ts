@@ -14,7 +14,7 @@ import type {
   SchedulerStorePort,
   TmuxDeliveryPort
 } from "./ports.js";
-import { isSchedulerTaskWorkspaceReady, roleDeliveryOutcome } from "./ports.js";
+import { isSchedulerTaskWorkspaceReady } from "./ports.js";
 import { formatProviderDeliveryFailure } from "../runtime/agentError.js";
 
 export type LeaderWakeupProcessingResult = Readonly<{
@@ -237,7 +237,7 @@ async function forceLeaderSteer(
       directive,
       deltaRefIds: []
     });
-    const outcome = roleDeliveryOutcome(await delivery.steerOnce({
+    const outcome = await delivery.steerOnce({
       taskId,
       roleName,
       agentId: active.effective.agentId,
@@ -252,7 +252,7 @@ async function forceLeaderSteer(
       },
       receiptId: `turn-input:${taskId}/${active.id}/${batchId}`,
       text: directive
-    }));
+    });
     if (outcome.status !== "sent" && outcome.status !== "already-sent") {
       if (outcome.status !== "delivery-unknown") store.releaseWorkMailbox(target, batchId);
       return {

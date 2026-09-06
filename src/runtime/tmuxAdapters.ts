@@ -896,7 +896,8 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
           }
         }
       });
-      const failure = hostFailure(result, request.binding.runtimeGenerationId, request.envelope.id);
+      // The Host attaches its own structured cause to every non-delivery.
+      const failure = result.failure;
       if (result.snapshot.state === "delivery-unknown") {
         return promptPushOutcome("delivery-unknown", failure);
       }
@@ -937,7 +938,7 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
         }
       });
       if (result.outcome === "accepted") return promptPushOutcome("delivered");
-      const failure = hostFailure(result, request.runtimeGenerationId, request.envelope.id);
+      const failure = result.failure;
       if (result.snapshot.state === "delivery-unknown") {
         return promptPushOutcome("delivery-unknown", failure);
       }
@@ -949,30 +950,6 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
       return transportFailureOutcome(error, "turn-submit", request.envelope.id);
     }
   }
-}
-
-/**
- * Reads the Host's structured cause, falling back to the snapshot detail when
- * the Host predates the `failure` field.
- */
-function hostFailure(
-  result: AgentHostControlResult,
-  expectedRuntimeGenerationId: string,
-  attemptId: string
-): ProviderDeliveryFailure | undefined {
-  if (result.failure !== undefined) return result.failure;
-  if (result.snapshot.detail === undefined) return undefined;
-  return providerDeliveryFailure({
-    detail: result.snapshot.detail,
-    phase: "turn-submit",
-    hostState: result.snapshot.state,
-    expectedRuntimeGenerationId,
-    ...(result.snapshot.runtimeGenerationId === undefined
-      ? {}
-      : { observedRuntimeGenerationId: result.snapshot.runtimeGenerationId }),
-    attemptId,
-    inputDisposition: result.snapshot.state === "delivery-unknown" ? "unknown" : "not-accepted"
-  });
 }
 
 /**

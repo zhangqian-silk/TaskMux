@@ -7,10 +7,18 @@ import { RuntimeLifecycleBusyError } from "../runtime/lifecycleReservation.js";
 import { managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
 import {
   formatProviderDeliveryFailure,
-  serializeAgentErrorRaw
+  innermostCauseName,
+  serializeAgentErrorRaw,
+  type AgentErrorRegistrationDisposition,
+  type AgentErrorSessionDisposition,
+  type ProviderDeliveryFailure
 } from "../runtime/agentError.js";
 import { RuntimeLaunchFailure } from "../runtime/launchDiagnostics.js";
-import { RuntimeLaunchError, type RuntimeLaunchPreflight } from "../runtime/ports.js";
+import {
+  RuntimeGenerationMismatchError,
+  RuntimeLaunchError,
+  type RuntimeLaunchPreflight
+} from "../runtime/ports.js";
 import { formatTurnReceiptId } from "../task/taskRecordReference.js";
 import { turnInputEnvelope } from "../turn/turn.js";
 import {
@@ -28,7 +36,6 @@ import type {
 } from "./ports.js";
 import {
   isSchedulerTaskWorkspaceReady,
-  roleDeliveryOutcome,
   selectedActiveSchedulerTasks,
   selectedSchedulerRoles,
   type SchedulerReconcileSelection
@@ -174,11 +181,11 @@ async function deliverActiveTurn(
       now
     });
     submitted = true;
-    const outcome = roleDeliveryOutcome(await delivery.sendOnce({
+    const outcome = await delivery.sendOnce({
       delivery: ready,
       receiptId: attemptId,
       text: serializeTurnInputEnvelope(turnInputEnvelope(turn))
-    }));
+    });
 
     if (outcome.status === "busy" || outcome.status === "unavailable") {
       forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
@@ -207,11 +214,12 @@ async function deliverActiveTurn(
         source: "host",
         phase: failure?.phase ?? "turn-submit",
         message: cause,
-        raw: serializeAgentErrorRaw(failure ?? cause),
+        // The Host already serialized the complete redacted chain. Re-serializing
+        // the failure object here would persist this layer's wrapper instead of
+        // the original cause, which is the detail an authorized reader needs.
+        raw: failure?.raw ?? serializeAgentErrorRaw(failure ?? cause),
         inputDisposition: failure?.inputDisposition ?? (unknown ? "unknown" : "not-accepted"),
-        ...(failure?.sessionDisposition === undefined
-          ? {}
-          : { sessionDisposition: failure.sessionDisposition })
+        ...providerDeliveryFailureFacts(failure)
       }, now);
       return failTurnDelivery(
         store,
@@ -231,6 +239,12 @@ async function deliverActiveTurn(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // A launch failure carries its own structure — the class that threw, the
+    // innermost cause, and for a generation mismatch both generations. Recording
+    // only `message` flattened all of it into prose that no reader could
+    // reliably parse back.
+    const causeName = innermostCauseName(error);
+    const mismatch = error instanceof RuntimeGenerationMismatchError ? error : undefined;
     store.recordAgentError?.({
       taskId: task.id,
       roleName: role.name,
@@ -239,7 +253,22 @@ async function deliverActiveTurn(
       phase: submitted ? "turn-submit" : mode === "new" ? "session-start" : "session-restore",
       message,
       raw: serializeAgentErrorRaw(error),
-      inputDisposition: submitted ? "unknown" : "not-accepted"
+      inputDisposition: submitted ? "unknown" : "not-accepted",
+      // Nothing was submitted, so the Provider provably holds no registration
+      // for this attempt; after a submit the Host owns that fact, not this layer.
+      ...(submitted ? {} : { registrationDisposition: "not-committed" as const }),
+      ...(error instanceof Error ? { errorName: error.name } : {}),
+      ...(causeName === undefined ? {} : { causeName }),
+      ...(mismatch === undefined ? {} : {
+        expectedRuntimeGenerationId: mismatch.expectedRuntimeGenerationId,
+        ...(mismatch.observedRuntimeGenerationId === undefined
+          ? {}
+          : { observedRuntimeGenerationId: mismatch.observedRuntimeGenerationId })
+      }),
+      ...(error instanceof RuntimeLaunchError
+        ? { expectedRuntimeGenerationId: error.runtimeGenerationId }
+        : {}),
+      attemptId
     }, now);
     if (error instanceof RuntimeLifecycleBusyError
       || (error instanceof RuntimeLaunchError && error.retryable)) {
@@ -261,6 +290,42 @@ async function deliverActiveTurn(
       message
     );
   }
+}
+
+/**
+ * Forwards the Host's structured facts to the durable record. Each is a fact
+ * the Host observed and no layer above can re-derive: parsing them back out of
+ * the formatted message would be guessing at the Host's own account.
+ */
+function providerDeliveryFailureFacts(
+  failure: ProviderDeliveryFailure | undefined
+): Readonly<{
+  sessionDisposition?: AgentErrorSessionDisposition;
+  registrationDisposition?: AgentErrorRegistrationDisposition;
+  errorName?: string;
+  causeName?: string;
+  expectedRuntimeGenerationId?: string;
+  observedRuntimeGenerationId?: string;
+  attemptId?: string;
+}> {
+  if (failure === undefined) return {};
+  return {
+    ...(failure.sessionDisposition === undefined
+      ? {}
+      : { sessionDisposition: failure.sessionDisposition }),
+    ...(failure.registrationDisposition === undefined
+      ? {}
+      : { registrationDisposition: failure.registrationDisposition }),
+    ...(failure.errorName === undefined ? {} : { errorName: failure.errorName }),
+    ...(failure.causeName === undefined ? {} : { causeName: failure.causeName }),
+    ...(failure.expectedRuntimeGenerationId === undefined
+      ? {}
+      : { expectedRuntimeGenerationId: failure.expectedRuntimeGenerationId }),
+    ...(failure.observedRuntimeGenerationId === undefined
+      ? {}
+      : { observedRuntimeGenerationId: failure.observedRuntimeGenerationId }),
+    ...(failure.attemptId === undefined ? {} : { attemptId: failure.attemptId })
+  };
 }
 
 function failTurnDelivery(
