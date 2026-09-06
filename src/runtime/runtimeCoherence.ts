@@ -13,31 +13,7 @@ import {
   type YuiVersionIdentity
 } from "../version.js";
 
-/**
- * Provenance for one Session launch: which installation created it, at which
- * Home, under which version identity. It is recorded as immutable audit
- * material and is never a gate. Whether a command may run is proven against
- * the current CLI, Home, and Controller, and who may act is proven by the
- * Session Manifest plus the Session's caller key.
- */
-export type ExactControlPlaneDescriptor = Readonly<{
-  schemaVersion: 1;
-  kind: "yui-control-plane";
-  executable: string;
-  cliEntry: string;
-  yuiHome: string;
-  identity: YuiVersionIdentity;
-  /**
-   * Issue 02: the release build ID this control plane runs. Present when the
-   * Controller runs from an installed release; absent for a dev checkout.
-   * When present, the preflight gates on the Home's active release pointer.
-   */
-  buildId?: string;
-  /** Package SHA-256 of the active release, when known. */
-  activeReleaseDigest?: string;
-}>;
-
-export type ExactControlPlanePreflightOptions = Readonly<{
+export type RuntimeCoherenceOptions = Readonly<{
   identity?: YuiVersionIdentity;
   inspectStorage?: (home: string) => StorageSchemaState | Readonly<{
     status: string;
@@ -52,72 +28,15 @@ export type ExactControlPlanePreflightOptions = Readonly<{
   checkController?: boolean;
 }>;
 
-export type CompatibleControlPlanePreflightInput = Readonly<{
+export type RuntimeCoherenceInput = Readonly<{
   actualHome: string;
 }>;
 
-export function createExactControlPlaneDescriptor(input: Readonly<{
-  executable: string;
-  cliEntry: string;
-  yuiHome: string;
-  identity?: YuiVersionIdentity;
-  buildId?: string;
-  activeReleaseDigest?: string;
-}>): ExactControlPlaneDescriptor {
-  const identity = validateVersionIdentity(input.identity ?? yuiVersionIdentity());
-  return Object.freeze({
-    schemaVersion: 1,
-    kind: "yui-control-plane",
-    executable: canonicalPath(input.executable),
-    cliEntry: canonicalPath(input.cliEntry),
-    yuiHome: canonicalPath(input.yuiHome),
-    identity: Object.freeze({ ...identity }),
-    ...(input.buildId === undefined ? {} : { buildId: input.buildId }),
-    ...(input.activeReleaseDigest === undefined
-      ? {}
-      : { activeReleaseDigest: input.activeReleaseDigest })
-  });
-}
-
-export function serializeExactDescriptor(
-  descriptor: ExactControlPlaneDescriptor
-): string {
-  return JSON.stringify(descriptor);
-}
-
-export function parseExactControlPlaneDescriptor(value: string): ExactControlPlaneDescriptor {
-  const record = parseDescriptorRecord(value);
-  assertDescriptorKind(record, "yui-control-plane");
-  if (record.schemaVersion !== 1) {
-    throw new Error("Exact control-plane descriptor schema version is invalid.");
-  }
-  return createExactControlPlaneDescriptor({
-    executable: requireText(record.executable, "Control-plane executable"),
-    cliEntry: requireText(record.cliEntry, "Control-plane CLI entry"),
-    yuiHome: requireText(record.yuiHome, "Control-plane YUI_HOME"),
-    identity: validateVersionIdentity(record.identity),
-    ...(typeof record.buildId !== "string" ? {} : { buildId: record.buildId }),
-    ...(typeof record.activeReleaseDigest !== "string"
-      ? {}
-      : { activeReleaseDigest: record.activeReleaseDigest })
-  });
-}
-
-export function exactControlPlaneDigest(descriptor: ExactControlPlaneDescriptor): string {
-  return createHash("sha256").update(serializeExactDescriptor(descriptor)).digest("hex");
-}
-
-/**
- * Compatibility gate for an ordinary `yui` invocation inside a managed
- * Session. The Session Manifest and durable runtime state authenticate the
- * actor separately; this gate proves that the current CLI can safely share the
- * Home with its storage and Controller without pinning package/build identity.
- */
-export async function assertCompatibleControlPlanePreflight(
-  input: CompatibleControlPlanePreflightInput,
-  options: ExactControlPlanePreflightOptions = {}
+export async function assertRuntimeCoherence(
+  input: RuntimeCoherenceInput,
+  options: RuntimeCoherenceOptions = {}
 ): Promise<YuiVersionIdentity> {
-  const home = canonicalPath(input.actualHome);
+  const home = resolve(input.actualHome);
   const identity = validateVersionIdentity(options.identity ?? yuiVersionIdentity());
   const storage = (options.inspectStorage ?? inspectStorageSchema)(home);
   if (storage.status !== "current") {
@@ -232,29 +151,6 @@ function assertControllerField(
   }
 }
 
-function parseDescriptorRecord(value: string): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(requireText(value, "Exact descriptor"));
-  } catch (error) {
-    throw new Error("Exact descriptor is not valid JSON.", { cause: error });
-  }
-  if (!isRecord(parsed)) throw new Error("Exact descriptor must be an object.");
-  return parsed;
-}
-
-function assertDescriptorKind(
-  value: Record<string, unknown>,
-  expected: ExactControlPlaneDescriptor["kind"]
-): void {
-  if (value.kind !== expected) {
-    throw new Error(
-      `Exact descriptor kind is invalid: expected ${expected}, found `
-        + `${typeof value.kind === "string" ? value.kind : "unknown"}.`
-    );
-  }
-}
-
 function requireText(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0 || value.includes("\0")) {
     throw new Error(`${label} is invalid.`);
@@ -262,32 +158,11 @@ function requireText(value: unknown, label: string): string {
   return value;
 }
 
-function requireDigest(value: unknown): string {
-  const digest = requireText(value, "Control-plane digest");
-  if (!/^[a-f0-9]{64}$/u.test(digest)) {
-    throw new Error("Control-plane digest is invalid.");
-  }
-  return digest;
-}
-
 function requireVersion(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
     throw new Error(`${label} is invalid.`);
   }
   return value as number;
-}
-
-function canonicalPath(value: string): string {
-  const absolute = resolve(requireText(value, "Path"));
-  try {
-    return realpathSync(absolute);
-  } catch {
-    return absolute;
-  }
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

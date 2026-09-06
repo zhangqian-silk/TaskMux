@@ -26,7 +26,10 @@ import {
   compileRoleSessionContext,
   roleSessionKind
 } from "../context/roleSessionContext.js";
-import { materializeSessionBootstrap } from "../context/sessionBootstrapManifest.js";
+import {
+  materializeSessionBootstrap,
+  type SessionEntryPoint
+} from "../context/sessionBootstrapManifest.js";
 import { prefixYuiTitleInput } from "../turn/turnIdentity.js";
 import { resolveAgentAdapter } from "./agentAdapter.js";
 import type { ClaudeAgentConfig, RoleAgentConfig } from "./agentAdapter.js";
@@ -52,13 +55,6 @@ import {
   resolveEffectiveLaunch,
   type EffectiveLaunchSnapshot
 } from "./effectiveLaunch.js";
-import {
-  createExactControlPlaneDescriptor,
-  exactControlPlaneDigest,
-  serializeExactDescriptor,
-  type ExactControlPlaneDescriptor
-} from "../runtime/exactControlPlane.js";
-import { detectRunningRelease } from "../release/runtimeRelease.js";
 import {
   parseTaskRuntimeIsolationDescriptor,
   taskRuntimeIsolationEnvironment,
@@ -112,7 +108,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
   readonly #createNativeSessionId: () => string;
   readonly #cliPath: string;
   readonly #inspectWorkspacePhysicalState: WorkspacePhysicalInspector;
-  readonly #controlPlane: ExactControlPlaneDescriptor;
+  readonly #entryPoint: SessionEntryPoint;
   #resourceRegistrarValue: ResourceRegistrar | undefined;
 
   constructor(
@@ -139,21 +135,10 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ?? inspectWorkspacePhysicalState;
     this.#cliPath = canonicalPath(options.cliPath
       ?? fileURLToPath(new URL("../cli.js", import.meta.url)));
-    // Internal callbacks retain one exact command identity for receipt fencing.
-    // Interactive Role commands use ordinary `yui`; their continuity is the
-    // Session Manifest plus protocol/storage and durable runtime identity.
-    const runningRelease = detectRunningRelease(this.#cliPath);
-    this.#controlPlane = createExactControlPlaneDescriptor({
-      executable: process.execPath,
-      cliEntry: this.#cliPath,
-      yuiHome: this.home,
-      ...(runningRelease === null
-        ? {}
-        : {
-            buildId: runningRelease.manifest.buildId,
-            activeReleaseDigest: runningRelease.manifest.packageDigest
-          })
-    });
+    // Where a managed Session's commands run. Continuity is the Session
+    // Manifest plus protocol/storage and durable runtime identity, so no
+    // package or build identity belongs in this entry point.
+    this.#entryPoint = { executable: process.execPath, cliEntry: this.#cliPath };
   }
 
   #resourceRegistrar(): ResourceRegistrar {
@@ -433,7 +418,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       owner,
       roleKind: roleSessionKind(launchRole, owner, sessionPolicy.purpose),
       skills: baseSessionContext.skills,
-      controlPlane: this.#controlPlane
+      entryPoint: this.#entryPoint
     });
     if (effective.contextProtocolVersion !== bootstrap.manifest.schemaVersion
       || effective.sessionManifestCompatibilityDigest
@@ -543,8 +528,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     for (const path of [
       bootstrap.manifestPath,
       bootstrap.sessionCliPath,
-      bootstrap.roleProfilePath,
-      bootstrap.descriptorPath
+      bootstrap.roleProfilePath
     ]) {
       this.#resourceRegistrar().registerSessionContext(
         path,

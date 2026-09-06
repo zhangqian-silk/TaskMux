@@ -65,7 +65,6 @@ import {
   RuntimeLaunchError
 } from "../../dist/runtime/ports.js";
 import { RuntimeLaunchCoordinator } from "../../dist/controller/runtimeLaunchCoordinator.js";
-import { createExactControlPlaneDescriptor } from "../../dist/runtime/exactControlPlane.js";
 import { resolveManagedTaskCaller } from "../../dist/runtime/managedCaller.js";
 import { taskLeaderActionTurnId } from "../../dist/commands/taskActor.js";
 import { buildTurnContextPack } from "../../dist/context/turnContextPack.js";
@@ -592,18 +591,17 @@ test("Global Codex Sessions use the shared daemon and retain a process-independe
     },
     workspace: home
   }), /Advanced rawArgs contains reserved argument: --remote/u);
-  const controlPlane = createExactControlPlaneDescriptor({
+  const entryPoint = {
     executable: process.execPath,
-    cliEntry: join(root, "dist", "cli.js"),
-    yuiHome: home
-  });
+    cliEntry: join(root, "dist", "cli.js")
+  };
   const bootstrap = materializeSessionBootstrap({
     yuiHome: home,
     role,
     owner: { scope: "global" },
     roleKind: "operator",
     skills: [],
-    controlPlane
+    entryPoint
   });
 
   assert.equal(typeof roleLaunchPlanner.addCodexSharedDaemonRemote, "function");

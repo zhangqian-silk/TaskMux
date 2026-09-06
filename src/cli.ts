@@ -218,17 +218,16 @@ import {
 import { YUI_VERSION, yuiVersionIdentity } from "./version.js";
 import { SqliteSchemaMigrationError } from "./storage/sqliteSchema.js";
 import {
-  assertCompatibleControlPlanePreflight,
-  createExactControlPlaneDescriptor,
-  type ExactControlPlaneDescriptor
-} from "./runtime/exactControlPlane.js";
+  assertRuntimeCoherence,
+} from "./runtime/runtimeCoherence.js";
 import {
   requireManagedTaskCaller,
   type ManagedTaskCaller
 } from "./runtime/managedCaller.js";
 import {
   readSessionBootstrapManifest,
-  refreshManagedSessionCliWrappers
+  refreshManagedSessionCliWrappers,
+  type SessionEntryPoint
 } from "./context/sessionBootstrapManifest.js";
 import {
   createTaskFinalReviewContract,
@@ -494,7 +493,7 @@ export async function main(): Promise<void> {
       }
       const result = refreshManagedSessionCliWrappers(
         home,
-        currentInvocationControlPlane(home)
+        currentInvocationEntryPoint()
       );
       emit(
         `Refreshed ${result.refreshed} managed Session CLI wrapper(s); `
@@ -2016,11 +2015,10 @@ async function preflightManagedTaskControlPlane(): Promise<ManagedTaskControlPla
   // One gate for every managed command: the current CLI, Home, and Controller
   // must agree. Internal callbacks must still be able to append their immutable
   // fact while the Controller is offline.
-  await assertCompatibleControlPlanePreflight(
+  await assertRuntimeCoherence(
     { actualHome: home },
     { checkController: !internalCallback }
   );
-  const digest = manifest.controlPlane.digest;
   const verifiedStore = openCurrentTaskStore(home);
   // One authority for "may this process act as this Task Role?". Yui's own
   // internal callbacks run inside the Host process Yui itself launched; an Agent
@@ -2058,11 +2056,7 @@ async function preflightManagedTaskControlPlane(): Promise<ManagedTaskControlPla
   return {
     contract: createTaskFinalReviewContract({
       taskId: runtime.taskId,
-      reviewerRoleName: request.reviewerRoleName,
-      // Once Task evidence establishes a contract, a compatible Session or
-      // CLI replacement presents that same capability. Package/build identity
-      // must not force a release rebind or invalidate delivery evidence.
-      controlPlaneDigest: recordedContract?.controlPlaneDigest ?? digest
+      reviewerRoleName: request.reviewerRoleName
     }),
     verifiedStore
   };
@@ -2081,7 +2075,7 @@ async function preflightManagedGlobalControlPlane(): Promise<ManagedTaskControlP
     || manifest.roleKind !== expectedRoleKind) {
     throw new Error("Managed global invocation does not match its Session Manifest.");
   }
-  await assertCompatibleControlPlanePreflight({ actualHome: home });
+  await assertRuntimeCoherence({ actualHome: home });
   return { contract: undefined, verifiedStore: openCurrentTaskStore(home) };
 }
 
@@ -2089,12 +2083,11 @@ async function preflightManagedGlobalControlPlane(): Promise<ManagedTaskControlP
  * The entry point the current invocation resolves to. Only its executable and
  * CLI path are used, to retarget managed Session wrappers at this installation.
  */
-function currentInvocationControlPlane(home: string): ExactControlPlaneDescriptor {
-  return createExactControlPlaneDescriptor({
+function currentInvocationEntryPoint(): SessionEntryPoint {
+  return {
     executable: process.execPath,
-    cliEntry: fileURLToPath(import.meta.url),
-    yuiHome: home
-  });
+    cliEntry: fileURLToPath(import.meta.url)
+  };
 }
 
 function assertManagedSessionManifest(
