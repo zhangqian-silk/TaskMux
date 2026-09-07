@@ -256,6 +256,8 @@ import {
   LIVE_SESSION_ACKNOWLEDGEMENT_OPTION
 } from "./roleRuntimeGuard.js";
 import { runTaskContextCommand } from "./taskContextCommand.js";
+import { createProjectResources, type ArtifactInput } from "../resources/projectResourceService.js";
+import { artifactSummary } from "../resources/projectResource.js";
 import { runTaskNextActionCommand } from "./taskNextActionCommand.js";
 import {
   runDeliveryGuardPreflight,
@@ -696,6 +698,30 @@ export function runTaskCommand(
 ): TaskCommandExecution {
   const [command, ...rest] = args;
   switch (command) {
+    case "artifact": {
+      const [action, taskId, value] = rest;
+      if (!taskId || !["list", "show", "save"].includes(action)
+        || rest.length !== (action === "list" ? 2 : 3)) {
+        throw usageError("Usage: yui task artifact list <task> | show <task> <artifact-id> | save <task> <artifact-json>");
+      }
+      if (options.environment?.YUI_SESSION_SCOPE === "task" && options.environment.YUI_TASK_ID !== taskId) {
+        throw usageError("Artifact is outside the managed Task scope.");
+      }
+      requireTask(store, taskId);
+      let data: unknown;
+      if (action === "list") data = store.listArtifacts(taskId).map(artifactSummary);
+      else if (action === "show") {
+        data = store.getArtifact(taskId, value);
+        if (data === null) throw usageError("Artifact not found in this Task.");
+      } else {
+        taskActor(store, options, taskId);
+        let input: ArtifactInput;
+        try { input = JSON.parse(value) as ArtifactInput; }
+        catch { throw usageError("Artifact input must be JSON."); }
+        data = createProjectResources(store).saveArtifact(taskId, input);
+      }
+      return output(JSON.stringify(data, null, 2), data);
+    }
     case "create": return createTaskCommand(rest, store, options);
     case "update": return output(updateTaskCommand(rest, store, options));
     case "list": return listTaskCommand(rest, store);
