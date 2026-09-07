@@ -191,7 +191,6 @@ import type { TaskWorkspaceActivation } from "../repository/taskWorkspacePrepare
 import type { TmuxRolePaneState } from "../tmux/tmuxManager.js";
 import {
   currentWorkItemCandidate,
-  governingWorkItemCandidate,
   currentWorkItemExecutionGroup,
   workItemExecutionGroupById,
   createWorkItem,
@@ -3782,7 +3781,7 @@ function rejectWork(
     if (item.status === "retired" || item.candidates.length === 0) {
       throw usageError(`Work Item is not awaiting acceptance: ${item.id}/${item.status}.`);
     }
-    const candidate = governingWorkItemCandidate(item)!;
+    const candidate = requireWorkItemCandidate(item);
     const activeReview = activeReviewRoundForCandidate(tx, item, candidate);
     if (activeReview !== undefined) {
       throw usageError(`ReviewRound is still active: ${activeReview.id}/${activeReview.status}.`);

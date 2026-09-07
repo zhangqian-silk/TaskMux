@@ -107,3 +107,13 @@ Brief 获得初始 revision，历史事实不因该并发令牌而失效。
 这些隔离证据不是“真实模型 E2E”。T04/T05 的后续合并仍须核对 typed
 端口及迁移顺序；本候选不实现 Endpoint、通用 Artifact 或资源生命周期替代。
 没有 push、PR、merge、tag、release、archive 或启动后续 Task。
+
+## 首轮审查修正
+
+`review-round-1 / turn-2` 对 `80c7051` 提出拒绝操作的空候选解引用问题。
+Leader 复现后采用现有 `requireWorkItemCandidate` 返回有界错误，不回退选择
+历史 Candidate，也不修改迁移语义。一次性实际 SQLite 检查确认：新 Home
+第二次拒绝，以及有效 v3 failed-with-candidates 迁移后首次拒绝，均保留
+原 WorkItem 与候选历史并返回 `DATA_ERROR`。修正前复现 `TypeError`。
+按 Project 验证政策移除专项脚本，不新增永久异常回归用例；构建与 lint
+通过。修复的独立增量 Review 及最终裁决仍以 Task 记录为准。

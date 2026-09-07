@@ -2593,6 +2593,8 @@ yui task context inspect &lt;task&gt; --store &lt;store&gt; --ref &lt;id&gt; --d
 </ul>
 <p>迟到执行终态不重开 Task。若原 Turn 已终止，原结果保持不可变，迟到内容 按原 Turn/fence 保存为关联 observation，不伪称第一次执行成功。 归档要求相关执行已结清，archived 不作为继续接收新执行的入口。</p>
 <p>未测试真实 Provider、付费 API、生产账户、共享 Home 或共享进程停止。 这些隔离证据不是“真实模型 E2E”。T04/T05 的后续合并仍须核对 typed 端口及迁移顺序；本候选不实现 Endpoint、通用 Artifact 或资源生命周期替代。 没有 push、PR、merge、tag、release、archive 或启动后续 Task。</p>
+<h2 id="doc-implementation-designs-T03-evidence-md--首轮审查修正">首轮审查修正</h2>
+<p><code>review-round-1 / turn-2</code> 对 <code>80c7051</code> 提出拒绝操作的空候选解引用问题。 Leader 复现后采用现有 <code>requireWorkItemCandidate</code> 返回有界错误，不回退选择 历史 Candidate，也不修改迁移语义。一次性实际 SQLite 检查确认：新 Home 第二次拒绝，以及有效 v3 failed-with-candidates 迁移后首次拒绝，均保留 原 WorkItem 与候选历史并返回 <code>DATA_ERROR</code>。修正前复现 <code>TypeError</code>。 按 Project 验证政策移除专项脚本，不新增永久异常回归用例；构建与 lint 通过。修复的独立增量 Review 及最终裁决仍以 Task 记录为准。</p>
 </article><article id="doc-implementation-designs-T03-task-context-md"><div class="source"><a href="implementation/designs/T03-task-context.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T03-task-context-md--t03-技术方案任务事实角色配置与-context">T03 技术方案｜任务事实、角色配置与 Context</h1>
 <p>硬依赖：T02。</p>
 <p>任务定义：<a href="#doc-implementation-tasks-T03-task-context-md">交付范围与证据</a>。</p>

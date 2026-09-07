@@ -108,8 +108,8 @@
     },
     {
       "path": "implementation/designs/T03-evidence.md",
-      "bytes": 7305,
-      "sha256": "0a7ef69b1836b185d20e90aea309ab486e16ac4648defbd051563e85ce895691"
+      "bytes": 7956,
+      "sha256": "b35dcd6311e535a8951e12501488b93c581506b5826830e5367308b0f8d90cd1"
     },
     {
       "path": "implementation/designs/T03-task-context.md",
@@ -223,8 +223,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 472619,
-      "sha256": "c9f485425fc7948b6d219316d79ed2bc4ac45c7b135a7402734c88c04a7cce8f"
+      "bytes": 473404,
+      "sha256": "9e50fc82c53578f4244230806fdd5c6a2c59a0940f4af703bc55e087160ef3a1"
     },
     {
       "path": "modules/01-kernel.md",
