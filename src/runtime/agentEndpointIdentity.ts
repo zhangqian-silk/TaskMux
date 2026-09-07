@@ -48,10 +48,13 @@ function resolveEndpointGeneration(): string {
 }
 
 const ENDPOINT_GENERATION = resolveEndpointGeneration();
+import { isAgentAdapterId } from "../agent/adapterCatalog.js";
 
 /** Execution implementation revision, independent from the surrounding CLI release. */
 export function builtinAgentEndpointImplementation(adapterId: string): ImplementationRef {
-  if (adapterId !== "codex" && adapterId !== "claude") {
+  // Every catalogued adapter has a managed Endpoint. Re-listing the adapter
+  // names here would let the two lists drift, so the catalog is the only source.
+  if (!isAgentAdapterId(adapterId)) {
     throw new Error(`No managed Endpoint implementation for adapter: ${adapterId}.`);
   }
   return Object.freeze({

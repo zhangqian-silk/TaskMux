@@ -74,6 +74,10 @@ export function nativeAgentEnvironmentNames(
   switch (adapterId) {
     case "codex": return ["CODEX_HOME"];
     case "claude": return ["CLAUDE_CONFIG_DIR"];
+    // ACP standardizes the protocol, not where a product keeps its
+    // configuration. Naming a variable here would be a product branch, so an
+    // ACP Agent that needs one declares it as an ordinary environment binding.
+    case "acp": return [];
   }
 }
 

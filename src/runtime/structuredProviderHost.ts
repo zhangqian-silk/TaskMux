@@ -22,9 +22,17 @@ import type {
   AgentHostProviderControl
 } from "./launchBroker.js";
 import { serializeAgentErrorRaw } from "./agentError.js";
+import type { AgentAdapterId } from "../agent/adapterCatalog.js";
+import { AcpStructuredProviderSession } from "./acpSession.js";
+import { YUI_VERSION } from "../version.js";
+import {
+  JsonLineChannel,
+  PROVIDER_MESSAGE_MAX_BYTES,
+  terminateProcessGroup,
+  type JsonObject
+} from "./jsonLineChannel.js";
 import { PROVIDER_ACCEPT_TIMEOUT_MS } from "./runtimeDeadlines.js";
 
-const PROVIDER_MESSAGE_MAX_BYTES = 16 * 1024 * 1024;
 const CODEX_PROXY_HANDSHAKE_TIMEOUT_MS = 10_000;
 
 export type StructuredProviderTurnReceipt = Readonly<{
@@ -95,7 +103,7 @@ export type StructuredProviderProcessExit = Readonly<{
 }>;
 
 export interface StructuredProviderSession {
-  readonly adapterId: "codex" | "claude";
+  readonly adapterId: AgentAdapterId;
   readonly conversationId: string;
   readonly nativeSessionId: string;
   readonly processInstanceId: string;
@@ -184,6 +192,23 @@ export async function startStructuredProviderSession(
   child.stderr.on("data", (chunk: string) => mirror("stderr", chunk));
   const exit = childExit(child, processInstanceId);
   try {
+    // Dispatch is on the negotiated transport, not on a product name: every
+    // Agent that speaks a given transport is opened by the same code.
+    if (control.transport === "acp-stdio") {
+      const session = await AcpStructuredProviderSession.open({
+        child,
+        exit,
+        processInstanceId,
+        clientVersion: YUI_VERSION,
+        cwd: payload.cwd,
+        ...(control.nativeSessionId === undefined
+          ? {}
+          : { nativeSessionId: control.nativeSessionId }),
+        ...(input.onTerminal === undefined ? {} : { onTerminal: input.onTerminal }),
+        mirror
+      });
+      return Object.freeze({ session });
+    }
     if (control.adapterId === "codex") {
       const opened = await CodexStructuredProviderSession.open(
           child,
@@ -220,8 +245,6 @@ export async function startStructuredProviderSession(
     throw error;
   }
 }
-
-type JsonObject = Record<string, unknown>;
 
 /**
  * Open an uninitialized, transparent connection for a native TUI. The TUI
@@ -468,71 +491,6 @@ class ChildProcessDuplex extends Duplex {
   setTimeout(_timeout: number, callback?: () => void): this {
     if (callback !== undefined) this.once("timeout", callback);
     return this;
-  }
-}
-
-class JsonLineChannel {
-  readonly #listeners = new Set<(message: JsonObject) => void>();
-  #buffer = "";
-  #closedError: Error | undefined;
-
-  constructor(
-    private readonly child: ChildProcessWithoutNullStreams,
-    private readonly mirror: (stream: "stdout" | "stderr", text: string) => void
-  ) {
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => this.#receive(chunk));
-    child.once("error", (error) => this.#close(error));
-    child.once("close", (code, signal) => this.#close(new Error(
-      `Provider process exited (code=${code ?? "none"}, signal=${signal ?? "none"}).`
-    )));
-  }
-
-  onMessage(listener: (message: JsonObject) => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
-  }
-
-  async send(message: JsonObject): Promise<void> {
-    if (this.#closedError !== undefined) throw this.#closedError;
-    const line = `${JSON.stringify(message)}\n`;
-    if (Buffer.byteLength(line, "utf8") > PROVIDER_MESSAGE_MAX_BYTES) {
-      throw new Error("Provider request exceeds its message bound.");
-    }
-    await new Promise<void>((resolvePromise, reject) => {
-      this.child.stdin.write(line, "utf8", (error) => {
-        if (error === null || error === undefined) resolvePromise();
-        else reject(error);
-      });
-    });
-  }
-
-  #receive(chunk: string): void {
-    this.mirror("stdout", chunk);
-    this.#buffer += chunk;
-    if (Buffer.byteLength(this.#buffer, "utf8") > PROVIDER_MESSAGE_MAX_BYTES) {
-      this.#close(new Error("Provider response line exceeds its message bound."));
-      terminateProcessGroup(this.child, "SIGTERM");
-      return;
-    }
-    for (;;) {
-      const newline = this.#buffer.indexOf("\n");
-      if (newline < 0) return;
-      const line = this.#buffer.slice(0, newline).trim();
-      this.#buffer = this.#buffer.slice(newline + 1);
-      if (line.length === 0) continue;
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-        for (const listener of this.#listeners) listener(parsed as JsonObject);
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  #close(error: Error): void {
-    if (this.#closedError === undefined) this.#closedError = error;
   }
 }
 
@@ -1125,22 +1083,6 @@ function childExit(
       processInstanceId
     })));
   });
-}
-
-function terminateProcessGroup(
-  child: ChildProcessWithoutNullStreams,
-  signal: NodeJS.Signals
-): void {
-  if (child.pid === undefined) return;
-  // Managed Providers are spawned detached and therefore own a process group.
-  // Kill that exact group so a CLI helper cannot outlive the Agent Host. The
-  // direct-child fallback covers embedded runtimes that cannot create setsid.
-  try {
-    process.kill(-child.pid, signal);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-    child.kill(signal);
-  }
 }
 
 function defaultMirrorOutput(stream: "stdout" | "stderr", text: string): void {

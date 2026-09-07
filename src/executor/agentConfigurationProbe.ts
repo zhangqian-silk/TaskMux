@@ -11,6 +11,12 @@ import { parse } from "smol-toml";
 
 import { configuredAgentLaunchEnvironment } from "../agent/launchEnvironment.js";
 import { codexClientInitialization } from "../runtime/codexAppServerRuntime.js";
+import {
+  acpInitializeRequest,
+  readAcpInitializeResult,
+  type AcpInitializeResult
+} from "../runtime/acpProtocol.js";
+import { YUI_VERSION } from "../version.js";
 import type {
   AgentConfigurationCatalog,
   AgentConfigurationChoice,
@@ -23,6 +29,7 @@ const MAX_OUTPUT_BYTES = 1024 * 1024;
 const PROCESS_TERMINATION_GRACE_MS = 100;
 const CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"] as const;
 const CODEX_APPROVALS = ["untrusted", "on-request", "never"] as const;
+const ACP_PROBE_REQUEST_ID = 1;
 
 export async function discoverCodexConfiguration(
   input: AgentConfigurationDiscoveryInput
@@ -327,6 +334,137 @@ async function requestClaudeInitialization(
       request_id: requestId,
       type: "control_request",
       request: { subtype: "initialize" }
+    })}\n`);
+  });
+}
+
+/**
+ * Discover an ACP Agent's capabilities from the protocol itself.
+ *
+ * `initialize` is the only method used: it is the one exchange ACP guarantees
+ * before any Session exists, and it requires no authentication, so discovery
+ * never touches a model or spends quota. Everything reported here is what the
+ * Agent actually advertised — no field is inferred from which product it is.
+ */
+export async function discoverAcpConfiguration(
+  input: AgentConfigurationDiscoveryInput
+): Promise<AgentConfigurationCatalog> {
+  const environment = configuredAgentLaunchEnvironment(input.agent, input.environment);
+  const negotiated = await requestAcpInitialization(
+    input.agent.command,
+    [...input.agent.baseArgs],
+    input.cwd,
+    environment,
+    input.signal
+  );
+  const warnings: string[] = [];
+  if (!negotiated.capabilities.loadSession) {
+    warnings.push(
+      "This ACP Agent does not support `session/load`, so a managed Yui Turn "
+      + "cannot survive a Provider restart."
+    );
+  }
+  if (negotiated.authMethods.length > 0) {
+    // Authenticating is the operator's decision, made outside Yui with the
+    // product's own tooling. Reporting the requirement is the honest action.
+    warnings.push(
+      "This ACP Agent advertises authentication methods "
+      + `(${negotiated.authMethods.map((method) => method.id).join(", ")}); `
+      + "sessions fail until it is authenticated with its own CLI."
+    );
+  }
+  return {
+    schemaVersion: 1,
+    agentId: input.agent.id,
+    adapterId: "acp",
+    ...(negotiated.agentVersion === undefined
+      ? {}
+      : semanticVersion(negotiated.agentVersion) === undefined
+        ? {}
+        : { cliVersion: semanticVersion(negotiated.agentVersion)! }),
+    // ACP negotiates no model catalog. Which model an Agent uses is its own
+    // configuration, and inventing choices here would misreport the protocol.
+    models: [],
+    fields: [
+      field("model", [], true, false,
+        "ACP does not expose a model catalog; configure the model in the Agent itself."),
+      field("effort", [], true, false, "ACP does not expose a reasoning-effort setting."),
+      field("permission.strategy", [choice("default")], false, true,
+        "Yui always declines ACP permission requests: this transport carries no "
+        + "interactive consent, so it cannot grant authority on the user's behalf."),
+      field("additionalDirectories", [], true, false,
+        "Yui does not send `additionalDirectories` over ACP.")
+    ],
+    warnings
+  };
+}
+
+/**
+ * Run one `initialize` exchange and stop. The Agent is spawned, asked what it
+ * supports, and terminated without creating a Session.
+ */
+async function requestAcpInitialization(
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+  signal: AbortSignal
+): Promise<AcpInitializeResult> {
+  const child = spawn(command, args, { cwd, env: environment, stdio: ["pipe", "pipe", "pipe"] });
+  return new Promise<AcpInitializeResult>((resolvePromise, reject) => {
+    let settled = false;
+    let bytes = 0;
+    const output = createInterface({ input: child.stdout });
+    const finish = (error?: Error, value?: AcpInitializeResult): void => {
+      if (settled) return;
+      settled = true;
+      output.close();
+      terminateProcess(child);
+      signal.removeEventListener("abort", abort);
+      if (error !== undefined) reject(error);
+      else resolvePromise(value!);
+    };
+    const abort = (): void => finish(abortError());
+    signal.addEventListener("abort", abort, { once: true });
+    child.on("error", (error) => finish(error));
+    child.on("exit", (code, exitSignal) => {
+      if (!settled) finish(new Error(
+        `ACP configuration probe exited before initialize (${code ?? exitSignal ?? "unknown"}).`
+      ));
+    });
+    output.on("line", (line) => {
+      bytes += Buffer.byteLength(line);
+      if (bytes > MAX_OUTPUT_BYTES) {
+        finish(new Error("ACP configuration probe exceeded the output limit."));
+        return;
+      }
+      let message: unknown;
+      try {
+        message = JSON.parse(line) as unknown;
+      } catch {
+        return;
+      }
+      const envelope = object(message);
+      if (envelope === undefined || envelope.id !== ACP_PROBE_REQUEST_ID) return;
+      const failure = object(envelope.error);
+      if (failure !== undefined) {
+        finish(new Error(typeof failure.message === "string"
+          ? `ACP initialize failed: ${failure.message}`
+          : "ACP initialize failed."));
+        return;
+      }
+      try {
+        finish(undefined, readAcpInitializeResult(envelope.result));
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    child.stdin.on("error", (error) => finish(error));
+    child.stdin.end(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: ACP_PROBE_REQUEST_ID,
+      method: "initialize",
+      params: acpInitializeRequest(YUI_VERSION)
     })}\n`);
   });
 }

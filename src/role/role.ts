@@ -4,6 +4,7 @@ import {
   type ExecutionEnvironmentSnapshot
 } from "../resources/projectResource.js";
 
+import { isAgentAdapterId } from "../agent/adapterCatalog.js";
 import type { WorkerAccess } from "../profile/agentProfile.js";
 import type {
   ClaudeRoleAgentConfig,
@@ -548,7 +549,10 @@ function cloneJson<T>(value: T): T {
 
 function requireSupportedAdapterId(value: string): RoleAgentConfig["adapterId"] {
   const normalized = requireText(value, "Role Agent adapter id");
-  if (normalized !== "codex" && normalized !== "claude") {
+  // The catalog defines which adapters exist. A second list here would let a
+  // catalogued adapter be registered as an Agent and then rejected when a Role
+  // binds to it, which reads as corruption rather than as the missing entry.
+  if (!isAgentAdapterId(normalized)) {
     throw new Error(`Role Agent adapter is unsupported: ${normalized}.`);
   }
   return normalized;

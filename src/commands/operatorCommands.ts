@@ -1,4 +1,5 @@
 import { usageError } from "../errors/cliError.js";
+import { agentAdapterLabel as adapterLabel } from "../agent/adapterCatalog.js";
 import {
   createRoleSessionSet,
   type GlobalRoleSessionSet
@@ -296,13 +297,7 @@ function requireOperator(store: TaskWorkflowStore): GlobalRole {
   return role;
 }
 
-function adapterLabel(adapterId: string): string {
-  return adapterId === "codex"
-    ? "Codex"
-    : adapterId === "claude"
-      ? "Claude"
-      : adapterId;
-}
+
 
 function requiredValue(value: string | undefined, option: string): string {
   if (value === undefined || value.startsWith("--") || value.trim().length === 0) {

@@ -18,12 +18,14 @@ import type {
 import { validateManagedWorkspace } from "../worktree/managedWorkspace.js";
 import {
   resolveAgentAdapter,
+  type AcpAgentConfig,
   type AdvancedAgentConfig,
   type ClaudeAgentConfig,
   type CodexAgentConfig,
   type RoleAgentConfig
 } from "./agentAdapter.js";
 import { roleSessionKind } from "../context/roleSessionContext.js";
+import { isAgentAdapterId } from "../agent/adapterCatalog.js";
 import {
   SESSION_BOOTSTRAP_MANIFEST_SCHEMA_VERSION,
   sessionManifestCompatibilityDigest
@@ -74,9 +76,20 @@ export type ClaudeEffectiveLaunchSnapshot = EffectiveLaunchBase & Readonly<{
   settingsSources?: readonly string[];
 }>;
 
+/**
+ * ACP negotiates model, effort and permission inside the protocol or the
+ * Agent's own configuration, so this snapshot carries none of the native
+ * launch knobs the other two adapters resolve here.
+ */
+export type AcpEffectiveLaunchSnapshot = EffectiveLaunchBase & Readonly<{
+  adapterId: "acp";
+  permission: NonNullable<AcpAgentConfig["permission"]>;
+}>;
+
 export type EffectiveLaunchSnapshot =
   | CodexEffectiveLaunchSnapshot
-  | ClaudeEffectiveLaunchSnapshot;
+  | ClaudeEffectiveLaunchSnapshot
+  | AcpEffectiveLaunchSnapshot;
 
 export type EffectiveLaunchRole = TaskRole | GlobalRole;
 
@@ -183,6 +196,20 @@ function claudeConfigFromSnapshot(
     ...(snapshot.settingsSources === undefined
       ? {}
       : { settingsSources: [...snapshot.settingsSources] })
+  };
+}
+
+function acpConfigFromSnapshot(
+  snapshot: AcpEffectiveLaunchSnapshot
+): AcpAgentConfig {
+  // No model/effort/settings round-trip: ACP resolves those inside the Agent,
+  // and the snapshot type keeps them permanently absent.
+  return {
+    adapterId: "acp",
+    permission: clone(snapshot.permission),
+    ...(snapshot.advanced === undefined
+      ? {}
+      : { advanced: clone(snapshot.advanced) })
   };
 }
 
@@ -432,15 +459,17 @@ function snapshotFromConfig(input: Readonly<{
         permission: clone(config.permission),
         ...(config.profile === undefined ? {} : { profile: config.profile })
       }
-    : {
-        ...common,
-        adapterId: "claude",
-        permission: clone(config.permission),
-        ...(config.settingsFile === undefined ? {} : { settingsFile: config.settingsFile }),
-        ...(config.settingsSources === undefined
-          ? {}
-          : { settingsSources: [...config.settingsSources] })
-      };
+    : config.adapterId === "acp"
+      ? { ...common, adapterId: "acp", permission: clone(config.permission) }
+      : {
+          ...common,
+          adapterId: "claude",
+          permission: clone(config.permission),
+          ...(config.settingsFile === undefined ? {} : { settingsFile: config.settingsFile }),
+          ...(config.settingsSources === undefined
+            ? {}
+            : { settingsSources: [...config.settingsSources] })
+        };
   return validateEffectiveLaunchSnapshot(snapshot);
 }
 
@@ -449,7 +478,9 @@ function effectiveLaunchConfigUnchecked(
 ): RoleAgentConfig {
   return snapshot.adapterId === "codex"
     ? codexConfigFromSnapshot(snapshot)
-    : claudeConfigFromSnapshot(snapshot);
+    : snapshot.adapterId === "acp"
+      ? acpConfigFromSnapshot(snapshot)
+      : claudeConfigFromSnapshot(snapshot);
 }
 
 function effectiveWriteProjects(
@@ -596,7 +627,8 @@ function validateDesiredRole(role: EffectiveLaunchRole): void {
   }
   const binding = role.agentBindings[role.activeAgentId];
   if (binding === undefined) throw new Error("Role active Agent binding is missing.");
-  if (binding.adapterId !== "codex" && binding.adapterId !== "claude") {
+  // Adapter support is the catalog's fact, not a second list to keep in sync.
+  if (!isAgentAdapterId(binding.adapterId)) {
     throw new Error(`Role Agent adapter is unsupported: ${binding.adapterId}.`);
   }
 }

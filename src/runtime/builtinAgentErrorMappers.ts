@@ -55,9 +55,55 @@ export function mapCodexAgentError(
   return mapSharedAgentError(text, "codex");
 }
 
+/**
+ * Agent Client Protocol failure recognition.
+ *
+ * ACP rides on JSON-RPC 2.0, so its failures arrive as numeric codes rather
+ * than provider prose. The codes are recognized first because they are the
+ * protocol's own exact vocabulary; only then does the shared text matcher run,
+ * which is what catches the transport failures underneath the protocol.
+ */
+export function mapAcpAgentError(
+  input: AgentDriverErrorInput
+): AgentErrorClassification {
+  const text = `${input.message}\n${input.raw}`;
+  // -32800 is ACP's own "request cancelled". It is the expected answer to
+  // `session/cancel`, not a fault.
+  if (/-32800/u.test(text) || /request[\s_-]?cancell?ed/iu.test(text)) {
+    return Object.freeze({
+      category: "cancelled",
+      code: "acp.request-cancelled",
+      sessionDisposition: "recoverable"
+    });
+  }
+  // -32601 method not found / -32602 invalid params: Yui asked for something
+  // this Agent does not implement, or asked for it wrongly. Either way the
+  // request is at fault, and retrying it unchanged cannot help.
+  if (/-32601/u.test(text)) {
+    return classification("invalid-request", "acp.method-not-found");
+  }
+  if (/-32602/u.test(text)) {
+    return classification("invalid-request", "acp.invalid-params");
+  }
+  if (/-3270[01]/u.test(text)) {
+    return classification("invalid-request", "acp.invalid-request");
+  }
+  // -32603 is the catch-all internal error: the Agent failed, but the protocol
+  // says nothing about whether this Session survived.
+  if (/-32603/u.test(text)) {
+    return recoverable("runtime", "acp.internal-error");
+  }
+  // ACP's authentication path: the Agent requires `authenticate` first. Yui
+  // never performs it on the user's behalf, so this is a genuine access fact.
+  if (/auth[\s_-]?required|requires? authentication|-32000/iu.test(text)) {
+    return classification("access", "acp.authentication-required");
+  }
+  return mapSharedAgentError(text, "acp");
+}
+
 function mapSharedAgentError(
   text: string,
-  namespace: "codex" | "claude-code"
+  namespace: "codex" | "claude-code" | "acp"
 ): AgentErrorClassification {
   if (/stream error:.*INTERNAL_ERROR/iu.test(text)) {
     return recoverable("transport", "transport.stream-internal-error");
@@ -136,12 +182,22 @@ function mapSharedAgentError(
     return recoverable("runtime", "runtime.process-exited");
   }
   if (/invalid[\s_-]?request|validation[\s_-]?error|bad[\s_-]?request|unknown[\s_-]?(?:flag|tool|argument)|unexpected argument|invalid schema/iu.test(text)
-    || (namespace === "codex"
-      ? /\[codex:(?:unrecognized_model|invalid_model|model_not_found)\]/iu.test(text)
-      : /\[claude-code:(?:unrecognized_model|invalid_model|model_not_found)\]/iu.test(text))) {
+    || namespacedModelError(namespace).test(text)) {
     return classification("invalid-request", "provider.invalid-request");
   }
   return classification("unknown", "unknown");
+}
+
+/**
+ * The `[<namespace>:<code>]` model-error tag, built from the caller's own
+ * namespace. Enumerating the namespaces here instead would silently test one
+ * provider's tag against another provider's text.
+ */
+function namespacedModelError(namespace: string): RegExp {
+  return new RegExp(
+    String.raw`\[${namespace}:(?:unrecognized_model|invalid_model|model_not_found)\]`,
+    "iu"
+  );
 }
 
 function classification(

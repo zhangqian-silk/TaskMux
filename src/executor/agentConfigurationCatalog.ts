@@ -206,6 +206,22 @@ export function fallbackAgentConfigurationCatalog(
     field("model", [], true),
     field("effort", [], true)
   ];
+  // The fallback exists for when the probe could not run, so it must still be
+  // this Agent's own shape. Falling through to Claude's fields handed the
+  // caller a catalog whose `adapterId` contradicted the Agent it described.
+  if (agent.adapterId === "acp") {
+    return {
+      schemaVersion: 1,
+      agentId: agent.id,
+      adapterId: "acp",
+      models: [],
+      fields: [
+        ...common,
+        field("permission.strategy", [choice("default")], false)
+      ],
+      warnings: ["Runtime configuration catalog is unavailable."]
+    };
+  }
   return agent.adapterId === "codex"
     ? {
         schemaVersion: 1,
@@ -320,9 +336,15 @@ function catalogFingerprint(
     sourceName: binding.sourceName,
     value: environment[binding.sourceName] ?? null
   }));
-  const nativeRoot = input.agent.adapterId === "codex"
-    ? environment.CODEX_HOME ?? join(environment.HOME ?? homedir(), ".codex")
-    : environment.CLAUDE_CONFIG_DIR ?? join(environment.HOME ?? homedir(), ".claude");
+  // Which directory an ACP Agent keeps its own state in is that product's
+  // business, not the protocol's. Fingerprinting it against Claude's config
+  // root made unrelated Claude edits invalidate this cache; the executable
+  // path below is the honest identity for an Agent Yui only speaks to.
+  const nativeRoot = input.agent.adapterId === "acp"
+    ? null
+    : input.agent.adapterId === "codex"
+      ? environment.CODEX_HOME ?? join(environment.HOME ?? homedir(), ".codex")
+      : environment.CLAUDE_CONFIG_DIR ?? join(environment.HOME ?? homedir(), ".claude");
   const context = input.config?.adapterId === "codex"
     ? { profile: input.config.profile ?? null }
     : input.config?.adapterId === "claude"

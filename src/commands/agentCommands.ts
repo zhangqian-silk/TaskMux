@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { agentNotFound, usageError } from "../errors/cliError.js";
 import { defaultTableWidth, renderTable } from "../output/table.js";
 import type { AgentAdapterId } from "../agent/adapterCatalog.js";
+import { isAgentAdapterId, supportedAgentAdapterIds } from "../agent/adapterCatalog.js";
 import {
   createConfiguredAgent,
   validateConfiguredAgent,
@@ -57,7 +58,6 @@ export type AgentCommandStore = AgentCommandTransactionStore & Readonly<{
   transaction<T>(execute: (store: AgentCommandTransactionStore) => T): T;
 }>;
 
-const SUPPORTED_ADAPTERS = Object.freeze(["codex", "claude"] as const);
 
 export function runAgentCommand(args: string[], store: AgentCommandStore): string {
   const [command, ...rest] = args;
@@ -78,9 +78,7 @@ function addAgent(args: string[], store: AgentCommandStore): string {
   const [rawId, ...tail] = args;
   const id = agentId(rawId);
   const parsed = parseAgentOptions(tail, "add");
-  const adapterId = parsed.one("--adapter") ?? (
-    SUPPORTED_ADAPTERS.includes(id as (typeof SUPPORTED_ADAPTERS)[number]) ? id : undefined
-  );
+  const adapterId = parsed.one("--adapter") ?? (isAgentAdapterId(id) ? id : undefined);
   if (adapterId === undefined) throw usageError("--adapter is required.");
   assertAdapter(adapterId);
   const command = parsed.one("--command")?.trim();
@@ -484,8 +482,8 @@ function agentId(value: string | undefined): string {
 }
 
 function assertAdapter(value: string): asserts value is AgentAdapterId {
-  if (!SUPPORTED_ADAPTERS.includes(value as (typeof SUPPORTED_ADAPTERS)[number])) {
-    throw usageError(`Agent adapter is not supported: ${value}. Supported adapters: ${SUPPORTED_ADAPTERS.join(", ")}.`);
+  if (!isAgentAdapterId(value)) {
+    throw usageError(`Agent adapter is not supported: ${value}. Supported adapters: ${supportedAgentAdapterIds().join(", ")}.`);
   }
 }
 

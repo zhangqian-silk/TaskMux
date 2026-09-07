@@ -1,4 +1,5 @@
 import type { OperatorSessionListItem } from "../operator/operatorSessionHistory.js";
+import { agentAdapterLabel as adapterLabel } from "../agent/adapterCatalog.js";
 import { renderTable } from "../output/table.js";
 import { formatRelativeTimestamp } from "../output/timePresentation.js";
 import type { SelectionIo } from "./interactiveSelection.js";
@@ -119,10 +120,4 @@ async function choose(
   return choices.find((choice) => choice.value === answer)?.value;
 }
 
-function adapterLabel(adapterId: string): string {
-  return adapterId === "codex"
-    ? "Codex"
-    : adapterId === "claude"
-      ? "Claude"
-      : adapterId;
-}
+

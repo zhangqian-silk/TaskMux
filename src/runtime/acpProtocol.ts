@@ -1,0 +1,377 @@
+/**
+ * Agent Client Protocol (ACP) v1 codec.
+ *
+ * This module owns the protocol only. It knows nothing about which product is
+ * on the other end of the pipe: every product-specific fact (executable,
+ * arguments, version, authentication context) belongs to a product descriptor.
+ * A second ACP product must be reachable by adding a descriptor alone.
+ *
+ * Field names and semantics follow the published v1 specification
+ * (agentclientprotocol.com/protocol/v1). Where the specification leaves a
+ * behavior optional, this codec reports the negotiated fact rather than
+ * assuming the capability exists.
+ */
+
+export const ACP_PROTOCOL_VERSION = 1;
+
+/** JSON-RPC "Request Cancelled", used by ACP for `$/cancel_request`. */
+export const ACP_REQUEST_CANCELLED_CODE = -32800;
+export const ACP_METHOD_NOT_FOUND_CODE = -32601;
+
+export type AcpJsonValue = Record<string, unknown>;
+
+/**
+ * Capabilities Yui advertises as an ACP client. Every entry is deliberately
+ * false: Yui does not expose its filesystem or a terminal to the Agent through
+ * this transport, so the Agent must not call `fs/*` or `terminal/*`. Declaring
+ * a capability Yui does not implement would invite calls it must then refuse.
+ */
+export const YUI_CLIENT_CAPABILITIES: AcpJsonValue = Object.freeze({
+  fs: Object.freeze({ readTextFile: false, writeTextFile: false }),
+  terminal: false
+});
+
+/** Negotiated Agent capabilities, reduced to the facts Yui acts on. */
+export type AcpAgentCapabilities = Readonly<{
+  /** `session/load` replays history; requires `loadSession`. */
+  loadSession: boolean;
+  /** `session/resume` restores without replay; requires `sessionCapabilities.resume`. */
+  resumeSession: boolean;
+  /** `session/close` releases a session; requires `sessionCapabilities.close`. */
+  closeSession: boolean;
+  promptImage: boolean;
+  promptAudio: boolean;
+  promptEmbeddedContext: boolean;
+}>;
+
+export type AcpAuthMethod = Readonly<{
+  id: string;
+  name?: string;
+  description?: string;
+}>;
+
+export type AcpInitializeResult = Readonly<{
+  protocolVersion: number;
+  capabilities: AcpAgentCapabilities;
+  authMethods: readonly AcpAuthMethod[];
+  agentName?: string;
+  agentVersion?: string;
+}>;
+
+/**
+ * A permission decision Yui is willing to return. Yui never selects an
+ * "allow" option on the user's behalf: an Agent asking for authority that the
+ * user has not granted is refused, and the refusal is reported as a fact.
+ */
+export type AcpPermissionDecision =
+  | Readonly<{ outcome: "selected"; optionId: string; kind: AcpPermissionOptionKind }>
+  | Readonly<{ outcome: "cancelled" }>;
+
+export type AcpPermissionOptionKind =
+  | "allow_once"
+  | "allow_always"
+  | "reject_once"
+  | "reject_always";
+
+export type AcpPermissionOption = Readonly<{
+  optionId: string;
+  name: string;
+  kind: AcpPermissionOptionKind;
+}>;
+
+export function acpInitializeRequest(clientVersion: string): AcpJsonValue {
+  return {
+    protocolVersion: ACP_PROTOCOL_VERSION,
+    clientCapabilities: YUI_CLIENT_CAPABILITIES,
+    clientInfo: { name: "yui", title: "Yui", version: clientVersion }
+  };
+}
+
+/**
+ * Read an `initialize` result. The specification allows the Agent to answer
+ * with the newest version it supports; a client that cannot use that version
+ * must stop rather than continue on a guessed dialect.
+ */
+export function readAcpInitializeResult(value: unknown): AcpInitializeResult {
+  const result = asObject(value);
+  if (result === null) throw new Error("ACP initialize result is not an object.");
+  const negotiated = result.protocolVersion;
+  if (typeof negotiated !== "number" || !Number.isSafeInteger(negotiated)) {
+    throw new Error("ACP initialize result is missing an integer protocolVersion.");
+  }
+  if (negotiated !== ACP_PROTOCOL_VERSION) {
+    throw new Error(
+      `ACP Agent negotiated protocol version ${negotiated}; Yui implements version `
+      + `${ACP_PROTOCOL_VERSION}. Select an Agent build that speaks this version.`
+    );
+  }
+  const capabilities = asObject(result.agentCapabilities) ?? {};
+  const prompt = asObject(capabilities.promptCapabilities) ?? {};
+  const session = asObject(capabilities.sessionCapabilities) ?? {};
+  const info = asObject(result.agentInfo) ?? {};
+  return Object.freeze({
+    protocolVersion: negotiated,
+    capabilities: Object.freeze({
+      loadSession: capabilities.loadSession === true,
+      // A capability object being present (even empty) is how ACP signals
+      // support for these; absence or false means unsupported.
+      resumeSession: isCapabilityPresent(session.resume),
+      closeSession: isCapabilityPresent(session.close),
+      promptImage: prompt.image === true,
+      promptAudio: prompt.audio === true,
+      promptEmbeddedContext: prompt.embeddedContext === true
+    }),
+    authMethods: Object.freeze(readAuthMethods(result.authMethods)),
+    ...(optionalText(info.name) === undefined ? {} : { agentName: optionalText(info.name)! }),
+    ...(optionalText(info.version) === undefined
+      ? {}
+      : { agentVersion: optionalText(info.version)! })
+  });
+}
+
+function isCapabilityPresent(value: unknown): boolean {
+  return value === true || (value !== null && typeof value === "object" && !Array.isArray(value));
+}
+
+function readAuthMethods(value: unknown): AcpAuthMethod[] {
+  if (!Array.isArray(value)) return [];
+  const methods: AcpAuthMethod[] = [];
+  for (const entry of value) {
+    const method = asObject(entry);
+    const id = method === null ? undefined : optionalText(method.id);
+    if (method === null || id === undefined) continue;
+    methods.push(Object.freeze({
+      id,
+      ...(optionalText(method.name) === undefined ? {} : { name: optionalText(method.name)! }),
+      ...(optionalText(method.description) === undefined
+        ? {}
+        : { description: optionalText(method.description)! })
+    }));
+  }
+  return methods;
+}
+
+export function acpNewSessionRequest(cwd: string): AcpJsonValue {
+  // `mcpServers` is required by the specification; Yui exposes none over ACP.
+  return { cwd, mcpServers: [] };
+}
+
+export function acpPromptRequest(sessionId: string, text: string): AcpJsonValue {
+  // Text is the baseline ContentBlock every ACP Agent must accept, so a prompt
+  // never depends on a negotiated prompt capability.
+  return { sessionId, prompt: [{ type: "text", text }] };
+}
+
+export function acpCancelNotification(sessionId: string): AcpJsonValue {
+  return { sessionId };
+}
+
+/** The five `stopReason` values defined by ACP v1. */
+export type AcpStopReason =
+  | "end_turn"
+  | "max_tokens"
+  | "max_turn_requests"
+  | "refusal"
+  | "cancelled";
+
+const STOP_REASONS: readonly AcpStopReason[] = [
+  "end_turn",
+  "max_tokens",
+  "max_turn_requests",
+  "refusal",
+  "cancelled"
+];
+
+export function readAcpStopReason(value: unknown): AcpStopReason | undefined {
+  const result = asObject(value);
+  const reason = result?.stopReason;
+  return STOP_REASONS.find((candidate) => candidate === reason);
+}
+
+/**
+ * Map a stop reason onto Yui's terminal vocabulary. Only `end_turn` is a
+ * completed Turn: a token or request ceiling and a refusal each ended the Turn
+ * without delivering the requested work, and reporting them as success would
+ * hide a real outcome from the Task record.
+ */
+export function acpTerminalStatus(reason: AcpStopReason): "completed" | "failed" | "cancelled" {
+  switch (reason) {
+    case "end_turn":
+      return "completed";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "failed";
+  }
+}
+
+export function acpStopReasonDetail(reason: AcpStopReason): string {
+  switch (reason) {
+    case "max_tokens":
+      return "ACP Agent stopped at its token limit (stopReason=max_tokens).";
+    case "max_turn_requests":
+      return "ACP Agent stopped at its per-Turn model request limit "
+        + "(stopReason=max_turn_requests).";
+    case "refusal":
+      return "ACP Agent refused to continue the Turn (stopReason=refusal).";
+    case "cancelled":
+      return "ACP Agent reported the Turn as cancelled (stopReason=cancelled).";
+    case "end_turn":
+      return "ACP Agent completed the Turn (stopReason=end_turn).";
+  }
+}
+
+export type AcpSessionUpdate =
+  | Readonly<{ kind: "agent-message"; text: string }>
+  | Readonly<{ kind: "tool-call"; toolCallId: string; title?: string; status?: string }>
+  | Readonly<{ kind: "tool-call-update"; toolCallId: string; status?: string }>
+  | Readonly<{ kind: "plan" }>
+  | Readonly<{ kind: "usage"; used?: number; size?: number }>
+  | Readonly<{ kind: "other"; sessionUpdate: string }>;
+
+/** Decode a `session/update` notification payload for the given session. */
+export function readAcpSessionUpdate(
+  params: unknown,
+  sessionId: string
+): AcpSessionUpdate | undefined {
+  const value = asObject(params);
+  if (value === null || optionalText(value.sessionId) !== sessionId) return undefined;
+  const update = asObject(value.update);
+  const kind = update === null ? undefined : optionalText(update.sessionUpdate);
+  if (update === null || kind === undefined) return undefined;
+  switch (kind) {
+    case "agent_message_chunk": {
+      const text = readContentText(update.content);
+      return text === undefined ? undefined : Object.freeze({ kind: "agent-message", text });
+    }
+    case "tool_call": {
+      const toolCallId = optionalText(update.toolCallId);
+      if (toolCallId === undefined) return undefined;
+      return Object.freeze({
+        kind: "tool-call",
+        toolCallId,
+        ...(optionalText(update.title) === undefined
+          ? {}
+          : { title: optionalText(update.title)! }),
+        ...(optionalText(update.status) === undefined
+          ? {}
+          : { status: optionalText(update.status)! })
+      });
+    }
+    case "tool_call_update": {
+      const toolCallId = optionalText(update.toolCallId);
+      if (toolCallId === undefined) return undefined;
+      return Object.freeze({
+        kind: "tool-call-update",
+        toolCallId,
+        ...(optionalText(update.status) === undefined
+          ? {}
+          : { status: optionalText(update.status)! })
+      });
+    }
+    case "plan":
+      return Object.freeze({ kind: "plan" });
+    case "usage_update":
+      return Object.freeze({
+        kind: "usage",
+        ...(safeCount(update.used) === undefined ? {} : { used: safeCount(update.used)! }),
+        ...(safeCount(update.size) === undefined ? {} : { size: safeCount(update.size)! })
+      });
+    default:
+      return Object.freeze({ kind: "other", sessionUpdate: kind });
+  }
+}
+
+function readContentText(value: unknown): string | undefined {
+  const content = asObject(value);
+  if (content === null || content.type !== "text") return undefined;
+  return typeof content.text === "string" ? content.text : undefined;
+}
+
+export type AcpPermissionRequest = Readonly<{
+  sessionId: string;
+  toolCallId?: string;
+  options: readonly AcpPermissionOption[];
+}>;
+
+export function readAcpPermissionRequest(params: unknown): AcpPermissionRequest | undefined {
+  const value = asObject(params);
+  const sessionId = value === null ? undefined : optionalText(value.sessionId);
+  if (value === null || sessionId === undefined) return undefined;
+  const toolCall = asObject(value.toolCall);
+  const options: AcpPermissionOption[] = [];
+  if (Array.isArray(value.options)) {
+    for (const entry of value.options) {
+      const option = asObject(entry);
+      const optionId = option === null ? undefined : optionalText(option.optionId);
+      const kind = option === null ? undefined : optionalText(option.kind);
+      if (option === null || optionId === undefined || !isPermissionOptionKind(kind)) continue;
+      options.push(Object.freeze({
+        optionId,
+        name: optionalText(option.name) ?? optionId,
+        kind
+      }));
+    }
+  }
+  const toolCallId = toolCall === null ? undefined : optionalText(toolCall.toolCallId);
+  return Object.freeze({
+    sessionId,
+    ...(toolCallId === undefined ? {} : { toolCallId }),
+    options: Object.freeze(options)
+  });
+}
+
+function isPermissionOptionKind(value: string | undefined): value is AcpPermissionOptionKind {
+  return value === "allow_once" || value === "allow_always"
+    || value === "reject_once" || value === "reject_always";
+}
+
+/**
+ * Choose a permission response without ever granting authority on the user's
+ * behalf. Yui holds no interactive consent on this transport, so an Agent's
+ * request to act is declined: an explicit reject option when the Agent offered
+ * one, otherwise the `cancelled` outcome the specification always permits.
+ * Escalating to an allow option here would silently convert an absent user
+ * decision into a granted one.
+ */
+export function acpDeclinePermission(request: AcpPermissionRequest): AcpPermissionDecision {
+  const reject = request.options.find((option) => option.kind === "reject_once")
+    ?? request.options.find((option) => option.kind === "reject_always");
+  return reject === undefined
+    ? Object.freeze({ outcome: "cancelled" })
+    : Object.freeze({ outcome: "selected", optionId: reject.optionId, kind: reject.kind });
+}
+
+export function acpPermissionResult(decision: AcpPermissionDecision): AcpJsonValue {
+  return decision.outcome === "selected"
+    ? { outcome: { outcome: "selected", optionId: decision.optionId } }
+    : { outcome: { outcome: "cancelled" } };
+}
+
+export function acpPermissionSummary(
+  request: AcpPermissionRequest,
+  decision: AcpPermissionDecision
+): string {
+  const target = request.toolCallId === undefined
+    ? "an operation"
+    : `tool call ${request.toolCallId}`;
+  return decision.outcome === "selected"
+    ? `Yui declined ACP permission for ${target} using option ${decision.optionId}.`
+    : `Yui returned the cancelled outcome for an ACP permission request covering ${target}.`;
+}
+
+export function asObject(value: unknown): AcpJsonValue | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as AcpJsonValue
+    : null;
+}
+
+export function optionalText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 && !value.includes("\0")
+    ? value.trim()
+    : undefined;
+}
+
+function safeCount(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined;
+}

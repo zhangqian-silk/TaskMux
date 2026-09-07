@@ -20,7 +20,13 @@ const OWNED_ARGUMENTS_BY_ADAPTER: Readonly<Record<AgentAdapterId, readonly strin
     "--fallback-model", "--tools", "--system-prompt", "--system-prompt-file",
     "--append-system-prompt", "--append-system-prompt-file", "--plugin-dir",
     "--name", "-n", "--output-format", "--input-format"
-  ]
+  ],
+  // The ACP adapter compiles no arguments of its own: the protocol is spoken
+  // over stdio once the product is running, and how a given product enters ACP
+  // mode (`acp`, `--experimental-acp`, …) is a descriptor fact. Reserving any
+  // name here would both encode one product's spelling and reject the very
+  // baseArgs that select ACP mode.
+  acp: []
 };
 
 export function ownedArgumentsForAdapter(adapterId: AgentAdapterId): readonly string[] {

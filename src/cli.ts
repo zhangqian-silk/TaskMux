@@ -2,6 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { agentAdapterLabel as adapterLabel } from "./agent/adapterCatalog.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -2717,13 +2718,7 @@ async function executeOperatorSessionControl(
   tmux.attachRole("operator", role.name, "auto");
 }
 
-function adapterLabel(adapterId: string): string {
-  return adapterId === "codex"
-    ? "Codex"
-    : adapterId === "claude"
-      ? "Claude"
-      : adapterId;
-}
+
 
 function renderControllerResult(method: "stop" | "restart", value: unknown): string {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {

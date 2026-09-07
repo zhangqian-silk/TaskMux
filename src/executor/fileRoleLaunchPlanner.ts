@@ -533,7 +533,10 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ? "new"
       : "resume";
     const managedControl = owner.scope === "task";
-    const preallocatedNativeSessionId = binding.adapterId === "claude"
+    // Only an Agent that accepts a caller-chosen Session id can have one
+    // preallocated. Keying this on the adapter name instead of the declared
+    // capability meant every non-Claude adapter was assumed to accept one.
+    const preallocatedNativeSessionId = adapter.capabilities.nativeSessionDiscovery === "preallocated"
       && resumeNativeSessionId === undefined
       ? requireText(
           this.#createNativeSessionId(),
@@ -596,13 +599,20 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         ? readySession(input.agentId, binding.adapterId, resumeNativeSessionId!, effective)
         : null;
     } else if (launchMode === "new") {
-      const nativeSessionId = requireText(
-        preallocatedNativeSessionId,
-        "Native session id"
-      );
-      if (!managedControl) args.push("--session-id", nativeSessionId);
-      else if (!args.includes("--session-id")) args.push("--session-id", nativeSessionId);
-      session = readySession(input.agentId, binding.adapterId, nativeSessionId, effective);
+      if (adapter.capabilities.nativeSessionDiscovery === "preallocated") {
+        const nativeSessionId = requireText(
+          preallocatedNativeSessionId,
+          "Native session id"
+        );
+        if (!managedControl) args.push("--session-id", nativeSessionId);
+        else if (!args.includes("--session-id")) args.push("--session-id", nativeSessionId);
+        session = readySession(input.agentId, binding.adapterId, nativeSessionId, effective);
+      } else {
+        // A runtime-discovered Session id does not exist until the Agent
+        // answers, so there is no ready Session to record at plan time and no
+        // id to pass on the command line. Same shape as a new Codex launch.
+        session = null;
+      }
     } else {
       session = readySession(input.agentId, binding.adapterId, resumeNativeSessionId!, effective);
     }

@@ -6,12 +6,15 @@ import { createConnection, createServer, type Server } from "node:net";
 import { createInterface } from "node:readline";
 import { assertAgentExecutionEnvironment } from "./executionEnvironment.js";
 
+import { builtinAgentDriverRegistry } from "./builtinAgentDrivers.js";
+
 import {
   callController,
   controllerCallMayHaveApplied,
   ControllerClientError
 } from "../core/controllerClient.js";
 import { readHomeFilesystemId } from "../core/homeFilesystemIdentity.js";
+import type { AgentAdapterId } from "../agent/adapterCatalog.js";
 import { callFileTaskController } from "../controller/clientRuntime.js";
 import { isForeignHandoverLockHeld } from "../release/runtimeRelease.js";
 import {
@@ -150,7 +153,7 @@ export type AgentHostProviderState =
 export type AgentHostSnapshot = Readonly<{
   schemaVersion: 2;
   state: AgentHostProviderState;
-  adapterId?: "codex" | "claude";
+  adapterId?: AgentAdapterId;
   processInstanceId?: string;
   nativeSessionId?: string;
   conversationId?: string;
@@ -649,7 +652,15 @@ export async function runAgentHost(input: Readonly<{
         }
         sessionPayload = next;
       } else {
-        conversationRecoverability = providerControl.adapterId === "codex"
+        // Recoverable means a later process can rebind this Conversation by
+        // its native id. That is exactly what `nativeConversationResume` plus
+        // `crossProcessResume` state, so read it from the Driver instead of
+        // assuming every non-Codex provider has lost its Conversation.
+        const driverCapabilities = builtinAgentDriverRegistry()
+          .requireByAdapterId(providerControl.adapterId)
+          .capabilities;
+        conversationRecoverability = driverCapabilities.lifecycle.nativeConversationResume === "exact"
+          && driverCapabilities.conversation.crossProcessResume
           ? "recoverable"
           : "unknown";
         if (providerControl.kind === "restore" && providerControl.ownedTurn !== undefined) {

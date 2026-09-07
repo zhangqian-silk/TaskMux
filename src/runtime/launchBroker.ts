@@ -9,6 +9,17 @@ import type { CodexThreadOptions } from "./codexAppServerRuntime.js";
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 import { validateAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 import { validateExecutionEnvironmentSnapshot, type ExecutionEnvironmentSnapshot } from "../resources/projectResource.js";
+import { isAgentAdapterId, type AgentAdapterId } from "../agent/adapterCatalog.js";
+import { resolveAgentAdapter } from "../executor/agentAdapter.js";
+
+/** Each adapter speaks exactly one managed transport. */
+const ADAPTER_TRANSPORTS: Readonly<
+  Record<AgentAdapterId, AgentHostProviderControl["transport"]>
+> = Object.freeze({
+  codex: "codex-app-server-proxy",
+  claude: "claude-stream-json",
+  acp: "acp-stdio"
+});
 
 export type AgentHostLaunchPayload = Readonly<{
   schemaVersion: 2;
@@ -29,8 +40,8 @@ export type ProviderOwnedTurn = Readonly<{
 
 type AgentHostProviderControlBase = Readonly<{
   schemaVersion: 1;
-  adapterId: "codex" | "claude";
-  transport: "codex-app-server-proxy" | "claude-stream-json";
+  adapterId: AgentAdapterId;
+  transport: "codex-app-server-proxy" | "claude-stream-json" | "acp-stdio";
   sessionTitle?: string;
   authority: ProviderAuthorityFence;
   codexThread?: CodexThreadOptions;
@@ -154,11 +165,10 @@ function validatePayload(payload: AgentHostLaunchPayload): AgentHostLaunchPayloa
 function validateProviderControl(control: AgentHostProviderControl): void {
   if (control.schemaVersion !== 1) throw new Error("Agent Host Provider control version is invalid.");
   if (control.endpointImplementation !== undefined) validateAgentEndpointImplementation(control.endpointImplementation);
-  if (control.adapterId !== "codex" && control.adapterId !== "claude") {
+  if (!isAgentAdapterId(control.adapterId)) {
     throw new Error("Agent Host Provider control adapter is invalid.");
   }
-  if ((control.adapterId === "codex" && control.transport !== "codex-app-server-proxy")
-    || (control.adapterId === "claude" && control.transport !== "claude-stream-json")) {
+  if (control.transport !== ADAPTER_TRANSPORTS[control.adapterId]) {
     throw new Error("Agent Host Provider control transport does not match its adapter.");
   }
   if ((control.adapterId === "codex") !== (control.codexThread !== undefined)) {
@@ -184,7 +194,11 @@ function validateProviderControl(control: AgentHostProviderControl): void {
     text(control.ownedTurn.attemptId, "owned Provider input attemptId");
     text(control.ownedTurn.turnId, "owned Provider Turn id");
   }
-  const requiresNativeSessionId = control.mode === "resume" || control.adapterId === "claude";
+  // Resume always needs the id being resumed. A new launch needs one only from
+  // an Agent that accepts a caller-chosen Session id; the others report theirs
+  // once they answer, so demanding it up front rejects a valid launch.
+  const requiresNativeSessionId = control.mode === "resume"
+    || resolveAgentAdapter(control.adapterId).capabilities.nativeSessionDiscovery === "preallocated";
   if (requiresNativeSessionId !== (control.nativeSessionId !== undefined)) {
     throw new Error("Agent Host Provider resume identity is inconsistent.");
   }

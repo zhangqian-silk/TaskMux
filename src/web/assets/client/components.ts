@@ -10,7 +10,7 @@ export function translatedStatus(t, prefix, status) {
 }
 
 // Mirrors src/agent/adapterCatalog.ts to avoid a runtime import loop.
-const adapterLabels = { codex: "Codex", claude: "Claude" };
+const adapterLabels = { codex: "Codex", claude: "Claude", acp: "Agent Client Protocol" };
 function adapterLabel(adapterId) {
   return adapterLabels[adapterId] || adapterId;
 }

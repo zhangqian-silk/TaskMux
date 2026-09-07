@@ -1,4 +1,5 @@
 import type { ImplementationRef } from "../kernel/instanceHost.js";
+import { builtinAgentDriverRegistry } from "./builtinAgentDrivers.js";
 import { builtinAgentEndpointImplementation, requireBuiltinAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 import { CodexPreSubmissionError } from "./codexAppServerRuntime.js";
 export { builtinAgentEndpointImplementation } from "./agentEndpointIdentity.js";
@@ -171,9 +172,18 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
     private readonly driver: StructuredProviderSession,
     readonly configuration: AgentEndpointConfiguration
   ) {
+    // The registered Driver, not the adapter name, states which control
+    // affordances this Session really has: a Session that sends a native
+    // cancel message must not be reported as one that can only kill its
+    // process, and vice versa.
+    const capabilities = builtinAgentDriverRegistry()
+      .requireByAdapterId(driver.adapterId)
+      .capabilities;
     this.capabilities = Object.freeze({
-      steer: driver.adapterId === "codex" ? "native" as const : "unsupported" as const,
-      cancel: driver.adapterId === "codex" ? "native-interrupt" as const : "owned-process" as const
+      steer: capabilities.input.steer === "fenced" ? "native" as const : "unsupported" as const,
+      cancel: capabilities.control.interruptDelivery === "native"
+        ? "native-interrupt" as const
+        : "owned-process" as const
     });
     void driver.waitForExit().then(() => { this.#attachment = "exited"; });
   }
