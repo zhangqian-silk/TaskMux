@@ -548,8 +548,11 @@ export function previewTaskRoleAgentConfigurationMutation(
     }
     const parsed = parseRoleOptions(tail, new Map([
       ...roleOptionSpecs({ update: true, includeAgent: true }),
-      ["--profile", "value" as const]
+      ["--profile", "value" as const],
+      ["--environment", "value" as const],
+      ["--managed-environment", "flag" as const]
     ]), usage);
+    validateTaskRoleEnvironmentOptions(parsed, usage);
     if (parsed.has("--agent") && (parsed.one("--agent")?.trim().length ?? 0) === 0) {
       throw usageError("--agent is required.", usage);
     }
@@ -2545,8 +2548,11 @@ function updateTaskRole(
   }
   const parsed = parseRoleOptions(tail, new Map([
     ...roleOptionSpecs({ update: true, includeAgent: true }),
-    ["--profile", "value" as const]
+    ["--profile", "value" as const],
+    ["--environment", "value" as const],
+    ["--managed-environment", "flag" as const]
   ]), usage);
+  validateTaskRoleEnvironmentOptions(parsed, usage);
   if (parsed.has("--agent") && (parsed.one("--agent")?.trim().length ?? 0) === 0) {
     throw usageError("--agent is required.", usage);
   }
@@ -2559,7 +2565,9 @@ function updateTaskRole(
     assertTaskOpen(task);
     taskActor(tx, options, task.id);
     const role = requireRole(tx, task.id, roleName);
-    const changesLaunchContext = hasRoleLaunchContextOptions(parsed) || parsed.has("--profile");
+    const changesEnvironment = parsed.has("--environment") || parsed.has("--managed-environment");
+    const changesLaunchContext = hasRoleLaunchContextOptions(parsed) || parsed.has("--profile")
+      || changesEnvironment;
     const changesAgentConfig = hasAgentConfigOptions(parsed);
     if (changesLaunchContext || changesAgentConfig) {
       assertRoleRuntimeMutationAllowed(tx, {
@@ -2589,7 +2597,7 @@ function updateTaskRole(
           [bindingUpdate.agentId]: bindingUpdate.binding
         }
       }, now);
-    const next = updateRole(withBinding, {
+    let next = updateRole(withBinding, {
       ...roleProfilePatch(parsed)
     }, now);
     if (bindingUpdate !== undefined) {
@@ -2599,6 +2607,14 @@ function updateTaskRole(
       validateConfiguredRoleSkills(options.yuiHome, next.skills ?? []);
     }
     tx.saveRole(task.id, next);
+    if (changesEnvironment) {
+      createProjectResources(tx, () => now).bindEnvironment(
+        task.id,
+        role.name,
+        parsed.has("--managed-environment") ? null : parsed.one("--environment")!
+      );
+      next = requireRole(tx, task.id, role.name);
+    }
     enqueueWork(tx, taskMailbox(task.id), "role-updated", now, [taskRef(task.id)]);
     recordTaskEvent(
       tx,
@@ -2619,6 +2635,18 @@ function updateTaskRole(
     kind: "task",
     sessions
   }), { role: updated, sessions });
+}
+
+function validateTaskRoleEnvironmentOptions(
+  parsed: ReturnType<typeof parseRoleOptions>,
+  usage: string
+): void {
+  if (parsed.has("--environment") && parsed.has("--managed-environment")) {
+    throw usageError("--environment and --managed-environment are mutually exclusive.", usage);
+  }
+  if (parsed.has("--environment") && (parsed.one("--environment")?.trim().length ?? 0) === 0) {
+    throw usageError("--environment requires an adopted preparation id.", usage);
+  }
 }
 
 function removeTaskRole(

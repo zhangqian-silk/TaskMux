@@ -681,8 +681,8 @@ const taskChildren: readonly NodeInput[] = [
       {
         name: "update",
         summary: "Update a Task Role; Agent settings target the named or active binding without switching it.",
-        usage: "yui task role update <task> <role> [--profile <id>] [--agent <id>] [Role and Agent settings]",
-        options: ["--profile", "--agent", ...roleProfileOptions, ...roleAgentOptions,
+        usage: "yui task role update <task> <role> [--profile <id>] [--agent <id>] [--environment <preparation-id> | --managed-environment] [Role and Agent settings]",
+        options: ["--profile", "--agent", "--environment", "--managed-environment", ...roleProfileOptions, ...roleAgentOptions,
           ...roleProfileClearOptions, ...roleAgentClearOptions, "--yes"],
         optionValues: roleAgentOptionValues
       },

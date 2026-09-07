@@ -1,4 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
+import {
+  validateExecutionEnvironmentSnapshot,
+  type ExecutionEnvironmentSnapshot
+} from "../resources/projectResource.js";
 
 import type { WorkerAccess } from "../profile/agentProfile.js";
 import type {
@@ -57,6 +61,8 @@ export type GlobalRole = RoleAgentOwner & {
 export type TaskRole = RoleAgentOwner & {
   schemaVersion: 4;
   taskId: string;
+  /** Explicitly adopted environment for the next native Session. */
+  executionEnvironment?: ExecutionEnvironmentSnapshot;
 };
 export type Role = TaskRole;
 
@@ -176,7 +182,9 @@ export function updateGlobalRole(
 export function updateRole(
   role: Role,
   patch: Partial<Pick<Role,
-    "name" | "activeAgentId" | "agentBindings" | "workspace" | "defaultAccess">> & RoleProfile,
+    "name" | "activeAgentId" | "agentBindings" | "workspace" | "defaultAccess">> & RoleProfile & {
+      executionEnvironment?: ExecutionEnvironmentSnapshot | null;
+    },
   now: Date
 ): Role {
   validateTaskRole(role);
@@ -186,6 +194,10 @@ export function updateRole(
     ...cloneRolePatch(patch),
     updatedAt: now.toISOString()
   };
+  if (patch.executionEnvironment === null) delete updated.executionEnvironment;
+  else if (patch.executionEnvironment !== undefined) {
+    updated.executionEnvironment = cloneJson(patch.executionEnvironment);
+  }
   clearProfileFields(updated, patch);
   updated.launchRevision = isDeepStrictEqual(desiredBefore, desiredLaunchProjection(updated))
     ? role.launchRevision
@@ -416,6 +428,13 @@ function validateRoleOwner<T extends GlobalRole | TaskRole>(role: T): T {
   requireSafeIdentity(role.name, "Role name");
   requireSafeIdentity(role.activeAgentId, "Role active Agent id");
   requireText(role.workspace, "Role workspace");
+  if ("executionEnvironment" in role && role.executionEnvironment !== undefined) {
+    if (!("taskId" in role)) throw new Error("Only a Task Role may bind an execution environment.");
+    validateExecutionEnvironmentSnapshot(role.executionEnvironment);
+    if (role.executionEnvironment.taskId !== role.taskId) {
+      throw new Error("Role execution environment belongs to another Task.");
+    }
+  }
   const entries = Object.entries(role.agentBindings);
   if (entries.length === 0) throw new Error("Role requires at least one Agent binding.");
   for (const [agentId, binding] of entries) {
@@ -478,6 +497,9 @@ function desiredLaunchProjection(role: GlobalRole | TaskRole): unknown {
     agentBindings: role.agentBindings,
     workspace: role.workspace,
     defaultAccess: role.defaultAccess,
+    ...("taskId" in role && role.executionEnvironment !== undefined
+      ? { executionEnvironment: role.executionEnvironment }
+      : {}),
     ...cloneProfile(role)
   };
 }

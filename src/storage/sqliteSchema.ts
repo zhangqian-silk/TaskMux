@@ -878,6 +878,15 @@ UPDATE task_records SET payload = json_remove(payload, '$.outcomeHistory'),
   brief = CASE WHEN brief IS NULL THEN NULL ELSE json_remove(brief, '$.revision') END;
 UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
 `
+  },
+  {
+    version: 9,
+    name: "adopted-agent-execution-environment",
+    introducedIn: "0.15.8",
+    // Optional Role selection and immutable Session/Turn effective snapshot.
+    // Existing records deliberately keep their managed-workspace execution;
+    // adopted preparations must never be inferred as an automatic binding.
+    sql: "SELECT 1; -- explicit adopted execution environment; absent means managed workspace"
   }
 ]);
 

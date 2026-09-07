@@ -43,6 +43,7 @@ export type AgentEndpointConfiguration = Readonly<{
   command: string;
   args: readonly string[];
   cwd: string;
+  executionEnvironment?: AgentHostLaunchPayload["executionEnvironment"];
   threadOptions?: NonNullable<AgentHostLaunchPayload["providerControl"]>["codexThread"];
 }>;
 
@@ -101,6 +102,9 @@ export function createAgentEndpointFactory(
       command: payload.command,
       args: Object.freeze([...payload.args]),
       cwd: payload.cwd,
+      ...(payload.executionEnvironment === undefined ? {} : {
+        executionEnvironment: freezeConfiguration(structuredClone(payload.executionEnvironment))
+      }),
       ...(control.codexThread === undefined ? {} : {
         threadOptions: freezeConfiguration(structuredClone(control.codexThread))
       })

@@ -91,6 +91,12 @@ const definitions: readonly Omit<CapabilityDescriptor, "contractVersion" | "prov
     inputSchema: object({ taskId: text, preparationId: text }), outputSchema: recordOutput
   },
   {
+    name: "environment.bind", summary: "Select an adopted environment for a Role's next native Session; null restores managed workspace. Active Sessions keep their environment.",
+    effect: "local-mutation", requiredPermissions: ["task:manage"], source: "ProjectResources.bindEnvironment",
+    inputSchema: object({ taskId: text, roleName: text, preparationId: { anyOf: [text, { const: null }] } }),
+    outputSchema: recordOutput
+  },
+  {
     name: "environment.release", summary: "Release exact preparation; adopted resources need actual quiescence evidence. Never deletes user directories.",
     effect: "local-mutation", requiredPermissions: ["task:manage"], source: "ProjectResources.release",
     inputSchema: object({ taskId: text, preparationId: text, quiescence: text }, ["taskId", "preparationId"]), outputSchema: recordOutput
@@ -241,6 +247,8 @@ export function createBuiltinCapabilities(
       if (name === "artifact.list") return store.listArtifacts(taskId).map(artifactSummary);
       if (name === "environment.prepare") return resources.prepare(taskId, params.plan as EnvironmentPlan);
       if (name === "environment.adopt") return resources.adopt(taskId, params.preparationId as string);
+      if (name === "environment.bind") return resources.bindEnvironment(taskId, params.roleName as string,
+        params.preparationId as string | null);
       if (name === "environment.release") return resources.release(taskId, params.preparationId as string,
         params.quiescence === undefined ? undefined : { quiescence: params.quiescence as string });
       if (name === "environment.list") return store.listEnvironmentPreparations(taskId);

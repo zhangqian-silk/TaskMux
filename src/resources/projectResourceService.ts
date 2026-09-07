@@ -5,9 +5,13 @@ import type { TaskStore } from "../storage/taskStore.js";
 import { checkGrant, recordGrantUse } from "../grant/capabilityGrant.js";
 import { requireIdentity, requireText, requireTimestamp } from "../domain/validation.js";
 import { validateProject } from "../repository/project.js";
+import { updateRole, type TaskRole } from "../role/role.js";
+import { assertRoleRuntimeMutationAllowed } from "../commands/roleRuntimeGuard.js";
+import { assertProviderConversationReplaceable, currentProviderConversation } from "../runtime/providerRuntimeIdentity.js";
+import { projectProviderContinuations } from "../runtime/runtimeContinuationProjection.js";
 import {
-  contentDigest, validateArtifact, stableArtifactRef,
-  type Artifact, type EnvironmentPreparation, type LocalResource
+  contentDigest, validateArtifact, stableArtifactRef, validateExecutionEnvironmentSnapshot,
+  type Artifact, type EnvironmentPreparation, type ExecutionEnvironmentSnapshot, type LocalResource
 } from "./projectResource.js";
 
 export type ArtifactInput = Readonly<{
@@ -83,12 +87,13 @@ export function createProjectResources(store: TaskStore, now: () => Date = () =>
     if (!value) throw new Error(`Local resource not found: ${resourceId}.`);
     return value;
   };
-  const grantFor = (taskId: string, resourceId: string, access: "read" | "write", reservation?: string) => {
+  const grantFor = (taskId: string, resourceId: string, access: "read" | "write", reservation?: string, reservedOnly = false) => {
     const target = resource(resourceId);
     const grant = store.listCapabilityGrants(taskId).find((candidate) => {
       // A Project scope is visibility, not an exhaustive Resource grant. A
       // concrete resource bound is mandatory even for a broadly named action.
       if (!candidate.parameterBounds.resourceId?.includes(resourceId)) return false;
+      if (reservedOnly && (reservation === undefined || !candidate.useReservations.includes(reservation))) return false;
       if (candidate.scope.homePath !== undefined && resolve(candidate.scope.homePath) !== target.path) return false;
       if (candidate.scope.projectIds?.some((id) => !task(taskId).projectBindings.some((binding) => binding.projectId === id))) return false;
       return checkGrant(candidate, { action: `resource.local.${access}`, params: { resourceId } }, now(),
@@ -114,7 +119,47 @@ export function createProjectResources(store: TaskStore, now: () => Date = () =>
       throw new Error("Local resource overlaps a Yui Home or managed Git workspace; use its existing owner and Git operations.");
     }
   };
+  const resolveExecutionEnvironment = (taskId: string, id: string): ExecutionEnvironmentSnapshot => {
+    openTask(taskId);
+    const value = preparation(taskId, id);
+    if (value.disposition !== "adopted") throw new Error("Execution environment must be adopted and not released.");
+    if (value.intentDigest !== intent(taskId)) throw new Error("Task resource/configuration intent changed; prepare again.");
+    if (!value.directory || !value.environmentRef || value.isolation !== "trusted-local") {
+      throw new Error("Empty preparation has no native execution directory; select a directory environment or managed workspace.");
+    }
+    assertDirectory(value.directory);
+    if (value.directory.ownership === "user") assertLocalWriteOwner(value.directory.path, value.access);
+    for (const resourceId of value.resourceRefs) {
+      // Adoption already charged the bounded grant. Launch/resume may recheck
+      // that reservation, but must neither invent nor consume another use.
+      grantFor(taskId, resourceId, value.access, id, true);
+      const target = resource(resourceId);
+      assertDirectory(target);
+      if (target.path !== value.directory.path || target.device !== value.directory.device || target.inode !== value.directory.inode) {
+        throw new Error("Execution environment no longer matches its registered Resource.");
+      }
+    }
+    return validateExecutionEnvironmentSnapshot({
+      taskId, preparationId: id, environmentRef: value.environmentRef,
+      access: value.access, isolation: value.isolation, directory: { ...value.directory }
+    });
+  };
   return {
+    resolveExecutionEnvironment,
+    bindEnvironment(taskId: string, roleName: string, preparationId: string | null): TaskRole {
+      return store.transaction((tx) => {
+        openTask(taskId);
+        const role = tx.getRole(taskId, roleName);
+        if (!role) throw new Error(`Role not found: ${taskId}/${roleName}.`);
+        assertRoleRuntimeMutationAllowed(tx, { scope: "task", taskId, roleName }, "environment binding");
+        const executionEnvironment = preparationId === null ? null : resolveExecutionEnvironment(taskId, preparationId);
+        const updated = updateRole(role, { executionEnvironment }, now());
+        // Desired configuration only: active native Sessions retain their
+        // immutable actual snapshot until explicitly ended.
+        tx.saveRole(taskId, updated);
+        return updated;
+      });
+    },
     saveArtifact(taskId: string, input: ArtifactInput): Artifact {
       task(taskId);
       validateArtifactInput(input);
@@ -266,9 +311,36 @@ export function createProjectResources(store: TaskStore, now: () => Date = () =>
         if (value.disposition === "released") return value;
         if (value.disposition === "adopted" && value.directory) {
           requireText(evidence?.quiescence ?? "", "Actual quiescence evidence");
+          const references = (environment: ExecutionEnvironmentSnapshot | undefined) =>
+            environment?.taskId === taskId && environment.preparationId === id;
+          const sessionSets = tx.listRoleSessionSets(taskId);
+          const continuations = projectProviderContinuations(tx.listEvents(taskId));
+          for (const set of sessionSets) {
+            const users = [...Object.values(set.sessions), ...(set.history ?? [])]
+              .filter((session) => references(session.effective.executionEnvironment));
+            if (set.providerBinding != null && users.some((session) =>
+              session.nativeSessionId === currentProviderConversation(set.providerBinding!).conversationId)) {
+              // A dead Host cannot prove that the native daemon accepted
+              // nothing or that a detached input has finished.
+              assertProviderConversationReplaceable(set.providerBinding);
+            }
+            if (continuations.some((continuation) =>
+              continuation.roleName === set.owner.roleName
+              && (continuation.execution !== "quiescent"
+                || continuation.observation !== "exact" || continuation.identityConflict)
+              && (users.some((session) => session.agentId === continuation.identity.accountScope
+                && session.nativeSessionId === continuation.identity.conversationId)
+                || references(tx.getTurn(taskId, continuation.turnId)?.effective.executionEnvironment)))) {
+              throw new Error("Environment still has a live or unknown native continuation.");
+            }
+          }
           if (value.directory && (
-            tx.listTurns(taskId).some((turn) => turn.status === "active" && turn.workspace
-              && overlaps(turn.workspace.root, value.directory!.path))
+            tx.listTurns(taskId).some((turn) => turn.status === "active"
+              && (references(turn.effective.executionEnvironment)
+                || (turn.workspace && overlaps(turn.workspace.root, value.directory!.path))))
+            || sessionSets.some((set) =>
+              [...Object.values(set.sessions), ...(set.history ?? [])].some((session) =>
+                session.status === "active" && references(session.effective.executionEnvironment)))
             || tx.listDurableJobs(taskId).some((job) => ["queued", "running", "unknown-needs-attention"].includes(job.status)
               && overlaps(job.workspace, value.directory!.path))
           )) throw new Error("Environment still has a live or unknown execution reference.");

@@ -37,6 +37,48 @@ an independently sampled observer source. Managed automation is admitted only wh
 prompt delivery, interrupt, stop, exact Session identity, exact prompt
 acceptance, and exact Turn lifecycle are available.
 
+## Explicit adopted execution environments
+
+Task Roles can select one directory already adopted through `environment.adopt`:
+
+```sh
+yui task role update task-1 worker --environment preparation-ID
+yui task role update task-1 worker --managed-environment
+```
+
+The equivalent authenticated capability is `environment.bind` with `taskId`,
+`roleName`, and `preparationId`; `null` explicitly selects the managed workspace.
+Selection changes desired configuration, not a running Session. Use the existing
+explicit Session stop/new flow to apply a changed environment to native execution;
+the CLI requires `--yes` to acknowledge desired changes while a Session is live.
+Role details distinguish desired and Session environments.
+
+New Session/Turn effective snapshots retain the preparation reference, directory
+path/device/inode, access, and isolation. The launch planner uses that directory
+for the native process and Codex thread cwd without automatically adding managed
+Git roots. The original managed workspace remains Yui's control/context and Git
+ownership record, not the selected native cwd.
+
+Launch, resume, and Yui-controlled input revalidate the adopted environment and
+its original grant reservation without charging another use. Missing/replaced
+directories, released preparations, and revoked grants fail explicitly; there is
+no fallback to the managed workspace. Session recovery retains its original
+environment even after desired configuration changes. Active/unknown native
+inputs and continuations block release even when the Host process has exited.
+
+This is a trusted-local directory contract, not a new general sandbox. Writable
+environments retain the Agent's configured permissions. Read access requires
+Codex's explicitly configured `read-only` sandbox with approval `never`; the
+current Claude adapter rejects read-only adopted directories. Empty preparations
+have no native cwd and cannot be selected here; use scratch for these native CLIs.
+Raw arguments and additional-directory overrides are rejected for adopted
+environment launches. External clients writing directly to a shared native
+server remain outside Yui's input-validation boundary.
+
+Storage migration 9 adds this optional binding contract. Existing Roles and
+Session/Turn snapshots keep managed-workspace behavior; existing adopted
+preparations are never automatically selected.
+
 ## Canonical observation flow
 
 ```text

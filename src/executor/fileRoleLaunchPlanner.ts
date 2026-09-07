@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { assertExecutionEnvironmentCurrent } from "../runtime/executionEnvironment.js";
 
 import {
   configuredAgentToDefinition,
@@ -373,7 +374,18 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const launchEnvironment = { ...inheritedLaunchEnvironment };
     const adapter = resolveAgentAdapter(binding.adapterId);
     const effectiveWorkspace = effective.workspace.root;
-    const agentWorkspace = nativeAgentWorkspace(effective.workspace);
+    if (effective.executionEnvironment !== undefined) {
+      if (owner.scope !== "task") throw new Error("Global Roles cannot adopt a Task execution environment.");
+      assertExecutionEnvironmentCurrent(this.store, owner.taskId, effective.executionEnvironment);
+      if ((binding.config.advanced?.rawArgs?.length ?? 0) > 0) {
+        throw new Error("Adopted environments do not accept raw Agent arguments; use structured configuration.");
+      }
+      if ((binding.config.additionalDirectories?.length ?? 0) > 0) {
+        throw new Error("Adopted environments cannot implicitly include additional directories.");
+      }
+    }
+    const agentWorkspace = effective.executionEnvironment?.directory.path
+      ?? nativeAgentWorkspace(effective.workspace);
     if (adapter.id === "codex" && (owner.scope !== "task" || input.turnId === undefined)) {
       const codexConfig = inspectCodexLaunchConfig({
         environment: launchEnvironment,
@@ -455,7 +467,9 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       : binding.config;
     const effectiveConfig = withNativeProjectDirectories(
       roleConfig,
-      nativeAdditionalDirectories(effective.workspace, agentWorkspace)
+      effective.executionEnvironment === undefined
+        ? nativeAdditionalDirectories(effective.workspace, agentWorkspace)
+        : []
     );
     const compileInput = {
       agent,
@@ -623,6 +637,9 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const launch = {
       command,
       args,
+      ...(effective.executionEnvironment === undefined ? {} : {
+        executionEnvironment: structuredClone(effective.executionEnvironment)
+      }),
       ...(providerControl === undefined ? {} : { providerControl }),
       env: {
         ...launchEnvironment,
