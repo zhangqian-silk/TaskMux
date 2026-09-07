@@ -1,5 +1,9 @@
 import { updateTaskMetadataCommand } from "../commands/taskCommands.js";
 import { runConfigCommand } from "../commands/configCommands.js";
+import {
+  readTaskContext, readTaskContextDelta, inspectTaskContext, withContextObservations,
+  type ContextObservationProvider
+} from "../context/taskContext.js";
 import { CONFIG_DOMAINS, type ConfigDomain } from "../config/configCatalog.js";
 import {
   createJobCallAuthority, parseDurableJobStartParams,
@@ -33,6 +37,23 @@ const provider = Object.freeze({ id: "yui:builtin-capabilities", generation: "1"
 
 /** Source locators identify the existing semantic owner, not a new Store. */
 const definitions: readonly Omit<CapabilityDescriptor, "contractVersion" | "provider" | "scope">[] = [
+  {
+    name: "context.read", summary: "Read a bounded authorized Task working set and atomic core cursor.",
+    effect: "query", requiredPermissions: ["task:read"], source: "readTaskContext",
+    inputSchema: taskInput, outputSchema: { type: "object", required: ["records", "coreCursor", "omitted"] }
+  },
+  {
+    name: "context.delta", summary: "Read immutable Task events with a fixed pagination upper bound.",
+    effect: "query", requiredPermissions: ["task:read"], source: "readTaskContextDelta",
+    inputSchema: object({ taskId: text, after: text, continuation: text, limit: { type: "integer" } }, ["taskId", "after"]),
+    outputSchema: { type: "object", required: ["events", "throughCursor"] }
+  },
+  {
+    name: "context.inspect", summary: "Expand an authorized current record; optionally require its exact digest.",
+    effect: "query", requiredPermissions: ["task:read"], source: "inspectTaskContext",
+    inputSchema: object({ taskId: text, store: text, refId: text, digest: text }, ["taskId", "store", "refId"]),
+    outputSchema: { type: "object", required: ["ref", "value", "coreCursor"] }
+  },
   {
     name: "artifact.save", summary: "Save immutable text, external version evidence, a Job receipt, or reference material.",
     effect: "local-mutation", requiredPermissions: ["task:read"], source: "ProjectResources.saveArtifact",
@@ -180,7 +201,8 @@ export function createBuiltinCapabilities(
   host: InstanceHost,
   store: TaskStore,
   jobs: DurableJobControlPort,
-  signal: (taskId: string) => void = () => undefined
+  signal: (taskId: string) => void = () => undefined,
+  contextProviders: readonly ContextObservationProvider[] = []
 ) {
   const authority = createJobCallAuthority(store);
   const resources = createProjectResources(store);
@@ -199,6 +221,17 @@ export function createBuiltinCapabilities(
         throw new Error("Capability target is outside the authenticated Task.");
       }
       const taskId = invocation.context.targetId;
+      if (name === "context.read") {
+        const core = readTaskContext(store, taskId, callerEnvironment(caller));
+        return withContextObservations(core, contextProviders);
+      }
+      if (name === "context.delta") return readTaskContextDelta(store, taskId, {
+        after: params.after as string, continuation: params.continuation as string | undefined,
+        limit: params.limit as number | undefined
+      }, callerEnvironment(caller));
+      if (name === "context.inspect") return inspectTaskContext(store, taskId, {
+        store: params.store as string, refId: params.refId as string, digest: params.digest as string | undefined
+      }, callerEnvironment(caller));
       if (name === "artifact.save") return resources.saveArtifact(taskId, params.artifact as ArtifactInput);
       if (name === "artifact.read") {
         const artifact = store.getArtifact(taskId, params.artifactId as string);

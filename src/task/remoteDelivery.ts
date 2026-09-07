@@ -200,7 +200,7 @@ function expectedDelivery(facts: TaskRemoteDeliveryFacts): ExpectedDelivery {
       ...(event === undefined ? {} : { event })
     };
   }
-  if (task.status === "active" || task.status === "retired") {
+  if (task.status === "active" || task.status === "cancelled") {
     return {
       source: "current-task-main",
       provisional: true,

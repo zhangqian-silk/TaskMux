@@ -121,7 +121,7 @@ export type NextActionFacts = Readonly<{
   currentTaskReviewCandidate?: TaskReviewCandidate | null;
 }>;
 
-const OPEN_WORK_ITEM_STATUSES = new Set(["pending", "running", "awaiting_acceptance"]);
+const OPEN_WORK_ITEM_STATUSES = new Set(["open"]);
 
 export function projectNextAction(facts: NextActionFacts): NextAction {
   const { task } = facts;
@@ -249,7 +249,7 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
   }
 
   const candidateReady = facts.workItems
-    .find((item) => item.status === "awaiting_acceptance");
+    .find((item) => (item.status === "open" && item.currentCandidateId !== undefined));
   if (candidateReady !== undefined) {
     const candidate = currentWorkItemCandidate(candidateReady);
     const activeReview = latestActiveWorkItemReview(facts.reviewRounds, candidateReady, candidate);
@@ -411,27 +411,6 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
     });
   }
 
-  const failedWork = facts.workItems.find((item) => item.status === "failed");
-  if (failedWork !== undefined) {
-    const failedReview = latestFailedReviewFor(facts.reviewRounds, failedWork.id);
-    return buildAction(facts, {
-      kind: "implement-current-work-item",
-      reason: failedReview === undefined
-        ? `Work Item ${failedWork.id} failed; retry implementation after Leader diagnosis.`
-        : `Work Item ${failedWork.id} failed after Review ${failedReview.id}; the Leader must read its exact Reviewer Turn result and choose the repair.`,
-      refs: [
-        ref("work-item", failedWork.id),
-        ...(failedReview === undefined ? [] : [ref("review-round", failedReview.id)])
-      ],
-      preconditions: [
-        { fact: "Work Item is failed", satisfied: true, ref: ref("work-item", failedWork.id) }
-      ],
-      recommendedCommand: failedWork.assignee === undefined
-        ? `yui task work update ${task.id}/${failedWork.id} running`
-        : `yui task work dispatch ${task.id}/${failedWork.id}`
-    });
-  }
-
   const openWork = selectOpenWorkItem(facts.workItems);
   if (openWork?.kind === "blocked") {
     const refs = [
@@ -451,7 +430,7 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
   if (openWork?.kind === "ready") {
     const item = openWork.item;
     const group = currentWorkItemExecutionGroup(item);
-    if (item.status === "running" && group !== undefined
+    if (item.status === "open" && group !== undefined
       && !facts.activeTurns.some((turn) => turn.sourceExecutionGroupId === group.id)) {
       return synthesisSelectionAction(facts, "work", item.id);
     }
@@ -968,7 +947,7 @@ function selectOpenWorkItem(workItems: readonly WorkItem[]): OpenWorkItemSelecti
   const eligible = openItems.find((item) => (
     item.dependsOn.every((dependencyId) => {
       const status = byId.get(dependencyId)?.status;
-      return status === "completed";
+      return status === "accepted";
     })
   ));
   if (eligible !== undefined) return { kind: "ready", item: eligible };
@@ -982,7 +961,7 @@ function selectOpenWorkItem(workItems: readonly WorkItem[]): OpenWorkItemSelecti
     visited.add(current.id);
     const blockedBy = current.dependsOn.find((dependencyId) => {
       const status = byId.get(dependencyId)?.status;
-      return status !== "completed";
+      return status !== "accepted";
     });
     if (blockedBy === undefined) return { kind: "ready", item: current };
     const dependency = byId.get(blockedBy);
@@ -1122,16 +1101,6 @@ function detectProtocolInconsistency(facts: NextActionFacts): Inconsistency | nu
       return {
         reason: `Review ${round.id} is still ${round.status} but its Work Item ${item.id} is retired.`,
         conflicts: [ref("review-round", round.id), ref("work-item", item.id)]
-      };
-    }
-  }
-
-  for (const item of facts.workItems) {
-    if (item.status !== "awaiting_acceptance") continue;
-    if (item.candidates.length === 0) {
-      return {
-        reason: `Work Item ${item.id} is awaiting acceptance but has no Candidate record.`,
-        conflicts: [ref("work-item", item.id)]
       };
     }
   }

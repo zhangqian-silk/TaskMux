@@ -2152,7 +2152,7 @@ test("Task execution stop/start atomically controls scheduler admission", (t) =>
   store.saveRole(task.id, leader);
   const item = updateWorkItemStatus(
     createWorkItem("work-item-1", task.id, { title: "Keep completed edits" }, now),
-    "running",
+    "open",
     now
   );
   store.saveWorkItem(task.id, item);
@@ -2185,7 +2185,7 @@ test("Task execution stop/start atomically controls scheduler admission", (t) =>
   );
   assert.equal(store.getTurn(task.id, activeTurn.id).status, "failed");
   assert.equal(store.getActiveTurn(task.id, leader.name), null);
-  assert.equal(store.getWorkItem(task.id, item.id).status, "running");
+  assert.equal(store.getWorkItem(task.id, item.id).status, "open");
   assert.throws(() => runTaskCommand(
     ["turn", "retry", `${task.id}/${activeTurn.id}`],
     store,
@@ -2204,7 +2204,7 @@ test("Task execution stop/start atomically controls scheduler admission", (t) =>
 
   const completedItem = updateWorkItemStatus(
     store.getWorkItem(task.id, item.id),
-    "completed",
+    "accepted",
     new Date("2026-08-30T00:03:00.000Z"),
     "Edits retained."
   );
@@ -2227,7 +2227,7 @@ test("Task execution stop/start atomically controls scheduler admission", (t) =>
   assert.equal(store.getTask(task.id).status, "completed");
   assert.equal(store.getTurn(task.id, disposableRun.id).status, "active");
   assert.equal(store.getActiveTurn(task.id, leader.name).id, disposableRun.id);
-  assert.equal(store.getWorkItem(task.id, completedItem.id).status, "completed");
+  assert.equal(store.getWorkItem(task.id, completedItem.id).status, "accepted");
 });
 
 test("direct and replicated WorkItem execution converge through exact Lane retry", (t) => {
@@ -2791,7 +2791,7 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
     objective: "Review the exact submitted implementation.",
     acceptance: ["Inspect the frozen Candidate."],
     writeProjectIds: [project.id]
-  }, now), "running", now);
+  }, now), "open", now);
   item = submitWorkItemCandidate(item, {
     summary: "Candidate ready.",
     source: { type: "direct" },
@@ -3034,7 +3034,7 @@ test("Core freezes writable Lane state without parsing the Producer output", (t)
       title: workItemId,
       assignee: "producer-a",
       writeProjectIds
-    }, now), "running", now);
+    }, now), "open", now);
     const laneWorkspaces = roles.map((role, index) => createManagedWorkspace({
       owner: {
         type: "execution-lane",
@@ -3354,7 +3354,7 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
       title: "Preserve the exact result",
       assignee: role.name,
       writeProjectIds: [projectId]
-    }, startedAt), "running", startedAt);
+    }, startedAt), "open", startedAt);
     const assignment = createWorkItemExecutionAssignment({
       input: "Produce a result.",
       objective: item.objective,
@@ -3541,7 +3541,7 @@ test("Controller begin-handover accepts a null fromReleaseId", async (t) => {
 
 test("production storage exposes one current version and one migration floor", () => {
   assert.equal(MIN_SUPPORTED_STORAGE_VERSION, 1);
-  assert.equal(CURRENT_STORAGE_VERSION, 6);
+  assert.equal(CURRENT_STORAGE_VERSION, 8);
   for (const retiredExport of [
     "FileTaskStore",
     "STORAGE_STATE_FILE",
@@ -3564,7 +3564,7 @@ test("a new current Home initializes its SQLite authority exactly once", (t) => 
   try {
     assert.deepEqual(
       database.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),
-      [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }]
+      [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }]
     );
     assert.deepEqual(
       database.prepare("PRAGMA table_info(schema_migrations)").all().map(({ name }) => name),
@@ -3774,21 +3774,25 @@ test("Task Role Profiles preserve runtime and portable behavior across add and u
     now
   );
   store.saveRole(task.id, portableRole);
-  const applyInheritedBehavior = [
+  // Explicit reapplication resolves the template's current runtime defaults.
+  // Target its Codex binding without silently switching this Claude Role.
+  const applyInheritedProfile = [
     "role", "update", task.id, portableRole.name,
-    "--profile", inheritedProfile.id
+    "--profile", inheritedProfile.id, "--agent", codex.id
   ];
-  assert.equal(
-    previewTaskRoleAgentConfigurationMutation(applyInheritedBehavior, store),
-    undefined
+  assert.deepEqual(
+    previewTaskRoleAgentConfigurationMutation(applyInheritedProfile, store),
+    { agentId: codex.id, config: workerBinding.config, cwd: home }
   );
-  runTaskCommand(applyInheritedBehavior, store, {
+  runTaskCommand(applyInheritedProfile, store, {
     now: () => new Date("2026-09-03T06:10:40.000Z"),
     environment: bareEnv
   });
   const portableUpdated = store.getRole(task.id, portableRole.name);
   assert.equal(portableUpdated.activeAgentId, claude.id);
-  assert.deepEqual(portableUpdated.agentBindings, portableRole.agentBindings);
+  assert.deepEqual(portableUpdated.agentBindings, {
+    ...portableRole.agentBindings, [codex.id]: workerBinding
+  });
   assert.equal(portableUpdated.description, "Portable inherited behavior");
   assert.equal(portableUpdated.defaultAccess, "write");
 

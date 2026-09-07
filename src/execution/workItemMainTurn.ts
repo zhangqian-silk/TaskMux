@@ -72,8 +72,8 @@ export function dispatchWorkItemSynthesis(
     throw new Error(`Task execution is not enabled: ${taskId}.`);
   }
   const item = store.getWorkItem(taskId, workItemId);
-  if (item === null || item.status !== "running") {
-    throw new Error(`WorkItem is not running: ${taskId}/${workItemId}.`);
+  if (item === null || item.status !== "open") {
+    throw new Error(`WorkItem is not open: ${taskId}/${workItemId}.`);
   }
   const group = currentWorkItemExecutionGroup(item);
   if (group === undefined) throw new Error(`WorkItem has no ExecutionGroup: ${item.id}.`);

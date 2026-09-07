@@ -419,7 +419,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const role = this.store.getRole(taskId, input.fence.roleName);
       const sessions = this.store.getTaskRoleSessionSet(taskId, input.fence.roleName);
       const session = sessions?.sessions[input.fence.agentId];
-      if (role?.activeAgentId !== input.fence.agentId
+      if (role === null || sessions?.activeAgentId !== input.fence.agentId
         || session?.adapterId === undefined) return null;
       try {
         return this.drivers.requireByAdapterId(session.adapterId).id === input.fence.driverId
@@ -751,31 +751,13 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
           now
         );
         store.saveEvent(taskId, errorEvent);
-        enqueueWork(
+        routeRoleEvent(
           store,
-          { kind: "role", taskId, roleName: "leader" },
+          errorEvent,
+          input.fence.roleName,
           wakeReason("agent-error", errorEvent.id),
-          now,
-          [{ type: "event", taskId, id: errorEvent.id }],
-          {
-            source: input.fence.driverId,
-            dedupeKey: `agent-error:${taskId}:${input.eventId}`
-          }
+          now
         );
-        if (input.fence.roleName === "leader"
-          && error.sessionDisposition === "unrecoverable") {
-          enqueueWork(
-            store,
-            { kind: "operator" },
-            "leader-session-unrecoverable",
-            now,
-            [{ type: "event", taskId, id: errorEvent.id }],
-            {
-              source: input.fence.driverId,
-              dedupeKey: `leader-session-unrecoverable:${taskId}:${input.eventId}`
-            }
-          );
-        }
       }
       if ((input.kind === "operation.completed" || input.kind === "operation.failed")
         && input.payload.operation === "subagent") {
@@ -2044,15 +2026,14 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       );
       store.saveEvent(input.taskId, deliveryFailureEvent);
 
-      if (input.roleName !== "leader") {
-        routeRoleEvent(
-          store,
-          deliveryFailureEvent,
-          input.roleName,
-          terminal.purpose === "review" ? "review-failed" : "role-turn-failed",
-          input.now
-        );
-      } else {
+      routeRoleEvent(
+        store,
+        deliveryFailureEvent,
+        input.roleName,
+        terminal.purpose === "review" ? "review-failed" : "role-turn-failed",
+        input.now
+      );
+      if (input.roleName === "leader") {
         store.saveLeaderFailure(recordLeaderFailure(
           input.taskId,
           session?.nativeSessionId ?? "(unregistered)",
@@ -2323,8 +2304,14 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
           now
         );
         store.saveEvent(input.taskId, event);
-        if (terminalTurn.roleName !== "leader"
-          && (terminalTurn.status !== "completed" || !providerGoalContinues(binding.goal))) {
+        // A structured failure routes its original runtime.agent-error below;
+        // the Turn terminal is the same fact, not a second notification.
+        const structuredFailure = input.observation?.kind === "turn.failed"
+          && input.observation.payload.failure !== undefined;
+        if (!structuredFailure && (
+          terminalTurn.status === "failed"
+          || (terminalTurn.roleName !== "leader" && !providerGoalContinues(binding.goal))
+        )) {
           routeRoleEvent(
             store,
             event,
@@ -3489,7 +3476,7 @@ function mapRole(
   const binding = activeRoleAgentBinding(role);
   const item = store.listWorkItems(role.taskId).find((candidate) => (
     candidate.assignee === role.name
-      && !["completed", "failed", "retired"].includes(candidate.status)
+      && !["accepted", "retired"].includes(candidate.status)
   )) ?? null;
   const workspace = (item === null
     ? store.getTaskWorkspace(role.taskId)
@@ -3501,7 +3488,10 @@ function mapRole(
   const liveSession = activeLiveRoleAgentSession(
     store.getTaskRoleSessionSet(role.taskId, role.name)
   );
-  const effective = reopened
+  // This projection plans future dispatch. A live Session retains its actual
+  // source, but cannot silently override an explicit next-Agent selection.
+  // Active Turn delivery separately and exclusively uses turn.effective.
+  const effective = reopened || (liveSession !== null && liveSession.agentId !== role.activeAgentId)
     ? resolveEffectiveLaunch({
         role,
         purpose: "execution",
@@ -3559,7 +3549,7 @@ function taskSessionEffective(
   if (role === null) throw new Error(`Role not found: ${taskId}/${roleName}.`);
   const item = store.listWorkItems(taskId).find((candidate) => (
     candidate.assignee === roleName
-      && !["completed", "failed", "retired"].includes(candidate.status)
+      && !["accepted", "retired"].includes(candidate.status)
   )) ?? null;
   const workspace = (item === null
     ? store.getTaskWorkspace(taskId)

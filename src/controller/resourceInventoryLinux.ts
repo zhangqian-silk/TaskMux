@@ -852,6 +852,7 @@ function loadHomeState(
         taskId: task.id,
         taskTitle: task.title,
         taskStatus: task.status,
+        taskRetirementIsolated: task.retirementIsolation === true,
         roleName: role.name,
         agentId,
         ...(adapterId === undefined ? {} : { adapterId }),

@@ -33,7 +33,7 @@ export type SessionReconciliationEntry = Readonly<{
   agentId: string;
   adapterId: string;
   nativeSessionId?: string;
-  taskStatus?: "draft" | "active" | "completed" | "retired" | "archived";
+  taskStatus?: "draft" | "active" | "completed" | "cancelled" | "archived";
   durableStatus: "active" | "ended" | "absent";
   tmuxPane?: Readonly<{ target: string; dead: boolean }>;
   physical?: SessionPhysicalObservation;
@@ -58,7 +58,7 @@ export type SessionReconciliationReport = Readonly<{
 export type SessionReconciliationInput = Readonly<{
   records: readonly SessionOwnerIdentity[];
   durable: readonly DurableSessionFact[];
-  taskStatus: (taskId: string) => "draft" | "active" | "completed" | "retired" | "archived" | undefined;
+  taskStatus: (taskId: string) => "draft" | "active" | "completed" | "cancelled" | "archived" | undefined;
   observe: (record: SessionOwnerIdentity) => SessionPhysicalObservation | undefined;
   inspectPane: (
     taskId: string | undefined,
@@ -137,7 +137,7 @@ function reconcileOne(
   }
 
   const terminalTask = taskStatus === "completed"
-    || taskStatus === "retired"
+    || taskStatus === "cancelled"
     || taskStatus === "archived";
   const archiveBlocked = mismatch === "durable-terminal-physical-live"
     && terminalTask;

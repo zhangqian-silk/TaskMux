@@ -47,7 +47,7 @@ const state = {
   detail: null,
   detailKey: null
 };
-const VALID_FILTERS = ["all", "active", "draft", "completed", "retired", "archived"];
+const VALID_FILTERS = ["all", "active", "draft", "completed", "cancelled", "archived"];
 let terminalSession = null;
 let terminalStateKey = "terminal.closed";
 

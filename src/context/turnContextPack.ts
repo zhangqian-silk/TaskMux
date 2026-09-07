@@ -4,7 +4,9 @@ import { operationalTaskRecords } from "../task/taskRecordRetirement.js";
 import { TASK_COMPLETION_PUBLISHED_TREE_AUTHORIZED_EVENT } from "../task/publicationReference.js";
 import { TURN_INPUT_MAX_DELTAS } from "./turnInputContract.js";
 import { assertWorkItemDependenciesCompleted } from "../workItem/dependencyGate.js";
-import { workItemExecutionGroupById } from "../workItem/workItem.js";
+import { governingWorkItemCandidate, workItemExecutionGroupById, type WorkItem } from "../workItem/workItem.js";
+import { stableArtifactRef } from "../resources/projectResource.js";
+import { managedWorkspaceKey } from "../worktree/managedWorkspace.js";
 import {
   contextContentDigest,
   contextSnapshotRef,
@@ -204,11 +206,13 @@ export function freezeWorkItemExecutionAssignmentContextSnapshot(
     materialize("L2", "task", task.id, task),
     materialize("L3", "work-item", workItem.id, workItem)
   ];
+  materialized.push(...candidateArtifacts(store, task.id, workItem.candidates));
   assertWorkItemDependenciesCompleted(store, workItem);
   for (const dependencyId of workItem.dependsOn) {
     const dependency = store.getWorkItem(task.id, dependencyId);
     if (dependency === null) throw new Error(`WorkItem dependency disappeared: ${dependencyId}.`);
     materialized.push(materialize("L3", "accepted-work-item", dependency.id, dependency));
+    materialized.push(...candidateArtifacts(store, task.id, dependency.candidates));
   }
   for (const binding of task.projectBindings) {
     const project = store.getProject(binding.projectId);
@@ -525,12 +529,14 @@ function collectAuthorizedContext(
     const item = store.getWorkItem(task.id, run.workItemId);
     if (item === null) throw new Error(`Turn WorkItem not found: ${run.workItemId}.`);
     result.push(materialize("L3", "work-item", item.id, item));
+    result.push(...candidateArtifacts(store, task.id, item.candidates));
     if (view === "worker") {
       assertWorkItemDependenciesCompleted(store, item);
       for (const dependencyId of item.dependsOn) {
         const dependency = store.getWorkItem(task.id, dependencyId);
         if (dependency === null) throw new Error(`WorkItem dependency disappeared: ${dependencyId}.`);
         result.push(materialize("L3", "accepted-work-item", dependency.id, dependency));
+        result.push(...candidateArtifacts(store, task.id, dependency.candidates));
       }
     }
   }
@@ -538,6 +544,14 @@ function collectAuthorizedContext(
     const round = store.getReviewRound(task.id, run.reviewRoundId);
     if (round === null) throw new Error(`Turn ReviewRound not found: ${run.reviewRoundId}.`);
     result.push(materialize("L3", "review-round", round.id, round));
+    if (round.scope === "task") {
+      for (const item of store.listWorkItems(task.id).filter(({ status }) => status !== "retired")) {
+        const candidate = governingWorkItemCandidate(item);
+        if (candidate === undefined) continue;
+        result.push(materialize("L3", "candidate", `${item.id}/${candidate.id}`, candidate));
+        result.push(...candidateArtifacts(store, task.id, [candidate]));
+      }
+    }
     if (round.deltaRecheck !== undefined) {
       const previous = store.getReviewRound(task.id, round.deltaRecheck.previousReviewRoundId);
       const previousTurn = previous?.reviewerTurnId === undefined
@@ -579,6 +593,18 @@ function collectAuthorizedContext(
     }
   }
   if (view === "leader") {
+    for (const artifact of store.listArtifacts(task.id)) {
+      result.push(materialize("L3", "artifact", artifact.id, artifact));
+    }
+    for (const preparation of store.listEnvironmentPreparations(task.id)) {
+      result.push(materialize("L3", "environment-preparation", preparation.id, preparation));
+    }
+    for (const workspace of store.listManagedWorkspaces(task.id)) {
+      result.push(materialize("L3", "managed-workspace", managedWorkspaceKey(workspace.owner), workspace));
+    }
+    for (const changeSet of store.listChangeSets(task.id)) {
+      result.push(materialize("L3", "change-set", changeSet.id, changeSet));
+    }
     const events = store.listEvents(task.id);
     for (const item of store.listWorkItems(task.id).filter(({ status }) => status !== "retired")) {
       result.push(materialize("L3", "work-item", item.id, item));
@@ -625,6 +651,22 @@ function collectAuthorizedContext(
   return [...unique.values()].sort((left, right) => (
     contextRefIdentity(left.ref).localeCompare(contextRefIdentity(right.ref))
   ));
+}
+
+/** Only artifacts attached to already-authorized candidates enter a bounded
+ * Worker/Reviewer snapshot. Their immutable Home content survives cleanup of
+ * the producing workspace and Session. */
+function candidateArtifacts(
+  store: TaskStore, taskId: string, candidates: WorkItem["candidates"]
+): MaterializedRef[] {
+  return candidates.flatMap((candidate) => (candidate.artifactRefs ?? []).map((ref) => {
+    const artifact = ref.taskId === taskId ? store.getArtifact(taskId, ref.artifactId) : null;
+    const actual = artifact === null ? null : stableArtifactRef(artifact);
+    if (artifact === null || actual?.kind !== ref.kind || actual.digest !== ref.digest) {
+      throw new Error(`Candidate Artifact is unavailable or drifted: ${ref.artifactId}.`);
+    }
+    return materialize("L3", "artifact", artifact.id, artifact);
+  }));
 }
 
 /** Lane-specific context that may be layered over an immutable stage base. */

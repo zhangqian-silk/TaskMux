@@ -200,7 +200,7 @@ test("WorkItem no-op Integration records the decision and archive removes all co
     { title: "Confirm existing behavior", writeProjectIds: ["project-1"] },
     now
   );
-  item = updateWorkItemStatus(item, "running", now);
+  item = updateWorkItemStatus(item, "open", now);
   store.saveWorkItem(task.id, item);
   const workItemWorkspace = await preparer.prepareWorkItemWorkspace(task.id, item.id);
   const resultCommit = git(["rev-parse", "HEAD"], workItemWorkspace.entries[0].path);
@@ -248,7 +248,7 @@ test("WorkItem no-op Integration records the decision and archive removes all co
   assert.equal(git(["rev-parse", "HEAD"], taskEntry.path), beforeCommit);
   assert.equal(store.listChangeSets(task.id).length, 0);
 
-  store.saveWorkItem(task.id, updateWorkItemStatus(item, "completed", now, "accepted no-op"));
+  store.saveWorkItem(task.id, updateWorkItemStatus(item, "accepted", now, "accepted no-op"));
   runTaskCommand([
     "complete",
     task.id,
@@ -281,7 +281,7 @@ test("WorkItem no-op Integration records the decision and archive removes all co
     archiveRemoteDeliveryProof
   });
   assert.equal(store.getTask(task.id).status, "archived");
-  assert.equal(store.getWorkItem(task.id, item.id).status, "completed");
+  assert.equal(store.getWorkItem(task.id, item.id).status, "accepted");
   assert.equal(store.getIntegrationAttempt(task.id, attempt.id).status, "committed");
 });
 

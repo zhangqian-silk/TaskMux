@@ -1,5 +1,7 @@
 import { activeRoleAgentBinding } from "../role/role.js";
+import type { Role } from "../role/role.js";
 import type { TaskStore } from "../storage/taskStore.js";
+import type { Turn } from "../turn/turn.js";
 
 /** Native Session identity supplied by the Agent transport. */
 export const MANAGED_NATIVE_SESSION_ENV = "YUI_NATIVE_SESSION_ID";
@@ -16,7 +18,7 @@ export const MANAGED_NATIVE_SESSION_ENV = "YUI_NATIVE_SESSION_ID";
 export type ManagedTaskCaller = Readonly<{
   taskId: string;
   roleName: string;
-  /** Durable active Agent of the Role this process belongs to. */
+  /** Current management Agent, or the Agent of a Worker's active Assignment. */
   agentId: string;
   adapterId: string;
   nativeSessionId: string;
@@ -28,7 +30,7 @@ export type ManagedTaskCaller = Readonly<{
 
 export type ManagedCallerStore = Pick<
   TaskStore,
-  "getRole" | "getActiveTurn" | "getTaskRoleSessionSet"
+  "getRole" | "getActiveTurn" | "getTaskRoleSessionSet" | "listEvents"
 >;
 
 /** Immutable self-identity a managed Task Session asserts about its own process. */
@@ -124,6 +126,21 @@ export function currentManagedRuntime(
   return caller;
 }
 
+/** Select execution identity, not a credential or grant. Workers retain their
+ * active Assignment; Leader management follows the current Role selection. */
+export function taskRoleRuntimeIdentity(role: Role, activeTurn: Turn | null): Readonly<{
+  agentId: string;
+  adapterId: string;
+}> {
+  const effective = role.name !== "leader" && activeTurn?.status === "active"
+    ? activeTurn.effective
+    : undefined;
+  return {
+    agentId: effective?.agentId ?? role.activeAgentId,
+    adapterId: effective?.adapterId ?? activeRoleAgentBinding(role).adapterId
+  };
+}
+
 function requireCurrentRuntime(
   store: ManagedCallerStore,
   self: ManagedTaskSessionIdentity
@@ -135,7 +152,8 @@ function requireCurrentRuntime(
         + "A new Session must be launched to act on this Task."
     );
   }
-  const agentId = role.activeAgentId;
+  const activeTurn = store.getActiveTurn(self.taskId, self.roleName);
+  const { agentId, adapterId } = taskRoleRuntimeIdentity(role, activeTurn);
   const sessions = store.getTaskRoleSessionSet(self.taskId, self.roleName);
   const session = sessions?.sessions[agentId];
   if (self.nativeSessionId === undefined) {
@@ -144,27 +162,32 @@ function requireCurrentRuntime(
         + `as the current runtime of ${self.taskId}/${self.roleName}.`
     );
   }
+  if (role.name === "leader" && store.listEvents(self.taskId).some((event) =>
+    event.type === "role.agent-bound" && event.payload.role === role.name
+    && event.payload.revokedNativeSessionId === self.nativeSessionId)) {
+    throw new ManagedRuntimeDriftError("This Leader native Session's management authority was explicitly revoked.");
+  }
   if (sessions?.activeAgentId !== agentId || session === undefined || session.status !== "active"
     || session.nativeSessionId !== self.nativeSessionId
-    || session.adapterId !== activeRoleAgentBinding(role).adapterId
+    || session.adapterId !== adapterId
     || (self.workspace !== undefined && self.workspace !== session.effective.workspace.root)) {
     throw new ManagedRuntimeDriftError(
       `This managed Session is no longer the current runtime of ${self.taskId}/${self.roleName} `
-        + `(the Role now runs Agent ${agentId}). Its native Session was replaced or its Role was `
+        + `(the authorized runtime uses Agent ${agentId}). Its native Session was replaced or its Role was `
         + "rebound, so its native session id no longer matches. Nothing was changed. Read the "
         + `current state with \`yui task show ${self.taskId}\`; acting requires the Session Yui `
         + "launched for the current runtime."
     );
   }
-  const activeTurn = store.getActiveTurn(self.taskId, self.roleName);
   return Object.freeze({
     taskId: self.taskId,
     roleName: self.roleName,
     agentId,
-    adapterId: activeRoleAgentBinding(role).adapterId,
+    adapterId,
     nativeSessionId: session.nativeSessionId,
     ...(self.workspace === undefined ? {} : { workspace: self.workspace }),
     ...(activeTurn === null || activeTurn.status !== "active"
+      || activeTurn.effective.agentId !== agentId
       ? {}
       : { currentTurnId: activeTurn.id })
   });

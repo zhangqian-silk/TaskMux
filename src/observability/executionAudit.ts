@@ -855,7 +855,7 @@ export function runExecutionAudit(
         for (const item of store.listWorkItems(taskId)) {
           if (!inWindow(item.createdAt, options)) continue;
           total += 1;
-          if (item.status === "completed") completed += 1;
+          if (item.status === "accepted") completed += 1;
           else if (item.status === "retired") retired += 1;
         }
       }

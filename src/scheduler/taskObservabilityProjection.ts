@@ -11,10 +11,8 @@ import type { WorkItem, WorkItemStatus } from "../workItem/workItem.js";
 export type TaskDagNodeStatus =
   | "ready"
   | "blocked"
-  | "running"
-  | "awaiting_acceptance"
-  | "completed"
-  | "failed"
+  | "open"
+  | "accepted"
   | "retired";
 
 export type TaskDagEdgeStatus = "satisfied" | "active" | "failed-open" | "dead";
@@ -191,7 +189,7 @@ function projectDag(workItems: readonly WorkItem[]): TaskDagProjection {
     const unresolved = item.dependsOn.filter((dependency) => {
       return !dependencySatisfied(dependency, byId);
     });
-    const projectedStatus = item.status === "pending"
+    const projectedStatus = item.status === "open"
       ? unresolved.length === 0 ? "ready" : "blocked"
       : item.status;
     return Object.freeze({
@@ -235,12 +233,12 @@ function rootCauses(
     }
     const unresolved = item.dependsOn.filter((dependency) => !dependencySatisfied(dependency, byId));
     if (unresolved.length === 0) {
-      if (item.status === "failed" || item.status === "awaiting_acceptance") result.push(item.id);
+      if (item.status === "open" && item.currentCandidateId !== undefined) result.push(item.id);
       return;
     }
     for (const dependency of unresolved) {
       const target = byId.get(dependency);
-      if (target?.status === "failed" || target?.status === "awaiting_acceptance") result.push(target.id);
+      if (target?.status === "open" && target.currentCandidateId !== undefined) result.push(target.id);
       else visit(dependency);
     }
   };
@@ -252,7 +250,7 @@ function dependencySatisfied(
   id: string,
   byId: ReadonlyMap<string, WorkItem>
 ): boolean {
-  return byId.get(id)?.status === "completed";
+  return byId.get(id)?.status === "accepted";
 }
 
 function dependencyEdgeStatus(
@@ -263,7 +261,7 @@ function dependencyEdgeStatus(
   if (target === undefined) return "dead";
   if (dependencySatisfied(id, byId)) return "satisfied";
   if (target.status === "retired") return "dead";
-  if (target.status === "failed" || target.status === "awaiting_acceptance") return "failed-open";
+  if (target.status === "open" && target.currentCandidateId !== undefined) return "active";
   return "active";
 }
 

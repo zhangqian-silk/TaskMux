@@ -163,14 +163,19 @@ updates the active binding, while a provided `--agent` updates that binding
 without activating it; only `task role bind` switches the active Agent. An
 explicit Profile must resolve to that update target, where its runtime is the
 base binding and explicit Agent settings override corresponding fields. An
-inherited Worker Profile used by itself may update portable Role behavior
-without retargeting a differently bound Agent; if `--agent` or Agent settings
-are also present, its currently resolved Worker Agent must match the target.
+inherited Worker Profile is also explicitly reapplied as a complete template:
+its currently resolved Worker Agent must match the update target. Use
+`--agent` to select that binding without activating it.
 Applying a Profile replaces the portable fields owned by AgentProfile
 (`defaultAccess`, description, instructions, skills, and access-derived
 constraints); explicit Role options in the same command apply afterward.
 This Yui Agent Profile is separate from a Codex native config profile also
 named `--profile`.
+
+Current Role selection is distinct from a Turn's immutable effective
+configuration. Updating a Worker from A to B preserves A's active Assignment;
+future explicit execution selects B. Leader replacement revokes the old
+management entry without rebuilding Worker assignments.
 
 ## Quick start
 
@@ -195,6 +200,31 @@ yui task show <task-id>
 yui task context <task-id>
 yui task activate <task-id>
 ```
+
+Context reads return a bounded authorized working set and `coreCursor`.
+Use `task context delta <task-id> --after <coreCursor>` and its continuation
+token for fixed-upper-bound event pages; `task context inspect <task-id>
+--store <store> --ref <id> --digest <digest>` expands a current record.
+Reading does not acknowledge delivery. `task next-action` remains a separate
+decision-support query.
+
+Saved T05 artifacts can be attached with `task work update <task>/<work> done
+--summary "..." --artifact-ref <artifact-id>` or `task complete <task>
+--summary "..." --artifact-ref <artifact-id>`. Missing, cross-Task, or mutable
+Reference artifacts cannot be selected as fixed results. Context exposes saved
+artifacts and workspace/resource facts without starting their original Runtime.
+
+Brief edits use `task brief update <task-id>` with only the fields to change.
+The transaction reads the latest record and preserves other fields; the last
+explicit write to the same field wins. Edit events preserve before/after values
+for inspection with `task event list <task-id>`, without a required version token
+or automatic rollback. Accepted results remain unchanged.
+
+Task lifecycle is draft / active / completed / cancelled / archived.
+`task cancel <task-id> --summary "..."` ends intent without claiming execution
+has stopped. User/Operator may reopen cancelled Tasks; a Leader may reopen a
+completed Task. Reopening requires fresh explicit work/input selection and
+does not replay old requests. Archive remains a separate user/Operator action.
 
 A Draft stores planning state and Project bindings only; it does not adopt a
 writable managed Workspace. `task activate` prepares every bound Project first,

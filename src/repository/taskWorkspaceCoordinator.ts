@@ -209,7 +209,7 @@ export class TaskWorkspaceCoordinator {
     try {
       const task = this.store.getTask(taskId);
       if (task === null) throw new Error(`Task not found: ${taskId}.`);
-      if (task.status !== "completed" && task.status !== "retired") {
+      if (task.status !== "completed" && task.status !== "cancelled") {
         throw new Error(`Task must be completed or retired before archive cleanup: ${task.id}.`);
       }
       const managedWorkspaces = [...this.store.listManagedWorkspaces(task.id)]
@@ -235,7 +235,7 @@ export class TaskWorkspaceCoordinator {
           : "";
         const item = this.store.getWorkItem(task.id, workItemId);
         if (item === null) throw new Error(`Work item not found: ${task.id}/${workItemId}.`);
-        if (item.status !== "completed" && item.status !== "retired") {
+        if (item.status !== "accepted" && item.status !== "retired") {
           throw new Error(`Work item must be completed or retired before archive cleanup: ${item.id}.`);
         }
         return item;
@@ -382,7 +382,7 @@ export class TaskWorkspaceCoordinator {
         await this.preparer.cleanupWorkItemWorkspace(
           task.id,
           item.id,
-          item.status === "completed" ? disposition : "abandoned"
+          item.status === "accepted" ? disposition : "abandoned"
         );
       }
       this.#assertTaskArchiveLifecycle(task);
@@ -600,5 +600,5 @@ function sameProjectScope(
 }
 
 function isTerminalWorkItem(item: WorkItem): boolean {
-  return ["completed", "failed", "retired"].includes(item.status);
+  return ["accepted", "retired"].includes(item.status);
 }

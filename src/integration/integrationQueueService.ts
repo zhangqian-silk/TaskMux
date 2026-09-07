@@ -27,7 +27,7 @@ import {
   type IntegrationResult
 } from "./gitIntegrationService.js";
 import type { ChangeSet } from "./changeSet.js";
-import type { WorkItemCandidate } from "../workItem/workItem.js";
+import { governingWorkItemCandidate, type WorkItemCandidate } from "../workItem/workItem.js";
 import type { TaskCompletedBy } from "../task/task.js";
 
 /**
@@ -82,8 +82,7 @@ export type EnqueueIntegrationQueueInput = Readonly<{
  * Candidate.
  */
 const TERMINAL_PRODUCER_STATUSES: ReadonlySet<string> = new Set([
-  "completed",
-  "failed",
+  "accepted",
   "retired"
 ]);
 
@@ -147,13 +146,13 @@ function assertCurrentCandidateInStore(
     throw new Error(`ChangeSet producer WorkItem not found: ${changeSet.workItemId}.`);
   }
   // A running WorkItem has no current Candidate: a new one is expected.
-  if (workItem.status === "running") {
+  if (workItem.status === "open" && workItem.currentCandidateId === undefined) {
     throw new Error(
       `ChangeSet ${changeSet.id} has no current Candidate: `
       + `WorkItem ${workItem.id} is running.`
     );
   }
-  const latestCandidate = workItem.candidates.at(-1);
+  const latestCandidate = governingWorkItemCandidate(workItem);
   if (latestCandidate !== undefined) {
     const snapshotHead = candidateHeadCommit(latestCandidate, changeSet.projectId);
     if (snapshotHead !== undefined && snapshotHead !== changeSet.headCommit) {

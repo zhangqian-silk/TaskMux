@@ -527,7 +527,7 @@ function inactiveTaskMessage(task: Task, action: string): string {
   if (task.status === "completed") {
     return `Task ${task.id} is completed; reopen it before ${action}.`;
   }
-  if (task.status === "retired") return `Task ${task.id} is retired; it cannot resume ${action}.`;
+  if (task.status === "cancelled") return `Task ${task.id} is retired; it cannot resume ${action}.`;
   return `Task is archived: ${task.id}.`;
 }
 

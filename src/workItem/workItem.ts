@@ -1,3 +1,4 @@
+import type { ArtifactRef } from "../resources/projectResource.js";
 import {
   normalizedUniqueIdentities,
   normalizedUniqueText,
@@ -24,11 +25,8 @@ import {
 } from "../execution/workItemExecution.js";
 
 export type WorkItemStatus =
-  | "pending"
-  | "running"
-  | "awaiting_acceptance"
-  | "completed"
-  | "failed"
+  | "open"
+  | "accepted"
   | "retired";
 
 export type WorkItemDisposition = Readonly<{
@@ -104,6 +102,8 @@ export type WorkItemCandidate = Readonly<{
   gitSnapshot?: CandidateGitSnapshot;
   /** Exact base/head boundary for a metadata-only Task-main Candidate. */
   taskMainSnapshot?: DirectTaskMainSnapshot;
+  /** Fixed T05 artifacts, owned by the same Task and selected at submission. */
+  artifactRefs?: readonly ArtifactRef[];
   createdAt: string;
 }>;
 
@@ -133,6 +133,10 @@ export type WorkItem = {
   createdAt: string;
   updatedAt: string;
   endedAt?: string;
+  acceptedCandidateId?: string;
+  currentCandidateId?: string;
+  /** Migration-only diagnostic capture of the previous execution-shaped state. */
+  historicalState?: Readonly<{ status: string; outcome?: string; endedAt?: string }>;
 };
 
 export type WorkItemDefinitionUpdate = Readonly<{
@@ -146,8 +150,7 @@ export type WorkItemDefinitionUpdate = Readonly<{
 }>;
 
 const TERMINAL_STATUSES: readonly WorkItemStatus[] = [
-  "completed",
-  "failed",
+  "accepted",
   "retired"
 ];
 
@@ -193,7 +196,7 @@ export function createWorkItem(
     ...(input.assignee === undefined
       ? {}
       : { assignee: requireIdentity(input.assignee, "Work item assignee") }),
-    status: "pending",
+    status: "open",
     candidates: [],
     createdAt: timestamp,
     updatedAt: timestamp
@@ -207,12 +210,8 @@ export function editDraftWorkItemDefinition(
   now: Date
 ): WorkItem {
   validateWorkItem(workItem);
-  if (workItem.status !== "pending"
-    || workItem.executionGroups.length > 0
-    || workItem.candidates.length > 0
-    || workItem.disposition !== undefined
-    || workItem.workspaceDisposition !== undefined) {
-    throw new Error(`Work Item has execution or retirement facts: ${workItem.id}.`);
+  if (workItem.status === "retired") {
+    throw new Error(`Work Item is retired: ${workItem.id}.`);
   }
   const next = {
     ...workItem,
@@ -266,11 +265,12 @@ export function submitWorkItemCandidate(
     workspace?: ManagedWorkspace;
     gitSnapshot?: CandidateGitSnapshot;
     taskMainSnapshot?: DirectTaskMainSnapshot;
+    artifactRefs?: readonly ArtifactRef[];
   }>,
   now: Date
 ): WorkItem {
   validateWorkItem(workItem);
-  if (workItem.status !== "running") {
+  if (workItem.status !== "open") {
     throw new Error(
       `Work Item candidate can only be submitted from running: ${workItem.id}/${workItem.status}.`
     );
@@ -301,13 +301,15 @@ export function submitWorkItemCandidate(
     ...(input.taskMainSnapshot === undefined
       ? {}
       : { taskMainSnapshot: input.taskMainSnapshot }),
+    ...(input.artifactRefs === undefined ? {} : { artifactRefs: input.artifactRefs.map((ref) => ({ ...ref })) }),
     createdAt: now.toISOString()
   });
   const { outcome: _outcome, endedAt: _endedAt, ...base } = workItem;
   return validateWorkItem({
     ...base,
-    status: "awaiting_acceptance",
+    status: "open",
     candidates: [...workItem.candidates, candidate],
+    currentCandidateId: candidate.id,
     revision,
     updatedAt: now.toISOString()
   });
@@ -317,7 +319,8 @@ export function updateWorkItemStatus(
   workItem: WorkItem,
   status: WorkItemStatus,
   now: Date,
-  outcome?: string
+  outcome?: string,
+  candidateId?: string
 ): WorkItem {
   validateWorkItem(workItem);
   validateStatus(status);
@@ -325,8 +328,8 @@ export function updateWorkItemStatus(
   if (workItem.disposition !== undefined && status !== workItem.status) {
     throw new Error(`Retired Work Item status cannot change: ${workItem.id}.`);
   }
-  const closingFailedWork = workItem.status === "failed" && status === "retired";
-  if (alreadyTerminal && status !== workItem.status && !closingFailedWork) {
+  const withdrawingAcceptance = workItem.status === "accepted" && status === "open";
+  if (alreadyTerminal && status !== workItem.status && !withdrawingAcceptance) {
     throw new Error(`Terminal Work Item status cannot change: ${workItem.id}.`);
   }
   const terminal = isTerminalStatus(status);
@@ -349,6 +352,8 @@ export function updateWorkItemStatus(
     endedAt: _endedAt,
     outcome: _outcome,
     workspaceDisposition,
+    acceptedCandidateId,
+    currentCandidateId,
     ...base
   } = workItem;
   return validateWorkItem({
@@ -357,9 +362,12 @@ export function updateWorkItemStatus(
     revision: workItem.revision + 1,
     ...(normalizedOutcome === undefined ? {} : { outcome: normalizedOutcome }),
     // Isolated workspace cleanup remains durable evidence after retirement.
-    ...(closingFailedWork && workspaceDisposition !== undefined
+    ...(workspaceDisposition !== undefined
       ? { workspaceDisposition }
       : {}),
+    ...(status === "accepted" && (candidateId ?? acceptedCandidateId ?? currentCandidateId) !== undefined
+      ? { acceptedCandidateId: candidateId ?? acceptedCandidateId ?? currentCandidateId } : {}),
+    ...(status === "open" && !withdrawingAcceptance && currentCandidateId !== undefined ? { currentCandidateId } : {}),
     updatedAt: timestamp,
     ...(terminal ? { endedAt: timestamp } : {})
   });
@@ -373,7 +381,7 @@ export function attachWorkItemExecutionGroup(
 ): WorkItem {
   validateWorkItem(workItem);
   const checked = validateWorkItemExecutionGroup(executionGroup, workItem.taskId, workItem.id);
-  if (workItem.status === "completed" || workItem.status === "failed" || workItem.status === "retired") {
+  if (workItem.status !== "open") {
     throw new Error(`A terminal Work Item cannot attach an ExecutionGroup: ${workItem.id}.`);
   }
   const existing = workItemExecutionGroupById(workItem, checked.id);
@@ -448,11 +456,10 @@ export function retireWorkItem(
     }
     throw new Error(`Work Item already has an explicit disposition: ${workItem.id}.`);
   }
-  if (workItem.status === "completed") {
+  if (workItem.status === "accepted") {
     throw new Error(`Completed Work Item cannot be retired: ${workItem.id}.`);
   }
   if (isTerminalStatus(workItem.status)
-    && workItem.status !== "failed"
     && workItem.status !== "retired") {
     throw new Error(`Terminal Work Item status cannot change: ${workItem.id}.`);
   }
@@ -468,15 +475,15 @@ export function retireWorkItem(
   });
 }
 
-export function retryFailedWorkItem(workItem: WorkItem, now: Date): WorkItem {
+export function prepareWorkItemDispatch(workItem: WorkItem, now: Date): WorkItem {
   validateWorkItem(workItem);
-  if (workItem.status !== "failed") {
+  if (workItem.status !== "open") {
     throw new Error(`Work item is not retryable from ${workItem.status}: ${workItem.id}.`);
   }
   if (workItem.workspaceDisposition !== undefined) {
     throw new Error(`Work item workspace is already settled: ${workItem.id}.`);
   }
-  const { outcome: _outcome, endedAt: _endedAt, ...base } = workItem;
+  const { outcome: _outcome, endedAt: _endedAt, currentCandidateId: _candidate, ...base } = workItem;
   // Keep every historical Group. A settled current Group is cleared only as
   // the current pointer; redispatch appends a fresh immutable Group.
   const current = currentWorkItemExecutionGroup(workItem);
@@ -485,7 +492,7 @@ export function retryFailedWorkItem(workItem: WorkItem, now: Date): WorkItem {
     : (({ currentExecutionGroupId: _currentExecutionGroupId, ...history }) => history)(base);
   return validateWorkItem({
     ...retryBase,
-    status: "running",
+    status: "open",
     revision: workItem.revision + 1,
     updatedAt: now.toISOString()
   });
@@ -538,7 +545,10 @@ export function validateWorkItem(workItem: WorkItem): WorkItem {
     "workspaceDisposition",
     "createdAt",
     "updatedAt",
-    "endedAt"
+    "endedAt",
+    "acceptedCandidateId",
+    "currentCandidateId",
+    "historicalState"
   ], "WorkItem");
   if (workItem.schemaVersion !== 15) throw new Error("WorkItem must use schemaVersion 15.");
   validateTaskRecordReference({ taskId: workItem.taskId, localId: workItem.id }, "workItem");
@@ -602,9 +612,23 @@ export function validateWorkItem(workItem: WorkItem): WorkItem {
       throw new Error("Work Item candidate revision cannot exceed the Work Item revision.");
     }
   });
-  const currentCandidate = currentWorkItemCandidate(workItem);
-  if (workItem.status === "awaiting_acceptance" && currentCandidate === undefined) {
-    throw new Error("A Work Item awaiting acceptance requires a candidate.");
+  if (workItem.acceptedCandidateId !== undefined
+    && !candidateIds.has(workItem.acceptedCandidateId)) throw new Error("Accepted Candidate is missing.");
+  if (workItem.acceptedCandidateId !== undefined && workItem.status !== "accepted") {
+    throw new Error("Only an accepted Work Item may select an accepted Candidate.");
+  }
+  if (workItem.status === "accepted" && workItem.candidates.length > 0 && workItem.acceptedCandidateId === undefined) {
+    throw new Error("Accepted Work Item must identify its selected Candidate.");
+  }
+  if (workItem.currentCandidateId !== undefined
+    && !candidateIds.has(workItem.currentCandidateId)) throw new Error("Current Candidate is missing.");
+  if (workItem.historicalState !== undefined) {
+    const historical = workItem.historicalState;
+    if (!["pending", "running", "awaiting_acceptance", "completed", "failed", "retired"].includes(historical.status)) {
+      throw new Error("Historical Work Item status is invalid.");
+    }
+    if (historical.outcome !== undefined) requireText(historical.outcome, "Historical outcome");
+    if (historical.endedAt !== undefined) requireTimestamp(historical.endedAt, "Historical endedAt");
   }
   if (workItem.outcome !== undefined) requireText(workItem.outcome, "Work item outcome");
   requireTimestamp(workItem.createdAt, "Work Item createdAt");
@@ -624,9 +648,6 @@ export function validateWorkItem(workItem: WorkItem): WorkItem {
   if (workItem.workspaceDisposition !== undefined) {
     if (!["integrated", "abandoned"].includes(workItem.workspaceDisposition)) {
       throw new Error("Work item workspaceDisposition is invalid.");
-    }
-    if (!terminal) {
-      throw new Error("Only a terminal Work Item can record workspace cleanup.");
     }
   }
   if (workItem.disposition !== undefined) {
@@ -721,6 +742,20 @@ export function validateWorkItemCandidate(
     throw new Error("Work Item candidate revision must be a positive integer.");
   }
   requireText(candidate.summary, "Work Item candidate summary");
+  if (candidate.artifactRefs !== undefined) {
+    if (!Array.isArray(candidate.artifactRefs)) throw new Error("Candidate Artifact refs must be an array.");
+    const ids = new Set<string>();
+    for (const ref of candidate.artifactRefs) {
+      requireIdentity(ref.artifactId, "Candidate Artifact id");
+      if (ref.taskId !== candidate.taskId || !["content", "external-version", "receipt"].includes(ref.kind)
+        || ids.has(ref.artifactId)) throw new Error("Candidate Artifact scope, kind or identity is invalid.");
+      if ((ref.kind !== "external-version" || ref.digest !== undefined)
+        && (typeof ref.digest !== "string" || !/^[a-f0-9]{64}$/u.test(ref.digest))) {
+        throw new Error("Candidate Artifact digest is invalid.");
+      }
+      ids.add(ref.artifactId);
+    }
+  }
   if (typeof candidate.source !== "object" || candidate.source === null) {
     throw new Error("Work Item candidate source is required.");
   }
@@ -915,8 +950,8 @@ function requireCommit(value: string, label: string): string {
 export function currentWorkItemCandidate(
   workItem: WorkItem
 ): WorkItemCandidate | undefined {
-  return workItem.status === "awaiting_acceptance"
-    ? workItem.candidates.at(-1)
+  return workItem.status === "open"
+    ? workItem.candidates.find(({ id }) => id === workItem.currentCandidateId)
     : undefined;
 }
 
@@ -930,9 +965,10 @@ export function currentWorkItemCandidate(
 export function governingWorkItemCandidate(
   workItem: WorkItem
 ): WorkItemCandidate | undefined {
-  return workItem.status === "awaiting_acceptance" || workItem.status === "completed"
-    ? workItem.candidates.at(-1)
-    : undefined;
+  if (workItem.status === "accepted" && workItem.acceptedCandidateId !== undefined) {
+    return workItem.candidates.find(({ id }) => id === workItem.acceptedCandidateId);
+  }
+  return currentWorkItemCandidate(workItem);
 }
 
 export function updateWorkItemWriteProjects(
@@ -975,11 +1011,8 @@ function isTerminalStatus(status: WorkItemStatus): boolean {
 
 function validateStatus(status: WorkItemStatus): void {
   if (![
-    "pending",
-    "running",
-    "awaiting_acceptance",
-    "completed",
-    "failed",
+    "open",
+    "accepted",
     "retired"
   ].includes(status)) {
     throw new Error(`Work Item status is invalid: ${String(status)}.`);

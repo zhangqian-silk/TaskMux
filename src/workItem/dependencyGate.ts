@@ -45,7 +45,7 @@ export function assertWorkItemDependenciesCompleted(
 ): void {
   const unmetDependencies = item.dependsOn.flatMap((dependencyId) => {
     const dependency = store.getWorkItem(item.taskId, dependencyId);
-    if (dependency?.status === "completed") return [];
+    if (dependency?.status === "accepted") return [];
     return [{
       id: dependencyId,
       status: dependency?.status ?? "missing"

@@ -43,6 +43,7 @@ export function updateTaskBrief(
   updatedBy: string,
   now: Date
 ): TaskBrief {
+  validateTaskBrief(brief);
   return createTaskBrief({
     objective: patch.objective ?? brief.objective,
     boundaries: patch.boundaries ?? brief.boundaries,
@@ -51,6 +52,18 @@ export function updateTaskBrief(
     leaderSummary: patch.leaderSummary ?? brief.leaderSummary,
     updatedBy
   }, now);
+}
+
+export function validateTaskBrief(brief: TaskBrief): TaskBrief {
+  if (brief.schemaVersion !== 2) {
+    throw new Error("Task Brief requires schemaVersion 2.");
+  }
+  if (!Array.isArray(brief.boundaries) || typeof brief.technicalApproach !== "string"
+    || typeof brief.updatedAt !== "string" || !Number.isFinite(Date.parse(brief.updatedAt))) {
+    throw new Error("Task Brief content or timestamp is invalid.");
+  }
+  createTaskBrief(brief, new Date(brief.updatedAt));
+  return brief;
 }
 
 function normalizeBoundaries(values: readonly string[]): string[] {

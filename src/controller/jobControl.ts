@@ -28,6 +28,7 @@ import type { ManagedWorkspace } from "../worktree/managedWorkspace.js";
 import { activeLiveRoleAgentSession } from "../executor/agentExecutor.js";
 import { CallAuthority } from "../kernel/callAuthority.js";
 import { redactLaunchText } from "../runtime/launchDiagnostics.js";
+import { requireManagedTaskCaller } from "../runtime/managedCaller.js";
 
 /**
  * rr8: The caller identity a `job.start`/`job.cancel` request is bound to.
@@ -236,12 +237,18 @@ function jobAuthorityBinding(store: TaskStore, scope: string, roleName: string, 
   // Authenticate the live launch at ingress, but bind accepted Jobs to the
   // caller's durable Session identity, not its disposable Host generation.
   if (scope === "task") {
-    const role = store.getRole(taskId, roleName);
     const sessions = store.getTaskRoleSessionSet(taskId, roleName);
     const session = activeLiveRoleAgentSession(sessions);
-    if (role === null || sessions?.activeAgentId !== role.activeAgentId
-      || session === null || session.agentId !== role.activeAgentId) {
+    if (session === null) {
       throw jobDomainError("Current Job caller Session is unavailable.");
+    }
+    try {
+      requireManagedTaskCaller(store, {
+        YUI_SESSION_SCOPE: "task", YUI_TASK_ID: taskId, YUI_ROLE: roleName,
+        YUI_NATIVE_SESSION_ID: session.nativeSessionId
+      });
+    } catch {
+      throw jobDomainError("Job caller binding was revoked; no execution was started.");
     }
     return createHash("sha256").update(JSON.stringify([
       session.agentId, session.adapterId, session.nativeSessionId
@@ -441,7 +448,7 @@ function validateJobTarget(store: TaskStore, params: Omit<DurableJobStartParams,
 function assertCallerAuthorized(
   store: Pick<
     TaskStore,
-    "getTurn" | "getActiveTurn" | "getRole" | "getTaskRoleSessionSet"
+    "getTurn" | "getActiveTurn" | "getRole" | "getTaskRoleSessionSet" | "listEvents"
       | "getGlobalRole" | "getGlobalRoleSessionSet"
   >,
   caller: DurableJobCaller,
@@ -483,19 +490,23 @@ function assertCallerAuthorized(
   // caller: a long-lived Session process cannot hold a current Turn in its
   // frozen environment, and its own claim would add nothing the store does
   // not already own.
-  const run = caller.role === undefined ? null : store.getActiveTurn(taskId, caller.role);
-  const currentRole = caller.role === undefined ? null : store.getRole(taskId, caller.role);
-  if (run === null || run.status !== "active" || currentRole === null
-    || currentRole.activeAgentId !== run.effective.agentId) {
-    throw jobControlError(
-      "UNAUTHORIZED",
-      "A managed Task Session's Role is not bound to an active Turn."
-    );
+  const current = (() => {
+    try {
+      return requireManagedTaskCaller(store, {
+        YUI_SESSION_SCOPE: "task", YUI_TASK_ID: taskId, YUI_ROLE: caller.role,
+        YUI_NATIVE_SESSION_ID: caller.nativeSessionId
+      });
+    } catch (error) {
+      throw jobControlError("UNAUTHORIZED", error instanceof Error ? error.message : String(error));
+    }
+  })();
+  if (current.currentTurnId === undefined) {
+    throw jobControlError("UNAUTHORIZED", "A managed Task Session's Role is not bound to an active Turn.");
   }
-  const sessions = store.getTaskRoleSessionSet(taskId, currentRole.name);
+  const sessions = store.getTaskRoleSessionSet(taskId, current.roleName);
   const session = activeLiveRoleAgentSession(sessions);
-  if (sessions?.activeAgentId !== currentRole.activeAgentId || session === null
-    || session.agentId !== run.effective.agentId || session.adapterId !== run.effective.adapterId
+  if (sessions?.activeAgentId !== current.agentId || session === null
+    || session.agentId !== current.agentId || session.adapterId !== current.adapterId
     || caller.nativeSessionId === undefined || session.nativeSessionId !== caller.nativeSessionId) {
     throw jobControlError("UNAUTHORIZED", "DurableJob control requires the current live Task Session.");
   }
@@ -548,7 +559,7 @@ function readGitHead(path: string): string | null {
 }
 
 function isTerminalWorkItemStatus(status: string): boolean {
-  return status === "completed" || status === "failed" || status === "retired";
+  return status === "accepted" || status === "retired";
 }
 
 /**

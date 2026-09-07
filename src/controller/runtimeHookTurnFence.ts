@@ -10,6 +10,7 @@ import {
 import { formatTurnReceiptId } from "../task/taskRecordReference.js";
 import { currentProviderConversation, managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
 import type { TaskEvent } from "../event/taskEvent.js";
+import { taskRoleRuntimeIdentity } from "../runtime/managedCaller.js";
 
 export type RuntimeHookTurnFence = Readonly<{
   taskId: string;
@@ -109,7 +110,9 @@ export function resolveRuntimeHookTurnFence(
     && !existingExecutionObservation) {
     throw new Error("Runtime observation Hook Task does not accept this lifecycle boundary.");
   }
-  if (!existingExecutionObservation && (role === null || role.activeAgentId !== agentId
+  const runtimeIdentity = role === null ? null : taskRoleRuntimeIdentity(role, activeTurn);
+  if (!existingExecutionObservation && (runtimeIdentity === null || runtimeIdentity.agentId !== agentId
+    || runtimeIdentity.adapterId !== adapterId
     || (sessions !== null && sessions.activeAgentId !== agentId))) {
     throw new Error("Runtime observation Hook Role or Agent is not current.");
   }

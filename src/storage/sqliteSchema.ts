@@ -797,6 +797,87 @@ UPDATE global_role_session_sets SET payload = json_set(payload, '$.history', jso
   FROM json_each(payload, '$.history')
 ))) WHERE json_type(payload, '$.history') = 'object';
 `
+  },
+  {
+    version: 7,
+    name: "task-facts-and-explicit-acceptance",
+    introducedIn: "0.15.8",
+    // Retain the complete retirement metadata/events and diagnostic facts.
+    // Only the public lifecycle changes; ordinary stores read one shape.
+    sql: `
+UPDATE task_records SET payload = json_set(payload, '$.status', 'cancelled')
+WHERE json_extract(payload, '$.status') = 'retired';
+UPDATE task_records SET payload = json_set(payload, '$.retirementIsolation', json('true'))
+WHERE json_extract(payload, '$.retiredAt') IS NOT NULL;
+UPDATE tasks_catalog SET status = 'cancelled' WHERE status = 'retired';
+UPDATE tasks_catalog SET lifecycle = 'cancelled' WHERE lifecycle = 'retired';
+UPDATE task_records SET brief = json_set(brief, '$.revision', 1) WHERE brief IS NOT NULL;
+UPDATE work_items SET payload = json_set(payload,
+  '$.historicalState', json_patch(json('{}'), json_object(
+    'status', json_extract(payload, '$.status'),
+    'outcome', json_extract(payload, '$.outcome'),
+    'endedAt', json_extract(payload, '$.endedAt'))),
+  '$.status', CASE status WHEN 'completed' THEN 'accepted' WHEN 'retired' THEN 'retired' ELSE 'open' END);
+UPDATE work_items SET payload = json_remove(payload, '$.outcome', '$.endedAt')
+WHERE json_extract(payload, '$.status') = 'open';
+UPDATE work_items SET status = json_extract(payload, '$.status');
+UPDATE work_items SET payload = json_set(payload, '$.currentCandidateId',
+  json_extract(payload, '$.candidates[#-1].id'))
+WHERE json_extract(payload, '$.historicalState.status') = 'awaiting_acceptance';
+UPDATE work_items SET payload = json_set(payload, '$.acceptedCandidateId',
+  json_extract(payload, '$.candidates[#-1].id'))
+WHERE status = 'accepted' AND json_array_length(payload, '$.candidates') > 0;
+`
+  },
+  {
+    version: 8,
+    name: "event-owned-edit-history",
+    introducedIn: "0.15.8",
+    // Move embedded histories to one immutable import event per Task.
+    // Existing events stay byte-identical; imports supply otherwise missing
+    // historical fields and are evidence only, never executable lifecycle input.
+    // Candidates may now carry optional fixed Artifact refs; absent refs remain
+    // valid for historical Candidates, so this payload addition needs no backfill.
+    sql: `
+CREATE TEMP TABLE migrated_edit_history AS
+SELECT records.task_id,
+  COALESCE(sequences.high_water, 0) + 1 AS sequence,
+  strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AS imported_at,
+  json_object(
+    'sourceStorageVersion', '7',
+    'taskOutcomes', '' || COALESCE(json_extract(records.payload, '$.outcomeHistory'), '[]'),
+    'workAcceptances', '' || COALESCE((
+      SELECT json_group_array(json_object(
+        'workItemId', work_item_id,
+        'history', json_extract(payload, '$.acceptanceHistory')))
+      FROM (SELECT * FROM work_items
+        WHERE task_id = records.task_id
+          AND json_array_length(payload, '$.acceptanceHistory') > 0
+        ORDER BY work_item_id)
+    ), '[]')
+  ) AS history
+FROM task_records AS records
+LEFT JOIN id_sequences AS sequences
+  ON sequences.task_id = records.task_id AND sequences.kind = 'event'
+WHERE json_array_length(records.payload, '$.outcomeHistory') > 0
+  OR EXISTS (SELECT 1 FROM work_items
+    WHERE task_id = records.task_id AND json_array_length(payload, '$.acceptanceHistory') > 0);
+
+INSERT INTO events (task_id, event_id, type, occurred_at, payload)
+SELECT task_id, 'event-' || sequence, 'history.imported', imported_at,
+  json_object('schemaVersion', 2, 'id', 'event-' || sequence,
+    'taskId', task_id, 'type', 'history.imported',
+    'createdAt', imported_at, 'payload', json(history))
+FROM migrated_edit_history;
+INSERT INTO id_sequences (task_id, kind, high_water)
+SELECT task_id, 'event', sequence FROM migrated_edit_history WHERE true
+ON CONFLICT(task_id, kind) DO UPDATE SET high_water = excluded.high_water;
+DROP TABLE migrated_edit_history;
+
+UPDATE task_records SET payload = json_remove(payload, '$.outcomeHistory'),
+  brief = CASE WHEN brief IS NULL THEN NULL ELSE json_remove(brief, '$.revision') END;
+UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
+`
   }
 ]);
 

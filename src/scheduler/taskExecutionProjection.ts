@@ -50,7 +50,7 @@ export type TaskExecutionStatus =
   | "blocked"
   | "working"
   | "completed"
-  | "retired"
+  | "cancelled"
   | "archived";
 
 export type TaskExecutionOwner =
@@ -359,7 +359,7 @@ export function projectTaskExecution(
   }));
   const monitoring = task.executionGate.state === "stopped"
     || task.status === "completed"
-    || task.status === "retired"
+    || task.status === "cancelled"
     || task.status === "archived"
     ? "stopped"
     : "active";
@@ -380,7 +380,7 @@ export function projectTaskExecution(
         pendingWakeup
       });
     }
-    const stoppedStatus = task.status as Extract<TaskStatus, "completed" | "retired" | "archived">;
+    const stoppedStatus = task.status as Extract<TaskStatus, "completed" | "cancelled" | "archived">;
     return render({
       task,
       status: stoppedStatus,
@@ -426,8 +426,9 @@ export function projectTaskExecution(
     leaderMailbox,
     leaderFailure
   );
-  const failedWork = workItems.some((item) => item.status === "failed");
-  const candidateReady = workItems.some((item) => item.status === "awaiting_acceptance");
+  const failedWork = workItems.some((item) => item.status === "open"
+    && turns.filter((turn) => turn.workItemId === item.id).at(-1)?.status === "failed");
+  const candidateReady = workItems.some((item) => (item.status === "open" && item.currentCandidateId !== undefined));
   const blockedIntegration = integrations.some((attempt) => attempt.status === "blocked");
   const unresolvedIntegration = integrations.some((attempt) => (
     attempt.status === "running"
@@ -774,23 +775,9 @@ function collectAttention(input: Readonly<{
     });
   }
   for (const turn of activeTurns) {
-    const role = input.roles.find((candidate) => candidate.name === turn.roleName);
     const session = input.roleSessions.find((candidate) => candidate.roleName === turn.roleName);
-    if (
-      role !== undefined
-      && ((role.activeAgentId !== undefined && role.activeAgentId !== turn.effective?.agentId)
-        || (role.adapterId !== undefined && role.adapterId !== turn.effective?.adapterId))
-    ) {
-      result.push({
-        kind: "identity-mismatch",
-        id: `identity:${turn.id}`,
-        owner: "leader",
-        summary: `Turn ${turn.id} does not match the current ${turn.roleName} Agent/adapter fence.`,
-        turnId: turn.id,
-        roleName: turn.roleName,
-        failClosed: true
-      });
-    }
+    // Current Role selection is desired configuration, not the identity fence
+    // of a Turn already assigned. Only actual execution evidence can mismatch.
     if (
       session !== undefined
       && (session.agentId !== turn.effective?.agentId || session.adapterId !== turn.effective?.adapterId)
@@ -872,7 +859,7 @@ function collectBlockers(
   const blockers: TaskExecutionBlocker[] = [];
   const byId = new Map(workItems.map((item) => [item.id, item]));
   for (const item of workItems) {
-    if (item.status === "failed" || item.status === "awaiting_acceptance") {
+    if (item.status === "open" && item.currentCandidateId !== undefined) {
       blockers.push({
         kind: "work",
         id: item.id,
@@ -880,9 +867,9 @@ function collectBlockers(
         summary: item.outcome ?? `WorkItem ${item.id} is ${item.status}.`
       });
     }
-    if (item.status === "pending" && (item.dependsOn ?? []).some((id) => {
+    if (item.status === "open" && (item.dependsOn ?? []).some((id) => {
       const status = byId.get(id)?.status;
-      return status !== "completed";
+      return status !== "accepted";
     })) {
       blockers.push({
         kind: "work",

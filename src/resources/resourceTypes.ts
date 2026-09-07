@@ -137,9 +137,9 @@ export function isReleasable(record: ResourceRecord): boolean {
 
 /** Terminal Task statuses: a terminal owner keeps no active runtime claim. */
 export function isTerminalTaskStatus(
-  status: "draft" | "active" | "completed" | "retired" | "archived" | undefined
+  status: "draft" | "active" | "completed" | "cancelled" | "archived" | undefined
 ): boolean {
-  return status === "completed" || status === "retired" || status === "archived";
+  return status === "completed" || status === "cancelled" || status === "archived";
 }
 
 /**

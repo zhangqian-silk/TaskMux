@@ -43,7 +43,7 @@ import {
   type Artifact, type LocalResource, type EnvironmentPreparation
 } from "../resources/projectResource.js";
 import type { ConfiguredAgent } from "../agent/agent.js";
-import type { TaskBrief } from "../brief/taskBrief.js";
+import { validateTaskBrief, type TaskBrief } from "../brief/taskBrief.js";
 import type { MailboxTarget, WorkMailbox } from "../coordination/workMailbox.js";
 import {
   consumePendingBatch,
@@ -94,7 +94,7 @@ import type { GlobalRole, TaskRole } from "../role/role.js";
 import type { LeaderFailure } from "../scheduler/leaderFailure.js";
 import type { PendingWakeup } from "../scheduler/pendingWakeup.js";
 import { validateTaskWake, type TaskWake } from "../scheduler/taskWake.js";
-import type { Task } from "../task/task.js";
+import { validateTask, type Task } from "../task/task.js";
 import type { NextActionFacts } from "../task/nextAction.js";
 import type { CompletionReadinessFacts } from "../task/completionReadiness.js";
 import {
@@ -102,7 +102,7 @@ import {
   TASK_RECORD_RETIRED_EVENT
 } from "../task/taskRecordRetirement.js";
 import { TASK_RECORD_ID_PREFIXES, type TaskRecordKind } from "../task/taskRecordReference.js";
-import type { WorkItem } from "../workItem/workItem.js";
+import { validateWorkItem, type WorkItem } from "../workItem/workItem.js";
 import { managedWorkspaceKey, type ManagedWorkspace, type ManagedWorkspaceOwner } from "../worktree/managedWorkspace.js";
 import {
   CURRENT_CONFIG_SCHEMA_VERSION,
@@ -716,12 +716,19 @@ export class SqliteTaskStore implements TaskStore {
 
   #getPayload<T>(table: string, where: string, params: readonly unknown[]): T | null {
     const row = this.#db.prepare(`SELECT payload FROM ${table} WHERE ${where}`).get(...params) as { payload: string } | undefined;
-    return row === undefined ? null : this.#parse<T>(row.payload);
+    return row === undefined ? null : this.#validateTaskPayload<T>(table, row.payload);
   }
 
   #listPayload<T>(table: string, where: string, params: readonly unknown[]): T[] {
     const rows = this.#db.prepare(`SELECT payload FROM ${table} WHERE ${where}`).all(...params) as Array<{ payload: string }>;
-    return rows.map((row) => this.#parse<T>(row.payload));
+    return rows.map((row) => this.#validateTaskPayload<T>(table, row.payload));
+  }
+
+  #validateTaskPayload<T>(table: string, payload: string): T {
+    const record = this.#parse<T>(payload);
+    if (table === "task_records") validateTask(record as Task);
+    if (table === "work_items") validateWorkItem(record as WorkItem);
+    return record;
   }
 
   #sortById<T>(rows: T[], idOf: (row: T) => string): T[] {
@@ -934,7 +941,7 @@ export class SqliteTaskStore implements TaskStore {
     const unresolvedIntegrationRefs: string[] = [];
     for (const task of activeTasks) {
       for (const workItem of this.listWorkItems(task.id)) {
-        if (workItem.status !== "completed" && workItem.status !== "retired") {
+        if (workItem.status !== "accepted" && workItem.status !== "retired") {
           unresolvedWorkItemRefs.push(`${task.id}/${workItem.id}`);
         }
       }
@@ -1070,6 +1077,7 @@ export class SqliteTaskStore implements TaskStore {
   nextTaskId(): string { return this.#nextGlobalId("task"); }
 
   saveTask(task: Task): void {
+    validateTask(task);
     if (typeof task.id !== "string" || task.id.length === 0) {
       throw new StorageRecordError("Task id is required.");
     }
@@ -1218,10 +1226,11 @@ export class SqliteTaskStore implements TaskStore {
   getTaskBrief(taskId: string): TaskBrief | null {
     const row = this.#db.prepare("SELECT brief FROM task_records WHERE task_id = ?").get(taskId) as { brief: string | null } | undefined;
     if (row === undefined || row.brief === null) return null;
-    return this.#parse<TaskBrief>(row.brief);
+    return validateTaskBrief(this.#parse<TaskBrief>(row.brief));
   }
 
   saveTaskBrief(taskId: string, brief: TaskBrief): void {
+    validateTaskBrief(brief);
     this.#requireTask(taskId);
     this.#mutate(() => {
       this.#db.prepare("UPDATE task_records SET brief = ?, updated_at = ? WHERE task_id = ?")
@@ -1845,6 +1854,7 @@ export class SqliteTaskStore implements TaskStore {
   }
 
   saveWorkItem(taskId: string, item: WorkItem): void {
+    validateWorkItem(item);
     if (item.taskId !== taskId) throw new StorageRecordError(`Work item belongs to another Task: ${item.taskId}`);
     this.#requireTask(taskId);
     this.#mutate(() => {
@@ -2379,11 +2389,11 @@ export class SqliteTaskStore implements TaskStore {
     if (pointer.turn === null) {
       // Retired Tasks are an explicit historical isolation boundary. Their
       // retained pointer rows may intentionally reference a missing Turn.
-      if (task.status === "retired") return null;
+      if (task.status === "cancelled" && task.retirementIsolation === true) return null;
       throw new StorageRecordError(`Active Turn pointer is dangling: ${taskId}/${roleName}`);
     }
     const turn = pointer.turn;
-    if (task.status === "retired") return turn;
+    if (task.status === "cancelled" && task.retirementIsolation === true) return turn;
     if (turn.id !== pointer.turnId
       || turn.taskId !== taskId
       || turn.roleName !== roleName
@@ -2407,11 +2417,11 @@ export class SqliteTaskStore implements TaskStore {
       throw new StorageRecordError(`Active Turn Task is missing: ${taskId}/${pointerKey}`);
     }
     if (pointer.turn === null) {
-      if (task.status === "retired") return null;
+      if (task.status === "cancelled" && task.retirementIsolation === true) return null;
       throw new StorageRecordError(`Active Turn pointer is dangling: ${taskId}/${pointerKey}`);
     }
     const turn = pointer.turn;
-    if (task.status === "retired") return turn;
+    if (task.status === "cancelled" && task.retirementIsolation === true) return turn;
     if (turn.id !== pointer.turnId
       || turn.taskId !== taskId
       || turn.status !== "active"
