@@ -1,4 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
+import {
+  validateExecutionEnvironmentSnapshot,
+  type ExecutionEnvironmentSnapshot
+} from "../resources/projectResource.js";
 
 import type { WorkerAccess } from "../profile/agentProfile.js";
 import type {
@@ -47,6 +51,7 @@ type EffectiveLaunchBase = Readonly<{
   advanced?: AdvancedAgentConfig;
   writeProjectIds: readonly string[];
   workspace: EffectiveLaunchWorkspace;
+  executionEnvironment?: ExecutionEnvironmentSnapshot;
   context: EffectiveLaunchContext;
   reviewRoundId?: string;
   reviewBaseCommit?: string;
@@ -101,6 +106,9 @@ export function resolveEffectiveLaunch(
     profileAccess: input.role.defaultAccess,
     writeProjectIds,
     workspace,
+    ...("taskId" in input.role && input.role.executionEnvironment !== undefined
+      ? { executionEnvironment: input.role.executionEnvironment }
+      : {}),
     context: snapshotContext(input.role),
     contextProtocolVersion: SESSION_BOOTSTRAP_MANIFEST_SCHEMA_VERSION,
     sessionManifestCompatibilityDigest: sessionManifestCompatibilityDigest(
@@ -248,6 +256,7 @@ function sessionContinuitySnapshot(snapshot: EffectiveLaunchSnapshot): unknown {
     contextProtocolVersion: snapshot.contextProtocolVersion,
     agentId: snapshot.agentId,
     adapterId: snapshot.adapterId,
+    executionEnvironment: snapshot.executionEnvironment,
     workspace: {
       root: snapshot.workspace.root,
       entries: snapshot.workspace.entries.map((entry) => ({
@@ -301,6 +310,19 @@ export function validateEffectiveLaunchSnapshot<T extends EffectiveLaunchSnapsho
     throw new Error("Effective launch Session Manifest compatibility digest is invalid.");
   }
   validateWorkspace(snapshot.workspace);
+  if (snapshot.executionEnvironment !== undefined) {
+    validateExecutionEnvironmentSnapshot(snapshot.executionEnvironment);
+    if (snapshot.executionEnvironment.access === "read") {
+      if (snapshot.adapterId !== "codex") {
+        throw new Error("Read-only execution environments require a native filesystem sandbox; Claude is unsupported.");
+      }
+      if (snapshot.permission.strategy !== "configured"
+        || snapshot.permission.sandbox !== "read-only"
+        || snapshot.permission.approval !== "never") {
+        throw new Error("Read-only execution environments require Codex configured sandbox read-only and approval never.");
+      }
+    }
+  }
   cloneContext(snapshot.context);
   const config = effectiveLaunchConfigUnchecked(snapshot);
   resolveAgentAdapter(snapshot.adapterId).canonicalizeConfig(config as never);
@@ -327,6 +349,17 @@ export function effectiveRoleForLaunch<T extends EffectiveLaunchRole>(
     defaultAccess: snapshot.profileAccess,
     workspace: snapshot.workspace.root
   } as T;
+  if ("taskId" in result) {
+    if (snapshot.executionEnvironment === undefined) delete result.executionEnvironment;
+    else {
+      if (snapshot.executionEnvironment.taskId !== result.taskId) {
+        throw new Error("Effective execution environment belongs to another Task.");
+      }
+      result.executionEnvironment = clone(snapshot.executionEnvironment);
+    }
+  } else if (snapshot.executionEnvironment !== undefined) {
+    throw new Error("Only a Task Role may use an execution environment.");
+  }
   clearMissingContext(result, snapshot.context);
   return result;
 }
@@ -338,6 +371,7 @@ function snapshotFromConfig(input: Readonly<{
   profileAccess: EffectiveLaunchProfileAccess;
   writeProjectIds: readonly string[];
   workspace: EffectiveLaunchWorkspace;
+  executionEnvironment?: ExecutionEnvironmentSnapshot;
   context: EffectiveLaunchContext;
   reviewRoundId?: string;
   reviewBaseCommit?: string;
@@ -371,6 +405,9 @@ function snapshotFromConfig(input: Readonly<{
     ...(config.advanced === undefined ? {} : { advanced: clone(config.advanced) }),
     writeProjectIds: [...input.writeProjectIds],
     workspace: cloneWorkspace(input.workspace),
+    ...(input.executionEnvironment === undefined
+      ? {}
+      : { executionEnvironment: clone(input.executionEnvironment) }),
     context: cloneContext(input.context),
     contextProtocolVersion: input.contextProtocolVersion,
     sessionManifestCompatibilityDigest: input.sessionManifestCompatibilityDigest,
@@ -537,6 +574,13 @@ function validateDesiredRole(role: EffectiveLaunchRole): void {
   positiveInteger(role.launchRevision, "Role desired revision");
   if (role.defaultAccess !== "read" && role.defaultAccess !== "write") {
     throw new Error("Role default access is invalid.");
+  }
+  if ("executionEnvironment" in role && role.executionEnvironment !== undefined) {
+    if (!("taskId" in role)) throw new Error("Only a Task Role may use an execution environment.");
+    validateExecutionEnvironmentSnapshot(role.executionEnvironment);
+    if (role.executionEnvironment.taskId !== role.taskId) {
+      throw new Error("Role execution environment belongs to another Task.");
+    }
   }
   const binding = role.agentBindings[role.activeAgentId];
   if (binding === undefined) throw new Error("Role active Agent binding is missing.");

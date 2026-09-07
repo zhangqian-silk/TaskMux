@@ -305,3 +305,49 @@ Controller／Store 归档、resume、取消或 Claude；这些证据仍按上文
 验证授权，未重复调用 Provider，也未操作共享 Controller／App Server。
 build、lint 与集成后核心测试 81/81 通过（测试阶段 4.37 秒）；
 数量变化来自主线移除旧 generation 回归，并非跳过失败测试。
+
+### 采用环境执行集成（2026-09-07）
+
+在 `129801f` 对应主线内容上补齐 T04×T05：`task role update --environment`
+或认证能力 `environment.bind` 显式选择已经 adopted 的目录 preparation。
+`--managed-environment`／null 明确清除选择。绑定只改变 Role desired，
+Session／Turn effective 冻结 preparation、environmentRef、目录身份与访问
+限制；原生 Session 不能因 desired 改动而切换环境。
+
+启动规划、Host 原生启动／恢复及每次 Yui 输入检查现行采用、资源意图、
+grant 原 reservation 和 path/device/inode。Codex Thread 与 Claude 子进程
+使用选定目录作为 cwd，不自动附加原 managed Git 根；Yui 的原 managed
+workspace 继续承载控制上下文和 Git 所有权，不被改写成第二份资源记录。
+目录被替换、released 或授权撤销时明确拒绝，不回退或自动重新 adopt。
+
+release 检查精确 Session／Turn 环境引用，复用原 Provider 未结算输入及
+continuation 投影：Host ended 不等于 native quiescent。复审指出的
+“Host 已退出而输入 accepted/unknown 仍可释放”路径已纳入释放检查。
+
+中央 migration 7 `adopted-agent-execution-environment`（目标 0.15.8）
+为可选绑定合同，已有 migration 1–6 不变。有效 v6 隔离 SQLite 迁移后
+旧 Role 和已 adopted preparation 保持原值，没有隐式选择；普通旧格式
+读取明确要求升级。
+
+隔离证据使用真实 Store、Adapter compiler、Endpoint 和本地假 Provider，
+不请求真实模型：Codex 协议 Thread cwd 与子进程 cwd 一致；Claude 子进程
+cwd 一致；两个协议完成输入并在 detach/resume 后继续使用原环境，
+即使 Role desired 已解绑。目录替换拒绝、grant 撤销拒绝、同一采用不重复
+消耗 grant、跨 Task／Global 绑定拒绝、CLI 原子回滚和释放检查均有临时证据。
+
+边界：empty 没有原生 cwd，拒绝选择并提示 scratch；read 环境仅允许显式
+Codex read-only/never，Claude 不伪造文件系统只读能力；write 保持既有
+原生权限，是 trusted-local 而非强沙箱。此集成不控制桌面端等外部原生
+客户端直接发出的后续输入，不接入远程环境或凭据解析器。
+
+最终 build、lint、核心 81/81 通过（4.33 秒），没有新增永久专项测试。
+独立复审通过；释放回归使用实际资源服务／Provider Binding／continuation
+投影与轻量 Store 替身，验证 ended Host、无 turnId 的未结算输入、
+history Session、detached continuation 均阻止释放，exact quiescent 后允许
+释放。该项不冒充 SQLite 集成；启动／恢复和迁移另使用真实隔离 SQLite。
+未运行真实模型、未升级共享 Home、未发布或重启共享服务。
+
+2026-09-08 PR 集成同步至 `97ad888`（T03 #316）。主线迁移 1–8 原样
+保留，环境绑定迁移由独立开发时的 7 顺延为 9；普通旧数据仍不自动绑定。
+代码从最新主线仅移入本次环境提交，避免重复包含已经 squash 合入的 T04
+历史。此集成未运行真实模型、升级共享 Home 或重启服务。

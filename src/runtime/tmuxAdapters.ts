@@ -63,6 +63,7 @@ export type RuntimeTmuxLaunchPlan = Readonly<{
   env: Readonly<Record<string, string>>;
   providerControl?: AgentHostLaunchPayload["providerControl"];
   childLifecycle?: AgentHostLaunchPayload["childLifecycle"];
+  executionEnvironment?: AgentHostLaunchPayload["executionEnvironment"];
   deferProviderStart?: boolean;
 }>;
 
@@ -579,6 +580,9 @@ export class TmuxSessionHost implements SessionHostPort {
       args: [...planned.launch.args],
       environment: { ...planned.launch.env },
       cwd: planned.role.cwd ?? planned.role.workspace,
+      ...(planned.launch.executionEnvironment === undefined ? {} : {
+        executionEnvironment: structuredClone(planned.launch.executionEnvironment)
+      }),
       childLifecycle,
       startMode: planned.launch.deferProviderStart === true ? "idle" : "provider",
       ...(planned.launch.providerControl === undefined

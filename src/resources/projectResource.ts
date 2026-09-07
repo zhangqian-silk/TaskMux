@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isAbsolute, resolve } from "node:path";
 import { requireIdentity, requireText, requireTimestamp } from "../domain/validation.js";
 
 /** Content belongs to the Home, never to an executable plugin or workspace. */
@@ -48,6 +49,36 @@ export type EnvironmentPreparation = Readonly<{
   updatedAt: string;
   releaseEvidence?: string;
 }>;
+
+/** Immutable physical environment selected for one native Session. */
+export type ExecutionEnvironmentSnapshot = Readonly<{
+  taskId: string;
+  preparationId: string;
+  environmentRef: string;
+  access: "read" | "write";
+  isolation: "trusted-local";
+  directory: Readonly<{ path: string; device: string; inode: string; ownership: "preparation" | "user" }>;
+}>;
+
+export function validateExecutionEnvironmentSnapshot(value: ExecutionEnvironmentSnapshot): ExecutionEnvironmentSnapshot {
+  if (!value || typeof value !== "object") throw new Error("Execution environment must be an object.");
+  requireIdentity(value.taskId, "Execution environment Task");
+  requireIdentity(value.preparationId, "Execution environment preparation");
+  if (value.environmentRef !== `${value.taskId}/${value.preparationId}`) {
+    throw new Error("Execution environment reference does not match its preparation.");
+  }
+  if (!["read", "write"].includes(value.access) || value.isolation !== "trusted-local" || !value.directory) {
+    throw new Error("Execution environment requires a trusted-local directory and explicit access.");
+  }
+  requireText(value.directory.path, "Execution environment path");
+  if (!isAbsolute(value.directory.path) || resolve(value.directory.path) !== value.directory.path) {
+    throw new Error("Execution environment path must be absolute and normalized.");
+  }
+  requireText(value.directory.device, "Execution environment device");
+  requireText(value.directory.inode, "Execution environment inode");
+  if (!["preparation", "user"].includes(value.directory.ownership)) throw new Error("Invalid execution directory owner.");
+  return value;
+}
 
 export function contentDigest(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
