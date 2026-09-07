@@ -205,57 +205,6 @@ export function renderTaskSurface(container, data, t, locale, actions) {
   refs.append(node("p", "muted", say("Reads do not acknowledge messages. Omitted records can be located with the CLI domain query and inspected by reference.",
     "读取不确认消息。被省略的记录可经 CLI 领域查询定位后按引用读取。")));
   scaffold.append(refs);
-  const panels = node("details", "record-card");
-  panels.append(node("summary", "", say("Optional capability panels", "可选能力面板")));
-  const panelBody = node("div", "section-body");
-  panels.append(panelBody);
-  panels.addEventListener("toggle", async () => {
-    if (!panels.open) return;
-    clear(panelBody);
-    panelBody.append(node("p", "muted", say("Loading", "读取中")));
-    try {
-      const current = await actions.panels(task.id);
-      clear(panelBody);
-      panelBody.append(node("p", "muted", current.status + " · " + current.observedAt));
-      (current.panels || []).forEach((item) => {
-        const panel = item.panel;
-        const card = node("article", "record-card");
-        card.append(node("strong", "", panel.title));
-        if (item.unavailable) card.append(node("p", "muted", item.unavailable));
-        else if (panel.kind === "text") card.append(node("p", "", panel.text));
-        else if (panel.kind === "link") {
-          const url = new URL(panel.href);
-          if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) {
-            const link = node("a", "", panel.title);
-            link.href = url.href;
-            link.rel = "noopener noreferrer";
-            card.append(link);
-          }
-        } else if (panel.kind === "data" && panel.renderer === "json") {
-          const label = node("label", "", say("Query input (JSON)", "查询输入（JSON）"));
-          const input = node("textarea", "");
-          input.value = JSON.stringify({ taskId: task.id });
-          label.append(input);
-          const load = node("button", "record-open", say("Read panel", "读取面板"));
-          const result = node("pre", "surface-json");
-          load.type = "button";
-          load.addEventListener("click", async () => {
-            load.disabled = true;
-            try {
-              const receipt = await actions.loadPanel(task.id, {
-                capability: item.capability, contractVersion: item.contractVersion, provider: item.provider
-              }, JSON.parse(input.value));
-              result.textContent = JSON.stringify(receipt, null, 2);
-            } catch { result.textContent = say("Panel unavailable; core facts remain readable.", "面板不可用；核心事实仍可读取。"); }
-            finally { load.disabled = false; }
-          });
-          card.append(label, load, result);
-        }
-        panelBody.append(card);
-      });
-    } catch { panelBody.textContent = say("Optional panels unavailable", "可选面板不可用"); }
-  });
-  scaffold.append(panels);
   container.append(scaffold);
 }
 `;

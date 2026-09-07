@@ -1,6 +1,6 @@
 import type { TrustedCallContext } from "../kernel/callAuthority.js";
 import type {
-  CapabilityDescriptor, CapabilityRegistry, CapabilityResult
+  CapabilityDescriptor, CapabilityRegistry
 } from "../kernel/capabilityRegistry.js";
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 
@@ -54,63 +54,7 @@ export class SurfaceContributions {
       }] : [];
     });
   }
-
-  /** The CLI supplies a selected contribution, never executable command text.
-   * Registry call rechecks grants, schemas, effects and Host acquisition. */
-  callCommand(
-    context: TrustedCallContext, selected: SurfaceContributionRef, input: unknown, requestId?: string
-  ): Promise<CapabilityResult> {
-    const resolved = this.resolve(context, selected);
-    if (resolved.kind !== "value") return Promise.resolve(resolved);
-    return this.registry.call(context, {
-      name: selected.capability, contractVersion: selected.contractVersion,
-      providerId: selected.provider.id, input, requestId
-    });
-  }
-
-  /** Data panels may only query. Static text/link panels do not invoke provider
-   * code. Callers render text as text and links as anchors, never as markup. */
-  async loadPanel(
-    context: TrustedCallContext, selected: SurfaceContributionRef, input: unknown
-  ): Promise<CapabilityResult> {
-    const resolved = this.resolve(context, selected);
-    if (resolved.kind !== "value") return resolved;
-    const entry = resolved.value as CapabilityDescriptor;
-    const panel = entry.surfaces?.panel
-      ?? (entry.effect === "query" ? { kind: "data", title: entry.summary, renderer: "json" } : undefined);
-    if (!panel) return unavailable("Capability has no panel contribution.");
-    if (panel.kind !== "data") return { ...resolved, value: panel };
-    return this.callCommand(context, selected, input);
-  }
-
-  private resolve(context: TrustedCallContext, selected: SurfaceContributionRef): CapabilityResult {
-    const resolved = this.registry.describe(context, {
-      name: selected.capability, contractVersion: selected.contractVersion, providerId: selected.provider.id
-    });
-    if (resolved.kind !== "value") return resolved;
-    const entry = resolved.value as CapabilityDescriptor;
-    if (entry.provider.generation !== selected.provider.generation) {
-      return unavailable("Contribution generation changed; reload current contributions.");
-    }
-    return resolved;
-  }
 }
-
-/** Trusted composition root binds an already authenticated context once.
- * Adapters receive no registry, Host, credentials or actor-selecting interface.
- * Every action still rechecks current authorization through the registry. */
-export function createSurfaceContributionPort(registry: CapabilityRegistry, context: TrustedCallContext) {
-  const surfaces = new SurfaceContributions(registry);
-  return Object.freeze({
-    listCommands: () => surfaces.listCommands(context),
-    listPanels: () => surfaces.listPanels(context),
-    callCommand: (selected: SurfaceContributionRef, input: unknown, requestId?: string) =>
-      surfaces.callCommand(context, selected, input, requestId),
-    loadPanel: (selected: SurfaceContributionRef, input: unknown) =>
-      surfaces.loadPanel(context, selected, input)
-  });
-}
-export type SurfaceContributionPort = ReturnType<typeof createSurfaceContributionPort>;
 
 /** Called before a complete capability generation is published. Restrict the
  * entire accepted shape so unchecked HTML or executable fields cannot sneak
@@ -152,9 +96,6 @@ export function checkSurfaceDescriptors(entry: CapabilityDescriptor): void {
 
 function reference(entry: CapabilityDescriptor): SurfaceContributionRef {
   return { capability: entry.name, contractVersion: entry.contractVersion, provider: entry.provider };
-}
-function unavailable(detail: string): CapabilityResult {
-  return { kind: "unavailable", effect: "none", operations: [], detail };
 }
 function text(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;

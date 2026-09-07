@@ -139,11 +139,6 @@ function detailActions() {
       submittedRequests.delete(key);
       return receipt;
     },
-    panels: (taskId) => requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/panels"),
-    loadPanel: (taskId, selected, input) => requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/panels", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ selected, input })
-    }),
     updateTask: async function (taskId, patch, requestId) {
       const key = taskId + "/metadata";
       if (submittedRequests.has(key)) throw new Error("Read current facts before another submission.");
@@ -331,24 +326,8 @@ async function loadTaskDetail(taskId, showLoading) {
   }
   const savedScrollTop = showLoading ? 0 : elements.mainCol.scrollTop;
   const base = "/api/tasks/" + encodeURIComponent(taskId);
-  // Delta pages keep the initial upper bound. Never fold current records into
-  // a historical page or acknowledge messages from a read. After draining,
-  // rebuild the current snapshot; invalid cursors use the same explicit read.
-  if (!showLoading && state.detail && state.detail.task.id === taskId) {
-    const after = state.detail.core.coreCursor;
-    try {
-      let continuation;
-      do {
-        const query = new URLSearchParams({ after });
-        if (continuation) query.set("continuation", continuation);
-        const page = await requestJson(base + "/delta?" + query);
-        if (state.selected !== taskId) return;
-        continuation = page.continuation;
-      } while (continuation);
-    } catch {
-      // No write/retry: rebuild from the current authoritative read below.
-    }
-  }
+  // Rendering consumes the current snapshot, not event pages. Reconnect uses
+  // this same read; the independent delta API retains its fixed-bound contract.
   const core = await requestJson(base + "/context");
   const taskEntry = core.records.find(function (entry) { return entry.ref.store === "task"; });
   if (!taskEntry) throw new Error("Task reference unavailable.");

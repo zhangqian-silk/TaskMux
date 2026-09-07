@@ -10,7 +10,6 @@ import WebSocket, { WebSocketServer } from "ws";
 
 import { usageError } from "../errors/cliError.js";
 import type { WebTaskSurface } from "./webTaskSurface.js";
-import type { SurfaceContributionPort, SurfaceContributionRef } from "../surface/surfaceContributions.js";
 import { DASHBOARD_HTML, findWebAsset, type WebAsset } from "./assets/assetManifest.js";
 import {
   buildWebDashboardSnapshot,
@@ -55,9 +54,6 @@ export type WebTerminalConnection = Readonly<{
 
 export type WebServerDependencies = Readonly<{
   surface?: WebTaskSurface;
-  /** Trusted root supplies a Task-bound authenticated port from its existing
-   * Host. No client-selected actor or new Web-owned instance registry. */
-  contributions?: (taskId: string) => SurfaceContributionPort;
   now?: () => Date;
   token?: string;
   answerInput?: (input: Readonly<{
@@ -180,44 +176,6 @@ async function handleHttpRequest(
   // select Operator/Leader authority; all API reads use this boundary too.
   if (pathname.startsWith("/api/") && !tokenMatches(headerValue(request, "x-yui-web-token"), token)) {
     sendJson(response, 403, { error: "Invalid Yui web token." }, method === "HEAD");
-    return;
-  }
-  const panelTarget = /^\/api\/tasks\/([^/]+)\/panels$/.exec(pathname);
-  if (panelTarget && (method === "GET" || method === "POST")) {
-    const observedAt = now().toISOString();
-    try {
-      const port = dependencies.contributions?.(decodeURIComponent(panelTarget[1]));
-      if (!port) {
-        sendJson(response, 200, { status: "unavailable", observedAt, panels: [] }, false);
-        return;
-      }
-      if (method === "GET") {
-        sendJson(response, 200, { status: "available", observedAt, panels: port.listPanels() }, false);
-      } else {
-        const body = await readJsonBody(request);
-        if (!body || typeof body !== "object" || Array.isArray(body)
-          || Object.keys(body).some((key) => !["selected", "input"].includes(key))
-          || !("selected" in body) || !("input" in body)) throw new Error("Expected selected and input.");
-        const selected = body.selected as SurfaceContributionRef;
-        if (!selected || typeof selected !== "object" || typeof selected.capability !== "string"
-          || typeof selected.contractVersion !== "string" || !selected.provider
-          || typeof selected.provider.id !== "string" || typeof selected.provider.generation !== "string") {
-          throw new Error("Invalid contribution reference.");
-        }
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          const value = await Promise.race([
-            port.loadPanel(selected, body.input),
-            new Promise((resolve) => { timer = setTimeout(() => resolve({
-              kind: "unavailable", effect: "none", operations: [], detail: "Optional panel timed out."
-            }), 500); })
-          ]);
-          sendJson(response, 200, { status: "available", observedAt, result: value }, false);
-        } finally { clearTimeout(timer); }
-      }
-    } catch {
-      sendJson(response, 200, { status: "unavailable", observedAt, panels: [] }, false);
-    }
     return;
   }
   const surfaceTarget = /^\/api\/tasks\/([^/]+)\/(context|delta|inspect|metadata|messages)$/.exec(pathname);
