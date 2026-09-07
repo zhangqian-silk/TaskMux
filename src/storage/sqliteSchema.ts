@@ -723,6 +723,40 @@ ON durable_jobs(task_id, json_extract(payload, '$.operation.actorId'),
     // Accepted inputs/results can use an exact attempt without a native Turn id.
     // Preserve all valid historical records; never repair failed Turns or logs.
     sql: "SELECT 1; -- exact attempt identity without a fabricated native Turn id"
+  },
+  {
+    version: 4,
+    name: "session-endpoint-implementation",
+    introducedIn: "0.15.7",
+    // Valid earlier Sessions used these two built-in protocols. Generation 1
+    // retains those codecs and identities behind the new execution boundary.
+    // Preserve native IDs, effective snapshots and all historical results.
+    sql: `
+UPDATE role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.sessions')
+)));
+UPDATE role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_array(json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'array';
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.sessions')
+)));
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_object(key, json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'object';
+`
   }
 ]);
 

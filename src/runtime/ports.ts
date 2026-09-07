@@ -176,6 +176,7 @@ export interface SessionHostPort {
 
 export type PromptPushResult =
   | "delivered"
+  | "pending"
   | "busy"
   | "rejected"
   | "delivery-unknown"

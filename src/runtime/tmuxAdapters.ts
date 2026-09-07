@@ -937,6 +937,7 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
       });
       // The Host attaches its own structured cause to every non-delivery.
       const failure = result.failure;
+      if (result.outcome === "pending") return promptPushOutcome("pending");
       if (result.snapshot.state === "delivery-unknown") {
         return promptPushOutcome("delivery-unknown", failure);
       }
@@ -976,9 +977,10 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
           }
         }
       });
+      if (result.outcome === "pending") return promptPushOutcome("pending");
       if (result.outcome === "accepted") return promptPushOutcome("delivered");
       const failure = result.failure;
-      if (result.snapshot.state === "delivery-unknown") {
+      if (failure?.inputDisposition === "unknown" || result.snapshot.state === "delivery-unknown") {
         return promptPushOutcome("delivery-unknown", failure);
       }
       if (result.snapshot.state === "busy") return promptPushOutcome("busy", failure);

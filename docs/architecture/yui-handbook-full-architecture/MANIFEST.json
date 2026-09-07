@@ -117,6 +117,11 @@
       "sha256": "fbefd578c7a5d3749d4fbad493dacb482b38ea9d1a96216f42966d4963f7332c"
     },
     {
+      "path": "implementation/designs/T04-evidence.md",
+      "bytes": 9672,
+      "sha256": "af6af3033e216348db52637d2bd924c3421b4629372baed3f61608ecda8f8c0a"
+    },
+    {
       "path": "implementation/designs/T05-project-resource.md",
       "bytes": 3798,
       "sha256": "5a2e21d5a088cac473d137f316259bb4ce2f83d85c490f74f8b48a791192c076"
@@ -178,8 +183,8 @@
     },
     {
       "path": "implementation/tasks/T04-agent-endpoint.md",
-      "bytes": 1673,
-      "sha256": "6d49f175e81791f3181252e3eb4649524efb924db9200559fc1d028fe1d376ef"
+      "bytes": 1851,
+      "sha256": "0297eb17c21e4f18da03675fa93969f48c012b8875a3df4a72ff46699345652b"
     },
     {
       "path": "implementation/tasks/T05-project-resource.md",
@@ -218,8 +223,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 464018,
-      "sha256": "6dd8450f05ae6f3598ca1fff708fbe5bd75870f08f06a6eb1e32d0e63ff91d96"
+      "bytes": 476157,
+      "sha256": "aca9d4e28742068a6ecec949ec9206f8b9259b12d48d47e7206b064d88ed3399"
     },
     {
       "path": "modules/01-kernel.md",

@@ -308,12 +308,13 @@ export function retryReviewRound(
             deletedLines: round.deltaRecheck.deletedLines
           })
         }),
-    // A replicated retry preserves settled successful Producers and reopens
-    // only failed Lanes. If every Producer succeeded, only the main Reviewer
-    // Turn is retried.
+    // A main retry consumes its already selected sources and leaves every
+    // Producer attempt untouched. A pre-main retry reopens failed Lanes only.
     ...(round.executionGroup === undefined
       ? {}
-      : { executionGroup: retryFailedExecutionLanes(round.executionGroup, now) }),
+      : { executionGroup: round.reviewerTurnId === undefined
+        ? retryFailedExecutionLanes(round.executionGroup, now)
+        : round.executionGroup }),
     requestedBy: validateReviewRequestSource(requestedBy),
     status: "pending",
     ...(round.workspace === undefined ? {} : { workspace: round.workspace }),

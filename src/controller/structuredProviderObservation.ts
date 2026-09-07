@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { callController } from "../core/controllerClient.js";
 import { builtinAgentDriverRegistry } from "../runtime/builtinAgentDrivers.js";
 import { standardAgentError } from "../runtime/agentError.js";
+import type { ProviderDeliveryFailure } from "../runtime/agentError.js";
 import { transportAgentResult } from "../domain/agentResultTransport.js";
 import {
   createRuntimeObservation,
@@ -122,6 +123,62 @@ export async function publishStructuredProviderAccepted(input: Readonly<{
     fence: commonFence
   })];
   await persistAndApply(input.home, observations, fence.taskId, fence.roleName);
+}
+
+/** Steer settles an additional input, never the parent Turn's initial delivery. */
+export async function publishStructuredProviderInputSettlement(input: Readonly<{
+  home: string;
+  environment: NodeJS.ProcessEnv;
+  activationId: string;
+  nativeSessionId: string;
+  nativeTurnId: string;
+  attemptId: string;
+  boundedText: string;
+  status: "accepted" | "rejected" | "unknown";
+  failure?: ProviderDeliveryFailure;
+}>): Promise<void> {
+  const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
+  const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
+  const fence = resolveRuntimeHookTurnFence(input.environment, adapterId, input.nativeSessionId, {
+    nativeTurnId: input.nativeTurnId,
+    terminal: true
+  });
+  if (fence.turnId === undefined) throw new Error("Steer settlement has no exact original Turn.");
+  const entry = observation({
+    kind: input.status === "accepted" ? "input.accepted"
+      : input.status === "rejected" ? "input.rejected" : "input.delivery-unknown",
+    observedAt: new Date().toISOString(),
+    sequence: nextStructuredSequence(),
+    ordinal: 0,
+    fence: {
+      taskId: fence.taskId,
+      roleName: fence.roleName,
+      turnId: fence.turnId,
+      agentId: fence.agentId,
+      driverId: driver.id,
+      runtimeGenerationId: fence.runtimeGenerationId,
+      conversationId: input.nativeSessionId,
+      activationId: executionActivationId(input.home, fence, input.activationId, input.nativeSessionId),
+      nativeSessionId: input.nativeSessionId,
+      nativeTurnId: input.nativeTurnId,
+      receiptId: input.attemptId
+    },
+    payload: {
+      input: input.boundedText,
+      ...(input.failure === undefined ? {} : {
+        failure: {
+          error: standardAgentError({
+            source: "host",
+            phase: "turn-submit",
+            message: input.failure.detail,
+            raw: input.failure.raw ?? input.failure.detail,
+            inputDisposition: input.status === "unknown" ? "unknown" : "not-accepted"
+          })
+        }
+      })
+    }
+  });
+  await persistAndApply(input.home, [entry], fence.taskId, fence.roleName);
 }
 
 export async function publishStructuredProviderOpened(input: Readonly<{

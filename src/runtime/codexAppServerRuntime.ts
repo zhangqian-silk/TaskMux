@@ -61,6 +61,11 @@ export type CodexTurnAcceptance =
   | Readonly<{ status: "not-accepted"; reason: string }>
   | Readonly<{ status: "unknown"; reason: string }>;
 
+/** The pre-submit read failed; no mutation request was issued. */
+export class CodexPreSubmissionError extends Error {
+  readonly name = "CodexPreSubmissionError";
+}
+
 export type CodexThreadGoal = Readonly<{
   conversationId: string;
   status: "active" | "paused" | "blocked" | "usage-limited" | "budget-limited" | "complete";
@@ -183,7 +188,9 @@ export class CodexAppServerRuntime implements
       // A new App Server thread has no materialized Turn history yet. This
       // exact response proves there cannot be an active Turn, so its first
       // mutation can proceed without weakening unknown-delivery handling.
-      if (!codexAppServerErrorIsUnmaterialized(error)) throw error;
+      if (!codexAppServerErrorIsUnmaterialized(error)) {
+        throw new CodexPreSubmissionError("Codex Session inspection failed before input submission.", { cause: error });
+      }
     }
     try {
       const result = await this.transport.request("turn/start", {
@@ -215,7 +222,9 @@ export class CodexAppServerRuntime implements
   }>): Promise<CodexTurnAcceptance> {
     const threadId = text(input.conversationId, "Codex thread id");
     const expectedTurnId = text(input.expectedTurnId, "Codex expected Turn id");
-    const snapshot = await this.readConversation(threadId);
+    const snapshot = await this.readConversation(threadId).catch((error: unknown) => {
+      throw new CodexPreSubmissionError("Codex Session inspection failed before native steer.", { cause: error });
+    });
     if (snapshot.activeTurnId !== expectedTurnId) {
       return {
         status: "not-accepted",

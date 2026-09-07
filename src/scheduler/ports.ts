@@ -631,6 +631,7 @@ export type ReadyRoleDelivery = Readonly<{
 export type RoleDeliveryStatus =
   | "sent"
   | "already-sent"
+  | "pending"
   | "busy"
   | "rejected"
   | "delivery-unknown"

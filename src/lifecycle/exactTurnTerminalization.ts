@@ -24,8 +24,6 @@ import {
   updateExecutionLane,
   updateWorkItemExecutionLane
 } from "../execution/workItemExecution.js";
-import { reconcileWorkItemMainTurns } from "../execution/workItemMainTurn.js";
-import { reconcileReviewMainTurns } from "../execution/reviewMainTurn.js";
 import {
   isRuntimeLaunchReservation,
   runtimeLifecycleTarget
@@ -66,7 +64,7 @@ export function validateExactTurnReviewRound(
   if (round === null) {
     return { disposition: "obsolete", round: null, reason: "review-round-missing" };
   }
-  if (!options.allowTerminal
+  if (!options.allowTerminal && turn.executionLaneId === undefined
     && round.status !== "pending" && round.status !== "running") {
     return { disposition: "obsolete", round, reason: "review-round-terminal" };
   }
@@ -545,8 +543,6 @@ export function terminalizeExactTaskTurn(
     store.clearActiveTurn(input.taskId, input.roleName);
   }
   settleLaunchReservation(store, sessions, input);
-  reconcileWorkItemMainTurns(store, input.taskId, now);
-  reconcileReviewMainTurns(store, input.taskId, now);
   return { disposition: "applied", turn: terminal };
 }
 

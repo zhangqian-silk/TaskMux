@@ -219,17 +219,20 @@ import {
   createReviewExecutionAssignment,
   createWorkItemExecutionAssignment,
   createWorkItemExecutionGroup,
-  MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS,
   updateExecutionLane as updateUnifiedExecutionLane,
   updateWorkItemExecutionLane,
   workItemExecutionGroupSettled,
   type WorkItemExecutionLaneWorkspace
 } from "../execution/workItemExecution.js";
 import {
-  reconcileWorkItemMainTurns,
-  successfulWorkItemSynthesisProducers
+  dispatchWorkItemSynthesis,
+  selectedWorkItemSynthesisProducers
 } from "../execution/workItemMainTurn.js";
-import { reconcileReviewMainTurns } from "../execution/reviewMainTurn.js";
+import {
+  dispatchReviewSynthesis,
+  selectedReviewSynthesisProducers
+} from "../execution/reviewMainTurn.js";
+import { synthesisSourceTurnIds } from "../context/turnContextPack.js";
 import {
   projectWorkItemExecution,
   type WorkItemExecutionProjection
@@ -839,7 +842,9 @@ function workItemCandidateProducerRoles(
         + `${item.id}/${sourceTurn.sourceExecutionGroupId}.`
       );
     }
-    for (const producer of successfulWorkItemSynthesisProducers(store, item, group)) {
+    for (const producer of selectedWorkItemSynthesisProducers(
+      store, item, group, synthesisSourceTurnIds(store, sourceTurn)
+    )) {
       roles.add(producer.roleName);
     }
   }
@@ -2774,6 +2779,7 @@ function taskWorkCommand(
   if (command === "update") return updateWork(rest, store, options);
   if (command === "scope") return output(updateWorkScope(rest, store, options));
   if (command === "dispatch") return output(dispatchWork(rest, store, options));
+  if (command === "synthesize") return synthesizeTurns(rest, "workItem", store, options);
   if (command === "review") {
     return rest[0] === "retry"
       ? retryFailedTaskReviewRound(rest.slice(1), store, options)
@@ -3810,7 +3816,7 @@ function listWork(args: string[], store: TaskWorkflowStore): TaskCommandExecutio
   const items = store.listWorkItems(task.id);
   const turns = store.listTurns(task.id);
   const sessionSets = store.listRoleSessionSets(task.id);
-  const executions = items.map((item) => projectWorkItemExecution(item, turns, sessionSets));
+  const executions = items.map((item) => projectWorkItemExecution(item, turns, sessionSets, store));
   const rendered = items.length === 0
     ? "No work items found.\n"
     : `${renderTable(
@@ -3850,7 +3856,8 @@ function showWork(
   const execution = projectWorkItemExecution(
     item,
     store.listTurns(item.taskId),
-    store.listRoleSessionSets(item.taskId)
+    store.listRoleSessionSets(item.taskId),
+    store
   );
   const replacement = item.disposition?.replacementWorkItemId;
   const rendered = [
@@ -3893,7 +3900,7 @@ function renderWorkItemExecutionProjection(
             + `retry=${lane.retryTurnId ?? "none"}; settle=${lane.settleTurnId ?? "none"}`
           ))
         ]),
-    `Synthesis: ${projection.synthesis.status}; successful=${projection.synthesis.successfulLaneCount}/${projection.synthesis.requiredSuccessfulLaneCount}`,
+    `Synthesis: ${projection.synthesis.status}; successful=${projection.synthesis.successfulLaneCount}; sources selected by Leader`,
     `Main Turn: ${projection.mainTurn.turnId ?? "unobserved"} [${projection.mainTurn.status}]; role=${projection.mainTurn.roleName ?? "unobserved"}; session=${projection.mainTurn.session}; retry=${projection.mainTurn.retryTurnId ?? "none"}`,
     `Candidate Source: ${projection.candidate.candidateId ?? "none"} [${projection.candidate.status}]; source=${projection.candidate.sourceType ?? "unobserved"}; main=${projection.candidate.mainTurnId ?? "unobserved"}`,
     ...(projection.candidate.sourceExecutionGroupId === undefined
@@ -4045,6 +4052,41 @@ function reviewWork(
  * committed Integration/ChangeSet provenance and Reviewer independence fences
  * pass again.
  */
+function synthesizeTurns(
+  args: string[],
+  kind: "workItem" | "reviewRound",
+  store: TaskWorkflowStore,
+  options: TaskCommandOptions
+): TaskCommandExecution {
+  const subject = kind === "workItem" ? "work" : "review";
+  const usage = `Usage: yui task ${subject} synthesize <task>/<${subject}> --source-turn <task>/<turn> ...`;
+  const parsed = parseMultiValueTail(args, new Set(), new Set(["--source-turn"]), usage);
+  exactPositionals(parsed.positionals, 1, usage);
+  const reference = taskRecordReference(parsed.positionals[0], kind, "Synthesis target", options);
+  const sources = parsed.multiOptions.get("--source-turn") ?? [];
+  const sourceTurnIds = sources.map((value) => {
+    const source = taskRecordReference(value, "turn", "Source Turn", options);
+    if (source.taskId !== reference.taskId) throw usageError("Synthesis sources must belong to the same Task.");
+    return source.localId;
+  });
+  const now = clock(options);
+  const turn = store.transaction((tx) => {
+    const actor = taskActor(tx, options, reference.taskId);
+    const created = kind === "workItem"
+      ? dispatchWorkItemSynthesis(tx, reference.taskId, reference.localId, sourceTurnIds, now)
+      : dispatchReviewSynthesis(tx, reference.taskId, reference.localId, sourceTurnIds, now);
+    recordTaskEvent(tx, reference.taskId, "turn.synthesis-requested", {
+      turnId: created.id,
+      requestedBy: actor,
+      sourceTurnIds: sourceTurnIds.join(","),
+      ...(actor === "leader" ? leaderActionEventPayload(tx, reference.taskId, options) : {})
+    }, now);
+    return created;
+  });
+  notifyMailbox(options.runtime, roleMailbox(turn.taskId, turn.roleName), turn.taskId);
+  return output(`Dispatched synthesis Turn ${turn.taskId}/${turn.id}\n`, { turn });
+}
+
 function taskReviewCommand(
   args: string[],
   store: TaskWorkflowStore,
@@ -4052,6 +4094,7 @@ function taskReviewCommand(
 ): TaskCommandExecution {
   const [command, ...rest] = args;
   if (command === "request") return requestTaskReviewRound(rest, store, options);
+  if (command === "synthesize") return synthesizeTurns(rest, "reviewRound", store, options);
   if (command === "retry") return retryFailedTaskReviewRound(rest, store, options);
   throw usageError(command === undefined
     ? "Task review command is required."
@@ -4578,12 +4621,11 @@ function settleFailedReviewExecutionLaneTurn(
       settledBy: actor,
       ...(actor === "leader" ? leaderActionEventPayload(tx, task.id, options) : {})
     }, now);
-    const reconciliation = reconcileReviewMainTurns(tx, task.id, now);
     return {
       turn: run,
       reviewRound: tx.getReviewRound(task.id, round.id)!,
       changed: true,
-      mainTurns: reconciliation.createdTurns
+      mainTurns: [] as readonly Turn[]
     } as const;
   });
   for (const turn of result.mainTurns) {
@@ -4662,12 +4704,11 @@ function settleFailedExecutionLaneTurn(
       settledBy: actor,
       ...(actor === "leader" ? leaderActionEventPayload(tx, task.id, options) : {})
     }, now);
-    const reconciliation = reconcileWorkItemMainTurns(tx, task.id, now);
     return {
       turn: run,
       workItem: tx.getWorkItem(task.id, item.id) ?? settledItem,
       changed: true,
-      mainTurns: reconciliation.createdTurns
+      mainTurns: [] as readonly Turn[]
     } as const;
   });
   for (const turn of result.mainTurns) {
@@ -5133,9 +5174,9 @@ function retryTurn(
       && retryItem.assignee === previous.roleName
       && sourceGroup !== undefined
       && currentRetryGroup?.id === sourceGroup.id
-      && workItemExecutionGroupSettled(sourceGroup)
-      && successfulWorkItemSynthesisProducers(tx, retryItem, sourceGroup).length
-        >= MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS
+      && selectedWorkItemSynthesisProducers(
+        tx, retryItem, sourceGroup, synthesisSourceTurnIds(tx, previous)
+      ).length > 0
       && sourceMainTurns.at(-1)?.id === previous.id
     );
     if (!exactSourceMain) {
@@ -5526,10 +5567,11 @@ function taskReviewProvenance(
             + `${item.id}/${sourceRun.sourceExecutionGroupId}.`
           );
         }
-        for (const producer of successfulWorkItemSynthesisProducers(
+        for (const producer of selectedWorkItemSynthesisProducers(
           store,
           item,
-          executionGroup
+          executionGroup,
+          synthesisSourceTurnIds(store, sourceRun)
         )) {
           recordProducer(producer.roleName, item.id);
         }
@@ -5999,6 +6041,58 @@ function retryFailedReviewRun(
       );
     }
 
+    if (run.sourceExecutionGroupId !== undefined) {
+      assertTaskExecutionEnabled(task, "retrying Review synthesis");
+      const group = round.executionGroup;
+      if (round.status !== "failed" || round.reviewerTurnId !== run.id
+        || group?.id !== run.sourceExecutionGroupId
+        || run.workspace === undefined) {
+        throw usageError(`Review Turn ${run.id} no longer owns the current main synthesis.`);
+      }
+      selectedReviewSynthesisProducers(tx, round, group, synthesisSourceTurnIds(tx, run));
+      const effective = resolveEffectiveLaunch({
+        role: reviewer,
+        purpose: "review",
+        workspace: run.workspace,
+        reviewRoundId: round.id,
+        reviewBaseCommit: round.reviewBaseCommit
+      });
+      const created = createTurn(
+        tx.nextTurnId(task.id),
+        task.id,
+        reviewer.name,
+        roleAgentSessionResumeMode(
+          tx.getTaskRoleSessionSet(task.id, reviewer.name), effective.agentId, effective
+        ),
+        run.inputs[0]!.input,
+        now,
+        {
+          purpose: "review",
+          ...(run.workItemId === undefined ? {} : { workItemId: run.workItemId }),
+          reviewRoundId: round.id,
+          sourceExecutionGroupId: group.id,
+          workspace: run.workspace,
+          effective
+        }
+      );
+      const restarted = startReviewRound(retryReviewRound(round, requestedBy, now), created.id);
+      tx.saveReviewRound(task.id, restarted);
+      tx.saveTurn(created);
+      tx.saveActiveTurn(created);
+      enqueueRoleTurnDispatch(tx, {
+        taskId: task.id,
+        roleName: reviewer.name,
+        turnId: created.id,
+        reason: "turn-retried",
+        occurredAt: now
+      });
+      recordTaskEvent(tx, task.id, "turn.review-retried", {
+        ...turnLaunchEventPayload(created),
+        previousTurnId: run.id
+      }, now);
+      return { round: restarted, previousRun: run, created: true, turn: created };
+    }
+
     if (runningPanelLaneRetry) {
       const resetRound = retryRunningReviewExecutionLane(
         round,
@@ -6037,11 +6131,14 @@ function retryFailedReviewRun(
     }, now);
     return { round: resetRound, previousRun: run, created: true };
   });
+  if ("turn" in result && result.turn !== undefined) {
+    notifyMailbox(options.runtime, roleMailbox(result.turn.taskId, result.turn.roleName), result.turn.taskId);
+  }
   return output(
     result.created
       ? `Review retry requested as ${result.round.id}\n`
       : `Review retry already requested as ${result.round.id} (${result.round.status})\n`,
-    { reviewRound: result.round }
+    { reviewRound: result.round, ...("turn" in result ? { turn: result.turn } : {}) }
   );
 }
 
@@ -6777,8 +6874,6 @@ export function dispatchPreparedReviewRound(
       });
       recordTaskEvent(tx, taskId, "turn.review-dispatched", turnLaunchEventPayload(created), now);
     }
-    const reconciliation = reconcileReviewMainTurns(tx, taskId, now);
-    createdTurns.push(...reconciliation.createdTurns);
     return createdTurns;
   });
   for (const run of runs) {

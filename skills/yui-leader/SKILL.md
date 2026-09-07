@@ -211,10 +211,14 @@ Use direct Review by default: one main Reviewer Turn owns the authoritative
 result without an ExecutionGroup or Lane. Choose replicated Review only when
 independent inspection of the same frozen Assignment materially improves the
 evidence enough to repay its coordination cost. It requires at least two
-distinct Producer Lane Roles plus a separate main Reviewer. Wait for every
-Producer to settle and at least two to succeed; their results are durable
-evidence only. The main Reviewer receives all successful results, resolves
-disagreement against the frozen sources, and submits one original result.
+distinct Producer Lane Roles plus a separate main Reviewer. Producer results
+are durable evidence only; Core does not choose a success count or vote.
+Select the original source Turns explicitly with
+`task review synthesize <task>/<review-round> --source-turn <task>/<turn> ...`.
+For replicated WorkItems use `task work synthesize <task>/<work> --source-turn <task>/<turn> ...`.
+The main Agent receives those frozen sources, resolves disagreement through
+judgment, and submits one original result. Finishing or settling a Lane does
+not dispatch synthesis automatically. A Lane retry remains the same replica.
 Automatic policy-triggered Candidate Review remains direct.
 
 When several WorkItems contribute to one outcome, prefer one independent
@@ -236,9 +240,9 @@ A failed ReviewRound is an execution failure, not an automatic retry or repair
 wave. Inspect its exact Round, Turn, candidate, Core failure, and
 `task next-action` facts, then choose the smallest recovery that preserves the
 frozen boundary. Do not invent a retry loop or silently replace the Reviewer
-Session. For a replicated Task-final Round below quorum before main synthesis,
-retry the Round so only unsettled or failed Producers rerun. Retry a failed
-main synthesis through its exact Turn.
+Session. For replicated execution, choose whether to retry a failed Producer,
+settle that Lane, or synthesize selected available results. Retry a failed
+main synthesis through its exact Turn, preserving its selected source snapshot.
 
 ## Accept, integrate, and complete
 

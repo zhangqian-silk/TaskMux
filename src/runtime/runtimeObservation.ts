@@ -39,6 +39,7 @@ export type RuntimeObservationKind =
   | "continuation.reported"
   | "continuation.settled"
   | "input.accepted"
+  | "input.rejected"
   | "input.delivery-unknown"
   | "activity.observed"
   | "observer.health";
@@ -180,6 +181,7 @@ const KINDS: readonly RuntimeObservationKind[] = [
   "continuation.reported",
   "continuation.settled",
   "input.accepted",
+  "input.rejected",
   "input.delivery-unknown",
   "activity.observed",
   "observer.health"

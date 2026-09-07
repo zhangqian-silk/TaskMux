@@ -273,7 +273,14 @@ async function forceLeaderSteer(
     deliveryReturned = true;
     inputAccepted = outcome.status === "sent" || outcome.status === "already-sent"
       || outcome.failure?.inputDisposition === "accepted";
-    inputMayBeAccepted = outcome.status === "delivery-unknown" || inputAccepted;
+    inputMayBeAccepted = outcome.status === "pending"
+      || outcome.status === "delivery-unknown"
+      || outcome.failure?.inputDisposition === "unknown" || inputAccepted;
+    if (outcome.status === "pending") {
+      // Keep the exact claimed steer input while its original receipt is
+      // pending; the next observation must not allocate a replacement input.
+      return { taskId, turnId: active.id, status: "skipped", reason: "not-ready" };
+    }
     if (outcome.status !== "sent" && outcome.status !== "already-sent") {
       if (!inputMayBeAccepted) store.releaseWorkMailbox(target, batchId);
       const failure = outcome.failure;

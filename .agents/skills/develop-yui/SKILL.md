@@ -102,9 +102,9 @@ independent attempts at the same frozen Assignment. This execution choice is
 separate from Task decomposition and WorkItem count. Direct Candidate or
 Task-final Review likewise uses one main Reviewer Turn with no Group.
 Replicated Review is an explicit choice in either scope: it uses at least two
-distinct Producer Lane Roles over one frozen Assignment, waits for every Lane
-to settle, and gives the main Reviewer the durable successful results for one
-authoritative synthesis Turn. Automatic policy-triggered Candidate Review
+distinct Producer Lane Roles over one frozen Assignment. The Leader explicitly
+selects original source Turns for one authoritative synthesis Turn; Core does
+not enforce a success count, vote, or automatic synthesis. Automatic policy-triggered Candidate Review
 stays direct.
 
 Risk controls review and evidence strength. Before delivery, the Leader makes

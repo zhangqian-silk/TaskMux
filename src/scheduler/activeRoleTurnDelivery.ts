@@ -188,6 +188,13 @@ async function deliverActiveTurn(
       text: serializeTurnInputEnvelope(turnInputEnvelope(turn))
     });
 
+    if (outcome.status === "pending") {
+      // The original Host request is still in flight. Its durable submitting
+      // attempt prevents another write; only the eventual receipt consumes
+      // this mailbox input. A normal wait is neither failure nor acceptance.
+      forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
+      return { ...base, status: "skipped", reason: "not-ready" };
+    }
     if (outcome.status === "busy" || outcome.status === "unavailable") {
       forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
       return {

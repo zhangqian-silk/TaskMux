@@ -109,7 +109,6 @@ import {
   createWorkItemExecutionAssignment,
   createWorkItemExecutionGroup
 } from "../../dist/execution/workItemExecution.js";
-import { reconcileReviewMainTurns } from "../../dist/execution/reviewMainTurn.js";
 import {
   attachReviewRoundWorkspace,
   createTaskReviewRound,
@@ -2520,6 +2519,13 @@ test("direct and replicated WorkItem execution converge through exact Lane retry
   assert.notEqual(retriedProducer.id, producerB.id);
   finish(retriedProducer, "completed", new Date("2026-09-02T00:06:00.000Z"));
 
+  assert.equal(store.getActiveTurn(task.id, "leader"), null);
+  runTaskCommand([
+    "work", "synthesize", `${task.id}/${groupedItem.id}`,
+    "--source-turn", `${task.id}/${producerA.id}`
+  ], store, {
+    now: () => new Date("2026-09-02T00:06:30.000Z"), environment: bareEnv
+  });
   const mainTurn = store.getActiveTurn(task.id, "leader");
   assert.equal(mainTurn.workItemId, groupedItem.id);
   assert.equal(mainTurn.sourceExecutionGroupId, groupId);
@@ -2831,6 +2837,13 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
     "producer-b"
   );
   assert.equal(secondProducer.result.output, producerOutputs[1]);
+  assert.equal(store.getActiveTurn(task.id, "reviewer-main"), null);
+  runTaskCommand([
+    "review", "synthesize", `${task.id}/${replicatedRound.id}`,
+    ...producerTurns.flatMap(({ id }) => ["--source-turn", `${task.id}/${id}`])
+  ], store, {
+    now: () => new Date("2026-09-02T00:16:15.000Z"), environment: bareEnv
+  });
   const initialMain = store.getActiveTurn(task.id, "reviewer-main");
   assert.ok(initialMain);
   assert.equal(initialMain.sourceExecutionGroupId, groupId);
@@ -2854,14 +2867,6 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
     assert.equal(Object.hasOwn(sourceTurn, "workspace"), false);
     assert.equal(Object.hasOwn(sourceTurn, "effective"), false);
   }
-  assert.deepEqual(
-    store.transaction((tx) => reconcileReviewMainTurns(
-      tx,
-      task.id,
-      new Date("2026-09-02T00:16:30.000Z")
-    )).createdTurns,
-    []
-  );
 
   const authoritativeOutput = [
     "# Main review",
@@ -3658,7 +3663,7 @@ test("Controller begin-handover accepts a null fromReleaseId", async (t) => {
 
 test("production storage exposes one current version and one migration floor", () => {
   assert.equal(MIN_SUPPORTED_STORAGE_VERSION, 1);
-  assert.equal(CURRENT_STORAGE_VERSION, 3);
+  assert.equal(CURRENT_STORAGE_VERSION, 4);
   for (const retiredExport of [
     "FileTaskStore",
     "STORAGE_STATE_FILE",
@@ -3681,7 +3686,7 @@ test("a new current Home initializes its SQLite authority exactly once", (t) => 
   try {
     assert.deepEqual(
       database.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),
-      [{ version: 1 }, { version: 2 }, { version: 3 }]
+      [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]
     );
     assert.deepEqual(
       database.prepare("PRAGMA table_info(schema_migrations)").all().map(({ name }) => name),

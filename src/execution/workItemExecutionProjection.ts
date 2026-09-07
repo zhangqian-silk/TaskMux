@@ -10,7 +10,8 @@ import type {
   WorkItemExecutionGroup,
   WorkItemExecutionLane
 } from "./workItemExecution.js";
-import { MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS } from "./workItemExecution.js";
+import type { TaskStore } from "../storage/taskStore.js";
+import { synthesisSourceTurnIds } from "../context/turnContextPack.js";
 
 export type WorkItemLaneProjectedStatus =
   | "running"
@@ -28,9 +29,7 @@ export type WorkItemTurnProjectedStatus =
 
 export type WorkItemSynthesisStatus =
   | "not-applicable"
-  | "blocked-by-open-lanes"
-  | "eligible"
-  | "insufficient-results"
+  | "awaiting-selection"
   | "main-running"
   | "main-needs-attention"
   | "complete"
@@ -51,7 +50,6 @@ export type WorkItemExecutionProjection = Readonly<{
   synthesis: Readonly<{
     status: WorkItemSynthesisStatus;
     successfulLaneCount: number;
-    requiredSuccessfulLaneCount: number;
   }>;
   mainTurn: WorkItemMainTurnProjection;
   candidate: WorkItemCandidateSourceProjection;
@@ -100,7 +98,7 @@ export type WorkItemExecutionNextAction = Readonly<{
     | "wait-for-lanes"
     | "retry-or-settle-lanes"
     | "inspect-unknown"
-    | "await-main-dispatch"
+    | "select-synthesis-sources"
     | "wait-for-main"
     | "retry-main"
     | "redispatch-work"
@@ -114,7 +112,8 @@ export type WorkItemExecutionNextAction = Readonly<{
 export function projectWorkItemExecution(
   item: WorkItem,
   turns: readonly Turn[],
-  sessionSets: readonly TaskRoleSessionSet[] = []
+  sessionSets: readonly TaskRoleSessionSet[] = [],
+  sourceStore?: Pick<TaskStore, "getContextSnapshot">
 ): WorkItemExecutionProjection {
   const group = currentWorkItemExecutionGroup(item);
   const relevantTurns = turns.filter((turn) => turn.workItemId === item.id);
@@ -133,7 +132,7 @@ export function projectWorkItemExecution(
   });
   const mainTurn = projectMainTurn(item, group, relevantTurns, sessionsByRole);
   const synthesis = projectSynthesis(group, lanes, mainTurn);
-  const candidate = projectCandidate(item, group, relevantTurns, lanes, mainTurn);
+  const candidate = projectCandidate(item, group, relevantTurns, mainTurn, sourceStore);
   return Object.freeze({
     schemaVersion: 1,
     shape: group === undefined ? "direct" : "replicated",
@@ -301,24 +300,13 @@ function projectSynthesis(
   if (group === undefined) {
     return Object.freeze({
       status: "not-applicable",
-      successfulLaneCount: 0,
-      requiredSuccessfulLaneCount: MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS
+      successfulLaneCount: 0
     });
   }
   const successfulLaneCount = group.lanes.filter(({ disposition }) => disposition === "succeeded").length;
   let status: WorkItemSynthesisStatus;
-  if (group.lanes.some(({ disposition }) => disposition === "open")) {
-    status = "blocked-by-open-lanes";
-  } else if (lanes.some((lane) => (
-    lane.status === "unknown" && group.lanes.some(({ id, disposition }) => (
-      id === lane.laneId && disposition === "succeeded"
-    ))
-  ))) {
-    status = "unknown";
-  } else if (successfulLaneCount < MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS) {
-    status = "insufficient-results";
-  } else if (mainTurn.status === "not-started") {
-    status = "eligible";
+  if (mainTurn.status === "not-started") {
+    status = "awaiting-selection";
   } else if (mainTurn.status === "running") {
     status = "main-running";
   } else if (mainTurn.status === "needs-attention") {
@@ -330,8 +318,7 @@ function projectSynthesis(
   }
   return Object.freeze({
     status,
-    successfulLaneCount,
-    requiredSuccessfulLaneCount: MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS
+    successfulLaneCount
   });
 }
 
@@ -339,8 +326,8 @@ function projectCandidate(
   item: WorkItem,
   group: WorkItemExecutionGroup | undefined,
   turns: readonly Turn[],
-  lanes: readonly WorkItemLaneProjection[],
-  mainTurn: WorkItemMainTurnProjection
+  mainTurn: WorkItemMainTurnProjection,
+  sourceStore?: Pick<TaskStore, "getContextSnapshot">
 ): WorkItemCandidateSourceProjection {
   const candidate = governingWorkItemCandidate(item);
   if (candidate === undefined) {
@@ -356,14 +343,14 @@ function projectCandidate(
   }
   const sourceTurnId = candidate.source.turnId;
   const sourceTurn = turns.find(({ id }) => id === sourceTurnId);
-  const laneTurns = group === undefined
+  const laneTurns = group === undefined || sourceStore === undefined || sourceTurn === undefined
     ? []
-    : [...group.lanes]
-      .filter(({ disposition, successfulTurnId }) => (
-        disposition === "succeeded" && successfulTurnId !== undefined
-      ))
-      .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
-      .map((lane) => ({ laneId: lane.id, successfulTurnId: lane.successfulTurnId! }));
+    : synthesisSourceTurnIds(sourceStore, sourceTurn).flatMap((id) => {
+      const selected = turns.find((turn) => turn.id === id);
+      return selected?.executionLaneId === undefined ? [] : [{
+        laneId: selected.executionLaneId, successfulTurnId: selected.id
+      }];
+    });
   const valid = sourceTurn !== undefined
     && sourceTurn.id === mainTurn.turnId
     && sourceTurn.status === "completed"
@@ -373,11 +360,7 @@ function projectCandidate(
     && sourceTurn.sourceExecutionGroupId === group?.id
     && candidate.executionLaneId === undefined
     && candidate.executionGroupId === undefined
-    && (group === undefined || (
-      laneTurns.length >= MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS
-      && lanes.filter(({ successfulTurnId }) => successfulTurnId !== undefined)
-        .every(({ status }) => status === "succeeded")
-    ));
+    && (group === undefined || laneTurns.length > 0);
   return candidateProjection(candidate, valid ? "observed" : "unknown", laneTurns, valid, group?.id);
 }
 
@@ -425,11 +408,8 @@ function projectNextAction(
   if (activeLanes.length > 0) {
     return action("wait-for-lanes", activeLanes.map(({ roleName }) => roleName), activeLanes.map(({ laneId }) => laneId));
   }
-  if (synthesis.status === "insufficient-results") {
-    return action("redispatch-work", ["leader"], [item.id]);
-  }
-  if (synthesis.status === "eligible") {
-    return action("await-main-dispatch", ["controller", ...(item.assignee === undefined ? [] : [item.assignee])], [item.id]);
+  if (synthesis.status === "awaiting-selection") {
+    return action("select-synthesis-sources", ["leader"], [item.id]);
   }
   if (mainTurn.status === "running") {
     return action("wait-for-main", mainTurn.roleName === undefined ? [] : [mainTurn.roleName], mainTurn.turnId === undefined ? [] : [mainTurn.turnId]);

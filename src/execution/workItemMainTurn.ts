@@ -14,12 +14,9 @@ import type { TaskStore } from "../storage/taskStore.js";
 import { createTurn, type Turn } from "../turn/turn.js";
 import {
   currentWorkItemExecutionGroup,
-  updateWorkItemStatus,
   type WorkItem
 } from "../workItem/workItem.js";
 import {
-  MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS,
-  workItemExecutionGroupSettled,
   type WorkItemExecutionGroup
 } from "./workItemExecution.js";
 
@@ -29,184 +26,154 @@ export type WorkItemSynthesisProducer = Readonly<{
   turnId: string;
 }>;
 
-export type WorkItemMainTurnReconciliation = Readonly<{
-  createdTurns: readonly Turn[];
-  failedWorkItemIds: readonly string[];
-}>;
-
-export function successfulWorkItemSynthesisProducers(
+export function selectedWorkItemSynthesisProducers(
   store: Pick<TaskStore, "getTurn">,
   item: WorkItem,
-  group: WorkItemExecutionGroup
+  group: WorkItemExecutionGroup,
+  sourceTurnIds: readonly string[]
 ): readonly WorkItemSynthesisProducer[] {
-  if (!workItemExecutionGroupSettled(group)) {
-    throw new Error(`WorkItem ExecutionGroup is not settled: ${item.id}/${group.id}.`);
+  if (sourceTurnIds.length === 0 || new Set(sourceTurnIds).size !== sourceTurnIds.length) {
+    throw new Error("Synthesis requires explicit, distinct source Turn references.");
   }
-  return [...group.lanes]
-    .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
-    .flatMap((lane): WorkItemSynthesisProducer[] => {
-      if (lane.disposition !== "succeeded") return [];
-      const turn = lane.successfulTurnId === undefined
-        ? null
-        : store.getTurn(item.taskId, lane.successfulTurnId);
-      if (turn === null
-        || turn.status !== "completed"
-        || turn.workItemId !== item.id
-        || turn.executionGroupId !== group.id
-        || turn.executionLaneId !== lane.id
-        || turn.result === undefined) {
-        throw new Error(
-          `Successful ExecutionLane has no exact Producer Turn result: ${group.id}/${lane.id}.`
-        );
-      }
-      return [{
-        laneId: lane.id,
-        roleName: lane.roleName,
-        turnId: turn.id
-      }];
-    });
+  return sourceTurnIds.map((turnId) => {
+    const turn = store.getTurn(item.taskId, turnId);
+    const lane = group.lanes.find(({ id }) => id === turn?.executionLaneId);
+    if (turn === null
+      || lane === undefined
+      || !["completed", "failed"].includes(turn.status)
+      || turn.purpose !== "execution"
+      || turn.workItemId !== item.id
+      || turn.executionGroupId !== group.id
+      || turn.executionLaneId !== lane.id
+      || turn.roleName !== lane.roleName
+      || turn.result === undefined) {
+      throw new Error(
+        `Synthesis source is not an exact terminal Producer result: ${group.id}/${turnId}.`
+      );
+    }
+    return {
+      laneId: lane.id,
+      roleName: lane.roleName,
+      turnId: turn.id
+    };
+  });
 }
 
-/**
- * Reconcile every settled replicated WorkItem in one Task. The Turn row is the
- * durable caller/idempotency record: at most one initial main Turn may name a
- * source Group, while explicit retries append more Turns with the same source.
- */
-export function reconcileWorkItemMainTurns(
+/** Called within the caller's transaction after Task authority is checked. */
+export function dispatchWorkItemSynthesis(
   store: TaskStore,
   taskId: string,
+  workItemId: string,
+  sourceTurnIds: readonly string[],
   now: Date
-): WorkItemMainTurnReconciliation {
+): Turn {
   const task = store.getTask(taskId);
   if (task === null || task.status !== "active" || task.executionGate.state !== "enabled") {
-    return { createdTurns: [], failedWorkItemIds: [] };
+    throw new Error(`Task execution is not enabled: ${taskId}.`);
   }
-  const createdTurns: Turn[] = [];
-  const failedWorkItemIds: string[] = [];
-  const items = [...store.listWorkItems(taskId)].sort((left, right) => (
-    left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
+  const item = store.getWorkItem(taskId, workItemId);
+  if (item === null || item.status !== "running") {
+    throw new Error(`WorkItem is not running: ${taskId}/${workItemId}.`);
+  }
+  const group = currentWorkItemExecutionGroup(item);
+  if (group === undefined) throw new Error(`WorkItem has no ExecutionGroup: ${item.id}.`);
+  const producers = selectedWorkItemSynthesisProducers(store, item, group, sourceTurnIds);
+  const existing = store.listTurns(taskId).some((turn) => (
+    turn.purpose === "execution"
+    && turn.workItemId === item.id
+    && turn.sourceExecutionGroupId === group.id
   ));
-  for (const item of items) {
-    if (item.status !== "running") continue;
-    const group = currentWorkItemExecutionGroup(item);
-    if (group === undefined || !workItemExecutionGroupSettled(group)) continue;
-    const producers = successfulWorkItemSynthesisProducers(store, item, group);
-    if (producers.length < MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS) {
-      const summary = `ExecutionGroup ${group.id} settled with ${producers.length} successful `
-        + `Producer result${producers.length === 1 ? "" : "s"}; at least `
-        + `${MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS} are required.`;
-      store.saveWorkItem(taskId, updateWorkItemStatus(item, "failed", now, summary));
-      store.saveEvent(taskId, createTaskEvent(
-        store.nextEventId(taskId),
-        taskId,
-        "work.execution-group-failed",
-        {
-          workItemId: item.id,
-          executionGroupId: group.id,
-          successfulProducerCount: String(producers.length),
-          requiredProducerCount: String(MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS)
-        },
-        now
-      ));
-      failedWorkItemIds.push(item.id);
-      continue;
-    }
-    const existing = store.listTurns(taskId).some((turn) => (
-      turn.purpose === "execution"
-      && turn.workItemId === item.id
-      && turn.sourceExecutionGroupId === group.id
-    ));
-    if (existing) continue;
-    if (item.assignee === undefined) {
-      throw new Error(`Replicated WorkItem has no main assignee: ${item.id}.`);
-    }
-    const role = store.getRole(taskId, item.assignee);
-    if (role === null) throw new Error(`WorkItem main Role is missing: ${taskId}/${item.assignee}.`);
-    if (store.getActiveTurn(taskId, role.name) !== null) continue;
-    const workspace = role.name === "leader"
-      ? store.getTaskWorkspace(taskId)
-      : store.getWorkItemWorkspace(taskId, item.id);
-    if (workspace === null) {
-      throw new Error(`WorkItem main workspace is missing: ${taskId}/${item.id}.`);
-    }
-    const visibleProjectIds = workspace.entries.map(({ projectId }) => projectId).sort();
-    const taskProjectIds = task.projectBindings.map(({ projectId }) => projectId).sort();
-    const writableProjectIds = workspace.entries
-      .filter(({ access }) => access === "write")
-      .map(({ projectId }) => projectId)
-      .sort();
-    if (!isDeepStrictEqual(visibleProjectIds, taskProjectIds)
-      || !isDeepStrictEqual(writableProjectIds, [...item.writeProjectIds].sort())) {
-      throw new Error(`WorkItem main workspace does not match its approved scope: ${item.id}.`);
-    }
-    const effective = resolveEffectiveLaunch({
-      role,
-      purpose: "execution",
-      workspace,
-      workItemWriteProjectIds: item.writeProjectIds
-    });
-    const snapshot = freezeTurnContextSnapshot(store, {
-      taskId,
-      roleName: role.name,
-      purpose: "execution",
+  if (existing) throw new Error(`Synthesis already exists for ${group.id}; retry its Turn explicitly.`);
+  if (item.assignee === undefined) {
+    throw new Error(`Replicated WorkItem has no main assignee: ${item.id}.`);
+  }
+  const role = store.getRole(taskId, item.assignee);
+  if (role === null) throw new Error(`WorkItem main Role is missing: ${taskId}/${item.assignee}.`);
+  if (store.getActiveTurn(taskId, role.name) !== null) {
+    throw new Error(`WorkItem main Role already has an active Turn: ${role.name}.`);
+  }
+  const workspace = role.name === "leader"
+    ? store.getTaskWorkspace(taskId)
+    : store.getWorkItemWorkspace(taskId, item.id);
+  if (workspace === null) {
+    throw new Error(`WorkItem main workspace is missing: ${taskId}/${item.id}.`);
+  }
+  const visibleProjectIds = workspace.entries.map(({ projectId }) => projectId).sort();
+  const taskProjectIds = task.projectBindings.map(({ projectId }) => projectId).sort();
+  const writableProjectIds = workspace.entries
+    .filter(({ access }) => access === "write")
+    .map(({ projectId }) => projectId)
+    .sort();
+  if (!isDeepStrictEqual(visibleProjectIds, taskProjectIds)
+    || !isDeepStrictEqual(writableProjectIds, [...item.writeProjectIds].sort())) {
+    throw new Error(`WorkItem main workspace does not match its approved scope: ${item.id}.`);
+  }
+  const effective = resolveEffectiveLaunch({
+    role,
+    purpose: "execution",
+    workspace,
+    workItemWriteProjectIds: item.writeProjectIds
+  });
+  const snapshot = freezeTurnContextSnapshot(store, {
+    taskId,
+    roleName: role.name,
+    purpose: "execution",
+    workItemId: item.id,
+    sourceExecutionGroupId: group.id,
+    workspace
+  }, now, "leader", group.assignment.contextSnapshotRef, sourceTurnIds);
+  const turn = createTurn(
+    store.nextTurnId(taskId),
+    taskId,
+    role.name,
+    roleAgentSessionResumeMode(
+      store.getTaskRoleSessionSet(taskId, role.name),
+      effective.agentId,
+      effective
+    ),
+    createTurnInput({
+      source: { type: "yui", channel: "workitem-dispatch" },
+      directive: synthesisDirective(group, producers),
+      contextSnapshotRef: contextSnapshotRef(snapshot),
+      deltaRefIds: contextSnapshotDeltaRefIds(store, snapshot)
+    }),
+    now,
+    {
       workItemId: item.id,
       sourceExecutionGroupId: group.id,
-      workspace
-    }, now, "controller", group.assignment.contextSnapshotRef);
-    const turn = createTurn(
-      store.nextTurnId(taskId),
-      taskId,
-      role.name,
-      roleAgentSessionResumeMode(
-        store.getTaskRoleSessionSet(taskId, role.name),
-        effective.agentId,
-        effective
-      ),
-      createTurnInput({
-        source: { type: "yui", channel: "workitem-dispatch" },
-        directive: synthesisDirective(group, producers),
-        contextSnapshotRef: contextSnapshotRef(snapshot),
-        deltaRefIds: contextSnapshotDeltaRefIds(store, snapshot)
-      }),
-      now,
-      {
-        workItemId: item.id,
-        sourceExecutionGroupId: group.id,
-        workspace,
-        effective
-      }
-    );
-    store.saveTurn(turn);
-    store.saveActiveTurn(turn);
-    enqueueRoleTurnDispatch(store, {
-      taskId,
-      roleName: role.name,
+      workspace,
+      effective
+    }
+  );
+  store.saveTurn(turn);
+  store.saveActiveTurn(turn);
+  enqueueRoleTurnDispatch(store, {
+    taskId,
+    roleName: role.name,
+    turnId: turn.id,
+    reason: "workitem-synthesis-ready",
+    occurredAt: now
+  });
+  store.saveEvent(taskId, createTaskEvent(
+    store.nextEventId(taskId),
+    taskId,
+    "turn.dispatched",
+    {
       turnId: turn.id,
-      reason: "workitem-synthesis-ready",
-      occurredAt: now
-    });
-    store.saveEvent(taskId, createTaskEvent(
-      store.nextEventId(taskId),
-      taskId,
-      "turn.dispatched",
-      {
-        turnId: turn.id,
-        role: turn.roleName,
-        purpose: turn.purpose,
-        mode: turn.mode,
-        agent: `${turn.effective.agentId}/${turn.effective.adapterId}`,
-        effectiveRevision: String(turn.effective.sourceDesiredRevision),
-        profileAccess: turn.effective.profileAccess,
-        effectivePermission: turn.effective.permission.strategy,
-        writeProjectIds: turn.effective.writeProjectIds.join(",") || "none",
-        workItemId: item.id,
-        sourceExecutionGroupId: group.id
-      },
-      now
-    ));
-    createdTurns.push(turn);
-  }
-  return { createdTurns, failedWorkItemIds };
+      role: turn.roleName,
+      purpose: turn.purpose,
+      mode: turn.mode,
+      agent: `${turn.effective.agentId}/${turn.effective.adapterId}`,
+      effectiveRevision: String(turn.effective.sourceDesiredRevision),
+      profileAccess: turn.effective.profileAccess,
+      effectivePermission: turn.effective.permission.strategy,
+      writeProjectIds: turn.effective.writeProjectIds.join(",") || "none",
+      workItemId: item.id,
+      sourceExecutionGroupId: group.id
+    },
+    now
+  ));
+  return turn;
 }
 
 function synthesisDirective(
@@ -214,7 +181,7 @@ function synthesisDirective(
   producers: readonly WorkItemSynthesisProducer[]
 ): string {
   return [
-    "Synthesize every frozen successful Producer result in stable Lane order.",
+    "Synthesize the explicitly selected Producer results in the supplied order.",
     "Expand each exact source Turn from the frozen Context Snapshot and consume its original result text plus Core-authored system evidence.",
     "Do not rerun, retry, append, or abandon any Lane. Form the final WorkItem result from these records.",
     JSON.stringify({
