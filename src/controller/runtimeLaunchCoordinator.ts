@@ -190,8 +190,9 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
     if (request.owner.scope === "global" && request.managedWorkspace !== undefined) {
       throw new Error("A global runtime cannot use a Task ManagedWorkspace.");
     }
+    let currentRequest = request;
     const assertLaunchCurrent = () => {
-      this.#assertCurrent?.(request);
+      this.#assertCurrent?.(currentRequest);
       assertCurrent?.();
     };
     const proposedGenerationId = requireText(
@@ -286,8 +287,20 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
         throw new Error("Runtime host reported its pre-start launch fence more than once.");
       }
       validateRuntimeLaunchPreflight(preflight, request, runtimeGenerationId);
+      this.reservations.confirmRuntimeLaunchReservation({
+        owner: request.owner,
+        runtimeGenerationId
+      }, assertLaunchCurrent);
       preflightObserved = true;
       beforeHostStart?.(preflight);
+      // The pre-start persistence callback hands the fixed native Session to
+      // this reserved activation. From here on, fence against that exact new
+      // identity, not the historical Host we originally set out to restore.
+      // Do not accept both identities: a later change back is stale as well.
+      if (request.mode === "resume" && request.hostActivationId !== undefined) {
+        currentRequest = { ...request, hostActivationId: runtimeGenerationId };
+      }
+      assertLaunchCurrent();
     };
     let binding: RuntimeBinding;
     try {
@@ -427,6 +440,7 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
         binding,
         runtimeGenerationId,
         runtimeIsolation,
+        reusedConfirmedRunningHost,
         new Error(
           `Runtime host was recreated while recovering an existing generation: ${
             request.owner.roleName
@@ -464,6 +478,7 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
         binding,
         runtimeGenerationId,
         runtimeIsolation,
+        reusedConfirmedRunningHost,
         error
       );
     }
@@ -513,8 +528,21 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
     binding: RuntimeBinding,
     runtimeGenerationId: string,
     runtimeIsolation: TaskRuntimeIsolationPreparation | undefined,
+    reusedConfirmedRunningHost: boolean,
     cause: unknown
   ): Promise<never> {
+    if (reusedConfirmedRunningHost && binding.hostCreated !== true) {
+      // Reattaching an existing activation gives this launch no ownership of
+      // it. A fresh activation inside a persistent Host is different: this
+      // launch still owns its startup and isolation cleanup even when the
+      // physical Host did not need to be created.
+      throw new RuntimeLaunchStateChangedError(
+        `Runtime launch state changed while reusing a Host: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        { cause }
+      );
+    }
     try {
       await this.host.stop(binding);
     } catch (stopError) {
