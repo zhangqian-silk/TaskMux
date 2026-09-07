@@ -39,6 +39,14 @@ export type AcpAgentCapabilities = Readonly<{
   resumeSession: boolean;
   /** `session/close` releases a session; requires `sessionCapabilities.close`. */
   closeSession: boolean;
+  /**
+   * Whether extra workspace roots may accompany a session lifecycle request.
+   * ACP states that Clients MUST only send `additionalDirectories` when the
+   * Agent advertises `sessionCapabilities.additionalDirectories`, so an Agent
+   * that stays silent gets a request without the field rather than one it is
+   * entitled to reject.
+   */
+  additionalDirectories: boolean;
   promptImage: boolean;
   promptAudio: boolean;
   promptEmbeddedContext: boolean;
@@ -48,6 +56,26 @@ export type AcpAuthMethod = Readonly<{
   id: string;
   name?: string;
   description?: string;
+}>;
+
+/**
+ * Per-Session facts an ACP launch carries that no command line can express.
+ *
+ * ACP Agents take no Yui flags: the process is started by the descriptor's own
+ * `baseArgs`, and everything else is negotiated. Anything the Session needs —
+ * the workspace roots to request, the bootstrap the model must read first —
+ * therefore travels here and is applied by the protocol, exactly as Codex
+ * carries its thread options.
+ */
+export type AcpSessionOptions = Readonly<{
+  /** Absolute extra workspace roots; sent only if the Agent advertises them. */
+  additionalDirectories?: readonly string[];
+  /**
+   * Bootstrap prepended to this Session's first prompt. ACP has no system
+   * prompt and no `--append-system-prompt-file`, so the only place a managed
+   * Session can state its own rules is inside the prompt itself.
+   */
+  sessionBootstrap?: string;
 }>;
 
 export type AcpInitializeResult = Readonly<{
@@ -117,6 +145,7 @@ export function readAcpInitializeResult(value: unknown): AcpInitializeResult {
       // support for these; absence or false means unsupported.
       resumeSession: isCapabilityPresent(session.resume),
       closeSession: isCapabilityPresent(session.close),
+      additionalDirectories: isCapabilityPresent(session.additionalDirectories),
       promptImage: prompt.image === true,
       promptAudio: prompt.audio === true,
       promptEmbeddedContext: prompt.embeddedContext === true
@@ -151,9 +180,23 @@ function readAuthMethods(value: unknown): AcpAuthMethod[] {
   return methods;
 }
 
-export function acpNewSessionRequest(cwd: string): AcpJsonValue {
+export function acpNewSessionRequest(
+  cwd: string,
+  additionalDirectories: readonly string[] = []
+): AcpJsonValue {
   // `mcpServers` is required by the specification; Yui exposes none over ACP.
-  return { cwd, mcpServers: [] };
+  return {
+    cwd,
+    mcpServers: [],
+    // Clients MUST only send `additionalDirectories` when the Agent advertised
+    // `sessionCapabilities.additionalDirectories`, so the caller gates this and
+    // passes an empty list for an Agent that never offered the field. Omitting
+    // the key entirely — rather than sending `[]` — keeps the request byte-wise
+    // identical to what an Agent without the capability expects.
+    ...(additionalDirectories.length === 0
+      ? {}
+      : { additionalDirectories: [...additionalDirectories] })
+  };
 }
 
 export function acpPromptRequest(sessionId: string, text: string): AcpJsonValue {

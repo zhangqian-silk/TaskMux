@@ -962,6 +962,21 @@ CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
     introducedIn: "0.15.9",
     sql: "SELECT 1; -- AgentRun contract, notification admission and Session authority",
     migrateData: migrateAgentRunContract
+  },
+  {
+    version: 14,
+    name: "acp-session-workspace-configuration",
+    introducedIn: "0.15.8",
+    // ACP Agent bindings may now carry `additionalDirectories`, which the
+    // adapter previously rejected outright. Role bindings and effective launch
+    // snapshots are re-validated whenever they are read, so this widens the set
+    // of values a stored payload may legally hold — a configuration schema
+    // transition that must be declared centrally even though it rewrites
+    // nothing. Every historical ACP binding stayed inside the narrower rule and
+    // is still valid unchanged; no payload is touched, and no earlier entry's
+    // checksum moves. Whether the roots reach a given Agent is negotiated per
+    // connection at `initialize`, so nothing about delivery is stored here.
+    sql: "SELECT 1; -- ACP bindings may carry additionalDirectories; history stays valid"
   }
 ]);
 

@@ -108,6 +108,17 @@ export interface StructuredProviderSession {
   readonly nativeSessionId: string;
   readonly processInstanceId: string;
   readonly activeTurnId: string | undefined;
+  /**
+   * Whether *this* connection proved its Conversation can be rebound by a
+   * later process.
+   *
+   * A Driver capability states what the protocol allows; some protocols settle
+   * it per connection instead. ACP negotiates `agentCapabilities.loadSession`
+   * during `initialize`, so two Agents on the same adapter can genuinely
+   * disagree. A Session that knows the answer reports it here and the Host
+   * prefers it; a Session that omits it leaves the Driver capability standing.
+   */
+  readonly conversationRecoverability?: "recoverable" | "unknown";
   submitTurn(turn: StructuredProviderTurnInput): Promise<StructuredProviderTurnReceipt>;
   steerTurn(turn: StructuredProviderTurnInput): Promise<StructuredProviderTurnReceipt>;
   cancelTurn(attemptId: string): Promise<"requested" | "not-active" | "unknown">;
@@ -201,6 +212,12 @@ export async function startStructuredProviderSession(
         processInstanceId,
         clientVersion: YUI_VERSION,
         cwd: payload.cwd,
+        ...(control.acpSession?.additionalDirectories === undefined
+          ? {}
+          : { additionalDirectories: control.acpSession.additionalDirectories }),
+        ...(control.acpSession?.sessionBootstrap === undefined
+          ? {}
+          : { sessionBootstrap: control.acpSession.sessionBootstrap }),
         ...(control.nativeSessionId === undefined
           ? {}
           : { nativeSessionId: control.nativeSessionId }),

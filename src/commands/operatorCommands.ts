@@ -297,8 +297,6 @@ function requireOperator(store: TaskWorkflowStore): GlobalRole {
   return role;
 }
 
-
-
 function requiredValue(value: string | undefined, option: string): string {
   if (value === undefined || value.startsWith("--") || value.trim().length === 0) {
     throw usageError(`${option} is required.`);

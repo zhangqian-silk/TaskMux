@@ -662,6 +662,9 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
               ? {}
               : { codexThread: managedCompiled!.codexThread }),
             ...(providerOwnedRun === undefined ? {} : { ownedRun: providerOwnedRun }),
+            ...(managedCompiled!.acpSession === undefined
+              ? {}
+              : { acpSession: managedCompiled!.acpSession }),
             authority: providerAuthority!
           }
         : {
@@ -679,6 +682,9 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             ...(managedCompiled!.codexThread === undefined
               ? {}
               : { codexThread: managedCompiled!.codexThread }),
+            ...(managedCompiled!.acpSession === undefined
+              ? {}
+              : { acpSession: managedCompiled!.acpSession }),
             authority: providerAuthority!
           };
     const launch = {

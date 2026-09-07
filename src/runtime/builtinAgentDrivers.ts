@@ -234,11 +234,16 @@ export const BUILTIN_AGENT_DRIVERS: readonly AgentDriver[] = Object.freeze([
       lifecycle: Object.freeze({
         host: "persistent" as const,
         providerProcess: "persistent" as const,
-        // `session/load` is ACP's exact Conversation resume. Whether a given
-        // Agent implements it is negotiated per connection via
-        // `agentCapabilities.loadSession`; the Session refuses to open when it
-        // is absent, so the failure is loud and lands before any Turn input
-        // rather than silently degrading a running Turn.
+        // `session/load` is ACP's exact Conversation resume, so the protocol
+        // does define one and managed admission — which runs adapter-wide,
+        // before any connection exists — is right to see it here. What a
+        // *given* Agent implements is negotiated per connection via
+        // `agentCapabilities.loadSession`, and that answer cannot be predicted
+        // by a static table. The live Session therefore reports its own
+        // recoverability after the handshake, and that value, not this one, is
+        // what gets published and stored. An Agent that never advertised
+        // `loadSession` also fails loudly inside `session/load` rather than
+        // silently degrading a running Turn.
         nativeConversationResume: "exact" as const,
         compaction: "unknown" as const,
         compactionEvents: "unavailable" as const,
@@ -259,6 +264,9 @@ export const BUILTIN_AGENT_DRIVERS: readonly AgentDriver[] = Object.freeze([
       conversation: Object.freeze({
         // `session/new` returns the Agent's own Session id.
         persistentIdentity: "exact" as const,
+        // Same as `nativeConversationResume`: `session/load` is how ACP carries
+        // a Conversation across processes, so the capability exists. Whether
+        // this Agent honours it is the live Session's answer, not this table's.
         crossProcessResume: true,
         // `session/load` replays the Conversation, but ACP exposes no way to
         // read back a Session's history without reloading it.

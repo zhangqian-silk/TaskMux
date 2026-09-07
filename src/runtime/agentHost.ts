@@ -652,17 +652,6 @@ export async function runAgentHost(input: Readonly<{
         }
         sessionPayload = next;
       } else {
-        // Recoverable means a later process can rebind this Conversation by
-        // its native id. That is exactly what `nativeConversationResume` plus
-        // `crossProcessResume` state, so read it from the Driver instead of
-        // assuming every non-Codex provider has lost its Conversation.
-        const driverCapabilities = builtinAgentDriverRegistry()
-          .requireByAdapterId(providerControl.adapterId)
-          .capabilities;
-        conversationRecoverability = driverCapabilities.lifecycle.nativeConversationResume === "exact"
-          && driverCapabilities.conversation.crossProcessResume
-          ? "recoverable"
-          : "unknown";
         if (providerControl.kind === "restore" && providerControl.ownedTurn !== undefined) {
           activeRunPayload = next;
           activeRunAttemptId = providerControl.ownedTurn.attemptId;
@@ -678,6 +667,12 @@ export async function runAgentHost(input: Readonly<{
           ? endpointLease.open(next) : endpointLease.resume(next));
         session = started.session;
         sessionPayload = next;
+        // Recoverable means a later process can rebind this Conversation by
+        // its native id. The Endpoint answers that from the Driver capability
+        // or, where the protocol settles it per connection, from what this
+        // Agent actually negotiated — so it is read after the handshake, never
+        // predicted before it.
+        conversationRecoverability = started.session.conversationRecoverability;
         started.session.events((event) => {
           if (session !== started.session && event.type !== "terminal") return;
           if (event.type === "started") handleStarted(event.value, next);

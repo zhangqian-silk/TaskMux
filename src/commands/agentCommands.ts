@@ -58,7 +58,6 @@ export type AgentCommandStore = AgentCommandTransactionStore & Readonly<{
   transaction<T>(execute: (store: AgentCommandTransactionStore) => T): T;
 }>;
 
-
 export function runAgentCommand(args: string[], store: AgentCommandStore): string {
   const [command, ...rest] = args;
   switch (command) {

@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { resolve } from "node:path";
+import { resolve, isAbsolute } from "node:path";
 import {
   validateProviderAuthorityFence,
   type ProviderAuthorityFence
 } from "./providerAuthorityFence.js";
 import { AGENT_HOST_LAUNCH_TICKET_TTL_MS } from "./runtimeDeadlines.js";
 import type { CodexThreadOptions } from "./codexAppServerRuntime.js";
+import type { AcpSessionOptions } from "./acpProtocol.js";
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 import { validateAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 import { validateExecutionEnvironmentSnapshot, type ExecutionEnvironmentSnapshot } from "../resources/projectResource.js";
@@ -45,6 +46,8 @@ type AgentHostProviderControlBase = Readonly<{
   sessionTitle?: string;
   authority: ProviderAuthorityFence;
   codexThread?: CodexThreadOptions;
+  /** ACP has no launch flags; its per-Session facts travel with the control. */
+  acpSession?: AcpSessionOptions;
   endpointImplementation?: ImplementationRef;
   /** Session-only launch; the coordinator records its identity before any input. */
   sessionOnly?: boolean;
@@ -175,6 +178,10 @@ function validateProviderControl(control: AgentHostProviderControl): void {
     throw new Error("Agent Host Provider thread settings do not match its adapter.");
   }
   if (control.codexThread !== undefined) validateCodexThreadOptions(control.codexThread);
+  if (control.adapterId !== "acp" && control.acpSession !== undefined) {
+    throw new Error("Agent Host ACP session settings do not match its adapter.");
+  }
+  if (control.acpSession !== undefined) validateAcpSessionOptions(control.acpSession);
   if (control.mode !== "new" && control.mode !== "resume") {
     throw new Error("Agent Host Provider control mode is invalid.");
   }
@@ -238,6 +245,27 @@ function validateCodexThreadOptions(options: CodexThreadOptions): void {
     && (options.config === null || typeof options.config !== "object"
       || Array.isArray(options.config))) {
     throw new Error("Agent Host Codex thread config is invalid.");
+  }
+}
+
+function validateAcpSessionOptions(options: AcpSessionOptions): void {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new Error("Agent Host ACP session settings are invalid.");
+  }
+  if (options.additionalDirectories !== undefined) {
+    if (!Array.isArray(options.additionalDirectories)) {
+      throw new Error("Agent Host ACP additional workspace roots are invalid.");
+    }
+    // ACP requires each additional root to be absolute. Rejecting a relative
+    // path here keeps an invalid request from reaching the Agent at all.
+    for (const root of options.additionalDirectories) {
+      if (!isAbsolute(text(root, "ACP additional workspace root"))) {
+        throw new Error("Agent Host ACP additional workspace root must be absolute.");
+      }
+    }
+  }
+  if (options.sessionBootstrap !== undefined) {
+    text(options.sessionBootstrap, "ACP session bootstrap");
   }
 }
 

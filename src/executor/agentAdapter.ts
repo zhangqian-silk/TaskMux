@@ -21,6 +21,7 @@ import {
 import type { PreInputReadinessCapability } from "../lifecycle/canonicalLifecycleEvent.js";
 import { builtinAgentDriverRegistry } from "../runtime/builtinAgentDrivers.js";
 import type { CodexThreadOptions } from "../runtime/codexAppServerRuntime.js";
+import type { AcpSessionOptions } from "../runtime/acpProtocol.js";
 
 export type AdvancedAgentConfig = Readonly<{ rawArgs?: readonly string[] }>;
 export type PermissionStrategy = "default" | "bypass" | "configured";
@@ -153,6 +154,7 @@ export type CompiledAgentLaunch = Readonly<{
 export type CompiledManagedControlLaunch = CompiledAgentLaunch & Readonly<{
   transport: "codex-app-server-proxy" | "claude-stream-json" | "acp-stdio";
   codexThread?: CodexThreadOptions;
+  acpSession?: AcpSessionOptions;
 }>;
 
 export interface AgentAdapter<TConfig extends RoleAgentConfig = RoleAgentConfig> {
@@ -551,11 +553,16 @@ class AcpAdapter extends BaseAdapter<AcpAgentConfig> {
         "ACP negotiates no model or reasoning effort; configure them in the Agent itself."
       );
     }
-    if (config.additionalDirectories !== undefined
-      || config.settingsFile !== undefined
-      || config.settingsSources !== undefined) {
-      throw new Error("ACP exposes no client-side workspace or settings configuration.");
+    if (config.settingsFile !== undefined || config.settingsSources !== undefined) {
+      throw new Error("ACP exposes no client-side settings configuration.");
     }
+    // `additionalDirectories` is a real ACP session-lifecycle field, so a
+    // Project-backed workspace is configurable here. Whether it is actually
+    // sent is decided per connection: ACP requires Clients to send it only to
+    // an Agent that advertised `sessionCapabilities.additionalDirectories`, and
+    // only the live handshake knows that. Rejecting it here instead would make
+    // every multi-root Project launch fail before the Agent is even asked.
+    validatePaths(config.additionalDirectories, "ACP additional directory");
     if (config.permission === undefined) {
       throw new Error("ACP permission strategy is required.");
     }
@@ -588,8 +595,56 @@ class AcpAdapter extends BaseAdapter<AcpAgentConfig> {
     _mode: "new" | "resume",
     _nativeSessionId?: string
   ): CompiledManagedControlLaunch {
-    return { ...this.compileNew(input), transport: "acp-stdio" };
+    const config = this.canonicalizeConfig(input.config);
+    const bootstrap = acpSessionBootstrap(input);
+    const directories = config.additionalDirectories ?? [];
+    return {
+      ...this.compileNew(input),
+      transport: "acp-stdio",
+      // ACP accepts no Yui flags, so everything a managed Session needs travels
+      // as protocol input. Omit the key entirely when there is nothing to say.
+      ...(directories.length === 0 && bootstrap === undefined ? {} : {
+        acpSession: {
+          ...(directories.length === 0 ? {} : { additionalDirectories: [...directories] }),
+          ...(bootstrap === undefined ? {} : { sessionBootstrap: bootstrap })
+        }
+      })
+    };
   }
+}
+
+/**
+ * The instructions a managed ACP Session must read before it acts.
+ *
+ * ACP defines no system prompt and no equivalent of `--append-system-prompt`,
+ * so unlike Codex and Claude this text cannot be delivered at launch. It is
+ * carried to the Session and prepended to the first prompt instead. The
+ * manifest form stays a pointer rather than an inlined Task: content is read
+ * through the manifest's own Context API, exactly as the other adapters do.
+ */
+function acpSessionBootstrap(input: CompileInput<AcpAgentConfig>): string | undefined {
+  const sections = input.sessionManifestPath === undefined
+    ? [
+        input.developerInstructions,
+        ...(input.skills === undefined || input.skills.length === 0 ? [] : [
+          [
+            "Yui Role Skills are available at the paths below. Before performing work "
+            + "governed by one, read and follow its SKILL.md on demand; do not treat "
+            + "this list as a user message.",
+            ...input.skills.map((skill) => `- ${skill.id}: ${skill.path}/SKILL.md`)
+          ].join("\n")
+        ])
+      ]
+    : [
+        `Yui managed Session. Read and follow the Session Manifest at `
+        + `${input.sessionManifestPath} (digest ${input.sessionManifestDigest ?? "unknown"}). `
+        + "Load each Skill and Role Profile by its manifest path before acting; Task "
+        + "content is available only through the manifest's exact Context API."
+      ];
+  const bootstrap = sections
+    .filter((value): value is string => value !== undefined && value.trim().length > 0)
+    .join("\n\n");
+  return bootstrap.length === 0 ? undefined : bootstrap;
 }
 
 function driverPreInputReadiness(adapterId: AgentAdapterId): PreInputReadinessCapability {
@@ -765,7 +820,12 @@ function baseline(id: AgentAdapterId): CapabilityField[] {
   // baseline can honestly state is what Yui itself decides: it answers
   // permission requests, and it never grants authority it was not given.
   if (id === "acp") return [
-    field("permission.strategy", "enum", "available", false, ["default"])
+    field("permission.strategy", "enum", "available", false, ["default"]),
+    // Configurable, but only reaches an Agent that advertises
+    // `sessionCapabilities.additionalDirectories` at `initialize`. A static
+    // baseline cannot see that handshake, so it reports the field as degraded
+    // rather than promising delivery it cannot guarantee.
+    field("additionalDirectories", "path-list", "degraded", true)
   ];
   if (id === "codex") return [
     field("model", "enum", "degraded", true), field("effort", "enum", "unavailable", true),

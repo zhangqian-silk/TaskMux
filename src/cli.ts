@@ -2718,8 +2718,6 @@ async function executeOperatorSessionControl(
   tmux.attachRole("operator", role.name, "auto");
 }
 
-
-
 function renderControllerResult(method: "stop" | "restart", value: unknown): string {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return JSON.stringify(value);

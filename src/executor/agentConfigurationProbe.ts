@@ -392,8 +392,13 @@ export async function discoverAcpConfiguration(
       field("permission.strategy", [choice("default")], false, true,
         "Yui always declines ACP permission requests: this transport carries no "
         + "interactive consent, so it cannot grant authority on the user's behalf."),
-      field("additionalDirectories", [], true, false,
-        "Yui does not send `additionalDirectories` over ACP.")
+      field("additionalDirectories", [], true,
+        negotiated.capabilities.additionalDirectories,
+        negotiated.capabilities.additionalDirectories
+          ? undefined
+          : "This ACP Agent does not advertise "
+            + "`sessionCapabilities.additionalDirectories`, so extra workspace roots "
+            + "cannot be sent to it and only the launch `cwd` is in scope.")
     ],
     warnings
   };

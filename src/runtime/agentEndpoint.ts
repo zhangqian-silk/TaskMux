@@ -57,6 +57,8 @@ export interface AgentEndpoint {
   readonly processInstanceId: string;
   readonly configuration: AgentEndpointConfiguration;
   readonly capabilities: Readonly<{ steer: "native" | "unsupported"; cancel: "native-interrupt" | "owned-process" }>;
+  /** What this live connection proved about rebinding its Conversation. */
+  readonly conversationRecoverability: "recoverable" | "unknown";
   submit(input: AgentEndpointInput): Promise<AgentEndpointSubmission>;
   steer(input: AgentEndpointInput): Promise<AgentEndpointSubmission>;
   inspect(): Readonly<{
@@ -158,6 +160,7 @@ type EventValue =
 
 class BuiltinAgentEndpoint implements AgentEndpoint {
   readonly capabilities;
+  readonly conversationRecoverability: "recoverable" | "unknown";
   readonly #listeners = new Set<(event: AgentEndpointEvent) => void>();
   readonly #openingEvents: AgentEndpointEvent[] = [];
   readonly #attempts = new Map<string, {
@@ -185,6 +188,15 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
         ? "native-interrupt" as const
         : "owned-process" as const
     });
+    // What the protocol permits is not always what this Agent agreed to. When
+    // the Session settled the question during its own handshake, that answer
+    // wins over the adapter-wide capability, which cannot see the difference
+    // between two Agents on the same adapter.
+    this.conversationRecoverability = driver.conversationRecoverability
+      ?? (capabilities.lifecycle.nativeConversationResume === "exact"
+        && capabilities.conversation.crossProcessResume
+        ? "recoverable"
+        : "unknown");
     void driver.waitForExit().then(() => { this.#attachment = "exited"; });
   }
 
