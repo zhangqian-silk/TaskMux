@@ -1,3 +1,4 @@
+import { YUI_VERSION } from "../version.js";
 import type {
   ProviderContinuationMetadataPort,
   ProviderContinuationQueryResult
@@ -9,6 +10,19 @@ import type {
 } from "./providerControl.js";
 
 export type JsonRpcObject = Readonly<Record<string, unknown>>;
+
+/**
+ * Preserve the native non-interactive Codex identity used by our historical
+ * execution adapter. A proxy's environment cannot set the daemon's originator;
+ * the daemon derives it from initialization (and can retain its first identity).
+ * Keep Yui's title/version explicit and do not opt into unsupported attestation.
+ */
+export function codexClientInitialization(): JsonRpcObject {
+  return {
+    clientInfo: { name: "codex_exec", title: "Yui", version: YUI_VERSION },
+    capabilities: { experimentalApi: true, requestAttestation: false }
+  };
+}
 
 /** Per-thread settings for a Yui-guided ordinary Codex conversation. */
 export type CodexThreadOptions = Readonly<{

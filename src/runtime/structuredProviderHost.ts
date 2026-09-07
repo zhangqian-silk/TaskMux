@@ -11,6 +11,7 @@ import WebSocket, { type RawData } from "ws";
 import {
   CodexAppServerRequestError,
   CodexAppServerRuntime,
+  codexClientInitialization,
   codexGoalNotification,
   codexAppServerErrorIsMissing,
   codexTurnInput,
@@ -22,7 +23,6 @@ import type {
 } from "./launchBroker.js";
 import { serializeAgentErrorRaw } from "./agentError.js";
 import { PROVIDER_ACCEPT_TIMEOUT_MS } from "./runtimeDeadlines.js";
-import { YUI_VERSION } from "../version.js";
 
 const PROVIDER_MESSAGE_MAX_BYTES = 16 * 1024 * 1024;
 const CODEX_PROXY_HANDSHAKE_TIMEOUT_MS = 10_000;
@@ -568,13 +568,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     const channel = await CodexProxyWebSocketChannel.connect(child, mirror);
     const openingMessages: JsonObject[] = [];
     const stopOpeningBuffer = channel.onMessage((message) => openingMessages.push(message));
-    await channel.request("initialize", {
-      clientInfo: { name: "yui", title: "Yui", version: YUI_VERSION },
-      capabilities: {
-        experimentalApi: true,
-        requestAttestation: false
-      }
-    });
+    await channel.request("initialize", codexClientInitialization());
     await channel.notify("initialized");
     const runtime = new CodexAppServerRuntime(channel);
     let conversationId: string;

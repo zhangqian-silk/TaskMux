@@ -118,8 +118,8 @@
     },
     {
       "path": "implementation/designs/T04-evidence.md",
-      "bytes": 15905,
-      "sha256": "b4ba19f13ecd5ae7d1835e027124122ead3c34c1786696297d02f84c463c9c43"
+      "bytes": 18561,
+      "sha256": "856a4fe8e20565929142473b3b00f04d3e06f9313a72a98c377264c3ed5ee79d"
     },
     {
       "path": "implementation/designs/T05-project-resource.md",
@@ -223,8 +223,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 483803,
-      "sha256": "47f27eec63f0c96648fb6d5a9314872dc73c6488c1a5f382b0d78a32dc5a6728"
+      "bytes": 486959,
+      "sha256": "c6e9a82bcd7e8a6c19518722e12387c3ee023e60696fc0640ff283b465488a3b"
     },
     {
       "path": "modules/01-kernel.md",

@@ -181,7 +181,7 @@ Codex 启动自有 App Server，proxy 通过 `--sock` 连接该测试 Unix socke
 | 原生配置回报 | init：`model_hub/es1_orange_o50` | thread response：`gpt-5.6-luna`，Provider `metabridge` |
 | 实际结果模型标签 | assistant：`claude-opus-5`；usage：`model_hub/es1_orange_o50` | 无成功模型结果；路由返回 `404 Model not found` |
 | 接受与归档 | 两次 transport 接受，随后真实 completed 终态均精确归档 | provider 接受及 nativeTurnId 已取得，随后 failed 终态精确归档 |
-| 同 Session 恢复 | 自有进程退出后 resume 原 native Session，正确回忆标记 | 未运行：指定模型不可用后停止请求 |
+| 同 Session 恢复 | 自有进程退出后 resume 原 native Session，正确回忆标记 | 未运行：当次请求 404 后停止，身份修复复测见下文 |
 | Store 关闭后 CLI 读回 | 两个原 Turn 的输出与 attempt 均通过 | 原 failed Turn、nativeTurnId 和错误均通过 |
 
 上述模型字符串只是原始回报标签，不能据此推断官方产品版本或模型等价性。
@@ -240,5 +240,50 @@ Claude 在 completed 后 detach，进程退出码 143；这是承载退出，不
 
 未真实验证取消、故意制造 unknown／迟到结果、原生多客户端竞态或长负载，
 这些仍仅有 turn-1 隔离夹具证据。Codex 成功输出、同 Session 后续请求及
-恢复因指定路由模型不可用而未覆盖，不宣称两 Provider 全场景真实 E2E 通过。
+恢复在当次 404 后未覆盖，不宣称两 Provider 全场景真实 E2E 通过。
 T03/T05 合并集成和中央迁移编号协调仍由 Operator 后续处理。
+
+### Codex 初始化身份修复与 Luna 复测（2026-09-07）
+
+当次 404 不能证明 Luna 不可用。历史 `01f0afb4` 使用
+`CODEX_INTERNAL_ORIGINATOR_OVERRIDE=codex_exec` 保持非交互执行身份；
+改为连接 daemon 的 proxy 后，proxy 进程的环境变量不能决定 daemon
+发出的请求头。失败 Session 的原生日志确认为 `originator=yui`。
+
+使用 Codex CLI `0.153.4`、自有 daemon、实际 proxy 与本地假 HTTP
+服务捕获请求头（无真实模型调用），得到以下证据：
+
+- 首次初始化 `clientInfo.name=yui`，即使 proxy 环境覆盖为 `codex_exec`，
+  实际请求仍为 `originator=yui`。
+- 同一 daemon 随后初始化 `codex_exec`，请求仍保留首次的 `yui`；
+  不能将后续连接初始化视为对现存 daemon 的修复。
+- 新 daemon 首次使用修复后的统一初始化，实际请求为
+  `originator=codex_exec`，User-Agent 主身份同样为 `codex_exec`。
+
+修复将 managed Session、配置探测、Thread 命名统一使用
+`clientInfo.name=codex_exec`，保留 Yui title/version，
+保持 `requestAttestation=false`，删除无效的 proxy 环境覆盖。
+不伪造 attestation、不改认证、模型名或 relay，不新增状态与恢复协议。
+独立只读审查未发现需修改的问题。修复后 build、lint 与核心 82/82
+通过（测试阶段 4.24 秒），未增加永久回归夹具。
+
+在此前明确授权范围内，仅追加一个真实 Luna 输入，经实际
+AgentEndpoint → App Server proxy → 自有 daemon → 原有 metabridge 路由：
+
+- native Session：`01a07b59-a521-70f3-8571-d1808464cb47`。
+- native Turn：`01a07b59-a8b0-7231-8293-f2bb2d5025b2`；
+  attempt：`identity-luna-1`。
+- provider accepted：`2026-09-07T10:11:08.599Z`；
+  completed：`2026-09-07T10:11:16.819Z`。
+- client-owned 终态输出精确为 `T04-LUNA-IDENTITY-OK`。
+- 原生日志：`originator=codex_exec`，Provider `metabridge`，
+  Turn model `gpt-5.6-luna`。这是配置与原生回报标签，
+  不独立证明 relay 后端模型权重身份。
+- 原生 token_count：input `35320`（cached `3328`），output `28`
+  （reasoning `13`），total `35348`；未报告费用，不推断账单。
+
+本次只复测改变的 Endpoint 初始化与真实推理路径，未重跑完整
+Controller／Store 归档、resume、取消或 Claude；这些证据仍按上文分别界定。
+自有 Endpoint 与 daemon 均退出码 0。未重启或改变共享 daemon；
+若共享实例已被旧身份初始化，部署代码本身不会清除其进程内身份，
+需由 Operator 在安全维护窗口处理，不能宣称现存共享实例已修复。
