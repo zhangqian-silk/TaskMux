@@ -118,13 +118,18 @@
     },
     {
       "path": "implementation/designs/T04-evidence.md",
-      "bytes": 19644,
-      "sha256": "d33e55fa142027c672824be12b99af2f0a5605d2fa80e3509eb639f170057a2f"
+      "bytes": 19698,
+      "sha256": "dee24d3a3fb4870cbf05fd270d9b98fb7a3ec52dfc63f028ae5c3a22328c6c6a"
+    },
+    {
+      "path": "implementation/designs/T05-evidence.md",
+      "bytes": 11182,
+      "sha256": "d3e50f2e7ecc46ee6c0f60dd3c541dd1a790a44056c87834edcaaa308d9f1e9d"
     },
     {
       "path": "implementation/designs/T05-project-resource.md",
-      "bytes": 3798,
-      "sha256": "5a2e21d5a088cac473d137f316259bb4ce2f83d85c490f74f8b48a791192c076"
+      "bytes": 3890,
+      "sha256": "a2732458af23de26fed7cc91492a2b6a2470ad36729b5f930066fee8ea7064d3"
     },
     {
       "path": "implementation/designs/T06-surface.md",
@@ -223,8 +228,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 488180,
-      "sha256": "45ef5f0137e931bd5c06df765d7b7583e230f50fb34fd8a1704bdcb6e0ccd8f5"
+      "bytes": 502404,
+      "sha256": "7289bd7e359ab868828c1aa1f1e12688ffc32a9e33632cf8c7ce4315f9dba450"
     },
     {
       "path": "modules/01-kernel.md",

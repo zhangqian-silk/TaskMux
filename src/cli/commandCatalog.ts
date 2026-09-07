@@ -423,6 +423,16 @@ const taskChildren: readonly NodeInput[] = [
   },
   { name: "show", summary: "Show a Task.", usage: "yui task show <id>" },
   {
+    name: "artifact",
+    summary: "Save fixed Task results and read history without the original Runtime.",
+    sections: [{ id: "manage", title: "Commands", entries: ["list", "show", "save"] }],
+    children: [
+      { name: "list", summary: "List saved Task artifacts.", usage: "yui task artifact list <task>" },
+      { name: "show", summary: "Read one saved artifact.", usage: "yui task artifact show <task> <artifact-id>" },
+      { name: "save", summary: "Save content, a version, receipt, or reference.", usage: "yui task artifact save <task> <artifact-json>" }
+    ]
+  },
+  {
     name: "context",
     summary: "Show consolidated working context for a Task.",
     usage: "yui task context <task>"
@@ -1480,7 +1490,7 @@ export const ROOT_COMMAND = buildNode({
       name: "task",
       summary: "Manage Tasks, WorkItems, Turns, and integration.",
       sections: [
-        { id: "lifecycle", title: "Lifecycle", entries: ["create", "project", "base", "update", "activate", "execution", "complete", "reopen", "retire", "list", "show", "context", "next-action", "remote-delivery", "archive", "replace", "reconcile", "upstream"] },
+        { id: "lifecycle", title: "Lifecycle", entries: ["create", "project", "base", "update", "activate", "execution", "complete", "reopen", "retire", "list", "show", "context", "next-action", "remote-delivery", "archive", "replace", "reconcile", "upstream", "artifact"] },
         { id: "collaboration", title: "Collaboration", entries: ["message", "input", "grant", "workflow", "publication", "work", "turn", "review", "integration", "role", "overlap", "change-set"] },
         { id: "knowledge", title: "Task Knowledge", entries: ["brief", "decision", "milestone", "event", "continuation", "wake"] }
       ],

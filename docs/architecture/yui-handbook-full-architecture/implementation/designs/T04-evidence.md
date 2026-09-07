@@ -290,15 +290,15 @@ Controller／Store 归档、resume、取消或 Claude；这些证据仍按上文
 
 ### 主线集成（2026-09-07）
 
-同步 `origin/master` 至 `c655cc6`，保留主线以 Session／Process 身份
+同步 `origin/master` 至 `36bf511`（含 `c655cc6`），保留主线以 Session／Process 身份
 替代启动 generation 的设计。Endpoint cancel、迟到 steer 结算及 pending
 投递路径改用当前身份合同；未恢复已移除的 activation／generation 状态，
 也未重新引入自动 synthesis。
 
-主线迁移 4 `session-and-process-identity` 原样保留；本任务尚未发布的
-Endpoint 迁移顺延为 5，`introducedIn=0.15.8`。因此上文的 3→4 是
-独立分支验证时的编号，最终集成合同为 3→4→5。内存 SQLite 验证
-3→5 与 4→5 均保留原生身份、模型快照及当前／历史 Session，
+主线迁移 4 `session-and-process-identity` 和迁移 5 `project-resource-artifacts`
+原样保留；本任务尚未发布的 Endpoint 迁移顺延为 6，
+`introducedIn=0.15.8`。因此上文的 3→4 是独立分支验证时的编号，
+最终集成合同为 3→4→5→6。内存 SQLite 验证升级后保留原生身份、模型快照及当前／历史 Session，
 正确移除旧运行身份并写入 Endpoint 实现引用。
 
 集成后的独立只读审查未发现阻断问题；不以合并或发布授权代替真实模型

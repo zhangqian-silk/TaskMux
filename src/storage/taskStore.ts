@@ -76,6 +76,7 @@ import type { LeaderFailure } from "../scheduler/leaderFailure.js";
 import type { PendingWakeup } from "../scheduler/pendingWakeup.js";
 import type { TaskWake } from "../scheduler/taskWake.js";
 import type { Task } from "../task/task.js";
+import type { Artifact, LocalResource, EnvironmentPreparation } from "../resources/projectResource.js";
 import type { NextActionFacts } from "../task/nextAction.js";
 import type { CompletionReadinessFacts } from "../task/completionReadiness.js";
 import { validateTaskRecordReference } from "../task/taskRecordReference.js";
@@ -91,7 +92,7 @@ import {
 export const CURRENT_CONFIG_SCHEMA_VERSION = 6 as const;
 /** Current SQLite payload-family versions owned by this storage boundary. */
 export const CURRENT_CONFIGURED_AGENT_SCHEMA_VERSION = 2 as const;
-export const CURRENT_PROJECT_SCHEMA_VERSION = 5 as const;
+export const CURRENT_PROJECT_SCHEMA_VERSION = 6 as const;
 export const CURRENT_AGENT_PROFILE_SCHEMA_VERSION = 3 as const;
 export const CURRENT_GLOBAL_ROLE_SCHEMA_VERSION = 3 as const;
 export const CURRENT_GLOBAL_ROLE_SESSION_SET_SCHEMA_VERSION = 5 as const;
@@ -212,6 +213,15 @@ export const CURRENT_TASK_ROLE_SESSION_SET_SCHEMA_VERSION = 12 as const;
 export const CURRENT_TURN_SCHEMA_VERSION = 5 as const;
 export const CURRENT_INTEGRATION_QUEUE_SCHEMA_VERSION = 1 as const;
 export type TaskStore = {
+  saveArtifact(artifact: Artifact): void;
+  getArtifact(taskId: string, artifactId: string): Artifact | null;
+  listArtifacts(taskId: string): Artifact[];
+  saveLocalResource(resource: LocalResource): void;
+  getLocalResource(resourceId: string): LocalResource | null;
+  listLocalResources(): LocalResource[];
+  saveEnvironmentPreparation(preparation: EnvironmentPreparation): void;
+  getEnvironmentPreparation(taskId: string, preparationId: string): EnvironmentPreparation | null;
+  listEnvironmentPreparations(taskId: string): EnvironmentPreparation[];
   rootDirectory(): string;
   transaction<T>(execute: (store: TaskStore) => T): T;
   /**

@@ -739,6 +739,33 @@ ON durable_jobs(task_id, json_extract(payload, '$.operation.actorId'),
   },
   {
     version: 5,
+    name: "project-resource-artifacts",
+    introducedIn: "0.15.8",
+    sql: `
+CREATE TABLE artifacts (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
+CREATE TABLE local_resources (
+  id TEXT PRIMARY KEY,
+  canonical_identity TEXT NOT NULL UNIQUE,
+  payload TEXT NOT NULL
+);
+CREATE TABLE environment_preparations (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
+UPDATE projects SET payload = json_set(payload,
+  '$.schemaVersion', 6, '$.resourceRefs', json('[]'),
+  '$.defaultCapabilityProviders', json('{}'));
+`
+  },
+  {
+    version: 6,
     name: "session-endpoint-implementation",
     introducedIn: "0.15.8",
     // Valid earlier Sessions used these two built-in protocols. Generation 1
@@ -1178,6 +1205,9 @@ export function migrateSqliteSchema(
 
 /** The names of every table the schema creates (for tests/introspection). */
 export const SQLITE_SCHEMA_TABLES: readonly string[] = [
+  "artifacts",
+  "local_resources",
+  "environment_preparations",
   "schema_migrations",
   "home_meta",
   "config",
