@@ -211,6 +211,28 @@ export async function startStructuredProviderSession(
 
 type JsonObject = Record<string, unknown>;
 
+/**
+ * Open an uninitialized, transparent connection for a native TUI. The TUI
+ * owns its requests; Yui observes only its exact startup response.
+ */
+export async function openCodexInteractiveConnection(
+  launch: Pick<AgentHostLaunchPayload, "command" | "args" | "environment" | "cwd">
+): Promise<CodexProxyWebSocketChannel> {
+  const child = spawn(launch.command, [...launch.args], {
+    cwd: launch.cwd,
+    env: { ...launch.environment },
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: true
+  });
+  child.stderr.resume();
+  try {
+    return await CodexProxyWebSocketChannel.connect(child, () => {});
+  } catch (error) {
+    terminateProcessGroup(child, "SIGTERM");
+    throw error;
+  }
+}
+
 class CodexProxyWebSocketChannel {
   readonly #pending = new Map<string, Readonly<{
     resolve: (value: JsonObject) => void;
@@ -218,6 +240,7 @@ class CodexProxyWebSocketChannel {
     timer: NodeJS.Timeout;
   }>>();
   readonly #listeners = new Set<(message: JsonObject) => void>();
+  readonly #closeListeners = new Set<(error: Error) => void>();
   #nextId = 1;
   #closedError: Error | undefined;
   #ready = false;
@@ -272,6 +295,17 @@ class CodexProxyWebSocketChannel {
   onMessage(listener: (message: JsonObject) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  onClose(listener: (error: Error) => void): () => void {
+    if (this.#closedError !== undefined) listener(this.#closedError);
+    else this.#closeListeners.add(listener);
+    return () => this.#closeListeners.delete(listener);
+  }
+
+  close(): void {
+    this.#webSocket.terminate();
+    this.#close(new Error("Codex App Server proxy client closed."));
   }
 
   async request(method: string, params: JsonObject): Promise<JsonObject> {
@@ -371,6 +405,8 @@ class CodexProxyWebSocketChannel {
       pending.reject(error);
     }
     this.#pending.clear();
+    for (const listener of this.#closeListeners) listener(error);
+    this.#closeListeners.clear();
     if (this.child.exitCode === null && this.child.signalCode === null) {
       terminateProcessGroup(this.child, "SIGTERM");
     }

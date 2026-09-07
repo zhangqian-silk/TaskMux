@@ -689,12 +689,39 @@ const MIGRATIONS: readonly StorageMigration[] = Object.freeze([
   },
   {
     version: 2,
+    name: "job-operation-facts",
+    introducedIn: "0.15.2",
+    // Historical records never carried caller identity or external effect
+    // evidence. Preserve that uncertainty rather than inventing attribution.
+    // No old executable implementation or runtime dual-read is needed.
+    sql: `
+UPDATE durable_jobs SET payload = json_set(payload,
+  '$.schemaVersion', 2,
+  '$.operation', json_object(
+    'requestId', json_extract(payload, '$.idempotencyKey'),
+    'inputDigest', json_extract(payload, '$.idempotencyKey'),
+    'actorId', 'historical:unrecorded',
+    'authorityRef', 'historical:unrecorded',
+    'targetId', json_extract(payload, '$.workspace'),
+    'capability', 'job.start',
+    'implementation', json_object('id', 'yui:job-runner', 'generation', '1'),
+    'effect', 'possible',
+    'receiptRefs', json('[]'),
+    'partialResultRefs', json('[]')
+  )
+);
+CREATE UNIQUE INDEX idx_durable_jobs_request
+ON durable_jobs(task_id, json_extract(payload, '$.operation.actorId'),
+  json_extract(payload, '$.operation.requestId'));
+`
+  },
+  {
+    version: 3,
     name: "exact-attempt-result-identity",
-    introducedIn: "0.15.1",
-    // Additive payload contract: accepted inputs and results can carry only
-    // an exact attempt when the protocol supplies no native Turn id.
-    // All valid v1 records remain valid, including historical opaque ids.
-    // Do not rewrite failed Turns, synthetic historical identities, or logs.
+    introducedIn: "0.15.5",
+    // Append after the released T01 migration without changing its checksum.
+    // Accepted inputs/results can use an exact attempt without a native Turn id.
+    // Preserve all valid historical records; never repair failed Turns or logs.
     sql: "SELECT 1; -- exact attempt identity without a fabricated native Turn id"
   }
 ]);

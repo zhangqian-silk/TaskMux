@@ -65,7 +65,6 @@ import {
   RuntimeLaunchError
 } from "../../dist/runtime/ports.js";
 import { RuntimeLaunchCoordinator } from "../../dist/controller/runtimeLaunchCoordinator.js";
-import { createExactControlPlaneDescriptor } from "../../dist/runtime/exactControlPlane.js";
 import { resolveManagedTaskCaller } from "../../dist/runtime/managedCaller.js";
 import { taskLeaderActionTurnId } from "../../dist/commands/taskActor.js";
 import { buildTurnContextPack } from "../../dist/context/turnContextPack.js";
@@ -592,18 +591,17 @@ test("Global Codex Sessions use the shared daemon and retain a process-independe
     },
     workspace: home
   }), /Advanced rawArgs contains reserved argument: --remote/u);
-  const controlPlane = createExactControlPlaneDescriptor({
+  const entryPoint = {
     executable: process.execPath,
-    cliEntry: join(root, "dist", "cli.js"),
-    yuiHome: home
-  });
+    cliEntry: join(root, "dist", "cli.js")
+  };
   const bootstrap = materializeSessionBootstrap({
     yuiHome: home,
     role,
     owner: { scope: "global" },
     roleKind: "operator",
     skills: [],
-    controlPlane
+    entryPoint
   });
 
   assert.equal(typeof roleLaunchPlanner.addCodexSharedDaemonRemote, "function");
@@ -776,7 +774,7 @@ test("a reused Host generation mismatch rejects without cleaning another activat
     "/tmp/yui-generation-mismatch",
     now
   );
-  const runtimeGenerationId = "runtime-fingerprint:generation:existing";
+  const runtimeGenerationId = "runtime-existing";
   let inspectCount = 0;
   let settled = 0;
   let cleanup = 0;
@@ -802,7 +800,7 @@ test("a reused Host generation mismatch rejects without cleaning another activat
     restore: async () => {
       throw new RuntimeGenerationMismatchError(
         runtimeGenerationId,
-        "runtime-fingerprint:generation:other",
+        "runtime-other",
         "ready",
         "generation acknowledgement mismatch"
       );
@@ -816,7 +814,6 @@ test("a reused Host generation mismatch rejects without cleaning another activat
     stopOwner: async () => true
   }, {
     createGenerationId: () => "new",
-    launchFingerprint: () => "fingerprint",
     now: () => now
   });
 
@@ -3661,7 +3658,7 @@ test("Controller begin-handover accepts a null fromReleaseId", async (t) => {
 
 test("production storage exposes one current version and one migration floor", () => {
   assert.equal(MIN_SUPPORTED_STORAGE_VERSION, 1);
-  assert.equal(CURRENT_STORAGE_VERSION, 2);
+  assert.equal(CURRENT_STORAGE_VERSION, 3);
   for (const retiredExport of [
     "FileTaskStore",
     "STORAGE_STATE_FILE",
@@ -3684,7 +3681,7 @@ test("a new current Home initializes its SQLite authority exactly once", (t) => 
   try {
     assert.deepEqual(
       database.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),
-      [{ version: 1 }, { version: 2 }]
+      [{ version: 1 }, { version: 2 }, { version: 3 }]
     );
     assert.deepEqual(
       database.prepare("PRAGMA table_info(schema_migrations)").all().map(({ name }) => name),

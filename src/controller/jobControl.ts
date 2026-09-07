@@ -26,6 +26,8 @@ import {
 import type { TaskStore } from "../storage/taskStore.js";
 import type { ManagedWorkspace } from "../worktree/managedWorkspace.js";
 import { activeLiveRoleAgentSession } from "../executor/agentExecutor.js";
+import { CallAuthority } from "../kernel/callAuthority.js";
+import { redactLaunchText } from "../runtime/launchDiagnostics.js";
 
 /**
  * rr8: The caller identity a `job.start`/`job.cancel` request is bound to.
@@ -69,6 +71,8 @@ export type DurableJobStartParams = Readonly<{
   env: Readonly<Record<string, string>>;
   steps: readonly DurableJobStep[];
   retryOf?: string;
+  /** Explicit request identity; omission uses the canonical content identity. */
+  requestId?: string;
   /** rr8: The caller identity the declared owner is bound to. */
   caller: DurableJobCaller;
 }>;
@@ -97,6 +101,7 @@ export type DurableJobControlPort = Readonly<{
 }>;
 
 export function createDurableJobControl(store: TaskStore): DurableJobControlPort {
+  const authority = createJobCallAuthority(store);
   return {
     startJob(params, now) {
       // rr4/finding-3: The entire create path — validation, idempotency
@@ -104,7 +109,8 @@ export function createDurableJobControl(store: TaskStore): DurableJobControlPort
       // between the idempotency check and the save lets a concurrent
       // startJob with the same key create a duplicate job.
       return store.transaction((tx) => {
-        validateStartParams(tx, params);
+        const context = authority.authenticate(Object.freeze({ ...params.caller }), params.taskId);
+        assertNonSecretJobInput(params);
         const baseKey = durableJobIdempotencyKey({
           owner: params.owner,
           projectId: params.projectId,
@@ -113,11 +119,50 @@ export function createDurableJobControl(store: TaskStore): DurableJobControlPort
           workspace: params.workspace,
           env: params.env
         });
-        const key = params.retryOf === undefined
+        const inputDigest = params.retryOf === undefined
           ? baseKey
           : retryDurableJobIdempotencyKey(baseKey, params.retryOf);
+        const requestId = params.requestId === undefined ? inputDigest
+          : requiredId(params.requestId, "job.start requestId");
+        // An IntegrationAttempt already is a durable operation identity.
+        // Recovery by another authorized Role must find its original Job,
+        // including the window before Integration persisted the returned id.
+        if (params.owner.kind === "integration-attempt") {
+          const integrationId = params.owner.integrationAttemptId;
+          const owned = tx.listDurableJobs(params.taskId).filter((job) => (
+            job.owner.kind === "integration-attempt"
+            && job.owner.integrationAttemptId === integrationId
+          ));
+          if (owned.length > 1) {
+            throw jobDomainError("IntegrationAttempt has multiple Jobs; inspect its existing records.");
+          }
+          const original = owned[0];
+          if (original !== undefined) {
+            if (original.operation.inputDigest !== inputDigest
+              || original.operation.targetId !== params.workspace) {
+              throw jobDomainError(`Integration Job input conflicts with its original request: ${original.id}.`);
+            }
+            return { job: original, created: false };
+          }
+        }
+        const key = createHash("sha256").update(JSON.stringify([
+          context.actorId, requestId
+        ])).digest("hex");
         const existing = tx.findDurableJobByIdempotencyKey(params.taskId, key);
-        if (existing !== null) return { job: existing, created: false };
+        if (existing !== null) {
+          if (existing.operation.inputDigest !== inputDigest || existing.operation.targetId !== params.workspace) {
+            throw jobDomainError(`Job request identity conflicts with its original input: ${existing.id}.`);
+          }
+          return { job: existing, created: false };
+        }
+        // A historical content-addressed request has no attributable caller.
+        // Do not silently execute it again under a newly attributed identity.
+        const historical = tx.findDurableJobByIdempotencyKey(params.taskId, inputDigest);
+        if (params.requestId === undefined && historical !== null) {
+          throw jobDomainError(`Historical request already exists: ${historical.id}; inspect it or select an explicit new requestId.`);
+        }
+        authority.authorize(context, params.taskId);
+        validateStartParams(tx, params);
         const id = tx.nextDurableJobId(params.taskId);
         const job = createDurableJob({
           id,
@@ -128,6 +173,10 @@ export function createDurableJobControl(store: TaskStore): DurableJobControlPort
           workspace: params.workspace,
           env: params.env,
           steps: params.steps,
+          operation: {
+            requestId, inputDigest, actorId: context.actorId,
+            authorityRef: jobAuthorityBinding(tx, params.caller.scope, params.caller.role!, params.taskId)
+          },
           artifactsLocator: `artifacts/jobs/${params.taskId}/${id}`,
           ...(params.retryOf === undefined ? {} : { retryOf: params.retryOf })
         }, now);
@@ -163,6 +212,80 @@ export function createDurableJobControl(store: TaskStore): DurableJobControlPort
   };
 }
 
+/** T02 ingress adapter. The existing Job boundary remains the authority and
+ * semantic writer; this does not authorize arbitrary plugin or resource work.
+ */
+export function createJobCallAuthority(store: TaskStore): CallAuthority<DurableJobCaller> {
+  return new CallAuthority((caller, taskId) => {
+    assertCallerAuthorized(store, caller, taskId);
+    return caller.scope === "task"
+      ? `task:${taskId}/role:${caller.role}`
+      : `global:${caller.role}`;
+  });
+}
+
+/** The collector does not use this gate: late results belong to the original
+ * Job even when its management binding is revoked. Only a new spawn checks it.
+ */
+export function authorizeJobStart(store: TaskStore, job: DurableJob): void {
+  const taskPrefix = `task:${job.taskId}/role:`;
+  const actor = job.operation.actorId;
+  const scope = actor.startsWith(taskPrefix) ? "task" : actor.startsWith("global:") ? "global" : undefined;
+  if (scope === undefined) throw jobDomainError("Job caller binding is unavailable; no execution was started.");
+  const role = actor.slice(scope === "task" ? taskPrefix.length : "global:".length);
+  if (jobAuthorityBinding(store, scope, role, job.taskId) !== job.operation.authorityRef) {
+    throw jobDomainError("Job caller binding was revoked; no execution was started.");
+  }
+  validateJobTarget(store, job);
+}
+
+function jobAuthorityBinding(store: TaskStore, scope: string, roleName: string, taskId: string): string {
+  // A Host detach/reattach preserves the native Session and its queued work.
+  // Authenticate the live launch at ingress, but bind accepted Jobs to the
+  // caller's durable Session identity, not its disposable Host generation.
+  if (scope === "task") {
+    const role = store.getRole(taskId, roleName);
+    const sessions = store.getTaskRoleSessionSet(taskId, roleName);
+    const session = activeLiveRoleAgentSession(sessions);
+    const hash = role === null ? null : store.getJobCallerKeyHash(taskId, roleName, role.activeAgentId);
+    if (hash === null || role === null || sessions?.activeAgentId !== role.activeAgentId
+      || session === null || session.agentId !== role.activeAgentId) {
+      throw jobDomainError("Current Job caller Session is unavailable.");
+    }
+    return createHash("sha256").update(JSON.stringify([
+      hash, session.agentId, session.adapterId, session.nativeSessionId
+    ])).digest("hex");
+  }
+  const role = store.getGlobalRole(roleName);
+  const session = activeLiveRoleAgentSession(store.getGlobalRoleSessionSet(roleName));
+  if (role === null || session === null) throw jobDomainError("Current Job caller binding is unavailable.");
+  return createHash("sha256").update(JSON.stringify([
+    role.activeAgentId, session.agentId, session.nativeSessionId
+  ])).digest("hex");
+}
+
+function assertNonSecretJobInput(params: DurableJobStartParams): void {
+  // Existing Jobs persist commands and environments. This boundary accepts
+  // non-secret executable specifications only; credential resolution is not a
+  // Job feature. Never hash a known secret then call the digest sanitized.
+  const secretKey = /api[_-]?key|private[_-]?key|token|secret|password|passwd|cookie|credential|authorization/i;
+  for (const env of [params.env, ...params.steps.map((step) => step.env ?? {})]) {
+    if (Object.keys(env).some((key) => secretKey.test(key))) {
+      throw jobDomainError("Job input cannot persist credentials; use a non-secret specification.");
+    }
+  }
+  const input = JSON.stringify({
+    env: params.env, steps: params.steps, requestId: params.requestId
+  });
+  // Reject recognizable key material regardless of the parameter name, and
+  // URL userinfo before either hashing or persisting the specification.
+  const privateKey = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
+  const urlCredential = /[a-z][a-z0-9+.-]*:\/\/[^\s/"<>]+:[^\s/"<>]*@/i;
+  if (privateKey.test(input) || urlCredential.test(input) || redactLaunchText(input) !== input) {
+    throw jobDomainError("Job input cannot persist credentials; use a non-secret specification.");
+  }
+}
+
 /**
  * Persisted-boundary validation for `job.start`. The owner must resolve to a
  * live Task record, the Task must be active, the workspace must be the exact
@@ -174,6 +297,11 @@ export function createDurableJobControl(store: TaskStore): DurableJobControlPort
  * managed workspace, verifies write access, and requires an active Task.
  */
 function validateStartParams(store: TaskStore, params: DurableJobStartParams): void {
+  validateJobTarget(store, params);
+  assertCallerAuthorized(store, params.caller, params.taskId);
+}
+
+function validateJobTarget(store: TaskStore, params: Omit<DurableJobStartParams, "caller">): void {
   // The Task must be active — a terminal Task cannot run jobs.
   const task = store.getTask(params.taskId);
   if (task === null) {
@@ -297,10 +425,6 @@ function validateStartParams(store: TaskStore, params: DurableJobStartParams): v
     }
   }
 
-  // rr8: Bind the declared owner to the caller's managed identity. A
-  // Role is not an authorization boundary. Scope and exact managed Session
-  // identity are verified independently below.
-  assertCallerAuthorized(store, params.caller, params.taskId);
 }
 
 /**
@@ -341,7 +465,7 @@ function validateStartParams(store: TaskStore, params: DurableJobStartParams): v
 function assertCallerAuthorized(
   store: Pick<
     TaskStore,
-    "getTurn" | "getActiveTurn" | "getTaskRoleSessionSet" | "getJobCallerKeyHash"
+    "getTurn" | "getActiveTurn" | "getRole" | "getTaskRoleSessionSet" | "getJobCallerKeyHash"
       | "getGlobalRole" | "getGlobalRoleSessionSet"
   >,
   caller: DurableJobCaller,
@@ -398,11 +522,19 @@ function assertCallerAuthorized(
   // frozen environment, and its own claim would add nothing the store does
   // not already own.
   const run = caller.role === undefined ? null : store.getActiveTurn(taskId, caller.role);
-  if (run === null || run.status !== "active") {
+  const currentRole = caller.role === undefined ? null : store.getRole(taskId, caller.role);
+  if (run === null || run.status !== "active" || currentRole === null
+    || currentRole.activeAgentId !== run.effective.agentId) {
     throw jobControlError(
       "UNAUTHORIZED",
       "A managed Task Session's Role is not bound to an active Turn."
     );
+  }
+  const sessions = store.getTaskRoleSessionSet(taskId, currentRole.name);
+  const session = activeLiveRoleAgentSession(sessions);
+  if (sessions?.activeAgentId !== currentRole.activeAgentId || session === null
+    || session.agentId !== run.effective.agentId || session.adapterId !== run.effective.adapterId) {
+    throw jobControlError("UNAUTHORIZED", "DurableJob control requires the current live Task Session.");
   }
   // rr13: Verify the non-replayable per-Session caller key. The key is injected
   // at native Session launch and never persisted in plaintext; only its SHA-256
@@ -417,7 +549,7 @@ function assertCallerAuthorized(
   const expectedHash = store.getJobCallerKeyHash(
     taskId,
     caller.role ?? "",
-    run.effective.agentId
+    currentRole.activeAgentId
   );
   if (expectedHash === null) {
     throw jobControlError(
@@ -440,7 +572,7 @@ function assertCallerAuthorized(
  */
 function resolveManagedWorkspace(
   store: TaskStore,
-  params: DurableJobStartParams
+  params: Omit<DurableJobStartParams, "caller">
 ): ManagedWorkspace | null {
   if (params.owner.kind === "work-item") {
     return store.getManagedWorkspace({
@@ -495,7 +627,7 @@ export function parseDurableJobStartParams(value: JsonValue): DurableJobStartPar
   const record = value as Readonly<Record<string, JsonValue>>;
   const allowed = new Set([
     "taskId", "owner", "projectId", "head", "workspace", "env", "steps",
-    "retryOf", "caller"
+    "retryOf", "caller", "requestId"
   ]);
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) {
@@ -525,6 +657,9 @@ export function parseDurableJobStartParams(value: JsonValue): DurableJobStartPar
     env,
     steps,
     caller,
+    ...(record.requestId === undefined ? {} : {
+      requestId: requiredId(record.requestId, "job.start requestId")
+    }),
     ...(retryOf === undefined ? {} : { retryOf })
   };
 }

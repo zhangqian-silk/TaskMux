@@ -55,8 +55,7 @@ import { answerInputRequest } from "../input/inputRequest.js";
 import { activeRoleAgentBinding } from "../role/role.js";
 import {
   effectiveLaunchWithTaskMainWorkspace,
-  effectiveLaunchSnapshotsCompatible,
-  effectiveLaunchSnapshotsCompatibleForTaskSession,
+  roleSessionMayContinue,
   resolveEffectiveLaunch,
   validateEffectiveLaunchSnapshot,
   type EffectiveLaunchSnapshot
@@ -3734,7 +3733,7 @@ function recordTaskRuntimeNativeSession(
   const effective = input.effective === undefined
     ? resolvedEffective
     : validateEffectiveLaunchSnapshot(input.effective);
-  if (!effectiveLaunchSnapshotsCompatibleForTaskSession(
+  if (!roleSessionMayContinue(
     resolvedEffective,
     effective
   )) {
@@ -3791,7 +3790,7 @@ function recordGlobalRuntimeNativeSession(
   const effective = input.effective === undefined
     ? resolvedEffective
     : validateEffectiveLaunchSnapshot(input.effective);
-  if (!effectiveLaunchSnapshotsCompatible(resolvedEffective, effective)) {
+  if (!roleSessionMayContinue(resolvedEffective, effective)) {
     throw new Error("Reserved global native Session effective launch changed before persistence.");
   }
   if (effective.agentId !== input.agentId || effective.adapterId !== input.adapterId) {
@@ -3910,7 +3909,7 @@ function taskSessionEffective(
       );
     }
     if (existing !== undefined) {
-      if (!effectiveLaunchSnapshotsCompatibleForTaskSession(
+      if (!roleSessionMayContinue(
         existing.effective,
         active.effective
       )) {

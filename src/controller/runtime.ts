@@ -7,7 +7,6 @@ import {
   resolveTmuxBin,
   resolveTmuxHistoryLimit
 } from "../config/yuiConfig.js";
-import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { controllerSocketPath } from "../core/controllerEndpoint.js";
@@ -35,8 +34,7 @@ import {
   roleAgentSessionResumeMode
 } from "../executor/agentExecutor.js";
 import {
-  effectiveLaunchSnapshotsCompatible,
-  effectiveLaunchSnapshotsCompatibleForTaskSession,
+  roleSessionMayContinue,
   effectiveLaunchConfig,
   resolveEffectiveLaunch,
   type EffectiveLaunchSnapshot
@@ -47,7 +45,6 @@ import {
 } from "../executor/agentConfigurationCatalog.js";
 import {
   isTaskOwnedWorkspace,
-  managedWorkspaceIdentity,
   sameManagedWorkspaceIdentity
 } from "../worktree/managedWorkspace.js";
 import { FileRoleLaunchPlanner } from "../executor/fileRoleLaunchPlanner.js";
@@ -92,7 +89,8 @@ import {
   createLinuxProcessPort,
   DurableJobSupervisor
 } from "./jobSupervisor.js";
-import { createDurableJobControl } from "./jobControl.js";
+import { authorizeJobStart } from "./jobControl.js";
+import { createKernelPorts } from "../kernel/kernelPorts.js";
 import { FileRuntimeEventInbox } from "./runtimeEventInbox.js";
 import { AgentRuntimeObserver } from "./agentRuntimeObserver.js";
 import {
@@ -159,6 +157,7 @@ export type RunningFileTaskControllerRuntime = RunningFileTaskController & Reado
   promptPush: ActivePromptPushPort;
   runtimeIsolation: TaskRuntimeIsolationPort & Partial<TaskRuntimeLifecycleCleanupPort>;
   workspacePreparer: TaskWorkspacePreparer;
+  kernel: ReturnType<typeof createKernelPorts>;
 }>;
 
 /** Production composition root for the current SQLite TaskStore + tmux Controller. */
@@ -382,9 +381,6 @@ export async function startFileTaskControllerRuntime(
       assertCurrent: (request) => {
         assertRuntimeLaunchRequestCurrent(store, request);
       },
-      launchFingerprint: (request) => (
-        runtimeLaunchFingerprint(store, request)
-      ),
       onCleanupRequired: signalRuntimeCleanup,
       runtimeIsolation
     }
@@ -538,10 +534,12 @@ export async function startFileTaskControllerRuntime(
   // supervisor enqueues a durable-job-terminal event; the processor drains it
   // on the next pass, waking the Controller immediately instead of waiting for
   // the poll interval.
+  const kernel = createKernelPorts(store, createLinuxProcessPort());
   const jobSupervisor = new DurableJobSupervisor({
     store: schedulerStore,
-    process: createLinuxProcessPort(),
+    process: kernel.runner,
     artifacts: createFileArtifactPort(home),
+    authorizeStart: (job) => authorizeJobStart(store, job),
     // rr6/f1: Bounded supervision wake. The supervisor signals the Controller
     // after spawning a runner (queued→running adoption) and when a runner
     // exits (terminal harvest), so a quick job converges without waiting for
@@ -574,7 +572,7 @@ export async function startFileTaskControllerRuntime(
     },
     onError: options.onError
   });
-  const jobControl = createDurableJobControl(store);
+  const jobControl = kernel.jobs;
   const continuationReconciler = options.continuationMetadata === undefined
     ? undefined
     : new ProviderContinuationReconciliationService(
@@ -662,6 +660,7 @@ export async function startFileTaskControllerRuntime(
   let resourceClose: Promise<void> | undefined;
   const closeResources = (): Promise<void> => {
     resourceClose ??= Promise.all([
+      kernel.close(),
       asyncStoreClient?.close() ?? Promise.resolve(),
       inventoryClient?.close() ?? Promise.resolve()
     ]).then(() => undefined);
@@ -670,6 +669,7 @@ export async function startFileTaskControllerRuntime(
   const closed = running.closed.then(closeResources);
   return {
     ...running,
+    kernel,
     closed,
     close: async () => {
       try {
@@ -707,9 +707,6 @@ export function createRuntimeLifecycleDispatcher(
       assertCurrent: (request) => {
         assertRuntimeLaunchRequestCurrent(store, request);
       },
-      launchFingerprint: (request) => (
-        runtimeLaunchFingerprint(store, request)
-      ),
       onCleanupRequired
     });
   const lifecycleTails = new Map<string, Promise<void>>();
@@ -1144,14 +1141,21 @@ function assertRuntimeLaunchRequestCurrent(
       || session.nativeSessionId !== request.nativeSessionId) {
       throw new Error(`Native session changed: ${request.owner.roleName}.`);
     }
-    const sessionEffectiveCompatible = request.owner.scope === "task"
-      ? effectiveLaunchSnapshotsCompatibleForTaskSession(
-          session.effective,
-          request.effective
-        )
-      : effectiveLaunchSnapshotsCompatible(session.effective, request.effective);
-    if (!sessionEffectiveCompatible) {
-      throw new Error(`Native session effective launch changed: ${request.owner.roleName}.`);
+    // The Role's durable Session record is the only authority for which Host
+    // activation may be restored. Targeting anything else would revive a
+    // historical activation.
+    if (request.hostActivationId !== undefined
+      && session.runtimeGenerationId !== request.hostActivationId) {
+      throw new Error(
+        `Session restore does not target the Role's current Host activation: ${
+          request.owner.roleName
+        }.`
+      );
+    }
+    if (!roleSessionMayContinue(session.effective, request.effective)) {
+      throw new Error(
+        `Native session cannot continue under this launch: ${request.owner.roleName}.`
+      );
     }
   }
 }
@@ -1179,25 +1183,6 @@ function currentDesiredEffective(
     ...(workspace === undefined ? {} : { workspace }),
     ...(item === null ? {} : { workItemWriteProjectIds: item.writeProjectIds })
   });
-}
-
-function runtimeLaunchFingerprint(
-  store: TaskStore,
-  request: CoordinatedRuntimeLaunchRequest
-): string {
-  const agent = store.getConfiguredAgent(request.effective.agentId);
-  if (agent === null) {
-    throw new Error(`Agent no longer exists: ${request.effective.agentId}.`);
-  }
-  return createHash("sha256").update(JSON.stringify([
-    request.owner,
-    request.effective,
-    request.managedWorkspace === undefined
-      ? undefined
-      : managedWorkspaceIdentity(request.managedWorkspace),
-    request.runtimePolicy,
-    agent
-  ])).digest("hex");
 }
 
 function currentDesiredManagedWorkspace(

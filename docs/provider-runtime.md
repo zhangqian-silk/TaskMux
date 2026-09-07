@@ -51,6 +51,22 @@ Its Session Manifest carries a self-contained Global Context command, so
 opening the same thread in Desktop does not depend on environment inherited
 from the Yui-created TUI process.
 
+For Global Codex, a thin Agent Host transparently relays that native TUI's
+WebSocket connection through a disposable shared-daemon proxy. Its loopback
+endpoint requires an ephemeral bearer token and accepts only the owning TUI.
+The Host correlates the TUI's exact startup request and response, then exposes
+the returned Thread ID through the existing startup acknowledgement. Core
+commits the Session only after that acknowledgement and a live pane check.
+The Host and relay have the TUI's lifetime, not the Controller's lifetime.
+
+This is deliberately the TUI's own `thread/start`, not a pre-created empty
+Thread followed by `resume`: the supported Codex 0.150.1 cannot resume such a
+Thread before its first message has materialized a rollout. No bootstrap
+message is inserted. An unavailable or rejected startup returns an error and
+leaves no active Session; retained dead panes remain diagnostic evidence.
+Previously recorded Sessions still use their exact native resume identity.
+Global `notify` is not an identity or lifecycle source.
+
 The shared daemon must already be available through the installed Codex client.
 Yui never starts, restarts, or stops it in response to a Task, thread, or proxy
 error; daemon/CLI repair remains outside Task lifecycle recovery.

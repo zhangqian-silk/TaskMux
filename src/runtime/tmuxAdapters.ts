@@ -42,7 +42,6 @@ import { builtinAgentDriverRegistry } from "./builtinAgentDrivers.js";
 import { requireSafeIdentity } from "./validation.js";
 import type { EffectiveLaunchSnapshot } from "../executor/effectiveLaunch.js";
 import type { TaskRuntimeIsolationDescriptor } from "./taskRuntimeIsolation.js";
-import { YUI_CONTROL_PLANE_DESCRIPTOR } from "./exactControlPlane.js";
 import { launchBrokerForHome, type AgentHostLaunchPayload } from "./launchBroker.js";
 import {
   AGENT_HOST_CONTROL_PROTOCOL,
@@ -469,6 +468,28 @@ export class TmuxSessionHost implements SessionHostPort {
         throw toRuntimeLaunchFailure(error, "validation", launchContext);
       }
     }
+    const interactiveCodex = request.owner.scope === "global" && request.adapterId === "codex";
+    let reuseInteractivePane = false;
+    if (interactiveCodex) {
+      let status: "running" | "exited";
+      try {
+        status = await probeRoleStatus(this.tmux, hostId, request.owner.roleName);
+      } catch (error) {
+        throw new RuntimeHostContentionError(
+          "previous-process",
+          `Global Role pane state is unknown; preserving it: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+      if (status === "running") {
+        if (request.mode === "new") {
+          throw new RuntimeHostContentionError(
+            "previous-process",
+            "Global Role already has a live pane; stop or record its exact Session first."
+          );
+        }
+        reuseInteractivePane = true;
+      }
+    }
     const plannedNativeSessionId = planned.session?.nativeSessionId;
     if (
       request.mode === "resume"
@@ -493,23 +514,30 @@ export class TmuxSessionHost implements SessionHostPort {
     });
     const yuiHome = planned.launch.env.YUI_HOME;
     const childLifecycle = planned.launch.childLifecycle;
-    // Interactive/global Roles remain native TUIs even when their Driver
-    // advertises a persistent child lifecycle. Provider control metadata is
-    // the discriminator for the structured Agent Host path. A managed Task
-    // Turn has no terminal-write fallback and must expose that contract.
+    // Global Codex retains the native TUI inside a thin Host that acknowledges
+    // its own App Server startup response. Existing live TUIs (including
+    // 0.15.0 Sessions) remain directly attachable without replacing them.
     if (
-      yuiHome === undefined
-      || childLifecycle === undefined
-      || planned.launch.providerControl === undefined
+      reuseInteractivePane
+      || (!interactiveCodex && (
+        yuiHome === undefined
+        || childLifecycle === undefined
+        || planned.launch.providerControl === undefined
+      ))
     ) {
       if (request.owner.scope === "task" && request.turnId !== undefined) {
         throw new Error("Managed Task Turn is missing its structured Agent Host contract.");
       }
       let hostCreated: boolean;
       try {
-        hostCreated = await ensureRoleWindow(this.tmux, hostId, planned.role, planned.launch);
+        hostCreated = await ensureRoleWindow(
+          this.tmux, hostId, planned.role, reuseInteractivePane ? undefined : planned.launch
+        );
       } catch (error) {
         throw toRuntimeLaunchFailure(error, "host-start", launchContext);
+      }
+      if (reuseInteractivePane && hostCreated) {
+        throw new Error("Global Role pane changed during attachment.");
       }
       let binding = createRuntimeBinding({
         id: bindingId,
@@ -553,14 +581,15 @@ export class TmuxSessionHost implements SessionHostPort {
       }
       return binding;
     }
+    if (yuiHome === undefined || childLifecycle === undefined) {
+      throw new Error("Agent Host launch is missing its Home or child lifecycle.");
+    }
     const broker = launchBrokerForHome(yuiHome);
     const sessionManifest = planned.launch.env.YUI_SESSION_MANIFEST;
-    const frozenControlPlane = planned.launch.env[YUI_CONTROL_PLANE_DESCRIPTOR];
     if (request.owner.scope === "task" && request.turnId !== undefined
-      && (sessionManifest === undefined
-        || frozenControlPlane === undefined)) {
+      && sessionManifest === undefined) {
       throw new Error(
-        "Managed Task Agent Host launch is missing its Session Manifest or frozen control descriptor."
+        "Managed Task Agent Host launch is missing its Session Manifest."
       );
     }
     const reservation = broker.reserve(Object.freeze({
@@ -602,10 +631,7 @@ export class TmuxSessionHost implements SessionHostPort {
           : { YUI_WORKSPACE: planned.launch.env.YUI_WORKSPACE }),
         ...(sessionManifest === undefined
           ? {}
-          : { YUI_SESSION_MANIFEST: sessionManifest }),
-        ...(frozenControlPlane === undefined
-          ? {}
-          : { [YUI_CONTROL_PLANE_DESCRIPTOR]: frozenControlPlane })
+          : { YUI_SESSION_MANIFEST: sessionManifest })
       }
     };
     let hostCreated = false;
@@ -614,17 +640,38 @@ export class TmuxSessionHost implements SessionHostPort {
     try {
       hostCreated = await ensureRoleWindow(this.tmux, hostId, planned.role, hostLaunch);
       if (hostCreated && planned.launch.deferProviderStart !== true) {
+        const assertInteractivePane = async (): Promise<void> => {
+          const pane = await inspectRolePane(this.tmux, hostId, request.owner.roleName);
+          if (pane === undefined) throw new Error("Global Codex startup has no observable pane state.");
+          if (pane.dead) {
+            await deadHostLaunchFailure(this.tmux, hostId, request.owner.roleName, pane, launchContext);
+          }
+        };
         providerSnapshot = await waitForAgentHostLaunchAck({
           home: yuiHome,
           scope: request.owner.scope,
           ...(request.owner.scope === "task" ? { taskId: request.owner.taskId } : {}),
           roleName: request.owner.roleName,
           runtimeGenerationId: reservation.runtimeGenerationId,
-          requireTurnAck: false
+          requireTurnAck: false,
+          ...(interactiveCodex ? { assertHostRunning: assertInteractivePane } : {})
         });
+        if (interactiveCodex) {
+          if (providerSnapshot.nativeSessionId === undefined) {
+            throw new Error("Global Codex startup acknowledgement has no Thread identity.");
+          }
+          requireSafeIdentity(providerSnapshot.nativeSessionId, "Codex Thread identity");
+          await assertInteractivePane();
+        }
         providerDispatchObserved = true;
       }
       if (!hostCreated) {
+        if (interactiveCodex) {
+          throw new RuntimeHostContentionError(
+            "previous-process",
+            "Global Role pane appeared during launch; preserving its existing Session."
+          );
+        }
         const controlResult = await sendAgentHostLaunchControl({
           home: yuiHome,
           scope: request.owner.scope,

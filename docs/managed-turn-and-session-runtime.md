@@ -118,6 +118,48 @@ history, not the runtime generation. Yui changes the generation only when it
 establishes a new Host activation boundary; restoring a still-running exact
 Host retains its current generation.
 
+A Host activation id is therefore an opaque durable identity and never a digest
+of the launch configuration. Restoring a Session targets the activation recorded
+on the Role's Session; anything else would revive a historical activation. Only
+facts that make continuation impossible end a Session: no recoverable native
+Session, a different Agent or adapter, or a different physical workspace.
+Desired launch configuration such as model, effort, permission, Role context,
+Skills, or declared write scope shapes the next activation instead, exactly as a
+user editing that configuration would keep typing in the Session they already
+have. Turn-scoped facts—ReviewRound identity, candidate commits, workspace base
+commits, desired-revision bookkeeping—never affect activation reuse.
+
+Because a live Session keeps the configuration it started with, the divergence
+is reported where the configuration changes: `config role update`, `task role
+update`, and `config agent update` refuse once with the affected Session's facts
+and require `--yes` to record the change and keep that Session. Stopping the
+Session remains the way to apply the change immediately. Runtime status shows the
+Session's launch revision next to the desired revision, so the pending
+divergence stays visible until the next activation.
+
+The same rule governs a Session's own entry point. A managed Session invokes Yui
+through the wrapper its Manifest names, because a Provider command runner may
+rebuild `PATH` and a bare `yui` could resolve to another install or Home. That
+wrapper carries only the resolved entry point, never a package or build identity:
+version identity changes on every release while a Session legitimately outlives
+it. A compatible update retargets those wrappers to the activated install, and an
+ordinary Agent command is authorized by the compatible continuity contract plus
+the Session's caller key.
+
+No launch-time snapshot exists to gate a later command. One
+question has one authority: whether a command may run at all is proven against
+the current CLI, Home, and Controller; which Session and Role it speaks for is
+proven by the Session Manifest and the Session's caller key; what is currently
+true comes from durable Task, Role, and Turn records. Yui's own internal
+callbacks are trusted because they run inside the Host process Yui started. A
+Task's final-review contract likewise promises exactly what it says — this Task's
+final review belongs to this Reviewer Role — and never records the runtime that
+established it. A Session therefore stays fully usable
+across an ordinary upgrade — including the callbacks that report its Turn
+terminals — while a real disagreement between CLI and Home still fails closed.
+An Agent never needs to know which package version or storage version its Home
+is on.
+
 Before sending any input through a reused Agent Host, Yui requires the Host to
 acknowledge the requested `runtimeGenerationId` and an admissible Host state.
 An acknowledgement for another generation, or an otherwise invalid

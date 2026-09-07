@@ -33,6 +33,7 @@ import {
   isDurableJobTerminal,
   markDurableJobUnknown,
   markDurableJobWakeupNotified,
+  rejectQueuedDurableJob,
   startDurableJob,
   touchDurableJobHeartbeat,
   type DurableJob,
@@ -44,6 +45,7 @@ import {
 } from "../job/durableJob.js";
 import { readLinuxProcessStartIdentity } from "./domainIdentity.js";
 import { wakeReason } from "../scheduler/wakeReason.js";
+import { recordOperationEvidence } from "../kernel/operationFacts.js";
 
 const DEFAULT_STEP_TIMEOUT_MS = 30 * 60_000;
 const HEARTBEAT_STALE_MS = 2 * 60_000;
@@ -143,6 +145,7 @@ export type DurableJobSupervisorOptions = Readonly<{
    */
   wake?: (taskId: string) => void;
   onError?: (error: unknown) => void;
+  authorizeStart: (job: DurableJob) => void;
 }>;
 
 /**
@@ -168,6 +171,7 @@ export class DurableJobSupervisor {
   readonly #terminalEvents: JobSupervisorTerminalPort | undefined;
   readonly #wake: (taskId: string) => void;
   readonly #onError: (error: unknown) => void;
+  readonly #authorizeStart: (job: DurableJob) => void;
   // f5: Composite key (taskId/jobId) because job IDs are Task-local — every
   // Task has a job-1, so a Task-local key would cross-kill healthy runners.
   readonly #sigkillAt = new Map<string, number>();
@@ -179,6 +183,7 @@ export class DurableJobSupervisor {
     this.#terminalEvents = options.terminalEvents;
     this.#wake = options.wake ?? (() => undefined);
     this.#onError = options.onError ?? (() => undefined);
+    this.#authorizeStart = options.authorizeStart;
   }
 
   reconcile(now: Date): void {
@@ -210,59 +215,37 @@ export class DurableJobSupervisor {
     return `${job.taskId}/${job.id}`;
   }
 
-  /**
-   * Reconcile a queued job.
-   *
-   * f4: A queued job with a cancel request converges to `cancelled` without
-   * spawning a runner — but only if no runner was already spawned. If a
-   * start marker proves a runner exists (real pid, or pending marker +
-   * ready.json), the job is adopted to running first; the running-cancel
-   * path then fences and signals it. Cancelling a spawned job from queued
-   * would orphan the runner.
-   *
-   * f3: The normal path writes a pending start marker, spawns the runner, and
-   * lets the runner's own `ready.json` handshake prove it started before any
-   * side effect. On recovery the supervisor adopts queued→running first
-   * (harvest/unknown require `running`), then harvests exit or handles a
-   * dead process — never calling complete/unknown directly from `queued`.
-   */
+  /** Adopt observed execution, preserve unknown, or start an unattempted request. */
   #reconcileQueued(job: DurableJob, now: Date): void {
     const marker = this.#artifacts.readStartMarker(job.taskId, job.id);
-
-    // f1/rr5: A cancel request on a queued job must not orphan an already-
-    // spawned runner. Check spawn evidence before converging to cancelled.
+    const spawned = this.#spawnedProcessFromEvidence(job, marker);
     if (job.cancelRequestedAt !== undefined) {
       this.#artifacts.writeCancelFence(job.taskId, job.id);
-      const spawnedProcess = this.#spawnedProcessFromEvidence(job, marker);
-      if (spawnedProcess !== null) {
-        // f1/rr5: A runner was spawned. Signal it in THIS reconcile pass —
-        // not adopt to running and wait for the next pass. The signal is
-        // sent before the adoption so the runner begins draining
-        // immediately; the adoption preserves evidence (exit.json / dead-
-        // process handling converges the job on this or the next pass).
-        this.#process.signalIfOwned(
-          spawnedProcess.pid,
-          spawnedProcess.startIdentity,
-          "SIGTERM"
-        );
-        this.#adoptAndContinue(job, spawnedProcess, now);
-        return;
+      if (spawned !== null) {
+        this.#process.signalIfOwned(spawned.pid, spawned.startIdentity, "SIGTERM");
       }
-      if (marker !== null) {
-        // f1/rr5: Ambiguous spawn — a pending marker exists but ready.json
-        // does not. The runner may be starting (slow to write ready.json)
-        // or may never have started. Do NOT terminalize without signaling.
-        // Re-spawn: the new runner writes ready.json, observes the cancel
-        // fence, and exits as cancelled without side effects. The next
-        // pass harvests the cancelled exit.json.
-        this.#startJob(job, now);
-        return;
-      }
-      // No spawn attempted — safe to cancel from queued.
-      // f6/rr5: The terminal transition and the Leader wakeup must be
-      // atomic (same transaction). Compose cancel + wakeupNotified and
-      // pass the wakeup param so the adapter enqueues the Leader mailbox
-      // entry in the same transaction.
+    }
+    if (spawned !== null) {
+      this.#adoptAndContinue(job, spawned, now);
+      return;
+    }
+    if (job.operation.effect !== "none") {
+      // A send intent was committed but no acceptance can be proved. Absence
+      // of a file is not proof of no external effect. Never respawn unknown.
+      const terminal = this.#store.transitionDurableJob(
+        job.taskId, job.id,
+        (current) => markDurableJobWakeupNotified(markDurableJobUnknown(
+          current, "runner acceptance is unknown; inspect the original request",
+          current.checkpoint?.completedSteps ?? [], now
+        ), now),
+        now, { reason: wakeReason("job-finished"), refs: wakeupRefs(job) }
+      );
+      this.#deliverTerminalEvent(terminal);
+      return;
+    }
+
+    if (job.cancelRequestedAt !== undefined) {
+      // No effect attempted. Cancellation and its wake commit atomically.
       const terminal = this.#store.transitionDurableJob(
         job.taskId,
         job.id,
@@ -277,40 +260,8 @@ export class DurableJobSupervisor {
       return;
     }
 
-    if (marker === null) {
-      this.#startJob(job, now);
-      return;
-    }
-
-    // f3: A pending marker means the Controller died after writing the marker
-    // but before the runner proved it started. Check the runner's ready file.
-    if (marker.startIdentity === "pending") {
-      const ready = this.#artifacts.readReadyFile(job.taskId, job.id);
-      if (ready === null) {
-        // The runner either never started or died before writing ready.
-        // No side effects could have occurred — re-spawn safely.
-        this.#startJob(job, now);
-        return;
-      }
-      // Runner proved it started: adopt and continue from evidence.
-      // rr4/finding-4: Use the runner's own startIdentity from ready.json,
-      // not a fresh /proc read (which could return a reused PID's identity).
-      this.#adoptAndContinue(
-        job,
-        { pid: ready.pid, startIdentity: ready.startIdentity },
-        now
-      );
-      return;
-    }
-
-    // Marker with a real pid (already spawned). Adopt and continue.
-    // f3/rr5: ready.json is authoritative when both exist.
-    const spawned = this.#spawnedProcessFromEvidence(job, marker);
-    this.#adoptAndContinue(
-      job,
-      spawned ?? { pid: marker.pid, startIdentity: marker.startIdentity },
-      now
-    );
+    if (marker !== null) throw new Error("Job start marker contradicts its unattempted operation.");
+    this.#startJob(job, now);
   }
 
   /**
@@ -321,7 +272,6 @@ export class DurableJobSupervisor {
     job: DurableJob,
     marker: DurableJobStartMarker | null
   ): { pid: number; startIdentity: string } | null {
-    if (marker === null) return null;
     // f3/rr5: ready.json is the runner's own record of its actual OS start.
     // When both the start marker and ready.json exist, ready.json is
     // authoritative: the marker is the Controller's declared intent (written
@@ -332,7 +282,7 @@ export class DurableJobSupervisor {
     if (ready !== null) {
       return { pid: ready.pid, startIdentity: ready.startIdentity };
     }
-    if (marker.startIdentity !== "pending") {
+    if (marker !== null && marker.startIdentity !== "pending") {
       // Real start marker with a pid — the runner was spawned.
       return { pid: marker.pid, startIdentity: marker.startIdentity };
     }
@@ -342,8 +292,7 @@ export class DurableJobSupervisor {
 
   /**
    * f3: Adopt a queued job to running, then harvest exit or handle a dead
-   * process. This is the only legal path from queued to a terminal state —
-   * complete/unknown require `running`.
+   * process. A request with unobserved acceptance instead stays unknown.
    */
   #adoptAndContinue(
     job: DurableJob,
@@ -372,6 +321,12 @@ export class DurableJobSupervisor {
   }
 
   #startJob(job: DurableJob, now: Date): void {
+    try {
+      this.#authorizeStart(job);
+    } catch (error) {
+      this.#rejectStart(job, error, now);
+      return;
+    }
     const spec: DurableJobSpec = {
       jobId: job.id,
       taskId: job.taskId,
@@ -383,9 +338,29 @@ export class DurableJobSupervisor {
       head: job.head
     };
     const specPath = this.#artifacts.writeSpec(job.taskId, job.id, spec);
-    // f3: Write a pending start marker BEFORE spawning. If the Controller dies
-    // between this write and the spawn, the next pass sees the pending marker
-    // and re-spawns safely (no side effects without a ready file).
+    let attempted: DurableJob | null;
+    try {
+      attempted = this.#store.transitionDurableJob(
+        job.taskId, job.id,
+        (current) => {
+          if (current.status !== "queued" || current.operation.effect !== "none") {
+            throw new Error("Job already attempted; inspect the original request.");
+          }
+          this.#authorizeStart(current);
+          return {
+            ...current,
+            operation: recordOperationEvidence(current.operation, { effect: "possible" }),
+            updatedAt: now.toISOString()
+          };
+        }, now
+      );
+    } catch (error) {
+      this.#rejectStart(job, error, now);
+      return;
+    }
+    if (attempted === null) return;
+    // Both the request and possible-effect boundary precede spawn. A missing
+    // acceptance after this point is unknown, never permission to respawn.
     this.#artifacts.writeStartMarker(job.taskId, job.id, {
       pid: 0,
       startIdentity: "pending",
@@ -410,6 +385,20 @@ export class DurableJobSupervisor {
     // idle — each wake is a single event-driven signal.
     spawned.onExit?.(() => this.#wake(job.taskId));
     this.#wake(job.taskId);
+  }
+
+  #rejectStart(job: DurableJob, error: unknown, now: Date): void {
+    // Only an explicit domain refusal is a known failure. Storage/CAS/runtime
+    // errors still propagate; never infer rejection from an unavailable read.
+    if (!(error instanceof Error) || error.name !== "CoreJobError") throw error;
+    const terminal = this.#store.transitionDurableJob(
+      job.taskId, job.id,
+      (current) => markDurableJobWakeupNotified(
+        rejectQueuedDurableJob(current, error.message, now), now
+      ),
+      now, { reason: wakeReason("job-finished"), refs: wakeupRefs(job) }
+    );
+    this.#deliverTerminalEvent(terminal);
   }
 
   #superviseRunning(job: DurableJob, now: Date): void {
@@ -483,6 +472,19 @@ export class DurableJobSupervisor {
   }
 
   #harvestExit(job: DurableJob, exit: DurableJobExit, now: Date): void {
+    // Persist the original receipt locator before interpreting its output.
+    // A bad schema cannot erase evidence of an already executed runner.
+    this.#store.transitionDurableJob(job.taskId, job.id, (current) => ({
+      ...current,
+      operation: recordOperationEvidence(current.operation, {
+        effect: "confirmed",
+        receiptRefs: [`${current.artifactsLocator}/exit.json`],
+        partialResultRefs: Array.isArray(exit.steps)
+          ? exit.steps.flatMap((step) => typeof step?.logPath === "string" && step.logPath.trim()
+            ? [step.logPath] : []) : []
+      }),
+      updatedAt: now.toISOString()
+    }), now);
     const result: DurableJobResult = {
       outcome: exit.outcome,
       exitCode: exit.exitCode,
@@ -499,10 +501,19 @@ export class DurableJobSupervisor {
     const terminal = this.#store.transitionDurableJob(
       job.taskId,
       job.id,
-      (current) => markDurableJobWakeupNotified(
-        completeDurableJob(current, result, now),
-        now
-      ),
+      (current) => {
+        let completed: DurableJob;
+        try {
+          completed = completeDurableJob(current, result, now);
+        } catch {
+          completed = completeDurableJob(current, {
+            outcome: "failed", exitCode: null, signal: null,
+            unknownReason: "runner output is invalid; original receipt is retained",
+            steps: []
+          }, now);
+        }
+        return markDurableJobWakeupNotified(completed, now);
+      },
       now,
       { reason: wakeReason("job-finished"), refs: wakeupRefs(job) }
     );

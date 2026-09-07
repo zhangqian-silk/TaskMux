@@ -29,7 +29,7 @@ import type { DormantRuntimeOwnerCandidate } from "../scheduler/ports.js";
 import type { TaskWorkspacePreparer } from "../repository/taskWorkspacePreparer.js";
 import type { MailboxTarget } from "../coordination/workMailbox.js";
 import { hasRuntimeLifecycleWork } from "../runtime/lifecycleReservation.js";
-import { assertControllerStatusIdentity } from "../runtime/exactControlPlane.js";
+import { assertControllerStatusIdentity } from "../runtime/runtimeCoherence.js";
 import { EPHEMERAL_DOMAIN_ENVIRONMENT_NAMES } from "./domainIdentity.js";
 import { yuiVersionIdentity } from "../version.js";
 import { SessionOwnerReconciliation } from "./sessionOwnerReconciliation.js";

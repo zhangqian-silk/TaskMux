@@ -72,9 +72,9 @@ Leader steer 的未结清 mailbox claim 不再次调用 Provider，重建 Host �
 
 ## 存储与历史采用
 
-中央 storage 1→2 声明 additive payload 合同：accepted 输入可无 nativeTurnId；
+最终中央 storage 2→3 声明 additive payload 合同：accepted 输入可无 nativeTurnId；
 结果可使用 exact attemptId，新登记保留原 Activation 引用。合法 v1 历史仍可读，不改写旧合成 ID、failed Turn
-或事件。旧 binary 应拒绝 v2 Home；升级须在受控停写窗口经既有 upgrade 入口
+或事件。旧 binary 应拒绝 v3 Home；升级须在受控停写窗口经既有 upgrade 入口
 备份并迁移，回退数据库备份需要核对备份后的事实，不能只回退 binary。
 
 Task13 event-4725 是原 implementer 报告，不是最终 Review。保留 turn-20 的
@@ -160,7 +160,7 @@ Reviewer 确认 R1、R2 闭合，检查返修及直接交互，独立运行全�
    只读核对现有版本、原生 Session、资源所有权及未结清输入；
    不能为了腾出升级窗口停止健康 Worker 或抹掉 unknown。
 2. 获得该共享实例维护授权后，安排一致性停写窗口，备份旧包和 Home；
-   使用既有中央 upgrade/update 入口执行 storage 1→2，禁止直接改表或全局重放。
+   使用既有中央 upgrade/update 入口执行 storage 1→2→3（已有 v2 则 2→3），禁止直接改表或全局重放。
    无法取得不伤害既有执行的窗口时，停止升级，由 Operator 决定维护时机。
 3. 在另行授权的全局安装及 Controller 维护范围内采用新产物。
    重建的 Yui 附件继续引用原 native Session；逐一核对配置兼容性、
@@ -169,7 +169,7 @@ Reviewer 确认 R1、R2 闭合，检查返修及直接交互，独立运行全�
    采用新的精确集成成果，产生新的合法交付记录。原 turn-20 的 failed、
    原报告及原 Worker Session 保留，不把本地代码采用当成共享历史修复。
    不对 Task12 私有记录执行任何操作。
-5. 失败时停止进一步写入并保留证据。仅回退二进制不能读取 v2 Home；
+5. 失败时停止进一步写入并保留证据。仅回退二进制不能读取 v3 Home；
    恢复备份前必须处理备份后的新 Task 数据，禁止盲目覆盖后续事实。
 
 真实 Provider 验证未执行，也未发起授权请求。若用户今后明确选择该验证，
@@ -180,3 +180,20 @@ Reviewer 确认 R1、R2 闭合，检查返修及直接交互，独立运行全�
 终态去重与迟到结果规则、Host/Session 分离、启动 reservation 校验及完整错误链。
 仍需由 T04 自身实现的 AgentEndpoint 接口、实现 generation、热更新等不在此提交；
 不得为统一术语把本次 Activation generation 当作代码实现版本。
+
+## PR 集成更新（2026-09-07）
+
+用户在本地交付后明确追加授权创建并合并 PR；该授权不包含发布、全局安装、
+共享 Controller 重启或历史数据修改。此前“不授权 push/merge”描述的是原修复阶段。
+
+合并目标 master 已推进至 `357c0a7f9523e4552c120c618a0e4982cc52da27`。
+保留其 T01 operation facts、当前世界的 Session 兼容语义、控制面描述符移除、
+全局 Codex interactive Host。Task13 在本地尚未发布的迁移编号由2顺延为3；
+master 已有的 storage 2 SQL 及 checksum 完全不变，不兼容未经发布的临时实验 Home。
+前文五组专项和代码 Review 是原候选的历史验证记录；PR 集成另行补充验证。
+
+集成版本 build/lint/core 82/82 通过。可丢弃 Home 中实际验证 1→3 和 2→3
+完整升级及备份：T01 checksum 不变，历史 Task/报告不变，v2 Job 原事实不变，
+v1 Job 经原 T01 迁移如实记录历史归属未知。临时集成脚本不进入永久套件。
+独立 Reviewer 已检查两侧提交的合并交互，未发现集成交互缺陷，并独立运行
+core-smoke 文件48/48；冻结后的精确 merge 提交另经确认。

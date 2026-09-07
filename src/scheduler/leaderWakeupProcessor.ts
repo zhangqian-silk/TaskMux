@@ -2,10 +2,7 @@ import {
   createTurnInput,
   type TurnInputSource
 } from "../context/turnInputContract.js";
-import {
-  effectiveLaunchSnapshotsCompatible,
-  effectiveLaunchSnapshotsCompatibleForTaskSession
-} from "../executor/effectiveLaunch.js";
+import { roleSessionMayContinue } from "../executor/effectiveLaunch.js";
 import { roleAgentSessionResumeMode } from "../executor/agentExecutor.js";
 import { createTurn } from "../turn/turn.js";
 import type {
@@ -101,9 +98,8 @@ export async function processLeaderWakeups(
         role.name,
         reopening ? undefined : role.effective.agentId
       );
-      const compatible = existingSession !== null && (reopening
-        ? effectiveLaunchSnapshotsCompatible(existingSession.effective, role.effective)
-        : effectiveLaunchSnapshotsCompatibleForTaskSession(existingSession.effective, role.effective));
+      const compatible = existingSession !== null
+        && roleSessionMayContinue(existingSession.effective, role.effective);
       if (hasNativeSession(existingSession)
         && existingSession.status === "active"
         && !compatible

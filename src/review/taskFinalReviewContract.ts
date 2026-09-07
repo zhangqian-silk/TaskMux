@@ -1,22 +1,22 @@
-import { createHash } from "node:crypto";
-
 import { requireIdentity } from "../domain/validation.js";
 import type { ReviewConfig } from "./reviewConfig.js";
 
 export const TASK_FINAL_REVIEW_ARGUMENT = "--yui-task-final-review";
 
 /**
- * Immutable capability created only after the CLI has verified the exact
- * control-plane and Task-runtime descriptors. It is persisted with the first
- * Candidate so later changes to the shared review config cannot weaken the
- * Task's completion gate.
+ * Immutable capability established by the Task Leader's managed Session. It is
+ * persisted with the first Candidate so later changes to the shared review
+ * config cannot weaken the Task's completion gate. Its identity is exactly what
+ * it promises — this Task's final review belongs to this Reviewer Role — and
+ * never the runtime that happened to establish it.
+ *
+ * It carries no record version tag: its required fields are its whole shape, so
+ * validating them is the same question a tag would ask. A tag earns its place
+ * only where a Home migration rewrites that record family and marks it.
  */
 export type TaskFinalReviewContract = Readonly<{
-  schemaVersion: 1;
   taskId: string;
   reviewerRoleName: string;
-  controlPlaneDigest: string;
-  digest: string;
 }>;
 
 export type TaskFinalReviewRequest = Readonly<{
@@ -27,37 +27,28 @@ export type TaskFinalReviewRequest = Readonly<{
 export function createTaskFinalReviewContract(input: Readonly<{
   taskId: string;
   reviewerRoleName: string;
-  controlPlaneDigest: string;
 }>): TaskFinalReviewContract {
   const taskId = requireIdentity(input.taskId, "Task final-review contract Task id");
   const reviewerRoleName = requireIdentity(
     input.reviewerRoleName,
     "Task final-review contract Reviewer Role"
   );
-  const controlPlaneDigest = requireDigest(
-    input.controlPlaneDigest,
-    "Task final-review contract control-plane digest"
-  );
   return Object.freeze({
-    schemaVersion: 1,
     taskId,
-    reviewerRoleName,
-    controlPlaneDigest,
-    digest: contractDigest(taskId, reviewerRoleName, controlPlaneDigest)
+    reviewerRoleName
   });
 }
 
 export function validateTaskFinalReviewContract(
   value: TaskFinalReviewContract
 ): TaskFinalReviewContract {
-  if (typeof value !== "object" || value === null || value.schemaVersion !== 1) {
-    throw new Error("Task final-review contract must use schemaVersion 1.");
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Task final-review contract must be a record.");
   }
-  const expected = createTaskFinalReviewContract(value);
-  const digest = requireDigest(value.digest, "Task final-review contract digest");
-  if (digest !== expected.digest) {
-    throw new Error("Task final-review contract digest does not match its immutable fields.");
-  }
+  // A contract recorded by an earlier release also carried a version tag and the
+  // runtime that established it. Those fields are historical evidence and are
+  // never read again; the required fields below are the whole contract.
+  createTaskFinalReviewContract(value);
   return value;
 }
 
@@ -73,14 +64,16 @@ export function sameTaskFinalReviewContract(
   right: TaskFinalReviewContract | undefined
 ): boolean {
   if (left === undefined || right === undefined) return left === right;
-  return validateTaskFinalReviewContract(left).digest
-    === validateTaskFinalReviewContract(right).digest;
+  const first = validateTaskFinalReviewContract(left);
+  const second = validateTaskFinalReviewContract(right);
+  return first.taskId === second.taskId
+    && first.reviewerRoleName === second.reviewerRoleName;
 }
 
 /**
  * The contract switch is an exact CLI prefix, never an environment variable.
- * It must immediately follow `--yui-control <digest>` so the preflight can
- * bind it to the one verified Task runtime before opening mutable storage.
+ * It must be the first CLI argument so the preflight can bind it to the
+ * Leader's managed Session before opening mutable storage.
  */
 export function extractTaskFinalReviewRequest(args: readonly string[]): Readonly<{
   request?: TaskFinalReviewRequest;
@@ -120,25 +113,4 @@ export function extractTaskFinalReviewRequest(args: readonly string[]): Readonly
       error: error instanceof Error ? error.message : String(error)
     };
   }
-}
-
-function contractDigest(
-  taskId: string,
-  reviewerRoleName: string,
-  controlPlaneDigest: string
-): string {
-  return createHash("sha256").update(JSON.stringify([
-    "yui-task-final-review",
-    1,
-    taskId,
-    reviewerRoleName,
-    controlPlaneDigest
-  ])).digest("hex");
-}
-
-function requireDigest(value: unknown, label: string): string {
-  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
-    throw new Error(`${label} is invalid.`);
-  }
-  return value;
 }

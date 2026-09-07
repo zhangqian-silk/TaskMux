@@ -2,12 +2,6 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import type { ExactControlPlaneDescriptor } from "../runtime/exactControlPlane.js";
-import {
-  exactControlPlaneCommandPrefix,
-  exactControlPlaneDigest,
-  serializeExactDescriptor
-} from "../runtime/exactControlPlane.js";
 import type { GlobalRole, TaskRole } from "../role/role.js";
 import { writeTextFileAtomically } from "../storage/durableFile.js";
 import type { RoleSessionOwner, RoleSkillContext } from "./roleSessionContext.js";
@@ -32,9 +26,7 @@ export type SessionBootstrapManifest = Readonly<{
   /** Stable compatibility identity; distinct from this materialization's byte digest. */
   compatibilityDigest: string;
   controlPlane: Readonly<{
-    descriptorPath: string;
     sessionCliPath: string;
-    digest: string;
   }>;
   skills: readonly Readonly<{ id: string; path: string; digest: string }>[];
   roleProfileRef: Readonly<{ digest: string; path: string }>;
@@ -50,7 +42,6 @@ export type MaterializedSessionBootstrap = Readonly<{
   manifestPath: string;
   sessionCliPath: string;
   roleProfilePath: string;
-  descriptorPath: string;
 }>;
 
 export type SessionCliRefreshResult = Readonly<{
@@ -61,10 +52,24 @@ export type SessionCliRefreshResult = Readonly<{
 
 const ordinarySessionCli = ["#!/bin/sh", "exec yui \"$@\"", ""].join("\n");
 
-function renderSessionCli(controlPlane: ExactControlPlaneDescriptor): string {
+/** Where a managed Session's commands run: this installation, nothing more. */
+export type SessionEntryPoint = Readonly<{
+  executable: string;
+  cliEntry: string;
+}>;
+
+/**
+ * A managed Session wrapper answers exactly one question: which installation
+ * runs this command. It therefore carries only the resolved entry point, never
+ * a package or build identity. Version identity changes on every release while
+ * a Session legitimately outlives it, so embedding it here would turn an
+ * ordinary update into a broken Session.
+ */
+function renderSessionCli(entryPoint: SessionEntryPoint): string {
   return [
     "#!/bin/sh",
-    `exec ${exactControlPlaneCommandPrefix(controlPlane)} \"$@\"`,
+    `exec ${quoteShellWord(entryPoint.executable)} `
+      + `${quoteShellWord(entryPoint.cliEntry)} \"$@\"`,
     ""
   ].join("\n");
 }
@@ -115,9 +120,7 @@ export function readSessionBootstrapManifest(path: string): SessionBootstrapMani
     throw new Error("Task Session Manifest owner is invalid.");
   }
   const control = record.controlPlane as Record<string, unknown>;
-  requireText(control.descriptorPath, "Session Manifest control descriptor path");
   requireText(control.sessionCliPath, "Session Manifest CLI path");
-  requireDigest(control.digest, "Session Manifest control-plane digest");
   for (const skill of record.skills) {
     if (skill === null || typeof skill !== "object") {
       throw new Error("Session Manifest Skill entry is invalid.");
@@ -144,18 +147,15 @@ export function materializeSessionBootstrap(input: Readonly<{
   owner: RoleSessionOwner;
   roleKind: SessionRoleKind;
   skills: readonly RoleSkillContext[];
-  controlPlane: ExactControlPlaneDescriptor;
+  entryPoint: SessionEntryPoint;
 }>): MaterializedSessionBootstrap {
   const home = resolve(input.yuiHome);
-  const controlDigest = exactControlPlaneDigest(input.controlPlane);
-  const descriptorPath = resolve(join(home, "runtime", "control-plane", `${controlDigest}.json`));
-  writeImmutableText(descriptorPath, `${serializeExactDescriptor(input.controlPlane)}\n`);
-
   // Provider command runners may rebuild PATH independently of the managed
-  // process environment. Keep the Session entry point deterministic; the
-  // existing continuity preflight accepts compatible package replacement at
-  // this path without treating package version as Session identity.
-  const sessionCliContent = renderSessionCli(input.controlPlane);
+  // process environment, so a bare `yui` could resolve to another install or
+  // Home. The wrapper pins the resolved entry point instead. Package identity
+  // stays out of it: the compatible continuity preflight and the Session's
+  // caller key already authorize the command.
+  const sessionCliContent = renderSessionCli(input.entryPoint);
   const sessionCliDigest = digest(sessionCliContent);
   const sessionCliPath = resolve(join(home, "runtime", "session-cli", `yui-${sessionCliDigest}.sh`));
   writeImmutableText(sessionCliPath, sessionCliContent);
@@ -193,9 +193,7 @@ export function materializeSessionBootstrap(input: Readonly<{
       input.role
     ),
     controlPlane: {
-      descriptorPath,
-      sessionCliPath,
-      digest: controlDigest
+      sessionCliPath
     },
     skills: input.skills.map((skill) => Object.freeze({
       id: skill.id,
@@ -209,7 +207,7 @@ export function materializeSessionBootstrap(input: Readonly<{
           // Carry its read entry in the Thread-visible Manifest instead of
           // depending on the client process that happened to create it.
           loadCommand: renderGlobalContextCommand(
-            input.controlPlane,
+            input.entryPoint,
             home,
             input.role.name
           )
@@ -231,20 +229,19 @@ export function materializeSessionBootstrap(input: Readonly<{
     manifest,
     manifestPath,
     sessionCliPath,
-    roleProfilePath,
-    descriptorPath
+    roleProfilePath
   });
 }
 
 function renderGlobalContextCommand(
-  controlPlane: ExactControlPlaneDescriptor,
+  entryPoint: SessionEntryPoint,
   home: string,
   roleName: string
 ): string {
   return [
     `YUI_HOME=${quoteShellWord(home)}`,
-    quoteShellWord(controlPlane.executable),
-    quoteShellWord(controlPlane.cliEntry),
+    quoteShellWord(entryPoint.executable),
+    quoteShellWord(entryPoint.cliEntry),
     "session",
     "context",
     quoteShellWord(roleName),
@@ -259,14 +256,16 @@ function quoteShellWord(value: string): string {
 /**
  * Retargets known managed wrappers to the current resolved control plane after
  * a compatible update. Only a valid Session Manifest may nominate a wrapper,
- * and only Yui's ordinary or exact two-line wrapper shapes are changed.
+ * and only Yui's own two-line wrapper shapes are changed. A wrapper written by
+ * an earlier release may still pin a control-plane digest; retargeting it here
+ * is what removes that stale pin from a live Home.
  */
 export function refreshManagedSessionCliWrappers(
   homeInput: string,
-  controlPlane: ExactControlPlaneDescriptor
+  entryPoint: SessionEntryPoint
 ): SessionCliRefreshResult {
   const home = resolve(homeInput);
-  const currentSessionCli = renderSessionCli(controlPlane);
+  const currentSessionCli = renderSessionCli(entryPoint);
   const manifestDirectory = resolve(join(home, "runtime", "session-manifests"));
   const sessionCliDirectory = resolve(join(home, "runtime", "session-cli"));
   if (!existsSync(manifestDirectory)) {
@@ -308,7 +307,7 @@ export function refreshManagedSessionCliWrappers(
       current += 1;
       continue;
     }
-    if (content !== ordinarySessionCli && !isExactSessionCli(content)) {
+    if (content !== ordinarySessionCli && !isManagedSessionCli(content)) {
       skipped += 1;
       continue;
     }
@@ -319,8 +318,12 @@ export function refreshManagedSessionCliWrappers(
   return Object.freeze({ refreshed, current, skipped });
 }
 
-function isExactSessionCli(content: string): boolean {
-  return /^#!\/bin\/sh\nexec [^\n]+ '--yui-control' '[a-f0-9]{64}' "\$@"\n$/u.test(content);
+/**
+ * Both wrapper shapes Yui has written: the current entry-point-only form and
+ * the earlier form that also pinned a control-plane digest.
+ */
+function isManagedSessionCli(content: string): boolean {
+  return /^#!\/bin\/sh\nexec [^\n]+(?: '--yui-control' '[a-f0-9]{64}')? "\$@"\n$/u.test(content);
 }
 
 function writeImmutableText(path: string, content: string): void {

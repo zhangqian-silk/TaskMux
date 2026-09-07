@@ -250,6 +250,7 @@ import {
 import { managedWorkspaceKey } from "../worktree/managedWorkspace.js";
 import {
   hasAgentConfigOptions,
+  hasNoRoleMutation,
   parseRoleOptions,
   patchRoleAgentBinding,
   roleOptionSpecs,
@@ -260,7 +261,11 @@ import {
   hasRoleLaunchContextOptions,
   validateConfiguredRoleSkills
 } from "./roleSkillValidation.js";
-import { assertRoleRuntimeMutationAllowed } from "./roleRuntimeGuard.js";
+import {
+  assertLiveRoleSessionAcknowledged,
+  assertRoleRuntimeMutationAllowed,
+  LIVE_SESSION_ACKNOWLEDGEMENT_OPTION
+} from "./roleRuntimeGuard.js";
 import { runTaskContextCommand } from "./taskContextCommand.js";
 import { runTaskNextActionCommand } from "./taskNextActionCommand.js";
 import {
@@ -2419,7 +2424,7 @@ function updateTaskRole(
   if (parsed.has("--agent") && (parsed.one("--agent")?.trim().length ?? 0) === 0) {
     throw usageError("--agent is required.", usage);
   }
-  if ([...parsed.seen].every((option) => option === "--agent")) {
+  if (hasNoRoleMutation(parsed)) {
     throw usageError("At least one role update option is required.", usage);
   }
   const now = clock(options);
@@ -2436,6 +2441,14 @@ function updateTaskRole(
         taskId: task.id,
         roleName: role.name
       }, "desired launch configuration update");
+      assertLiveRoleSessionAcknowledged({
+        sessions: tx.getTaskRoleSessionSet(task.id, role.name),
+        roleName: role.name,
+        desiredRevision: role.launchRevision,
+        acknowledged: parsed.has(LIVE_SESSION_ACKNOWLEDGEMENT_OPTION),
+        stopCommand:
+          `yui task role session stop ${task.id} ${role.name} --reason "<decision>"`
+      });
     }
     const profileId = parsed.one("--profile");
     const agentProfile = profileId === undefined

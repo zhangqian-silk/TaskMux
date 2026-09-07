@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   runtimeLifecycleTarget,
   type RuntimeLifecycleTarget,
@@ -19,7 +19,7 @@ import {
   type SessionHostPort
 } from "../runtime/index.js";
 import {
-  effectiveLaunchSnapshotsCompatible,
+  sameEffectiveLaunch,
   validateEffectiveLaunchSnapshot
 } from "../executor/effectiveLaunch.js";
 import type {
@@ -74,7 +74,6 @@ export type RuntimeLaunchCoordinatorOptions = Readonly<{
   createGenerationId?: () => string;
   now?: () => Date;
   assertCurrent?: (request: CoordinatedRuntimeLaunchRequest) => void;
-  launchFingerprint?: (request: CoordinatedRuntimeLaunchRequest) => string;
   onCleanupRequired?: (target: RuntimeLifecycleTarget) => void;
   runtimeIsolation?: TaskRuntimeIsolationPort & Partial<TaskRuntimeLifecycleCleanupPort>;
 }>;
@@ -106,8 +105,6 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
   readonly #assertCurrent:
     | ((request: CoordinatedRuntimeLaunchRequest) => void)
     | undefined;
-  readonly #launchFingerprint:
-    (request: CoordinatedRuntimeLaunchRequest) => string;
   readonly #onCleanupRequired:
     | ((target: RuntimeLifecycleTarget) => void)
     | undefined;
@@ -123,8 +120,6 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
     this.#createGenerationId = options.createGenerationId ?? randomUUID;
     this.#now = options.now ?? (() => new Date());
     this.#assertCurrent = options.assertCurrent;
-    this.#launchFingerprint = options.launchFingerprint
-      ?? defaultLaunchFingerprint;
     this.#onCleanupRequired = options.onCleanupRequired;
     this.#runtimeIsolation = options.runtimeIsolation;
   }
@@ -195,30 +190,22 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
     if (request.owner.scope === "global" && request.managedWorkspace !== undefined) {
       throw new Error("A global runtime cannot use a Task ManagedWorkspace.");
     }
-    const expectedFingerprint = requireText(
-      this.#launchFingerprint(request),
-      "Launch fingerprint"
-    );
     const assertLaunchCurrent = () => {
       this.#assertCurrent?.(request);
       assertCurrent?.();
-      if (this.#launchFingerprint(request) !== expectedFingerprint) {
-        throw new Error(
-          `Role or Agent launch state changed: ${request.owner.roleName}.`
-        );
-      }
     };
-    const generationPrefix = `runtime-${expectedFingerprint}:generation:`;
     const proposedGenerationId = requireText(
       this.#createGenerationId(),
       "Launch generation id"
     );
-    let proposedRuntimeGenerationId = `${generationPrefix}${proposedGenerationId}`;
+    // A Host activation id is an opaque durable identity, not a digest of the
+    // launch configuration. Whether a live activation may be reused is answered
+    // by the Role's durable Session record through `assertCurrent`, so launch
+    // configuration that only shapes the next activation never invalidates the
+    // current one.
+    let proposedRuntimeGenerationId = `runtime-${proposedGenerationId}`;
     let reusedConfirmedRunningHost = false;
     if (request.mode === "resume" && request.hostActivationId !== undefined) {
-      if (!request.hostActivationId.startsWith(generationPrefix)) {
-        throw new Error("Session restore targets an incompatible Host activation.");
-      }
       const inspection = await this.host.inspectOwner(request.owner);
       if (inspection.state === "unavailable" || inspection.state === "starting") {
         throw new RuntimeLaunchError(
@@ -245,14 +232,6 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
       runtimeGenerationId: proposedRuntimeGenerationId
     }, assertLaunchCurrent, this.#now());
     if (reservation.status === "existing") {
-      if (!reservation.runtimeGenerationId.startsWith(generationPrefix)) {
-        this.#requireCleanup(request.owner);
-        throw new Error(
-          `Runtime launch reservation belongs to stale Role or Agent state: ${
-            request.owner.roleName
-          }.`
-        );
-      }
       const inspection = await this.host.inspectOwner(request.owner);
       if (inspection.state === "unavailable" || inspection.state === "starting") {
         throw new RuntimeLaunchError(
@@ -666,7 +645,7 @@ function validateRuntimeLaunchPreflight(
     || preflight.turnId !== request.turnId
     || preflight.agentId !== request.agentId
     || preflight.adapterId !== request.adapterId
-    || !effectiveLaunchSnapshotsCompatible(preflight.effective, request.effective)
+    || !sameEffectiveLaunch(preflight.effective, request.effective)
     || (
       request.mode === "resume"
       && preflight.nativeSessionId !== request.nativeSessionId
@@ -720,20 +699,6 @@ function requireMatchingRuntimeBinding(
     );
   }
   return binding;
-}
-
-function defaultLaunchFingerprint(
-  request: CoordinatedRuntimeLaunchRequest
-): string {
-  return createHash("sha256").update(JSON.stringify([
-    request.owner,
-    request.agentId,
-    request.adapterId,
-    request.effective,
-    request.workspace,
-    request.managedWorkspace,
-    request.runtimePolicy
-  ])).digest("hex");
 }
 
 function requireText(value: string | undefined, label: string): string {

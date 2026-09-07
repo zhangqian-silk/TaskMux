@@ -1,7 +1,7 @@
 import { serializeTurnInputEnvelope } from "../context/turnInputContract.js";
 import {
-  effectiveLaunchSnapshotsCompatible,
-  effectiveLaunchSnapshotsCompatibleForTaskSession
+  roleSessionMayContinue,
+  sameEffectiveLaunch
 } from "../executor/effectiveLaunch.js";
 import { RuntimeLifecycleBusyError } from "../runtime/lifecycleReservation.js";
 import { managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
@@ -386,8 +386,8 @@ function validateRoleSession(
     throw new Error(`Ready Role session identity changed: ${role.taskId}/${role.name}.`);
   }
   const compatible = mode === "resume"
-    ? effectiveLaunchSnapshotsCompatibleForTaskSession(session.effective, turn.effective)
-    : effectiveLaunchSnapshotsCompatible(session.effective, turn.effective);
+    ? roleSessionMayContinue(session.effective, turn.effective)
+    : sameEffectiveLaunch(session.effective, turn.effective);
   if (!compatible) {
     throw new Error(`Ready Role session effective snapshot changed: ${role.taskId}/${role.name}.`);
   }
@@ -409,7 +409,7 @@ function requireResumeSession(
   if (session === null || !hasText(session.nativeSessionId)) {
     throw new Error(`Role resume has no fixed native session: ${role.taskId}/${role.name}.`);
   }
-  if (!effectiveLaunchSnapshotsCompatibleForTaskSession(session.effective, turn.effective)) {
+  if (!roleSessionMayContinue(session.effective, turn.effective)) {
     throw new Error(`Role resume effective snapshot drifted: ${role.taskId}/${role.name}.`);
   }
   return session.nativeSessionId;

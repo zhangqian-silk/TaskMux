@@ -622,6 +622,8 @@ Task 生命周期的交互选择只展示有效来源状态：activate 只展示
 
 Session、Activation 与 Turn 是独立身份。Session 可以跨多个 Turn 和客户端连接；Activation 只代表 Yui 当前的连接，而不是对 Provider thread 的独占所有权。每次 Provider 执行对应一个持久 Turn；写入超时或结果不明确会进入 `delivery-unknown`，不会自动重发。Codex 已存在的 active Turn 只会让 Yui 暂时等待，不会导致待投递 Turn 失败；Claude 等独立进程 Provider 继续通过 Yui 的 view/takeover 边界进行人工控制。
 
+恢复只在真的续不下去时被拦住：provider 侧没有可恢复的 Session、换了 Agent 或适配器、换了物理工作区。模型、推理强度、权限策略、Role 说明与 Skill、声明的写范围只决定下一次 activation 用什么，审查轮次、候选 commit、工作区基线这类每轮事实不影响复用。因此当 Role 存在活跃 Session 时，`task role update`、`config role update`、`config agent update` 会先报告该 Session 并要求 `--yes` 确认；需要立刻生效则先停止该 Session。
+
 Turn 是 Role 是否有工作正在执行的唯一持久调度状态，记录可见输入、来源/渠道与最终回复，不复制思考过程或工具调用。所有经 Yui 中转或生成的输入统一使用 `source: yui`；Provider UI 中直接输入的消息使用 `source: user`；显式 Goal continuation 使用 `source: provider`。Provider Turn 终态后 Yui 完成该 Turn，再把下一个 Turn 投递到同一 Session。TaskRole 本身只保存身份和期望启动配置，不再保存可写的运行状态；CLI/Web 展示的 Role 状态由活动 Turn 派生，并叠加 Session/Driver 生命周期事实用于诊断。
 
 Goal 是 Session 级显式 Provider 事实，可以跨越多个 Turn。Codex 通过 Goal API/事件提供，Claude 通过 `active_goal` 提供；Yui 不用静默等待来猜测 Goal 是否完成。Turn 结束不等于 Goal、WorkItem 或 Task 完成，只有 Leader 更新 WorkItem 与 Task 的持久语义。
@@ -637,6 +639,8 @@ yui task role release <task-id> <role>
 ```
 
 Codex Role thread 可在 Desktop 中直接查看和操作；Desktop 已有 active Turn 时，Yui 只保留待投递工作并等待，不会失败或重复投递。`view`、`takeover`、`release` 继续作为 Claude 等独立进程 Provider 的人工控制入口。Yui 不写入全局 Hook/config，也不启动、重启或停止共享 daemon；Codex CLI/daemon 故障由 Task 生命周期之外修复。Global Operator 与 global Role 继续使用原生交互式 CLI，不属于受管理 Task Provider 协议；Yui 在内部将 Codex 的 Global TUI 连接到同一个默认 App Server，用户不能通过 Agent 或 Role 参数覆盖该连接，Session Manifest 自带不依赖启动进程环境的 Global Context 命令，因此同一 thread 可直接切换到 Desktop 继续对话。
+
+Global Codex 的薄 Host 与原生 TUI 位于同一个 pane，透明转发 App Server 连接，并从该 TUI 自己的 `thread/start` 或 `thread/resume` 成功响应取得 Thread ID。Yui 在首条用户消息之前通过既有启动回执登记身份，不依赖 `notify`、历史目录扫描或 bootstrap 消息；旧的 global `notify` 不能登记或修改 Session 生命周期。连接随 TUI 退出，不依赖 Controller 的持续运行。tmux 窗口存在不等于 Agent 存活：`pane_dead=0` 才是运行中，`pane_dead=1` 是保留的退出现场，读取失败则报错。状态查询不删除现场；显式启动可重建精确的死亡窗口，但不能覆盖身份未知的活 Operator。
 
 `yui update` 会用目标版本先做只读预检，在停住精确的旧 Controller 后自动执行
 所需的离线迁移，再校验并启动新 Controller。若升级前希望结束所有 Agent

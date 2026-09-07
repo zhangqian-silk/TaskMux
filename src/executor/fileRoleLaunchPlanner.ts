@@ -26,7 +26,10 @@ import {
   compileRoleSessionContext,
   roleSessionKind
 } from "../context/roleSessionContext.js";
-import { materializeSessionBootstrap } from "../context/sessionBootstrapManifest.js";
+import {
+  materializeSessionBootstrap,
+  type SessionEntryPoint
+} from "../context/sessionBootstrapManifest.js";
 import { prefixYuiTitleInput } from "../turn/turnIdentity.js";
 import { resolveAgentAdapter } from "./agentAdapter.js";
 import type { ClaudeAgentConfig, RoleAgentConfig } from "./agentAdapter.js";
@@ -47,20 +50,11 @@ import {
 } from "./workspacePreflightClassification.js";
 import { activeLiveRoleAgentSession } from "./agentExecutor.js";
 import {
-  effectiveLaunchSnapshotsCompatibleForTaskSession,
-  effectiveLaunchSnapshotsCompatible,
+  roleSessionMayContinue,
   effectiveRoleForLaunch,
   resolveEffectiveLaunch,
   type EffectiveLaunchSnapshot
 } from "./effectiveLaunch.js";
-import {
-  YUI_CONTROL_PLANE_DESCRIPTOR,
-  createExactControlPlaneDescriptor,
-  exactControlPlaneDigest,
-  serializeExactDescriptor,
-  type ExactControlPlaneDescriptor
-} from "../runtime/exactControlPlane.js";
-import { detectRunningRelease } from "../release/runtimeRelease.js";
 import {
   parseTaskRuntimeIsolationDescriptor,
   taskRuntimeIsolationEnvironment,
@@ -117,7 +111,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
   readonly #createNativeSessionId: () => string;
   readonly #cliPath: string;
   readonly #inspectWorkspacePhysicalState: WorkspacePhysicalInspector;
-  readonly #controlPlane: ExactControlPlaneDescriptor;
+  readonly #entryPoint: SessionEntryPoint;
   #resourceRegistrarValue: ResourceRegistrar | undefined;
 
   constructor(
@@ -144,21 +138,10 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ?? inspectWorkspacePhysicalState;
     this.#cliPath = canonicalPath(options.cliPath
       ?? fileURLToPath(new URL("../cli.js", import.meta.url)));
-    // Internal callbacks retain one exact command identity for receipt fencing.
-    // Interactive Role commands use ordinary `yui`; their continuity is the
-    // Session Manifest plus protocol/storage and durable runtime identity.
-    const runningRelease = detectRunningRelease(this.#cliPath);
-    this.#controlPlane = createExactControlPlaneDescriptor({
-      executable: process.execPath,
-      cliEntry: this.#cliPath,
-      yuiHome: this.home,
-      ...(runningRelease === null
-        ? {}
-        : {
-            buildId: runningRelease.manifest.buildId,
-            activeReleaseDigest: runningRelease.manifest.packageDigest
-          })
-    });
+    // Where a managed Session's commands run. Continuity is the Session
+    // Manifest plus protocol/storage and durable runtime identity, so no
+    // package or build identity belongs in this entry point.
+    this.#entryPoint = { executable: process.execPath, cliEntry: this.#cliPath };
   }
 
   #resourceRegistrar(): ResourceRegistrar {
@@ -291,12 +274,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const effective = input.effective ?? resolvedEffective;
     const existing = sessionSet?.sessions[effective.agentId];
     const compatibleExisting = existing !== undefined
-      && (input.mode === "resume"
-        ? effectiveLaunchSnapshotsCompatibleForTaskSession(
-            existing.effective,
-            effective
-          )
-        : effectiveLaunchSnapshotsCompatible(existing.effective, effective));
+      && roleSessionMayContinue(existing.effective, effective);
     if (input.mode === "resume" && !compatibleExisting) {
       throw new Error(
         `Task Role resume effective snapshot drifted: ${task.id}/${role.name}.`
@@ -346,7 +324,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const effective = input.effective ?? resolvedEffective;
     const existing = sessionSet?.sessions[effective.agentId];
     const compatibleExisting = existing !== undefined
-      && effectiveLaunchSnapshotsCompatible(existing.effective, effective);
+      && roleSessionMayContinue(existing.effective, effective);
     if (input.mode === "resume" && !compatibleExisting) {
       throw new Error(`Global Role resume effective snapshot drifted: ${role.name}.`);
     }
@@ -417,7 +395,9 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
           : undefined,
         trustWorkspace: true
       });
-      assertCodexLaunchOverridesAvailable(codexConfig, ["developerInstructions", "notify"]);
+      assertCodexLaunchOverridesAvailable(codexConfig, owner.scope === "global"
+        ? ["developerInstructions"]
+        : ["developerInstructions", "notify"]);
     }
     const runtimeIsolation = input.runtimeIsolation === undefined
       ? undefined
@@ -448,7 +428,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       owner,
       roleKind: roleSessionKind(launchRole, owner, sessionPolicy.purpose),
       skills: baseSessionContext.skills,
-      controlPlane: this.#controlPlane
+      entryPoint: this.#entryPoint
     });
     if (effective.contextProtocolVersion !== bootstrap.manifest.schemaVersion
       || effective.sessionManifestCompatibilityDigest
@@ -558,8 +538,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     for (const path of [
       bootstrap.manifestPath,
       bootstrap.sessionCliPath,
-      bootstrap.roleProfilePath,
-      bootstrap.descriptorPath
+      bootstrap.roleProfilePath
     ]) {
       this.#resourceRegistrar().registerSessionContext(
         path,
@@ -582,10 +561,10 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       args.push("--plugin-dir", ensureClaudeLifecyclePlugin(this.home, this.#cliPath));
     }
     if (binding.adapterId === "codex") {
-      // Global/interactive Codex sessions still use notify for presentation.
+      // Interactive Task sessions may use notify for presentation.
       // Managed Turns receive lifecycle facts through their ordinary App Server
       // subscription, avoiding a second Hook channel for the same Turn.
-      if (owner.scope !== "task" || input.turnId === undefined) {
+      if (owner.scope === "task" && input.turnId === undefined) {
         args = addCodexSessionNotify(args, launchMode, this.#cliPath);
       }
       // Managed Codex Turns use disposable proxy clients against the shared
@@ -697,12 +676,10 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         YUI_WORKSPACE: effectiveWorkspace,
         YUI_SESSION_MANIFEST: sessionContext.sessionManifestPath,
         YUI_SESSION_CLI: sessionContext.sessionCliPath,
+        ...(owner.scope === "global" && configured.adapterId === "codex"
+          ? { YUI_AGENT_BASE_ARGS: JSON.stringify(configured.baseArgs) }
+          : {}),
         ...(jobCallerKey === undefined ? {} : { YUI_JOB_CALLER_KEY: jobCallerKey }),
-        ...(owner.scope !== "task"
-          ? {}
-          : {
-              [YUI_CONTROL_PLANE_DESCRIPTOR]: serializeExactDescriptor(this.#controlPlane)
-            }),
         ...(sessionTitle === undefined
           ? {}
           : {
@@ -1014,6 +991,8 @@ function managedClaudeControlPlaneConfig(
 function isManagedYuiBashRule(rule: string): boolean {
   const normalized = rule.trim();
   return /^Bash\(yui(?:\s|:\*|\*|\))/u.test(normalized)
+    // Yui no longer writes a control-plane digest into a managed rule; this
+    // shape only clears one an earlier release left in a Provider config.
     || /^Bash\(.*\s--yui-control\s/u.test(normalized);
 }
 
