@@ -130,14 +130,6 @@ export type WorkItem = {
   createdAt: string;
   updatedAt: string;
   endedAt?: string;
-  /** Explicit selections remain history even after acceptance is withdrawn. */
-  acceptanceHistory?: readonly Readonly<{
-    candidateId: string;
-    summary: string;
-    acceptedAt: string;
-    acceptedBy: string;
-    reviewRoundId?: string;
-  }>[];
   acceptedCandidateId?: string;
   currentCandidateId?: string;
   /** Migration-only diagnostic capture of the previous execution-shaped state. */
@@ -549,7 +541,6 @@ export function validateWorkItem(workItem: WorkItem): WorkItem {
     "createdAt",
     "updatedAt",
     "endedAt",
-    "acceptanceHistory",
     "acceptedCandidateId",
     "currentCandidateId",
     "historicalState"
@@ -626,16 +617,6 @@ export function validateWorkItem(workItem: WorkItem): WorkItem {
   }
   if (workItem.currentCandidateId !== undefined
     && !candidateIds.has(workItem.currentCandidateId)) throw new Error("Current Candidate is missing.");
-  if (workItem.acceptanceHistory !== undefined && !Array.isArray(workItem.acceptanceHistory)) {
-    throw new Error("Work Item acceptance history must be an array.");
-  }
-  for (const entry of workItem.acceptanceHistory ?? []) {
-    if (!candidateIds.has(entry.candidateId)) throw new Error("Historical accepted Candidate is missing.");
-    requireText(entry.summary, "Acceptance summary");
-    requireTimestamp(entry.acceptedAt, "Accepted at");
-    if (!["leader", "operator", "user"].includes(entry.acceptedBy)) throw new Error("Acceptance actor is invalid.");
-    if (entry.reviewRoundId !== undefined) requireIdentity(entry.reviewRoundId, "Acceptance ReviewRound id");
-  }
   if (workItem.historicalState !== undefined) {
     const historical = workItem.historicalState;
     if (!["pending", "running", "awaiting_acceptance", "completed", "failed", "retired"].includes(historical.status)) {

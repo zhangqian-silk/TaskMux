@@ -15,8 +15,8 @@ Task、WorkItem、Brief、Role、Message 与 Turn 继续使用原 `TaskStore`。
 - WorkItem 状态采用 open／accepted／retired。执行失败保存在 Turn；
   `work update running/failed` 不再改变责任状态，`done` 提交 Candidate，
   需要明确 `work accept` 才接受。原 CLI 动词是当前原子操作，不双读旧 payload。
-- Brief 修改要求 `--expected-revision`，创建使用 0。冲突返回当前 Brief、
-  revision 和本次提交字段。修改方案、焦点或 WorkItem 定义不自动撤销结果；
+- Brief 在事务内读最新值并修改指定字段，不要求版本令牌；同一字段以
+  后一次明确写入为准，前后值同事务保存为事件。修改方案、焦点或 WorkItem 定义不自动撤销结果；
   接受记录选择的 Candidate 和说明，撤回接受保留历史。
 - Role 当前选择与 Turn effective 分开。当前 Worker 改为 B 后，原 A 的
   Assignment、结果来源和合法执行权限保留；下一次明确执行使用 B。
@@ -63,18 +63,22 @@ Role／Turn。消息正文、计数和引用先经过同一过滤；message list
 ## 存储采用
 
 当前源码基线已经包含 storage version 3（包括已发布的 exact-attempt
-迁移）；本次仅追加 3→4 的 `task-facts-and-explicit-acceptance`，
+迁移）；首轮追加 3→4 的 `task-facts-and-explicit-acceptance`，
+按用户后续简化决定再追加 4→5 的 `event-owned-edit-history`。
 最低支持版本仍为 1。普通 Store 只接受当前合同，不解释旧状态。
 
 迁移保留原 Task 退休时间、操作者、说明和隔离含义；WorkItem 旧执行状态、
 诊断和结束时间保留为历史证据，completed 映为 accepted，其他未退休工作
 映为 open。Candidate、Turn、Message、Review 原文及来源不被重写。
-Brief 获得初始 revision，历史事实不因该并发令牌而失效。
+4→5 将 Task `outcomeHistory` 和 WorkItem `acceptanceHistory` 原文转存为
+每个受影响 Task 一条 `history.imported` 事件，再删除重复数组及 Brief
+专用 revision。导入事件标注源存储版本，不伪称当时发生的新业务操作，
+不派发工作；旧事件原文不变，事件序号从既有高水位继续。
 
 采用走现有 `upgrade --dry-run`／`upgrade` 或 update 的受控握手，保持停写，
 保留升级器生成的备份。未改已有迁移、最低版本或 update 握手。旧 binary
-不能读取 version 4；切回源码不降 schema，恢复备份也不撤销外部效果。
-本批并行 Task 如追加迁移，合并时必须顺序协调；version 4 是本候选的实际
+不能读取 version 5；切回源码不降 schema，恢复备份也不撤销外部效果。
+本批并行 Task 如追加迁移，合并时必须顺序协调；version 5 是本候选的实际
 迁移编号，不是预占号或跨 Task 账本。
 
 ## 验证证据与边界
@@ -96,7 +100,7 @@ Brief 获得初始 revision，历史事实不因该并发令牌而失效。
 - 通知：调用实际 `saveRoleTurnDeliveryFailure`、`observeRuntimeObservation`、
   `observeRuntimeTurnTerminal`，覆盖三种角色、重复观察和 Operator 不可用；
   原失败事实保留，Task 不自动失败。先复现五项缺失路由，修正后十项通过。
-- 生命周期与迁移：Brief 冲突、修改要求后接受原 Candidate、显式撤回、依赖、
+- 生命周期与迁移（首轮）：Brief 冲突、修改要求后接受原 Candidate、显式撤回、依赖、
   取消／重开、直接完成及归档、有效 v3 payload 到 v4 的历史保留。
 
 迟到执行终态不重开 Task。若原 Turn 已终止，原结果保持不可变，迟到内容
@@ -117,3 +121,27 @@ Leader 复现后采用现有 `requireWorkItemCandidate` 返回有界错误，不
 原 WorkItem 与候选历史并返回 `DATA_ERROR`。修正前复现 `TypeError`。
 按 Project 验证政策移除专项脚本，不新增永久异常回归用例；构建与 lint
 通过。修复的独立增量 Review 及最终裁决仍以 Task 记录为准。
+
+## 用户要求的简化
+
+首轮完成后，用户明确选择数据库事务、字段更新和可查历史，不将规划编辑
+冲突做成 Agent 必经步骤。本轮移除 Brief 的强制 expected-revision，
+保留现有事务及具体执行／验收边界。Task 元数据、WorkItem 定义和 Role
+配置编辑补齐更新前后值；仅记录相关字段或 Role 配置，不复制执行历史。
+Task 和 WorkItem 当前记录不再累加历史数组；完成事件补齐 artifact refs、
+接受事件补齐 ReviewRound 引用，重开事件保留被清除的结束字段。
+历史由 `task event list` 和按引用 inspect 查询，是否恢复由 Leader 明确决定。
+旧版日志没有保存的内容无法通过迁移凭空补全。
+
+Context 复用授权判断后按消息、事件或目标记录读取，不再为这些查询构造
+整份 Context；完整 read 保持原语义。Worker／Reviewer 仍通过原 Turn
+Context Pack 确定授权，未另建授权账本。可选观察端口及预算保留，不扩展
+插件框架。
+
+临时证据已验证双 SQLite 写入的字段保留、同字段覆盖可追溯、事务回滚、
+接受与重开历史，以及 4→5 导入完整性、幂等性与序号连续性。
+Context 专项验证定向读取不访问无关记录、inspect 等价、固定分页上界、
+相同授权过滤和读取不写入。独立只读 Agent 审查本轮完整差异并重跑这两组
+证据，未发现新增实质问题。build、lint、core 82/82（约 4.23 秒）和
+手册生成／契约检查通过；临时脚本交付前移除。该补充是用户直接要求的
+本地简化，不冒充先前 Task-final Review 已覆盖新提交，也未更新共享实例。

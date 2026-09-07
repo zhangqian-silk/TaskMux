@@ -29,7 +29,7 @@ export type ContextObservationProvider = Readonly<{
 }>;
 
 /** A current read model, not a second snapshot store or a delivery receipt.
- * Every public path uses the same authorized entries before counting or paging.
+ * Every public path checks the same scope before reading, counting or paging.
  */
 export function readTaskContext(
   store: TaskStore, taskId: string, environment: NodeJS.ProcessEnv = {}
@@ -69,10 +69,10 @@ export function readTaskContextDelta(
   environment: NodeJS.ProcessEnv = {}
 ) {
   return store.transaction((reader) => {
-    const entries = authorizedEntries(reader, taskId, environment);
-    const allowedEvents = new Set(entries.filter((e) => e.ref.store === "task-event").map((e) => e.ref.refId));
+    const { allow } = authorizeContext(reader, taskId, environment);
+    const history = reader.listEvents(taskId);
     const start = decode(input.after, taskId);
-    const now = currentCursor(reader, taskId);
+    const now = currentCursor(reader, taskId, history);
     const continuation = input.continuation === undefined ? undefined : decodePage(input.continuation, taskId);
     const bound = continuation ?? now;
     const after = continuation?.after ?? start.sequence;
@@ -84,8 +84,9 @@ export function readTaskContextDelta(
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_EVENTS) {
       throw usageError(`Context delta limit must be between 1 and ${MAX_EVENTS}.`);
     }
-    const events = reader.listEvents(taskId)
-      .filter((event) => allowedEvents.has(event.id) && sequence(event.id) > after && sequence(event.id) <= bound.sequence)
+    const events = history
+      .filter((event) => isAllowed(allow, "task-event", event.id)
+        && sequence(event.id) > after && sequence(event.id) <= bound.sequence)
       .sort((a, b) => sequence(a.id) - sequence(b.id));
     const page: Array<{ ref: Ref; value?: unknown; omitted: boolean }> = [];
     let bytes = 0;
@@ -116,9 +117,11 @@ export function inspectTaskContext(
   environment: NodeJS.ProcessEnv = {}
 ) {
   return store.transaction((reader) => {
-    const entry = authorizedEntries(reader, taskId, environment)
-      .find(({ ref }) => ref.store === selector.store && ref.refId === selector.refId);
-    if (entry === undefined) throw usageError("Context reference is unavailable in the caller's current scope.");
+    const scope = authorizeContext(reader, taskId, environment);
+    const value = isAllowed(scope.allow, selector.store, selector.refId)
+      ? inspectValue(reader, scope, selector) : null;
+    if (value === null) throw usageError("Context reference is unavailable in the caller's current scope.");
+    const entry = materialize(selector.store, selector.refId, value);
     if (selector.digest !== undefined && entry.ref.digest !== selector.digest) {
       throw usageError("Context reference changed; read its current reference before inspecting again.", undefined, {
         currentRef: entry.ref
@@ -134,10 +137,12 @@ export function inspectTaskContext(
 export function listContextMessages(
   store: TaskStore, taskId: string, environment: NodeJS.ProcessEnv = {}
 ): TaskMessage[] {
-  return store.transaction((reader) => authorizedEntries(reader, taskId, environment)
-    .filter(({ ref }) => ref.store === "task-message")
-    .map(({ value }) => value as TaskMessage)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)));
+  return store.transaction((reader) => {
+    const { allow } = authorizeContext(reader, taskId, environment);
+    return reader.listMessages(taskId)
+      .filter((message) => isAllowed(allow, "task-message", message.id))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  });
 }
 
 /** Optional read-only providers receive only the caller's bounded core view.
@@ -178,7 +183,7 @@ export async function withContextObservations(
   return { ...core, observations };
 }
 
-function authorizedEntries(store: TaskStore, taskId: string, environment: NodeJS.ProcessEnv): Entry[] {
+function authorizeContext(store: TaskStore, taskId: string, environment: NodeJS.ProcessEnv) {
   const caller = resolveManagedTaskCaller(store, environment);
   if (caller !== undefined && caller.taskId !== taskId) throw usageError("Context is outside the caller's Task.");
   if (caller === undefined && environment.YUI_SESSION_SCOPE === "global" && environment.YUI_ROLE !== "operator") {
@@ -202,9 +207,86 @@ function authorizedEntries(store: TaskStore, taskId: string, environment: NodeJS
     allow.add(`role:${caller.roleName}`);
     allow.add(`turn:${caller.currentTurnId}`);
   }
+  return { task, allow };
+}
+
+function isAllowed(allow: Set<string> | undefined, family: string, id: string): boolean {
+  return allow === undefined || allow.has(`${family}:${id}`);
+}
+
+function roleProfile(role: NonNullable<ReturnType<TaskStore["getRole"]>>) {
+  return {
+    name: role.name, defaultAccess: role.defaultAccess, description: role.description,
+    responsibilities: role.responsibilities ?? [], constraints: role.constraints ?? [],
+    skills: role.skills ?? [], launchRevision: role.launchRevision
+  };
+}
+
+/** Resolve just the requested family. Families without a singular Store read
+ * use their existing list primitive, without constructing unrelated Context.
+ */
+function inspectValue(
+  store: TaskStore,
+  { task, allow }: ReturnType<typeof authorizeContext>,
+  { store: family, refId }: Readonly<{ store: string; refId: string }>
+): unknown | null {
+  const taskId = task.id;
+  switch (family) {
+    case "task": return refId === taskId ? task : null;
+    case "task-brief": return refId === taskId ? store.getTaskBrief(taskId) : null;
+    case "role": return store.getRole(taskId, refId);
+    case "role-profile": {
+      const role = store.getRole(taskId, refId);
+      return role === null ? null : roleProfile(role);
+    }
+    case "project-policy":
+    case "project-knowledge": {
+      const binding = task.projectBindings.find(({ projectId }) => family === "project-policy"
+        ? projectId === refId : refId.startsWith(`${projectId}:`));
+      if (binding === undefined) return null;
+      const project = store.getProject(binding.projectId);
+      if (project === null) return null;
+      const { knowledge, ...policy } = project;
+      if (family === "project-policy") return policy;
+      const entry = knowledge.find((item) => item.status === "active" && `${project.id}:${item.id}` === refId);
+      return entry === undefined ? null : { projectId: project.id, ...entry };
+    }
+    case "input-request": return store.getInputRequest(taskId, refId);
+    case "work-item": return store.getWorkItem(taskId, refId);
+    case "accepted-work-item":
+      return allow?.has(`accepted-work-item:${refId}`) ? store.getWorkItem(taskId, refId) : null;
+    case "candidate": return store.listWorkItems(taskId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .flatMap((item) => [...item.candidates].reverse()).find((candidate) => candidate.id === refId) ?? null;
+    case "task-message": return store.listMessages(taskId).find((message) => message.id === refId) ?? null;
+    case "turn": return store.getTurn(taskId, refId);
+    case "source-turn": {
+      if (!allow?.has(`source-turn:${refId}`)) return null;
+      const turn = store.getTurn(taskId, refId);
+      return turn === null ? null : sourceTurnContextValue(turn);
+    }
+    case "review-round": return store.getReviewRound(taskId, refId);
+    case "mailbox": {
+      if (allow !== undefined) return null;
+      if (refId === "task") return store.getWorkMailbox({ kind: "task", taskId });
+      const roleName = refId.startsWith("role:") ? refId.slice("role:".length) : undefined;
+      return roleName !== undefined && store.getRole(taskId, roleName) !== null
+        ? store.getWorkMailbox({ kind: "role", taskId, roleName }) : null;
+    }
+    case "task-decision": return store.getDecision(taskId, refId);
+    case "task-milestone": return store.getMilestone(taskId, refId);
+    case "job": return store.getDurableJob(taskId, refId);
+    case "publication": return store.listPublicationReferences(taskId).find((item) => item.id === refId) ?? null;
+    case "task-event": return store.listEvents(taskId).find((event) => event.id === refId) ?? null;
+    default: return null;
+  }
+}
+
+function authorizedEntries(store: TaskStore, taskId: string, environment: NodeJS.ProcessEnv): Entry[] {
+  const { task, allow } = authorizeContext(store, taskId, environment);
   const entries: Entry[] = [];
   const add = (family: string, id: string, value: unknown) => {
-    if (value !== null && (allow === undefined || allow.has(`${family}:${id}`))) {
+    if (value !== null && isAllowed(allow, family, id)) {
       entries.push(materialize(family, id, value));
     }
   };
@@ -212,11 +294,7 @@ function authorizedEntries(store: TaskStore, taskId: string, environment: NodeJS
   add("task-brief", taskId, store.getTaskBrief(taskId));
   for (const role of store.listRoles(taskId)) {
     add("role", role.name, role);
-    add("role-profile", role.name, {
-      name: role.name, defaultAccess: role.defaultAccess, description: role.description,
-      responsibilities: role.responsibilities ?? [], constraints: role.constraints ?? [],
-      skills: role.skills ?? [], launchRevision: role.launchRevision
-    });
+    add("role-profile", role.name, roleProfile(role));
   }
   for (const binding of task.projectBindings) {
     const project = store.getProject(binding.projectId);
@@ -260,8 +338,8 @@ function materialize(store: string, refId: string, value: unknown): Entry {
   const record = value as Record<string, unknown>;
   return { ref: { store, refId, revision: String(record.revision ?? record.updatedAt ?? record.createdAt ?? digest), digest }, value };
 }
-function currentCursor(store: TaskStore, taskId: string): Cursor {
-  return { taskId, sequence: store.listEvents(taskId).reduce((max, e) => Math.max(max, sequence(e.id)), 0), revision: store.getStateRevision() };
+function currentCursor(store: TaskStore, taskId: string, events = store.listEvents(taskId)): Cursor {
+  return { taskId, sequence: events.reduce((max, e) => Math.max(max, sequence(e.id)), 0), revision: store.getStateRevision() };
 }
 function sequence(id: string): number {
   const result = /^event-(\d+)$/.exec(id);

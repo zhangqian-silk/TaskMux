@@ -3658,7 +3658,7 @@ test("Controller begin-handover accepts a null fromReleaseId", async (t) => {
 
 test("production storage exposes one current version and one migration floor", () => {
   assert.equal(MIN_SUPPORTED_STORAGE_VERSION, 1);
-  assert.equal(CURRENT_STORAGE_VERSION, 4);
+  assert.equal(CURRENT_STORAGE_VERSION, 5);
   for (const retiredExport of [
     "FileTaskStore",
     "STORAGE_STATE_FILE",
@@ -3681,7 +3681,7 @@ test("a new current Home initializes its SQLite authority exactly once", (t) => 
   try {
     assert.deepEqual(
       database.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),
-      [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]
+      [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]
     );
     assert.deepEqual(
       database.prepare("PRAGMA table_info(schema_migrations)").all().map(({ name }) => name),

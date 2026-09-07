@@ -152,8 +152,10 @@ Context 返回受权、有界的工作集和 `coreCursor`；`task context delta 
 <task-id> --store <store> --ref <id> --digest <digest>` 展开当前记录。
 读取不确认消息送达；`task next-action` 保留为独立决策辅助查询。
 
-Brief 修改需先读取 revision，再用 `task brief update <task-id>
---expected-revision <n>`（创建为 0）；过期修改返回当前版本，不改写已有验收。
+Brief 使用 `task brief update <task-id>` 只提交要改的字段，不要求版本令牌。
+事务读取最新记录并保留其他字段；同一字段以后一次明确写入为准。
+修改前后值保存在事件中，可用 `task event list <task-id>` 找回历史，
+由 Leader 决定是否重新写入，不自动回滚或撤销已有验收。
 WorkItem 当前状态为 open／accepted／retired，执行失败属于原 Turn。
 提交 Candidate 不等于接受，Leader 通过 `task work accept` 明确验收。
 

@@ -208,9 +208,11 @@ token for fixed-upper-bound event pages; `task context inspect <task-id>
 Reading does not acknowledge delivery. `task next-action` remains a separate
 decision-support query.
 
-Brief edits use `task brief update <task-id> --expected-revision <n>` (0 to
-create). Read the current Brief first; stale edits return the current version
-without modifying accepted results.
+Brief edits use `task brief update <task-id>` with only the fields to change.
+The transaction reads the latest record and preserves other fields; the last
+explicit write to the same field wins. Edit events preserve before/after values
+for inspection with `task event list <task-id>`, without a required version token
+or automatic rollback. Accepted results remain unchanged.
 
 Task lifecycle is draft / active / completed / cancelled / archived.
 `task cancel <task-id> --summary "..."` ends intent without claiming execution

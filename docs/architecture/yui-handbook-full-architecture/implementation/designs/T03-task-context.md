@@ -12,9 +12,9 @@ Task 对外生命周期为 draft／active／completed／cancelled／archived；W
 
 ## 2. Task 与结果
 
-Brief 提供指定字段修改及 expectedRevision。Role 当前配置与实际执行配置分开。Assignment／Turn 保留实际输入说明；Candidate 固定提交结果与来源；Review 只引用 Candidate 和 Reviewer Turn。
+Brief 在数据库事务内读取最新记录，只修改指定字段，不要求 expectedRevision。同一字段以后一次明确写入为准，更新前后值随事件在同一事务保存。Role 当前配置与实际执行配置分开。Assignment／Turn 保留实际输入说明；Candidate 固定提交结果与来源；Review 只引用 Candidate 和 Reviewer Turn。
 
-记录 revision 只保护并发更新。结果适用性由 Leader 结合当前要求明确判断，不建立独立的自动失效版本体系。接受时保存明确选择和说明，不要求当前 Brief 与来源 revision 完全相等。
+结果适用性由 Leader 结合当前要求明确判断，不建立独立的自动失效版本体系。接受时保存明确选择和说明，不要求当前 Brief 与来源版本相等。Task／WorkItem 只保存当前结束和接受选择；历史由持久事件承载，不在对象内累计第二份历史数组。找回旧值后由 Leader 决定是否明确重写，不自动回滚。
 
 直接完成 Task 支持 summary 和 artifact refs，不强制合成 WorkItem。完成和取消阻止后续自动派发，迟到结果仍归原 Turn。显式重开不自动重放所有过去的通知和未知输入。
 
@@ -31,6 +31,8 @@ Brief 提供指定字段修改及 expectedRevision。Role 当前配置与实际�
 外部观察单独放 source／observedAt／coverage，不能与核心 cursor 混称原子快照。可选 Context 贡献只读、有限输出，失败不影响核心任务信息。
 
 同一 caller 的访问范围同时作用于正文、计数和引用，避免只隐藏内容却泄漏其他 Task 的资源名称。
+
+复用授权判断，不要求所有查询构造整份 Context：消息查询读取消息，delta 读取事件，inspect 按目标记录读取。可选观察保留现有最小端口，不扩展插件框架或缓存。
 
 ## 5. 消息与通知
 

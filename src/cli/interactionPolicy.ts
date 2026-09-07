@@ -643,7 +643,7 @@ export const INTERACTION_POLICIES: readonly InteractionPolicy[] = Object.freeze(
   ] as const).map(([group, command]): InteractionPolicy => {
     const trailingOptions: Record<string, TrailingOptionKind> = {};
     if (group === "brief" && command === "update") {
-      Object.assign(trailingOptions, { "--expected-revision": "value", "--objective": "value", "--boundary": "value", "--approach": "value", "--focus": "value", "--leader-summary": "value" });
+      Object.assign(trailingOptions, { "--objective": "value", "--boundary": "value", "--approach": "value", "--focus": "value", "--leader-summary": "value" });
     } else if (group === "decision" && command === "record") {
       Object.assign(trailingOptions, { "--title": "value", "--rationale": "value" });
     } else if (group === "decision" && command === "list") {

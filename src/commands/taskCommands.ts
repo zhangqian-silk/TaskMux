@@ -1003,6 +1003,8 @@ export function updateTaskMetadataCommand(
     tx.saveTask(updated);
     recordTaskEvent(tx, updated.id, "task.updated", {
       status: updated.status,
+      previous: editedFieldValues(current, Object.keys(patch)),
+      current: editedFieldValues(updated, Object.keys(patch)),
       ...(updated.type === undefined ? {} : { taskType: updated.type })
     }, now);
     enqueueWork(tx, taskMailbox(updated.id), "task-updated", now, [taskRef(updated.id)]);
@@ -1420,6 +1422,9 @@ function completeTaskCommand(
     const terminalEvent = recordTaskEvent(tx, task.id, "task.completed", {
       by: actor,
       summary,
+      ...(completed.completionArtifactRefs === undefined ? {} : {
+        artifactRefs: JSON.stringify(completed.completionArtifactRefs)
+      }),
       dispatchHistory: JSON.stringify(taskDispatchMailboxes(tx, task.id)),
       ...(completedProjectHeads === undefined
         ? {}
@@ -1511,6 +1516,10 @@ function reopenTaskCommand(
     enqueueWork(tx, taskMailbox(task.id), reopenedReason, now, [taskRef(task.id)]);
     recordTaskEvent(tx, task.id, "task.reopened", {
       status: active.status, by: actor, historicalInputs: "not-replayed", dispatchHistory,
+      previous: editedFieldValues(task, [
+        "status", "completedAt", "completedBy", "completionSummary", "completionArtifactRefs",
+        "retiredAt", "retiredBy", "retirementSummary", "replacementTaskId", "retirementIsolation"
+      ]),
       historicalExecutionGroupIds: JSON.stringify([
         ...tx.listWorkItems(task.id).flatMap((item) => item.executionGroups.map(({ id }) => id)),
         ...tx.listReviewRounds(task.id).flatMap((round) =>
@@ -1809,6 +1818,7 @@ function retireTaskCommand(
     const terminalEvent = recordTaskEvent(tx, task.id, "task.retired", {
       by: actor,
       summary,
+      isolationEstablished: "true",
       ...(replacementTaskId === undefined ? {} : { replacementTaskId })
     }, now);
     enqueueOperatorEvent(tx, terminalEvent, "task-terminal", now);
@@ -2580,7 +2590,11 @@ function updateTaskRole(
       tx,
       task.id,
       "role.updated",
-      roleLaunchEventPayload(next, tx.getTaskRoleSessionSet(task.id, next.name)),
+      {
+        ...roleLaunchEventPayload(next, tx.getTaskRoleSessionSet(task.id, next.name)),
+        previous: JSON.stringify(role),
+        current: JSON.stringify(next)
+      },
       now
     );
     return next;
@@ -2992,6 +3006,8 @@ function editWork(
       workItemId: updated.id,
       revision: String(updated.revision),
       fields: changedFields.join(","),
+      previous: editedFieldValues(item, changedFields),
+      current: editedFieldValues(updated, changedFields),
       editedBy: actor
     }, now);
     return { task, item: updated };
@@ -3695,17 +3711,7 @@ function acceptWork(
         }
       }
     }
-    const completed = {
-      ...updateWorkItemStatus(item, "accepted", now, summary, candidate.id),
-      acceptedCandidateId: candidate.id,
-      acceptanceHistory: [...(item.acceptanceHistory ?? []), {
-        candidateId: candidate.id,
-        acceptedBy: actor,
-        acceptedAt: now.toISOString(),
-        summary,
-        ...(latestReview === undefined ? {} : { reviewRoundId: latestReview.id })
-      }]
-    };
+    const completed = updateWorkItemStatus(item, "accepted", now, summary, candidate.id);
     tx.saveWorkItem(item.taskId, completed);
     recordTaskEvent(tx, item.taskId, "work.accepted", {
       workItemId: item.id,
@@ -3715,6 +3721,7 @@ function acceptWork(
         : { workItemRevision: String(candidate.workItemRevision) }),
       acceptedBy: actor,
       summary,
+      ...(latestReview === undefined ? {} : { reviewRoundId: latestReview.id }),
       ...(actor === "leader" ? leaderActionEventPayload(tx, item.taskId, options) : {})
     }, now);
     return completed;
@@ -7597,10 +7604,10 @@ function taskBriefCommand(
     ].join("\n").concat("\n"), { taskId: task.id, brief });
   }
   if (command === "update") {
-    const usage = "Task brief update usage: yui task brief update <task> --expected-revision <n> [--objective <text>] [--boundary <text> ...] [--approach <text>] [--focus <text>] [--leader-summary <text>].";
+    const usage = "Task brief update usage: yui task brief update <task> [--objective <text>] [--boundary <text> ...] [--approach <text>] [--focus <text>] [--leader-summary <text>].";
     const parsed = parseMultiValueTail(
       rest,
-      new Set(["--objective", "--approach", "--focus", "--leader-summary", "--expected-revision"]),
+      new Set(["--objective", "--approach", "--focus", "--leader-summary"]),
       new Set(["--boundary"]),
       usage
     );
@@ -7619,25 +7626,6 @@ function taskBriefCommand(
       assertTaskOpen(task);
       const existing = tx.getTaskBrief(task.id);
       const updatedBy = taskActor(tx, options, task.id);
-      const expectedText = requiredOption(parsed.options, "--expected-revision");
-      const expectedRevision = Number(expectedText);
-      if (!/^\d+$/u.test(expectedText) || !Number.isSafeInteger(expectedRevision)) {
-        throw usageError("--expected-revision must be a non-negative integer (0 for creation).");
-      }
-      if (expectedRevision !== (existing?.revision ?? 0)) {
-        throw usageError("Task Brief revision conflict; read the current Brief and retry.", undefined, {
-          expectedRevision,
-          currentRevision: existing?.revision ?? 0,
-          current: existing,
-          conflictFields: [
-            ...(hasObjective ? ["objective"] : []),
-            ...(hasApproach ? ["technicalApproach"] : []),
-            ...(hasFocus ? ["currentFocus"] : []),
-            ...(hasSummary ? ["leaderSummary"] : []),
-            ...(boundaries.length > 0 ? ["boundaries"] : [])
-          ]
-        });
-      }
       const brief = existing === null
         ? createTaskBrief({
             objective: requiredText(parsed.options.get("--objective"), "--objective"),
@@ -7663,7 +7651,7 @@ function taskBriefCommand(
           }, updatedBy, now);
       tx.saveTaskBrief(task.id, brief);
       recordTaskEvent(tx, task.id, "brief.updated", {
-        updatedBy, revision: String(brief.revision),
+        updatedBy,
         previous: JSON.stringify(existing), current: JSON.stringify(brief)
       }, now);
       enqueueWork(tx, taskMailbox(task.id), "brief-updated", now, [taskRef(task.id)]);
@@ -7681,6 +7669,13 @@ function taskBriefCommand(
   throw usageError(command === undefined
     ? "Task brief command is required."
     : `Unknown command: task brief ${command}`);
+}
+
+/** Persist only edited fields, not another copy of aggregate execution history.
+ * Null records an absent optional field so clearing it remains observable. */
+function editedFieldValues(record: object, fields: readonly string[]): string {
+  const values = record as Record<string, unknown>;
+  return JSON.stringify(Object.fromEntries(fields.map((field) => [field, values[field] ?? null])));
 }
 
 function taskDecisionCommand(

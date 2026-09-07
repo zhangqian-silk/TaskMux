@@ -113,9 +113,10 @@ Maintain only context that changes future decisions:
 
 - Keep the Brief's objective, boundaries, approach, current focus, and Leader
   summary current after material semantic progress.
-  Read `task brief show` first and pass its `revision` as
-  `task brief update --expected-revision <n>` (0 to create); a conflict returns
-  the current Brief and requested fields so you can reread and retry.
+  Use `task brief update` with only the fields you intend to change; no version
+  token is required. Same-field edits use the last explicit write. Inspect
+  `task event list` for before/after values if a prior value is needed, then
+  decide whether to restore it through another explicit update.
 - Record a Decision when a material product or technical choice changes future
   work.
 - Add a Milestone for an independently meaningful phase result.

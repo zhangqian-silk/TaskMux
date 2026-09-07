@@ -72,16 +72,6 @@ export type Task = {
   completedBy?: TaskCompletedBy;
   completionSummary?: string;
   completionArtifactRefs?: readonly string[];
-  /** Immutable preceding outcomes, retained when explicitly reopening. */
-  outcomeHistory?: readonly Readonly<{
-    status: "completed" | "cancelled";
-    at: string;
-    by: TaskCompletedBy;
-    summary: string;
-    artifactRefs?: readonly string[];
-    replacementTaskId?: string;
-    isolationEstablished?: true;
-  }>[];
   retiredAt?: string;
   retiredBy?: TaskCompletedBy;
   retirementSummary?: string;
@@ -346,15 +336,8 @@ export function reopenTask(task: Task, now: Date): Task {
     retirementIsolation: _retirementIsolation,
     ...reopened
   } = task;
-  const outcome = task.status === "completed"
-    ? { status: task.status, at: task.completedAt!, by: task.completedBy!, summary: task.completionSummary!,
-        ...(task.completionArtifactRefs === undefined ? {} : { artifactRefs: task.completionArtifactRefs }) }
-    : { status: task.status, at: task.retiredAt!, by: task.retiredBy!, summary: task.retirementSummary!,
-        ...(task.replacementTaskId === undefined ? {} : { replacementTaskId: task.replacementTaskId }),
-        ...(task.retirementIsolation === true ? { isolationEstablished: true as const } : {}) };
   return validateTask({ ...reopened, status: "active",
     executionGate: { state: "enabled" },
-    outcomeHistory: [...(task.outcomeHistory ?? []), outcome],
     updatedAt: now.toISOString() });
 }
 
@@ -477,28 +460,8 @@ export function validateTask(task: Task): Task {
   }
   requireTimestamp(task.createdAt, "Task createdAt");
   requireTimestamp(task.updatedAt, "Task updatedAt");
-  if (task.outcomeHistory !== undefined && !Array.isArray(task.outcomeHistory)) {
-    throw new Error("Task outcome history must be an array.");
-  }
   if (task.retirementIsolation !== undefined && task.retirementIsolation !== true) {
     throw new Error("Task retirement isolation must represent explicit established evidence.");
-  }
-  for (const outcome of task.outcomeHistory ?? []) {
-    if (outcome.status !== "completed" && outcome.status !== "cancelled") {
-      throw new Error("Task outcome history status is invalid.");
-    }
-    requireTimestamp(outcome.at, "Task historical outcome at");
-    requireText(outcome.summary, "Task historical outcome summary");
-    if (!["user", "operator", "leader"].includes(outcome.by)) {
-      throw new Error("Task outcome history actor is invalid.");
-    }
-    if (outcome.artifactRefs !== undefined && !Array.isArray(outcome.artifactRefs)) {
-      throw new Error("Task historical artifact refs must be an array.");
-    }
-    for (const ref of outcome.artifactRefs ?? []) requireText(ref, "Task historical artifact ref");
-    if (outcome.isolationEstablished !== undefined && outcome.isolationEstablished !== true) {
-      throw new Error("Task historical isolation must represent established evidence.");
-    }
   }
   if (task.completionArtifactRefs !== undefined && !Array.isArray(task.completionArtifactRefs)) {
     throw new Error("Task completion artifact refs must be an array.");

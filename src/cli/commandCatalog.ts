@@ -971,8 +971,8 @@ const taskChildren: readonly NodeInput[] = [
       {
         name: "update",
         summary: "Create or update the Task Brief.",
-        usage: "yui task brief update <task> --expected-revision <n> [--objective <text>] [--boundary <text> ...] [--approach <text>] [--focus <text>] [--leader-summary <text>]",
-        options: ["--expected-revision", "--objective", "--boundary", "--approach", "--focus", "--leader-summary"]
+        usage: "yui task brief update <task> [--objective <text>] [--boundary <text> ...] [--approach <text>] [--focus <text>] [--leader-summary <text>]",
+        options: ["--objective", "--boundary", "--approach", "--focus", "--leader-summary"]
       }
     ]
   },

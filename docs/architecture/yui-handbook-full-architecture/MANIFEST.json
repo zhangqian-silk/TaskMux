@@ -108,13 +108,13 @@
     },
     {
       "path": "implementation/designs/T03-evidence.md",
-      "bytes": 7956,
-      "sha256": "b35dcd6311e535a8951e12501488b93c581506b5826830e5367308b0f8d90cd1"
+      "bytes": 10064,
+      "sha256": "bdab6ace35d83990b53a29e9281bbd430046d2ac692d3f976fbec35ce9548f49"
     },
     {
       "path": "implementation/designs/T03-task-context.md",
-      "bytes": 4179,
-      "sha256": "c4c4b3665f78b4b1fde2a9cfa34c63cbf8e106a2b91a8126a2f27ce7a0d5f5fd"
+      "bytes": 4690,
+      "sha256": "b68331a0632f509b3c61c69a890a01e7ba7f75487514e990a3d4f093712ca2dc"
     },
     {
       "path": "implementation/designs/T04-agent-endpoint.md",
@@ -223,8 +223,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 473404,
-      "sha256": "9e50fc82c53578f4244230806fdd5c6a2c59a0940f4af703bc55e087160ef3a1"
+      "bytes": 476655,
+      "sha256": "c9def7c4849d13714f80b0df4e621996cea426a46675e4b82848c3e66ea9bf17"
     },
     {
       "path": "modules/01-kernel.md",
@@ -233,8 +233,8 @@
     },
     {
       "path": "modules/02-task.md",
-      "bytes": 7665,
-      "sha256": "e0327c20833adf94ae47d220c6dbb9fba5a678aa212bab00c6c4093027f6e689"
+      "bytes": 7939,
+      "sha256": "5e21297a28c337ab85702f1bc60ab1c06db584263f0edff429e7834e640199da"
     },
     {
       "path": "modules/03-agent-context.md",
@@ -268,8 +268,8 @@
     },
     {
       "path": "reference/acceptance-scenarios.md",
-      "bytes": 18887,
-      "sha256": "aa6a81a15ec6ae0ea810b54c1eb53d5a7c4e4e553043bab63478bb371650ab3f"
+      "bytes": 19092,
+      "sha256": "fe6a988058ac472f00943242fef5ff09ced37c77e6971d863db9f739d00be7c0"
     },
     {
       "path": "reference/glossary.md",

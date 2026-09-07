@@ -754,6 +754,54 @@ UPDATE work_items SET payload = json_set(payload, '$.acceptedCandidateId',
   json_extract(payload, '$.candidates[#-1].id'))
 WHERE status = 'accepted' AND json_array_length(payload, '$.candidates') > 0;
 `
+  },
+  {
+    version: 5,
+    name: "event-owned-edit-history",
+    introducedIn: "0.15.6",
+    // Move valid v4 embedded histories to one immutable import event per Task.
+    // Existing events stay byte-identical; imports supply otherwise missing
+    // historical fields and are evidence only, never executable lifecycle input.
+    sql: `
+CREATE TEMP TABLE migrated_edit_history AS
+SELECT records.task_id,
+  COALESCE(sequences.high_water, 0) + 1 AS sequence,
+  strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AS imported_at,
+  json_object(
+    'sourceStorageVersion', '4',
+    'taskOutcomes', '' || COALESCE(json_extract(records.payload, '$.outcomeHistory'), '[]'),
+    'workAcceptances', '' || COALESCE((
+      SELECT json_group_array(json_object(
+        'workItemId', work_item_id,
+        'history', json_extract(payload, '$.acceptanceHistory')))
+      FROM (SELECT * FROM work_items
+        WHERE task_id = records.task_id
+          AND json_array_length(payload, '$.acceptanceHistory') > 0
+        ORDER BY work_item_id)
+    ), '[]')
+  ) AS history
+FROM task_records AS records
+LEFT JOIN id_sequences AS sequences
+  ON sequences.task_id = records.task_id AND sequences.kind = 'event'
+WHERE json_array_length(records.payload, '$.outcomeHistory') > 0
+  OR EXISTS (SELECT 1 FROM work_items
+    WHERE task_id = records.task_id AND json_array_length(payload, '$.acceptanceHistory') > 0);
+
+INSERT INTO events (task_id, event_id, type, occurred_at, payload)
+SELECT task_id, 'event-' || sequence, 'history.imported', imported_at,
+  json_object('schemaVersion', 2, 'id', 'event-' || sequence,
+    'taskId', task_id, 'type', 'history.imported',
+    'createdAt', imported_at, 'payload', json(history))
+FROM migrated_edit_history;
+INSERT INTO id_sequences (task_id, kind, high_water)
+SELECT task_id, 'event', sequence FROM migrated_edit_history WHERE true
+ON CONFLICT(task_id, kind) DO UPDATE SET high_water = excluded.high_water;
+DROP TABLE migrated_edit_history;
+
+UPDATE task_records SET payload = json_remove(payload, '$.outcomeHistory'),
+  brief = CASE WHEN brief IS NULL THEN NULL ELSE json_remove(brief, '$.revision') END;
+UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
+`
   }
 ]);
 
