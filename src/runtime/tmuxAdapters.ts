@@ -16,7 +16,6 @@ import type {
   SessionLaunchRequest
 } from "./sessionLaunchRequest.js";
 import {
-  RuntimeGenerationMismatchError,
   RuntimeHostContentionError,
   RuntimeHostUnavailableError,
   promptPushOutcome,
@@ -35,10 +34,8 @@ import {
 } from "./agentError.js";
 import {
   toRuntimeLaunchFailure,
-  hasFatalLaunchOutput,
   type RuntimeLaunchDiagnosticContext
 } from "./launchDiagnostics.js";
-import { builtinAgentDriverRegistry } from "./builtinAgentDrivers.js";
 import { requireSafeIdentity } from "./validation.js";
 import type { EffectiveLaunchSnapshot } from "../executor/effectiveLaunch.js";
 import type { TaskRuntimeIsolationDescriptor } from "./taskRuntimeIsolation.js";
@@ -86,7 +83,6 @@ export interface RuntimeRoleLaunchPlannerPort {
     mode: "new" | "resume";
     turnId?: string;
     nativeSessionId?: string;
-    runtimeGenerationId?: string;
     runtimeIsolation?: TaskRuntimeIsolationDescriptor;
     environment?: Readonly<Record<string, string>>;
   }>): RuntimePlannedSession;
@@ -97,20 +93,8 @@ export interface RuntimeRoleLaunchPlannerPort {
     effective: EffectiveLaunchSnapshot;
     mode: "new" | "resume";
     nativeSessionId?: string;
-    runtimeGenerationId?: string;
     environment?: Readonly<Record<string, string>>;
   }>): RuntimePlannedSession;
-  /**
-   * Persist a caller key only after the host adapter has confirmed that its
-   * Provider process exists. A live Conversation resume retains its inherited
-   * key; a Conversation replacement inside a reused Host owns a fresh one.
-   */
-  commitTaskCallerKey?(input: Readonly<{
-    taskId: string;
-    roleName: string;
-    agentId: string;
-    callerKey: string;
-  }>): void;
 }
 
 /** The lifecycle subset required from TmuxManager. */
@@ -432,7 +416,6 @@ export class TmuxSessionHost implements SessionHostPort {
       agentId: request.agentId,
       adapterId: request.adapterId,
       effective: request.effective,
-      runtimeGenerationId: request.runtimeGenerationId,
       mode: request.mode,
       ...(request.turnId === undefined ? {} : { turnId: request.turnId }),
       ...(request.runtimeIsolation === undefined
@@ -502,7 +485,6 @@ export class TmuxSessionHost implements SessionHostPort {
       ?? (request.mode === "resume" ? request.nativeSessionId : undefined);
     beforeHostStart?.({
       owner: request.owner,
-      runtimeGenerationId: request.runtimeGenerationId,
       ...(request.turnId === undefined ? {} : { turnId: request.turnId }),
       agentId: request.agentId,
       adapterId: request.adapterId,
@@ -541,7 +523,6 @@ export class TmuxSessionHost implements SessionHostPort {
       }
       let binding = createRuntimeBinding({
         id: bindingId,
-        runtimeGenerationId: request.runtimeGenerationId,
         owner: request.owner,
         agentId: request.agentId,
         adapterId: request.adapterId,
@@ -594,7 +575,6 @@ export class TmuxSessionHost implements SessionHostPort {
     }
     const reservation = broker.reserve(Object.freeze({
       schemaVersion: 2,
-      runtimeGenerationId: request.runtimeGenerationId,
       command: planned.launch.command,
       args: [...planned.launch.args],
       environment: { ...planned.launch.env },
@@ -611,7 +591,6 @@ export class TmuxSessionHost implements SessionHostPort {
         fileURLToPath(new URL("../cli.js", import.meta.url)),
         "internal",
         "agent-host",
-        reservation.runtimeGenerationId,
         reservation.ticket
       ],
       env: {
@@ -619,7 +598,6 @@ export class TmuxSessionHost implements SessionHostPort {
         YUI_SESSION_SCOPE: request.owner.scope,
         ...(request.owner.scope === "task" ? { YUI_TASK_ID: request.owner.taskId } : {}),
         YUI_ROLE: request.owner.roleName,
-        YUI_RUNTIME_GENERATION_ID: request.runtimeGenerationId,
         ...(planned.launch.env.YUI_AGENT_ID === undefined
           ? {}
           : { YUI_AGENT_ID: planned.launch.env.YUI_AGENT_ID }),
@@ -635,7 +613,6 @@ export class TmuxSessionHost implements SessionHostPort {
       }
     };
     let hostCreated = false;
-    let providerDispatchObserved = false;
     let providerSnapshot: AgentHostSnapshot | undefined;
     try {
       hostCreated = await ensureRoleWindow(this.tmux, hostId, planned.role, hostLaunch);
@@ -652,7 +629,6 @@ export class TmuxSessionHost implements SessionHostPort {
           scope: request.owner.scope,
           ...(request.owner.scope === "task" ? { taskId: request.owner.taskId } : {}),
           roleName: request.owner.roleName,
-          runtimeGenerationId: reservation.runtimeGenerationId,
           requireTurnAck: false,
           ...(interactiveCodex ? { assertHostRunning: assertInteractivePane } : {})
         });
@@ -663,7 +639,6 @@ export class TmuxSessionHost implements SessionHostPort {
           requireSafeIdentity(providerSnapshot.nativeSessionId, "Codex Thread identity");
           await assertInteractivePane();
         }
-        providerDispatchObserved = true;
       }
       if (!hostCreated) {
         if (interactiveCodex) {
@@ -680,105 +655,45 @@ export class TmuxSessionHost implements SessionHostPort {
           control: {
             protocol: AGENT_HOST_CONTROL_PROTOCOL,
             type: "launch",
-            runtimeGenerationId: reservation.runtimeGenerationId,
             ticket: reservation.ticket
           }
         });
-        if (controlResult.outcome === "active-other-generation") {
-          broker.revoke(request.runtimeGenerationId);
+        if (controlResult.outcome === "busy") {
+          broker.revoke(reservation.ticket);
           throw new RuntimeHostContentionError(
             "provider-child-active",
             `The persistent Agent Host for ${request.owner.roleName} still owns another Provider Turn.`
           );
         }
-        if (controlResult.outcome === "active-same-generation") {
-          broker.revoke(request.runtimeGenerationId);
-        }
-        // Identity and readiness are separate facts. Only a genuinely
-        // different generation is a conflict that must fail closed, not
-        // permission to stop the Host; a matching unsettled generation is this
-        // exact activation still coming up, and stopping it would destroy a
-        // healthy Session (and any Turn it is carrying).
-        const observedGeneration = controlResult.snapshot.runtimeGenerationId;
-        if (observedGeneration !== reservation.runtimeGenerationId) {
-          broker.revoke(request.runtimeGenerationId);
-          throw new RuntimeGenerationMismatchError(
-            reservation.runtimeGenerationId,
-            observedGeneration,
-            controlResult.snapshot.state,
-            `Agent Host acknowledgement generation mismatch for ${
-              reservation.runtimeGenerationId
-            }; observed=${observedGeneration ?? "none"}; `
-              + `state=${controlResult.snapshot.state}${
-                describeHostFailure(controlResult)
-              }.`
-          );
-        }
         if (!["idle", "ready", "busy"].includes(controlResult.snapshot.state)) {
-          broker.revoke(request.runtimeGenerationId);
+          broker.revoke(reservation.ticket);
           if (["starting", "settling", "delivery-unknown"].includes(
             controlResult.snapshot.state
           )) {
-            // The right generation is present but not yet deliverable. This
-            // is transient backpressure, so leave the Host running and let
-            // the caller retry rather than terminalizing the Turn.
+            // A temporarily unavailable Session preserves the pending input.
             throw new RuntimeHostContentionError(
               "provider-child-active",
               `The Agent Host for ${request.owner.roleName} is still ${
                 controlResult.snapshot.state
-              } on this exact generation${describeHostFailure(controlResult)}.`
+              }${describeHostFailure(controlResult)}.`
             );
           }
           // This launch is unusable. It did not create this Host, so failure
           // is not authority to clean its resources or unknown execution.
           throw new RuntimeHostUnavailableError(
-            reservation.runtimeGenerationId,
             controlResult.snapshot.state,
-            `Agent Host reached ${controlResult.snapshot.state} for ${
-              reservation.runtimeGenerationId
-            }${describeHostFailure(controlResult)}.`,
+            `Agent Host reached ${controlResult.snapshot.state}${describeHostFailure(controlResult)}.`,
             { cause: controlResult.failure ?? controlResult.snapshot }
           );
         }
         providerSnapshot = controlResult.snapshot;
-        providerDispatchObserved = true;
       }
     } catch (error) {
-      broker.revoke(request.runtimeGenerationId);
-      if (hostCreated && !providerDispatchObserved) {
-        try {
-          await stopExactRole(this.tmux, hostId, request.owner.roleName);
-        } catch (stopError) {
-          throw new Error(
-            `Managed Provider launch failed and its disposable Agent Host could not be stopped: ${
-              stopError instanceof Error ? stopError.message : String(stopError)
-            }`,
-            { cause: stopError }
-          );
-        }
-      }
+      broker.revoke(reservation.ticket);
       throw error;
-    }
-    if (
-      providerDispatchObserved
-      // A fresh Host always starts a Provider process. mode=new also starts
-      // one inside a reused Host by replacing (or creating) the native
-      // Conversation. Same-Conversation resume must retain its inherited key.
-      && (hostCreated || request.mode === "new")
-      && request.owner.scope === "task"
-      && planned.launch.env.YUI_JOB_CALLER_KEY !== undefined
-      && this.planner.commitTaskCallerKey !== undefined
-    ) {
-      this.planner.commitTaskCallerKey({
-        taskId: request.owner.taskId,
-        roleName: request.owner.roleName,
-        agentId: request.agentId,
-        callerKey: planned.launch.env.YUI_JOB_CALLER_KEY
-      });
     }
     const binding = createRuntimeBinding({
       id: bindingId,
-      runtimeGenerationId: request.runtimeGenerationId,
       owner: request.owner,
       agentId: request.agentId,
       adapterId: request.adapterId,
@@ -838,11 +753,7 @@ export class TmuxSessionHost implements SessionHostPort {
     try {
       return await Promise.race([discovery, monitor]);
     } catch (error) {
-      try {
-        await stopExactRole(this.tmux, hostId, request.owner.roleName);
-      } catch {
-        // Preserve the discovery failure; durable cleanup owns later retries.
-      }
+      // Missing discovery is not evidence that the running process is unwanted.
       throw toRuntimeLaunchFailure(error, "native-session-discovery", context);
     } finally {
       stopped = true;
@@ -925,7 +836,6 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
         control: {
           protocol: AGENT_HOST_CONTROL_PROTOCOL,
           type: "submit-turn",
-          runtimeGenerationId: request.binding.runtimeGenerationId,
           nativeSessionId: request.binding.nativeSessionId,
           turnId: request.envelope.source.localId,
           authority: request.binding.providerAuthority,
@@ -937,6 +847,7 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
       });
       // The Host attaches its own structured cause to every non-delivery.
       const failure = result.failure;
+      if (result.outcome === "pending") return promptPushOutcome("pending");
       if (result.snapshot.state === "delivery-unknown") {
         return promptPushOutcome("delivery-unknown", failure);
       }
@@ -966,7 +877,6 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
         control: {
           protocol: AGENT_HOST_CONTROL_PROTOCOL,
           type: "steer-turn",
-          runtimeGenerationId: request.runtimeGenerationId,
           nativeSessionId: request.nativeSessionId,
           nativeTurnId: request.nativeTurnId,
           authority: request.providerAuthority,
@@ -976,9 +886,10 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
           }
         }
       });
+      if (result.outcome === "pending") return promptPushOutcome("pending");
       if (result.outcome === "accepted") return promptPushOutcome("delivered");
       const failure = result.failure;
-      if (result.snapshot.state === "delivery-unknown") {
+      if (failure?.inputDisposition === "unknown" || result.snapshot.state === "delivery-unknown") {
         return promptPushOutcome("delivery-unknown", failure);
       }
       if (result.snapshot.state === "busy") return promptPushOutcome("busy", failure);

@@ -31,7 +31,7 @@ export function codexTranscriptUsage(transcript: string): RuntimeUsageSnapshot |
 export function codexTranscriptUsageReport(transcript: string): TranscriptUsageReport | null {
   // Codex token_count events are cumulative Session snapshots. Per-request
   // input is the non-negative delta between consecutive snapshots; the first
-  // snapshot only establishes the generation baseline.
+  // snapshot only establishes the Session baseline.
   let latestInput = 0;
   let latestCached = 0;
   let latestOutput = 0;

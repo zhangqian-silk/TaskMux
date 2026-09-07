@@ -2,7 +2,6 @@ import {
   validateTaskWorkspaceIdentity,
   type TaskWorkspaceIdentity
 } from "../repository/taskWorkspaceIdentity.js";
-import type { TaskEvent } from "../event/taskEvent.js";
 
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 export type TaskStatus =
@@ -681,23 +680,4 @@ function requireTimestamp(value: string, label: string): void {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
     throw new Error(`${label} is invalid.`);
   }
-}
-
-/** The reopen event, not a second writable clock, owns the no-replay boundary. */
-export function historicalExecutionDormant(events: readonly TaskEvent[], groupId: string): boolean {
-  let reopenIndex = -1;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    if (events[index]!.type === "task.reopened") { reopenIndex = index; break; }
-  }
-  if (reopenIndex < 0) return false;
-  const historical = events[reopenIndex]!.payload.historicalExecutionGroupIds;
-  if (historical === undefined) return false;
-  const groups: unknown = JSON.parse(historical);
-  if (!Array.isArray(groups) || !groups.every((id) => typeof id === "string")) {
-    throw new Error("Task reopen execution history is invalid.");
-  }
-  if (!groups.includes(groupId)) return false;
-  return !events.slice(reopenIndex + 1).some((event) =>
-    (event.type === "turn.dispatched" || event.type === "turn.retried")
-    && (event.payload.executionGroupId === groupId || event.payload.sourceExecutionGroupId === groupId));
 }

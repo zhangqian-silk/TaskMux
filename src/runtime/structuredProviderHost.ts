@@ -11,6 +11,7 @@ import WebSocket, { type RawData } from "ws";
 import {
   CodexAppServerRequestError,
   CodexAppServerRuntime,
+  codexClientInitialization,
   codexGoalNotification,
   codexAppServerErrorIsMissing,
   codexTurnInput,
@@ -22,7 +23,6 @@ import type {
 } from "./launchBroker.js";
 import { serializeAgentErrorRaw } from "./agentError.js";
 import { PROVIDER_ACCEPT_TIMEOUT_MS } from "./runtimeDeadlines.js";
-import { YUI_VERSION } from "../version.js";
 
 const PROVIDER_MESSAGE_MAX_BYTES = 16 * 1024 * 1024;
 const CODEX_PROXY_HANDSHAKE_TIMEOUT_MS = 10_000;
@@ -93,6 +93,7 @@ export interface StructuredProviderSession {
   readonly activeTurnId: string | undefined;
   submitTurn(turn: StructuredProviderTurnInput): Promise<StructuredProviderTurnReceipt>;
   steerTurn(turn: StructuredProviderTurnInput): Promise<StructuredProviderTurnReceipt>;
+  cancelTurn(attemptId: string): Promise<"requested" | "not-active" | "unknown">;
   waitForExit(): Promise<StructuredProviderProcessExit>;
   terminate(signal: NodeJS.Signals): void;
 }
@@ -237,7 +238,7 @@ class CodexProxyWebSocketChannel {
   readonly #pending = new Map<string, Readonly<{
     resolve: (value: JsonObject) => void;
     reject: (error: Error) => void;
-    timer: NodeJS.Timeout;
+    timer: NodeJS.Timeout | undefined;
   }>>();
   readonly #listeners = new Set<(message: JsonObject) => void>();
   readonly #closeListeners = new Set<(error: Error) => void>();
@@ -313,7 +314,10 @@ class CodexProxyWebSocketChannel {
     if (this.#closedError !== undefined) throw this.#closedError;
     const id = String(this.#nextId++);
     const response = new Promise<JsonObject>((resolvePromise, reject) => {
-      const timer = setTimeout(() => {
+      // A live turn submission may legitimately outlast the observation
+      // deadline. Retain its exact callback until acknowledgement or actual
+      // disconnect; a clock alone is not evidence of unknown delivery.
+      const timer = method === "turn/start" || method === "turn/steer" ? undefined : setTimeout(() => {
         this.#pending.delete(id);
         reject(new Error(`Provider request timed out: ${method}.`));
       }, PROVIDER_ACCEPT_TIMEOUT_MS);
@@ -522,6 +526,7 @@ class JsonLineChannel {
 }
 
 class CodexStructuredProviderSession implements StructuredProviderSession {
+  readonly #turnAttempts = new Map<string, string>();
   readonly adapterId = "codex" as const;
   #activeTurnId: string | undefined;
   #clientOwnedTurnId: string | undefined;
@@ -563,13 +568,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     const channel = await CodexProxyWebSocketChannel.connect(child, mirror);
     const openingMessages: JsonObject[] = [];
     const stopOpeningBuffer = channel.onMessage((message) => openingMessages.push(message));
-    await channel.request("initialize", {
-      clientInfo: { name: "yui", title: "Yui", version: YUI_VERSION },
-      capabilities: {
-        experimentalApi: true,
-        requestAttestation: false
-      }
-    });
+    await channel.request("initialize", codexClientInitialization());
     await channel.notify("initialized");
     const runtime = new CodexAppServerRuntime(channel);
     let conversationId: string;
@@ -619,6 +618,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     const ownedTurn = control.kind === "restore" ? control.ownedTurn : undefined;
     session.#clientOwnedTurnId = ownedTurn?.turnId;
     session.#clientOwnedAttemptId = ownedTurn?.attemptId;
+    if (ownedTurn !== undefined) session.#turnAttempts.set(ownedTurn.turnId, ownedTurn.attemptId);
     stopOpeningBuffer();
     let recoveredTerminal: StructuredProviderTurnTerminal | undefined;
     for (const message of openingMessages) {
@@ -770,6 +770,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
       this.#activeTurnId = acceptance.turnId;
       this.#clientOwnedTurnId = acceptance.turnId;
       this.#clientOwnedAttemptId = turn.attemptId;
+      this.#turnAttempts.set(acceptance.turnId, turn.attemptId);
       return Object.freeze({
         attemptId: turn.attemptId,
         conversationId: this.conversationId,
@@ -829,11 +830,11 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     terminal: Omit<StructuredProviderTurnTerminal, "clientOwned">,
     emit: boolean
   ): StructuredProviderTurnTerminal {
-    const clientOwned = terminal.nativeTurnId !== undefined
-      && terminal.nativeTurnId === this.#clientOwnedTurnId;
-    const attemptId = clientOwned ? this.#clientOwnedAttemptId : undefined;
+    const attemptId = terminal.nativeTurnId === undefined ? undefined
+      : this.#turnAttempts.get(terminal.nativeTurnId);
+    const clientOwned = attemptId !== undefined;
     if (terminal.nativeTurnId === this.#activeTurnId) this.#activeTurnId = undefined;
-    if (clientOwned) {
+    if (terminal.nativeTurnId === this.#clientOwnedTurnId) {
       this.#clientOwnedTurnId = undefined;
       this.#clientOwnedAttemptId = undefined;
     }
@@ -848,6 +849,17 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
 
   waitForExit(): Promise<StructuredProviderProcessExit> {
     return this.exit;
+  }
+
+  async cancelTurn(attemptId: string): Promise<"requested" | "not-active" | "unknown"> {
+    if (this.#clientOwnedAttemptId !== attemptId || this.#clientOwnedTurnId === undefined) {
+      return this.#submissionPending ? "unknown" : "not-active";
+    }
+    const result = await this.runtime.interruptTurn({
+      conversationId: this.conversationId,
+      turnId: this.#clientOwnedTurnId
+    });
+    return result === "interrupted" ? "requested" : result;
   }
 
   terminate(signal: NodeJS.Signals): void {
@@ -953,6 +965,12 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
       "Claude stream-json does not expose an exact native Turn identity for steering.",
       turn.attemptId
     );
+  }
+
+  async cancelTurn(attemptId: string): Promise<"requested" | "not-active" | "unknown"> {
+    if (this.#activeAttemptId !== attemptId) return "not-active";
+    terminateProcessGroup(this.child, "SIGTERM");
+    return "requested";
   }
 
   waitForExit(): Promise<StructuredProviderProcessExit> {

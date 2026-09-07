@@ -506,7 +506,7 @@ export const INTERACTION_POLICIES: readonly InteractionPolicy[] = Object.freeze(
             }
           }
         : command === "update"
-        ? { trailingOptions: { "--summary": "value" as const } }
+        ? { trailingOptions: { "--summary": "value" as const, "--artifact-ref": "value" as const } }
         : command === "dispatch"
           ? { trailingOptions: { "--input": "value" as const } }
           : command === "cleanup"

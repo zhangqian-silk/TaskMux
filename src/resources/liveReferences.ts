@@ -8,7 +8,12 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -288,7 +293,7 @@ function readActiveReleaseClaims(home: string): ClaimReadResult {
 }
 
 /**
- * Read Session owner records (`runtime/session-owners/<runtimeGenerationId>.json`). A
+ * Read Session owner records (`runtime/session-owners/<pid-startIdentity>.json`). A
  * record whose Provider root is physically alive with a matching start
  * identity protects its runtime root. A dead PID is stale (reconciliation
  * removes those records); an identity conflict or unreadable record fails
@@ -319,7 +324,6 @@ function readSessionOwnerClaims(home: string): ClaimReadResult {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     const path = join(directory, entry.name);
     let record: {
-      runtimeGenerationId?: unknown;
       runtimeRoot?: unknown;
       providerRoot?: { pid?: unknown; startIdentity?: unknown };
     };
@@ -359,7 +363,7 @@ function readSessionOwnerClaims(home: string): ClaimReadResult {
     if (typeof record.runtimeRoot === "string" && record.runtimeRoot.length > 0) {
       claims.push({
         path: resolve(record.runtimeRoot),
-        token: `session-owner:${typeof record.runtimeGenerationId === "string" ? record.runtimeGenerationId : entry.name}`
+        token: `session-owner:${pid}-${startIdentity}`
       });
     }
   }

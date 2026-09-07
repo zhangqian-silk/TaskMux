@@ -184,7 +184,7 @@ function updateAgent(args: string[], store: AgentCommandStore): string {
     if (liveSession !== null && !parsed.has(LIVE_SESSION_ACKNOWLEDGEMENT_OPTION)) {
       throw usageError(
         `${describeReference(liveSession)} runs a live native session (${liveSession.status}) on `
-        + `Agent ${id}, so this change applies to its next Host activation instead of the `
+        + `Agent ${id}, so this change applies to its next Host process instead of the `
         + "running one.\n"
         + `Re-run with ${LIVE_SESSION_ACKNOWLEDGEMENT_OPTION} to record the change and keep that `
         + "session.\n"

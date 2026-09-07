@@ -121,7 +121,6 @@ export const BUILTIN_AGENT_DRIVERS: readonly AgentDriver[] = Object.freeze([
         terminal: isTerminalHook(hookEventName),
         ...(hookEventName !== "SubagentStop" ? {} : {
           continuationId: subagentId(payload),
-          continuationGeneration: continuationGeneration(payload)
         })
       }),
       observer: Object.freeze({
@@ -188,7 +187,6 @@ export const BUILTIN_AGENT_DRIVERS: readonly AgentDriver[] = Object.freeze([
         terminal: isTerminalHook(hookEventName),
         ...(hookEventName !== "SubagentStop" ? {} : {
           continuationId: subagentId(payload),
-          continuationGeneration: continuationGeneration(payload)
         })
       }),
       observer: Object.freeze({
@@ -235,8 +233,7 @@ function mapClaudeLifecycleHook(
         payload.source === "startup"
           ? mapped("session.ready")
           : mapped("session.started"),
-        mapped("conversation.observed", { recoverability: "recoverable" }),
-        mapped("activation.started")
+        mapped("conversation.observed", { recoverability: "recoverable" })
       ];
     case "UserPromptSubmit":
       return mapped("turn.accepted");
@@ -311,7 +308,7 @@ function mapClaudeLifecycleHook(
       // Native CLI exit ends this local Provider attachment, not the
       // resumable Conversation. Durable Session end is an explicit Yui
       // mutation or a Provider fact that the Conversation is unrecoverable.
-      return mapped("activation.ended");
+      return [];
     default:
       throw new Error(`Claude Code Driver does not support Hook event: ${name}.`);
   }
@@ -399,8 +396,7 @@ function mapCodexHook(
     case "SessionStart":
       return [
         mapped("session.started"),
-        mapped("conversation.observed", { recoverability: "recoverable" }),
-        mapped("activation.started")
+        mapped("conversation.observed", { recoverability: "recoverable" })
       ];
     case "UserPromptSubmit":
       return mapped("turn.accepted");
@@ -443,7 +439,7 @@ function mapCodexHook(
     case "Stop":
       return mapped("turn.completed", optionalResultOutput(payload));
     case "SessionEnd":
-      return mapped("activation.ended");
+      return [];
     default:
       throw new Error(`Codex Driver does not support Hook event: ${name}.`);
   }
@@ -467,10 +463,8 @@ function continuationObservation(
   payload: RuntimeObservationPayload
 ): MappedHook {
   const continuationId = subagentId(native);
-  const generation = continuationGeneration(native);
   return mapped(kind, payload, {
     continuationId,
-    continuationGeneration: generation,
     ...(optionalIdentityFrom(native, ["parent_agent_id", "parent_subagent_id"]) === undefined
       ? {}
       : {
@@ -480,13 +474,6 @@ function continuationObservation(
           )
         })
   });
-}
-
-function continuationGeneration(native: Readonly<Record<string, unknown>>): number {
-  return typeof native.generation === "number"
-    && Number.isSafeInteger(native.generation) && native.generation >= 1
-    ? native.generation
-    : 1;
 }
 
 function reportId(payload: Readonly<Record<string, unknown>>): string {

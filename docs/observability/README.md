@@ -148,7 +148,7 @@ Sections:
   coalesced by scheduler single-flight because the Role runtime lifecycle lane
   was busy (Issue 05). The wake stays durable and is retried after the lane
   settles, so a suppression is scheduler backpressure, never a failed Turn.
-- **sessions** — generations, broken/stopped, resets, lifecycle events, stop
+- **sessions** — native Session count, broken/stopped, resets, lifecycle events, stop
   failures.
 - **reviews** — total/completed/failed execution counts. Reviewer prose is not
   parsed into outcome classes.
@@ -159,7 +159,7 @@ Sections:
 - **workItems** — total/completed/retired.
 - **orchestration** — per-Task intent type, Turn/WorkItem counts, full/delta/
   failed Reviews, Integration attempts/failures/repeated
-  identities/evidence reuse, generations before first durable progress,
+  identities/evidence reuse, native Sessions before first durable progress,
   publication-to-completion latency, terminal workspaces, and non-blocking
   cost advisories. `--since`/`--until` filters every underlying record family.
 - **storage** — state.json/runtime/deployments byte sizes.
@@ -177,7 +177,7 @@ legal action. Current
 advisories cover direct-path protocol overhead, initial integrated WorkItem
 fan-out, repeated exact Integration checks,
 same-Reviewer/same-candidate full Review repetition, and
-the two-generation first-progress advisory threshold. No Review advisory is a
+the two-Session first-progress advisory threshold. No Review advisory is a
 budget or blocks a legal action; the first-progress threshold never chooses
 Agent recovery.
 

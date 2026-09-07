@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 
-import { YUI_VERSION } from "../version.js";
+import { codexClientInitialization } from "../runtime/codexAppServerRuntime.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -82,13 +82,7 @@ class CodexNamingClient {
     ));
     try {
       await withTimeout(
-        client.request("initialize", {
-          clientInfo: { name: "yui", title: "Yui", version: YUI_VERSION },
-          capabilities: {
-            experimentalApi: true,
-            requestAttestation: false
-          }
-        }),
+        client.request("initialize", codexClientInitialization()),
         timeoutMs,
         "Timed out initializing Codex App Server for thread naming."
       );

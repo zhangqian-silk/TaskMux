@@ -20,7 +20,9 @@ Task、WorkItem、Brief、Role、Message 与 Turn 继续使用原 `TaskStore`。
   接受记录选择的 Candidate 和说明，撤回接受保留历史。
 - Role 当前选择与 Turn effective 分开。当前 Worker 改为 B 后，原 A 的
   Assignment、结果来源和合法执行权限保留；下一次明确执行使用 B。
-  Leader 换绑撤销旧管理 caller key，A→B→A 不复活旧入口，不重建 Worker。
+  Leader 换绑撤销旧管理入口，A→B→A 不复活旧入口，不重建 Worker。
+  同步 T04 后使用实际 native Session 身份及绑定事件中的明确撤权事实，
+  不恢复已移除的 caller key／启动 generation。
 - 失败沿 Worker／Reviewer→Leader、Leader→Operator 路由。修正可恢复
   Leader 失败、投递失败和仅有 terminal 的失败遗漏；复用原事件引用，
   不重复投递 structured error 与其 terminal，也不建立备用 Operator。
@@ -62,24 +64,25 @@ Role／Turn。消息正文、计数和引用先经过同一过滤；message list
 
 ## 存储采用
 
-当前源码基线已经包含 storage version 3（包括已发布的 exact-attempt
-迁移）；首轮追加 3→4 的 `task-facts-and-explicit-acceptance`，
-按用户后续简化决定再追加 4→5 的 `event-owned-edit-history`。
+原开发基线为 storage version 3。同步远端 `129801f` 后，原样保留其
+迁移 1–6，本地未发布迁移顺延为 6→7 的 `task-facts-and-explicit-acceptance`
+和 7→8 的 `event-owned-edit-history`；目标发布标记为 0.15.8。
 最低支持版本仍为 1。普通 Store 只接受当前合同，不解释旧状态。
 
 迁移保留原 Task 退休时间、操作者、说明和隔离含义；WorkItem 旧执行状态、
 诊断和结束时间保留为历史证据，completed 映为 accepted，其他未退休工作
 映为 open。Candidate、Turn、Message、Review 原文及来源不被重写。
-4→5 将 Task `outcomeHistory` 和 WorkItem `acceptanceHistory` 原文转存为
+7→8 将 Task `outcomeHistory` 和 WorkItem `acceptanceHistory` 原文转存为
 每个受影响 Task 一条 `history.imported` 事件，再删除重复数组及 Brief
 专用 revision。导入事件标注源存储版本，不伪称当时发生的新业务操作，
 不派发工作；旧事件原文不变，事件序号从既有高水位继续。
 
 采用走现有 `upgrade --dry-run`／`upgrade` 或 update 的受控握手，保持停写，
 保留升级器生成的备份。未改已有迁移、最低版本或 update 握手。旧 binary
-不能读取 version 5；切回源码不降 schema，恢复备份也不撤销外部效果。
-本批并行 Task 如追加迁移，合并时必须顺序协调；version 5 是本候选的实际
-迁移编号，不是预占号或跨 Task 账本。
+不能读取 version 8；切回源码不降 schema，恢复备份也不撤销外部效果。
+本分支早期隔离试验 Home 的迁移 4/5 与远端正式链不同，不能仅按数字
+升级或重写账本；保留其匹配 binary 和原数据，必要时明确导出成果。
+当前合并候选验证的是远端正式链 6→8，不加入分叉账本兼容或启发式修复。
 
 ## 验证证据与边界
 
@@ -94,7 +97,7 @@ Role／Turn。消息正文、计数和引用先经过同一过滤；message list
   相同范围的消息正文／计数／引用、错误 identity、可选失败／超时及真实 CLI。
   Capability 真实认证入口可读取核心，附 unavailable；跨 Task inspect 拒绝。
   不完整身份测试先复现错误放行，修正后通过。
-- Role：当前 B／effective A、显式模板重应用、旧 Leader key 撤销；实际 Job
+- Role（首轮）：当前 B／effective A、显式模板重应用、旧 Leader key 撤销；实际 Job
   ingress、去重、取消和启动前鉴权；完整 workspace prepare 不退休仍工作的 A；
   active／accepted A 不隐式启动 B 或增加 Turn。修正前复现 Job 拒绝及 B 被 A 覆盖。
 - 通知：调用实际 `saveRoleTurnDeliveryFailure`、`observeRuntimeObservation`、
@@ -145,3 +148,46 @@ Context 专项验证定向读取不访问无关记录、inspect 等价、固定�
 证据，未发现新增实质问题。build、lint、core 82/82（约 4.23 秒）和
 手册生成／契约检查通过；临时脚本交付前移除。该补充是用户直接要求的
 本地简化，不冒充先前 Task-final Review 已覆盖新提交，也未更新共享实例。
+
+## 同步 T04／T05 后的集成
+
+远端 `129801f` 包含 Session 身份调整、T05 `36bf511`（PR #314）和
+T04 Endpoint（PR #315）。当前 Task 分支以 merge 保留原 T03 提交，
+没有重置 Task 的起始基线、更新远端分支或升级共享 Home。
+
+- 接受 T04 的实际 native Session 身份和显式 synthesis 来源选择。
+  Worker／Reviewer current B、effective A 的命令、Job 与进度 Hook 仍识别 A；
+  Leader 换绑事件明确撤销原 native Session 的管理入口，旧排队 Job 同样拒绝。
+  撤权不伪造 Session ended，不阻止原执行结果归档，也不增加凭据／租约。
+- `task work update ... done --artifact-ref <artifact-id>` 将 T05 固定引用
+  保存进 Candidate；接受时再次核对同一 Task 的不可变 Artifact。
+  `task complete ... --artifact-ref <artifact-id>` 同样解析保存的固定结果。
+  普通 Reference Artifact 不可充当固定结果；既有 HTTP(S) 完成引用仍只代表
+  参考链接，不被升级为固定版本。
+- Context read／inspect 显示 Artifact、EnvironmentPreparation、ManagedWorkspace
+  和 ChangeSet。Worker／Reviewer 仅获得其授权 Candidate 的固定 Artifact，
+  快照保存对应内容和来源；清理工作区后仍可读取。
+- Git 复用原所有者：Task main 是独立 clone，WorkItem 是 Task 内的隔离
+  worktree；固定 Candidate 经 capture 形成 ChangeSet，再由 Integration
+  推进 Task main。具体 Git 写入仍保留目标 commit 比较，不能以后写覆盖
+  的 Brief 语义取代。Project 参考仓库及远端不会随本地集成隐式变化。
+
+隔离证据已通过：远端 schema6→8 且前六项账本／资源／Session 原文保持；
+固定 Artifact→Candidate→接受→完成→重开 Store 后读取，缺失／跨 Task／
+Reference 拒绝；native 身份与 A→B→A 撤权；受管 Context 授权；真实
+Git clone/worktree/capture/Integration/cleanup 后保留 Task、WorkItem、
+ChangeSet。build、lint、core 81/81（约 4.39 秒）通过；用例数变化来自
+远端移除 generation 的既有调整，本次没有增加永久异常矩阵。
+
+独立审查发现普通多 WorkItem 的 `candidate-1` 会发生 Context 引用碰撞；
+现已统一为 `work-item-N/candidate-M`，read、定向 inspect 和最终 Review
+快照使用同一作用域，不改变 Candidate 的持久编号。两工作项同名候选
+隔离证据及独立复核通过，无剩余实质发现。五份临时专项脚本按 Project
+Skill 清理，最终核心仍为 81/81。
+
+要求判断：T03 的任务事实、明确验收、受权 Context 及 Git 工作区主路径
+已接通。T05 的通用 environment prepare/adopt/release 已存在且可读，
+但采用的 `environmentRef` 尚未作为 T04 原生 Session／Turn 的实际启动
+环境选择；保留原 managed workspace 启动路径，不能宣称空环境／任意
+本地环境已端到端驱动原生 Agent。真实 Provider、付费／生产资源 E2E
+也未运行。这些边界不通过新增工作流或隐式切换 cwd 掩盖。

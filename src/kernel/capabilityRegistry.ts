@@ -59,7 +59,7 @@ export type CapabilityImplementation = Readonly<{
 export type CapabilityVisibility = Readonly<{ taskIds: readonly string[]; projectIds: readonly string[] }>;
 type Authorize = (context: TrustedCallContext, descriptor?: CapabilityDescriptor, input?: unknown) => CapabilityVisibility;
 const effectRank = { query: 0, "local-mutation": 1, "external-operation": 2 };
-const reserved = new Set(["yui", "task", "config", "job", "resource", "plugin", "runtime", "grant", "capability"]);
+const reserved = new Set(["yui", "task", "config", "job", "resource", "plugin", "runtime", "grant", "capability", "artifact", "environment", "project"]);
 
 /** One rebuildable descriptor view over the composition root's existing Host.
  * Only the trusted root owns this object. Extensions receive a bound invocation

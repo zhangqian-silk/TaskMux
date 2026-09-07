@@ -8,9 +8,7 @@ export type ProviderContinuationIdentity = Readonly<{
   providerNamespace: string;
   accountScope: string;
   conversationId: string;
-  activationId: string;
   continuationId: string;
-  generation: number;
 }>;
 
 export type ProviderReport = Readonly<{
@@ -60,9 +58,7 @@ export function providerContinuationKey(identity: ProviderContinuationIdentity):
     normalized.providerNamespace,
     normalized.accountScope,
     normalized.conversationId,
-    normalized.activationId,
-    normalized.continuationId,
-    normalized.generation
+    normalized.continuationId
   ].join("\u0000");
 }
 
@@ -291,11 +287,7 @@ export function validateProviderContinuationIdentity(
   text(value.providerNamespace, "Provider namespace");
   text(value.accountScope, "Provider account scope");
   text(value.conversationId, "Provider Conversation id");
-  text(value.activationId, "Provider Activation id");
   text(value.continuationId, "Provider Continuation id");
-  if (!Number.isSafeInteger(value.generation) || value.generation < 1) {
-    throw new Error("Provider Continuation generation is invalid.");
-  }
   return value;
 }
 

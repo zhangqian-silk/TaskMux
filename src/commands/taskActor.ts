@@ -2,7 +2,7 @@ import type { TaskCompletedBy } from "../task/task.js";
 import { usageError } from "../errors/cliError.js";
 import type { DurableJobCaller } from "../controller/jobControl.js";
 import {
-  MANAGED_CALLER_KEY_ENV,
+  MANAGED_NATIVE_SESSION_ENV,
   currentManagedRuntime,
   type ManagedCallerStore
 } from "../runtime/managedCaller.js";
@@ -33,7 +33,7 @@ export function taskActor(
   if (
     env.YUI_ROLE !== undefined
     || env.YUI_AGENT_ID !== undefined
-    || env[MANAGED_CALLER_KEY_ENV] !== undefined
+    || env[MANAGED_NATIVE_SESSION_ENV] !== undefined
   ) {
     throw usageError("Managed Agent identity is incomplete; refusing to infer user authority.");
   }
@@ -81,7 +81,7 @@ export function projectActor(environment: NodeJS.ProcessEnv | undefined): Projec
   if (
     env.YUI_ROLE !== undefined
     || env.YUI_AGENT_ID !== undefined
-    || env[MANAGED_CALLER_KEY_ENV] !== undefined
+    || env[MANAGED_NATIVE_SESSION_ENV] !== undefined
   ) {
     throw usageError("Managed Agent identity is incomplete; refusing to infer user authority.");
   }
@@ -89,25 +89,9 @@ export function projectActor(environment: NodeJS.ProcessEnv | undefined): Projec
 }
 
 /**
- * rr8: Resolve the caller identity for a `job.start`/`job.cancel` request from
- * the managed Session environment. The Controller verifies the Agent Session
- * and its scope; Role does not narrow Task control authority.
- *
- * The identity is Controller-verified rather than self-reported. A managed
- * Task Session reports only its immutable self-identity (Task, Role, caller
- * key); the Controller resolves the current Turn from durable state, so no
- * Turn is ever carried across Turns in a long-lived process environment.
- *
- * rr13: A managed Task Session also carries `callerKey` — the
- * `YUI_JOB_CALLER_KEY` injected at its native Session launch. The Controller
- * hashes it and compares against the durable `jobCallerKeyHashes` map, so a
- * client that reads durable state cannot replay the caller. A `user`-scope
- * caller is rejected outright for job.start/job.cancel (fail-closed); a
- * managed global Agent carries its own durable Session identity.
- *
- * A managed Task Session may only start jobs for its own Task. An incomplete
- * managed identity (role/agent/caller-key vars without a scope) is rejected
- * rather than silently downgraded to user authority.
+ * Resolve the caller's Task, Role and native Session identity. The Controller
+ * verifies it against durable state and supplies the current Turn. A Task
+ * caller cannot control another Task; an incomplete identity is not a user.
  */
 export function resolveJobCaller(
   environment: NodeJS.ProcessEnv | undefined,
@@ -121,17 +105,14 @@ export function resolveJobCaller(
       );
     }
     const role = env.YUI_ROLE;
-    // rr13: Carry the per-Session caller key so the Controller can verify the
-    // channel binding. Absent on a managed Session = fail-closed at the
-    // Controller boundary.
-    const callerKey = env[MANAGED_CALLER_KEY_ENV];
+    const nativeSessionId = env.CODEX_THREAD_ID ?? env.YUI_NATIVE_SESSION_ID;
     // The Turn is deliberately absent: the Controller reads the current Turn
     // for this Task Role from durable state when it authorizes the request.
     return {
       scope: "task",
       taskId,
       role,
-      ...(callerKey === undefined ? {} : { callerKey })
+      ...(nativeSessionId === undefined ? {} : { nativeSessionId })
     };
   }
   if (env.YUI_SESSION_SCOPE === "global") {
@@ -140,14 +121,13 @@ export function resolveJobCaller(
       role: env.YUI_ROLE,
       agentId: env.YUI_AGENT_ID,
       adapterId: env.YUI_ADAPTER_ID,
-      runtimeGenerationId: env.YUI_RUNTIME_GENERATION_ID,
-      nativeSessionId: env.YUI_NATIVE_SESSION_ID
+      nativeSessionId: env.CODEX_THREAD_ID ?? env.YUI_NATIVE_SESSION_ID
     };
   }
   if (
     env.YUI_ROLE !== undefined
     || env.YUI_AGENT_ID !== undefined
-    || env[MANAGED_CALLER_KEY_ENV] !== undefined
+    || env[MANAGED_NATIVE_SESSION_ENV] !== undefined
   ) {
     throw usageError("Managed Agent identity is incomplete; refusing to infer user authority.");
   }

@@ -84,7 +84,7 @@ export class ResourceRegistrar {
   #registerTaskRuntimeIsolation(descriptor: TaskRuntimeIsolationDescriptor): void {
     const owner = ownerFromManagedWorkspace(this.#home, descriptor.workspace.owner);
     this.#save([
-      descriptor.roots.generation,
+      descriptor.roots.runtime,
       descriptor.roots.data,
       descriptor.roots.cache,
       descriptor.roots.temporary

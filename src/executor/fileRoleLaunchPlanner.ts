@@ -1,7 +1,7 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmodSync, realpathSync } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
@@ -30,7 +30,6 @@ import {
   materializeSessionBootstrap,
   type SessionEntryPoint
 } from "../context/sessionBootstrapManifest.js";
-import { prefixYuiTitleInput } from "../turn/turnIdentity.js";
 import { resolveAgentAdapter } from "./agentAdapter.js";
 import type { ClaudeAgentConfig, RoleAgentConfig } from "./agentAdapter.js";
 import type { PlannedRoleSession, RoleLaunchPlanner } from "./executorRegistry.js";
@@ -39,7 +38,6 @@ import type {
   AgentEnvironmentRefreshPort
 } from "../runtime/ports.js";
 import { resolveTaskRoleSessionTitle } from "../runtime/sessionTitle.js";
-import { nativeSessionIdForLaunch } from "../runtime/preallocatedNativeSession.js";
 import {
   type ManagedWorkspace
 } from "../worktree/managedWorkspace.js";
@@ -66,14 +64,17 @@ import {
   builtinDriverIdForAdapter
 } from "../runtime/builtinAgentDrivers.js";
 import { managedRuntimeAdmission } from "../runtime/agentDriver.js";
+import {
+  builtinAgentEndpointImplementation,
+  requireBuiltinAgentEndpointImplementation
+} from "../runtime/agentEndpointIdentity.js";
 import type {
   AgentHostProviderControl,
   ProviderOwnedTurn
 } from "../runtime/launchBroker.js";
 import type { ProviderAuthorityFence } from "../runtime/providerAuthorityFence.js";
 import {
-  assertProviderConversationReplaceable,
-  currentProviderActivation
+  assertProviderConversationReplaceable
 } from "../runtime/providerRuntimeIdentity.js";
 import {
   assertCodexLaunchOverridesAvailable,
@@ -94,12 +95,10 @@ export type GlobalRoleLaunchPlanInput = Readonly<{
   effective?: EffectiveLaunchSnapshot;
   mode: RoleSessionLaunchMode;
   nativeSessionId?: string;
-  runtimeGenerationId?: string;
   environment?: Readonly<Record<string, string>>;
 }>;
 
 type TaskRoleLaunchPlanInput = Parameters<RoleLaunchPlanner["plan"]>[0] & Readonly<{
-  runtimeGenerationId?: string;
   environment?: Readonly<Record<string, string>>;
 }>;
 
@@ -159,22 +158,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       refresh.nativeNames,
       refresh.nativeSources
     );
-  }
-
-  /**
-   * Commit the caller key for a task Session only after the runtime host has
-   * confirmed that it created a new native process.  An ensure/resume request
-   * that reuses a live host must keep the old durable hash because its process
-   * still carries the old plaintext key.
-   */
-  commitTaskCallerKey(input: Readonly<{
-    taskId: string;
-    roleName: string;
-    agentId: string;
-    callerKey: string;
-  }>): void {
-    const hash = createHash("sha256").update(input.callerKey).digest("hex");
-    this.store.setJobCallerKeyHash(input.taskId, input.roleName, input.agentId, hash);
   }
 
   plan(input: TaskRoleLaunchPlanInput): PlannedRoleSession {
@@ -348,7 +331,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       adapterId: string;
       mode: RoleSessionLaunchMode;
       nativeSessionId?: string;
-      runtimeGenerationId?: string;
       turnId?: string;
       runtimeIsolation?: TaskRuntimeIsolationDescriptor;
       environment?: Readonly<Record<string, string>>;
@@ -363,8 +345,14 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const launchRole = effectiveRoleForLaunch(role, effective);
     const binding = activeRoleAgentBinding(launchRole);
     if (binding.agentId !== input.agentId || binding.adapterId !== input.adapterId) {
-      throw new Error(`Role runtime generation identity changed: ${role.name}.`);
+      throw new Error(`Role runtime identity changed: ${role.name}.`);
     }
+    const existingSession = owner.scope === "task"
+      ? this.store.getTaskRoleSessionSet(owner.taskId, role.name)?.sessions[input.agentId]
+      : this.store.getGlobalRoleSessionSet(role.name)?.sessions[input.agentId];
+    const endpointImplementation = input.mode === "resume"
+      ? requireBuiltinAgentEndpointImplementation(binding.adapterId, existingSession!.endpointImplementation)
+      : builtinAgentEndpointImplementation(binding.adapterId);
     const configured = this.store.getConfiguredAgent(input.agentId);
     if (configured === null) throw new Error(`Configured Agent not found: ${input.agentId}.`);
     if (configured.adapterId !== binding.adapterId) {
@@ -402,12 +390,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const runtimeIsolation = input.runtimeIsolation === undefined
       ? undefined
       : parseTaskRuntimeIsolationDescriptor(JSON.stringify(input.runtimeIsolation));
-    if (runtimeIsolation !== undefined && (
-      owner.scope !== "task"
-      || runtimeIsolation.taskId !== owner.taskId
-      || runtimeIsolation.workspace.root !== effectiveWorkspace
-      || runtimeIsolation.generation.runtimeGenerationId !== input.runtimeGenerationId
-    )) {
+    if (runtimeIsolation !== undefined && (owner.scope !== "task" || runtimeIsolation.taskId !== owner.taskId || runtimeIsolation.workspace.root !== effectiveWorkspace)) {
       throw new Error("Role launch does not match its Task runtime isolation descriptor.");
     }
     Object.assign(
@@ -498,25 +481,10 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ? "new"
       : "resume";
     const managedControl = owner.scope === "task" && input.turnId !== undefined;
-    const managedProviderEnvironment: Readonly<Record<string, string>> = managedControl
-      && configured.adapterId === "codex"
-      ? {
-          // Managed Codex Turns are non-interactive. Use the Codex execution
-          // identity for provider requests while clientInfo still identifies Yui.
-          CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "codex_exec"
-        }
-      : {};
     const preallocatedNativeSessionId = binding.adapterId === "claude"
       && resumeNativeSessionId === undefined
       ? requireText(
-          input.runtimeGenerationId === undefined
-            ? this.#createNativeSessionId()
-            : nativeSessionIdForLaunch(
-                this.home,
-                input.runtimeGenerationId,
-                input.agentId,
-                input.adapterId
-              ),
+          this.#createNativeSessionId(),
           "Native session id"
         )
       : resumeNativeSessionId;
@@ -596,14 +564,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       throw new Error(`Managed Claude Turn is no longer active: ${input.turnId}.`);
     }
 
-    // Generate a candidate per-Provider-process DurableJob caller key for
-    // every task-scope launch. A reused live Conversation keeps the key that
-    // its process inherited; a new Host or a Conversation replacement commits
-    // the fresh candidate only after Provider dispatch is observed.
-    let jobCallerKey: string | undefined;
-    if (owner.scope === "task" && (input.mode === "new" || input.mode === "resume")) {
-      jobCallerKey = randomBytes(32).toString("hex");
-    }
     // Session lifecycle and Turn submission are separate atomic operations.
     // Planning only starts or restores the exact native Session; delivery
     // submits the Turn input after that Session fact is durable.
@@ -614,7 +574,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ? this.#providerAuthorityForLaunch(
           owner.taskId,
           role.name,
-          input.runtimeGenerationId,
           input.mode
         )
       : undefined;
@@ -631,6 +590,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             schemaVersion: 1,
             adapterId: binding.adapterId,
             transport: managedCompiled!.transport,
+            endpointImplementation,
             kind: "restore",
             mode: "resume",
             nativeSessionId: requireText(
@@ -648,6 +608,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             schemaVersion: 1,
             adapterId: binding.adapterId,
             transport: managedCompiled!.transport,
+            endpointImplementation,
             kind: "start",
             mode: "new",
             ...(providerNativeSessionId === undefined
@@ -665,7 +626,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ...(providerControl === undefined ? {} : { providerControl }),
       env: {
         ...launchEnvironment,
-        ...managedProviderEnvironment,
         YUI_HOME: resolve(this.home),
         YUI_SESSION_SCOPE: owner.scope,
         ...(owner.scope === "task" ? { YUI_TASK_ID: owner.taskId } : {}),
@@ -679,7 +639,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         ...(owner.scope === "global" && configured.adapterId === "codex"
           ? { YUI_AGENT_BASE_ARGS: JSON.stringify(configured.baseArgs) }
           : {}),
-        ...(jobCallerKey === undefined ? {} : { YUI_JOB_CALLER_KEY: jobCallerKey }),
         ...(sessionTitle === undefined
           ? {}
           : {
@@ -691,9 +650,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
                   }
                 : {})
             }),
-        ...(input.runtimeGenerationId === undefined
-          ? {}
-          : { YUI_RUNTIME_GENERATION_ID: input.runtimeGenerationId }),
         // No Turn is exported into the Session environment. A native pane
         // outlives its Turn, so a Turn id frozen here would be stale for every
         // later Turn. The Agent Host sets it explicitly per spawned Provider
@@ -733,26 +689,18 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
   #providerAuthorityForLaunch(
     taskId: string,
     roleName: string,
-    runtimeGenerationId: string | undefined,
     mode: "new" | "resume"
   ): ProviderAuthorityFence {
-    const activationId = requireText(runtimeGenerationId, "Managed Provider Activation id");
     const binding = this.store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding;
     if (binding === null || binding === undefined) {
-      return { epoch: 1, owner: "controller", holderId: activationId };
+      return { epoch: 1, owner: "controller", holderId: "controller" };
     }
     if (binding.authority.owner === "controller") {
       if (mode === "new") {
-        const activation = currentProviderActivation(binding);
-        if (activation === null || binding.authority.holderId !== activation.activationId) {
-          throw new Error(`Provider Activation is not exact: ${taskId}/${roleName}.`);
-        }
-        // An actor-requested switch first ends the idle old Activation (+1)
-        // and then binds the replacement Activation (+1).
         return {
-          epoch: binding.authority.epoch + 2,
+          epoch: binding.authority.epoch + 1,
           owner: "controller",
-          holderId: activationId
+          holderId: "controller"
         };
       }
       return {
@@ -768,7 +716,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       return {
         epoch: binding.authority.epoch + 1,
         owner: "controller",
-        holderId: activationId
+        holderId: "controller"
       };
     }
     throw new Error(`Provider writer authority is unknown: ${taskId}/${roleName}.`);

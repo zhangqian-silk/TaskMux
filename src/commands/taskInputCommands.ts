@@ -1,4 +1,9 @@
-import { dataError, roleNotFound, taskNotFound, usageError } from "../errors/cliError.js";
+import {
+  dataError,
+  roleNotFound,
+  taskNotFound,
+  usageError
+} from "../errors/cliError.js";
 import { createTaskEvent, type TaskEventPayload } from "../event/taskEvent.js";
 import {
   activeLiveRoleAgentSession,
@@ -26,15 +31,6 @@ import {
   TURN_RECOVERED_EVENT
 } from "../scheduler/roleTurnStall.js";
 import type { TaskStore } from "../storage/taskStore.js";
-import {
-  hasRuntimeCleanupObligation,
-  isRuntimeLaunchReservation,
-  runtimeLifecycleTarget
-} from "../runtime/lifecycleReservation.js";
-import {
-  isLinuxProcessLive,
-  listOwnedProcessTree
-} from "../runtime/sessionOwnerIdentity.js";
 import type { Task } from "../task/task.js";
 import {
   resolveTaskRecordReference
@@ -375,97 +371,35 @@ function assertInputCancelOrigin(
 }
 
 export function isCurrentGlobalOperator(
-  store: Pick<TaskStore, "getGlobalRole" | "getGlobalRoleSessionSet">
-    & Partial<Pick<TaskStore, "getSessionOwner" | "getWorkMailbox">>,
+  store: Pick<TaskStore, "getGlobalRole" | "getGlobalRoleSessionSet">,
   environment: NodeJS.ProcessEnv
 ): boolean {
   if (
-    environment.YUI_SESSION_SCOPE !== "global"
-    || environment.YUI_ROLE !== "operator"
+    (environment.YUI_SESSION_SCOPE !== undefined && environment.YUI_SESSION_SCOPE !== "global")
+    || (environment.YUI_ROLE !== undefined && environment.YUI_ROLE !== "operator")
     || environment.YUI_TASK_ID !== undefined
   ) return false;
   const role = store.getGlobalRole("operator");
   if (role === null) return false;
-  const agentId = exactIdentity(environment.YUI_AGENT_ID);
-  const adapterId = exactIdentity(environment.YUI_ADAPTER_ID);
-  const runtimeGenerationId = exactIdentity(environment.YUI_RUNTIME_GENERATION_ID);
-  const nativeSessionId = exactIdentity(environment.YUI_NATIVE_SESSION_ID);
   const binding = role.agentBindings[role.activeAgentId];
-  if (agentId === undefined
-    || adapterId === undefined
-    || runtimeGenerationId === undefined
-    || binding === undefined
-    || binding.agentId !== agentId
-    || binding.adapterId !== adapterId) return false;
+  if (binding === undefined) return false;
   const sessions = store.getGlobalRoleSessionSet(role.name);
   const session = activeLiveRoleAgentSession(sessions);
   if (sessions === null || session === null || sessions.activeAgentId !== role.activeAgentId) {
-    // Codex learns its native Session ID only after the first Turn. During
-    // that narrow bootstrap window, authenticate against the durable launch
-    // reservation and its strongly attributed live process owner instead.
-    return nativeSessionId === undefined
-      && binding.adapterId === "codex"
-      && currentProcessBelongsToReservedGlobalLaunch(store, {
-        roleName: role.name,
-        agentId,
-        adapterId,
-        runtimeGenerationId
-      });
+    return false;
   }
-  // A fresh Codex launch discovers its native Session asynchronously. Its
-  // launch envelope therefore cannot carry YUI_NATIVE_SESSION_ID, but the
-  // durable Session still binds that provider identity to the exact launch
-  // generation. Accept that one transport shape only when the current
-  // launch, Agent, and adapter all match; Claude and stale/unknown launches
-  // remain fail-closed on the native identity fence.
-  const nativeSessionMatches = binding !== undefined && (
-    nativeSessionId === session.nativeSessionId
-      || (nativeSessionId === undefined
-        && binding.adapterId === "codex"
-        && session.adapterId === "codex"
-        && session.runtimeGenerationId !== undefined
-        && session.runtimeGenerationId === runtimeGenerationId)
+  // The provider's conversation survives Host restarts and entry-point changes.
+  // Prefer its command-time identity over a launch-time environment snapshot.
+  // A launch reservation alone is not a registered Operator conversation.
+  const nativeSessionId = exactIdentity(
+    binding.adapterId === "codex"
+      ? environment.CODEX_THREAD_ID ?? environment.YUI_NATIVE_SESSION_ID
+      : environment.YUI_NATIVE_SESSION_ID
   );
   return binding.agentId === session.agentId
     && binding.adapterId === session.adapterId
-    && session.agentId === agentId
-    && session.adapterId === adapterId
-    && session.runtimeGenerationId !== undefined
-    && session.runtimeGenerationId === runtimeGenerationId
-    && nativeSessionMatches;
-}
-
-function currentProcessBelongsToReservedGlobalLaunch(
-  store: Partial<Pick<TaskStore, "getSessionOwner" | "getWorkMailbox">>,
-  input: Readonly<{
-    roleName: string;
-    agentId: string;
-    adapterId: string;
-    runtimeGenerationId: string;
-  }>
-): boolean {
-  if (store.getSessionOwner === undefined || store.getWorkMailbox === undefined) return false;
-  const mailbox = store.getWorkMailbox(runtimeLifecycleTarget({
-    scope: "global",
-    roleName: input.roleName
-  }));
-  if (!isRuntimeLaunchReservation(mailbox?.processing, input.runtimeGenerationId)
-    || hasRuntimeCleanupObligation(mailbox)) return false;
-  const owner = store.getSessionOwner(input.runtimeGenerationId);
-  if (owner === null
-    || owner.owner.scope !== "global"
-    || owner.owner.roleName !== input.roleName
-    || owner.agentId !== input.agentId
-    || owner.adapterId !== input.adapterId
-    || owner.runtimeGenerationId !== input.runtimeGenerationId
-    || owner.providerRoot.attribution !== "launch-env"
-    || !isLinuxProcessLive(owner.providerRoot.pid, owner.providerRoot.startIdentity)) {
-    return false;
-  }
-  return listOwnedProcessTree(
-    owner.providerRoot.pid,
-    owner.providerRoot.processGroupId
-  ).some(({ pid }) => pid === process.pid);
+    && nativeSessionId !== undefined
+    && nativeSessionId === session.nativeSessionId;
 }
 
 function inputAnswerer(environment: NodeJS.ProcessEnv | undefined): "user" | "operator" {

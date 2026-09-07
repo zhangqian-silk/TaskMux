@@ -208,6 +208,12 @@ token for fixed-upper-bound event pages; `task context inspect <task-id>
 Reading does not acknowledge delivery. `task next-action` remains a separate
 decision-support query.
 
+Saved T05 artifacts can be attached with `task work update <task>/<work> done
+--summary "..." --artifact-ref <artifact-id>` or `task complete <task>
+--summary "..." --artifact-ref <artifact-id>`. Missing, cross-Task, or mutable
+Reference artifacts cannot be selected as fixed results. Context exposes saved
+artifacts and workspace/resource facts without starting their original Runtime.
+
 Brief edits use `task brief update <task-id>` with only the fields to change.
 The transaction reads the latest record and preserves other fields; the last
 explicit write to the same field wins. Edit events preserve before/after values

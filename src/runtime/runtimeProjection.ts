@@ -34,7 +34,6 @@ export type RuntimeProjection = Readonly<{
   session: "unknown" | "started" | "ready" | "active" | "waiting" | "ended" | "failed";
   turn: "none" | "accepted" | "waiting" | "completed" | "failed" | "cancelled" | "delivery-unknown";
   conversation: "unknown" | "recoverable" | "unrecoverable";
-  activation: "none" | "active" | "ended" | "failed";
   goal: "none" | "active" | "paused" | "blocked" | "usage-limited" | "budget-limited" | "complete";
   continuations: Readonly<Record<string, Readonly<{
     execution: "active" | "quiescent" | "unknown";
@@ -120,7 +119,6 @@ export function createRuntimeProjection(
     session: "unknown",
     turn: "none",
     conversation: "unknown",
-    activation: "none",
     goal: "none",
     continuations: Object.freeze({}),
     runActivity: "starting",
@@ -177,7 +175,6 @@ export function projectRuntimeObservation(
       return next(current, {
         session: "started",
         conversation: "recoverable",
-        activation: "active",
         stateSince: at
       });
     case "session.ready":
@@ -185,7 +182,6 @@ export function projectRuntimeObservation(
     case "session.ended":
       return next(current, {
         session: "ended",
-        activation: "ended",
         turn: terminalTurn(current.turn),
         // A parent provider Session ending is independent from native child
         // operations already observed under the Turn. Keep those children
@@ -197,13 +193,13 @@ export function projectRuntimeObservation(
     case "session.failed":
       return next(current, {
         session: "failed",
-        activation: "failed",
         turn: current.turn === "none" ? "failed" : terminalTurn(current.turn, "failed"),
         operations: activeSubagentOperations(current.operations),
         stateSince: at
       });
     case "turn.accepted":
     case "input.accepted":
+      if (event.fence.receiptId?.startsWith("turn-input:") === true) return current;
       return withActivity(next(current, {
         session: "active",
         turn: "accepted",
@@ -316,12 +312,6 @@ export function projectRuntimeObservation(
           ? "unrecoverable"
           : event.payload.recoverability === "recoverable" ? "recoverable" : "unknown"
       });
-    case "activation.started":
-      return next(current, { activation: "active", stateSince: at });
-    case "activation.ended":
-      return next(current, { activation: "ended", stateSince: at });
-    case "activation.failed":
-      return next(current, { activation: "failed", stateSince: at });
     case "goal.updated":
       return next(current, { goal: event.payload.goalStatus!, stateSince: at });
     case "goal.cleared":
@@ -330,9 +320,7 @@ export function projectRuntimeObservation(
     case "continuation.reported":
     case "continuation.settled": {
       const id = [
-        event.fence.activationId,
-        event.fence.continuationId,
-        event.fence.continuationGeneration
+        event.fence.continuationId
       ].join("/");
       const existing = current.continuations[id];
       if (event.kind === "continuation.reported") {
@@ -389,6 +377,7 @@ export function projectRuntimeObservation(
       });
     }
     case "input.delivery-unknown":
+      if (event.fence.receiptId?.startsWith("turn-input:") === true) return current;
       return next(current, { turn: "delivery-unknown", stateSince: at });
     case "native-work.snapshot":
       return next(current, {});
@@ -618,7 +607,7 @@ function next(
       || copy.session === "ended"
       || copy.session === "failed"
     ? "unobservable"
-    : (copy.activation !== "active" && waitingNative.length > 0)
+    : (["unknown", "ended", "failed"].includes(copy.session) && waitingNative.length > 0)
       ? "reconciling"
       : "healthy";
   const runActivity: RuntimeProjection["runActivity"] = copy.turn === "accepted"

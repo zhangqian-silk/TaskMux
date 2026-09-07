@@ -1,6 +1,11 @@
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import {
+  basename,
+  dirname,
+  join,
+  resolve
+} from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { ConfiguredAgent } from "../agent/agent.js";
 import type { TaskBrief } from "../brief/taskBrief.js";
@@ -71,6 +76,7 @@ import type { LeaderFailure } from "../scheduler/leaderFailure.js";
 import type { PendingWakeup } from "../scheduler/pendingWakeup.js";
 import type { TaskWake } from "../scheduler/taskWake.js";
 import type { Task } from "../task/task.js";
+import type { Artifact, LocalResource, EnvironmentPreparation } from "../resources/projectResource.js";
 import type { NextActionFacts } from "../task/nextAction.js";
 import type { CompletionReadinessFacts } from "../task/completionReadiness.js";
 import { validateTaskRecordReference } from "../task/taskRecordReference.js";
@@ -86,7 +92,7 @@ import {
 export const CURRENT_CONFIG_SCHEMA_VERSION = 6 as const;
 /** Current SQLite payload-family versions owned by this storage boundary. */
 export const CURRENT_CONFIGURED_AGENT_SCHEMA_VERSION = 2 as const;
-export const CURRENT_PROJECT_SCHEMA_VERSION = 5 as const;
+export const CURRENT_PROJECT_SCHEMA_VERSION = 6 as const;
 export const CURRENT_AGENT_PROFILE_SCHEMA_VERSION = 3 as const;
 export const CURRENT_GLOBAL_ROLE_SCHEMA_VERSION = 3 as const;
 export const CURRENT_GLOBAL_ROLE_SESSION_SET_SCHEMA_VERSION = 5 as const;
@@ -155,7 +161,7 @@ export type YuiConfig = Readonly<{
   tmuxHistoryLimit?: number;
   /** Whether optional diagnostic telemetry is active. */
   telemetryEnabled?: boolean;
-  /** Terminal Turn/generation progress rows retained after prune. */
+  /** Terminal Turn progress rows retained after prune. */
   telemetryTerminalKeep?: number;
   /** Hard cap of progress rows per Turn while it is still active. */
   telemetryTurnCap?: number;
@@ -207,6 +213,15 @@ export const CURRENT_TASK_ROLE_SESSION_SET_SCHEMA_VERSION = 12 as const;
 export const CURRENT_TURN_SCHEMA_VERSION = 5 as const;
 export const CURRENT_INTEGRATION_QUEUE_SCHEMA_VERSION = 1 as const;
 export type TaskStore = {
+  saveArtifact(artifact: Artifact): void;
+  getArtifact(taskId: string, artifactId: string): Artifact | null;
+  listArtifacts(taskId: string): Artifact[];
+  saveLocalResource(resource: LocalResource): void;
+  getLocalResource(resourceId: string): LocalResource | null;
+  listLocalResources(): LocalResource[];
+  saveEnvironmentPreparation(preparation: EnvironmentPreparation): void;
+  getEnvironmentPreparation(taskId: string, preparationId: string): EnvironmentPreparation | null;
+  listEnvironmentPreparations(taskId: string): EnvironmentPreparation[];
   rootDirectory(): string;
   transaction<T>(execute: (store: TaskStore) => T): T;
   /**
@@ -327,20 +342,16 @@ export type TaskStore = {
   saveRoleSessionSet(sessions: TaskRoleSessionSet): void;
   saveTaskRoleSessionSet(sessions: TaskRoleSessionSet): void;
   getRoleSession(taskId: string, roleName: string): RoleAgentSession | null;
-  /** rr13: Look up the durable hash for a Session's job caller key. */
-  getJobCallerKeyHash(taskId: string, roleName: string, agentId: string): string | null;
-  /** rr13: Persist the hash of a newly launched Session's job caller key. */
-  setJobCallerKeyHash(taskId: string, roleName: string, agentId: string, hash: string): void;
-  /** Issue 03: Persist one runtime generation's exact physical owner identity. */
+  /** Issue 03: Persist one runtime's exact physical owner identity. */
   saveSessionOwner(identity: SessionOwnerIdentity): void;
-  /** Issue 03: Look up one owner record by runtime generation id. */
-  getSessionOwner(runtimeGenerationId: string): SessionOwnerIdentity | null;
+  /** Issue 03: Look up one owner record by runtime id. */
+  getSessionOwner(processKey: string): SessionOwnerIdentity | null;
   /** Issue 03: Enumerate every persisted owner record. */
   listSessionOwners(): SessionOwnerIdentity[];
   /** Issue 03: Enumerate owner records for one Task/global Role. */
   listSessionOwnersForOwner(owner: RuntimeOwner): SessionOwnerIdentity[];
   /** Issue 03: Remove a record whose physical resources were proven absent. */
-  removeSessionOwner(runtimeGenerationId: string): void;
+  removeSessionOwner(processKey: string): void;
   nextWorkItemId(taskId: string): string;
   getWorkItem(taskId: string, workItemId: string): WorkItem | null;
   listWorkItems(taskId: string): WorkItem[];

@@ -97,7 +97,7 @@ export type TaskObservabilityProjection = Readonly<{
   workItems: readonly WorkItemObservabilityProjection[];
   cost: TaskCostProjection;
   context: TaskContextProjection;
-  /** Per-generation read-only token metrics; never an aggregate decision input. */
+  /** Per-Session read-only token metrics; never an aggregate decision input. */
   sessionTokens: readonly TaskSessionTokenProjection[];
 }>;
 

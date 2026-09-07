@@ -531,7 +531,7 @@ function projectTaskRoleRuntime(
   roleName: string,
   now: Date
 ): TaskRoleRuntimeStatus["runtime"] {
-  if (run === null || session?.runtimeGenerationId === undefined) return null;
+  if (run === null || session === null) return null;
   let driverId: string;
   try {
     driverId = builtinDriverIdForAdapter(run.effective.adapterId);
@@ -544,7 +544,6 @@ function projectTaskRoleRuntime(
     turnId: run.id,
     agentId: run.effective.agentId,
     driverId,
-    runtimeGenerationId: session.runtimeGenerationId,
     nativeSessionId: session.nativeSessionId,
     nativeTurnId: runtimeNativeTurnId(
       events,
@@ -554,7 +553,6 @@ function projectTaskRoleRuntime(
         turnId: run.id,
         agentId: run.effective.agentId,
         driverId,
-        runtimeGenerationId: session.runtimeGenerationId,
         nativeSessionId: session.nativeSessionId,
         receiptId: store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding?.turn?.attemptId
           ?? formatTurnReceiptId(run.taskId, run.id)
@@ -617,23 +615,13 @@ function runtimeNativeTurnId(
     turnId: string;
     agentId: string;
     driverId: string;
-    runtimeGenerationId: string;
     nativeSessionId: string;
     receiptId: string;
   }>
 ): string | undefined {
   const observations = events
     .map(runtimeObservationFromTaskEvent)
-    .filter((observation): observation is RuntimeObservation => observation !== null
-      && observation.fence.taskId === expected.taskId
-      && observation.fence.roleName === expected.roleName
-      && observation.fence.turnId === expected.turnId
-      && observation.fence.agentId === expected.agentId
-      && observation.fence.driverId === expected.driverId
-      && observation.fence.runtimeGenerationId === expected.runtimeGenerationId
-      && observation.fence.nativeSessionId === expected.nativeSessionId
-      && observation.fence.receiptId === expected.receiptId
-      && observation.fence.nativeTurnId !== undefined)
+    .filter((observation): observation is RuntimeObservation => observation !== null && observation.fence.taskId === expected.taskId && observation.fence.roleName === expected.roleName && observation.fence.turnId === expected.turnId && observation.fence.agentId === expected.agentId && observation.fence.driverId === expected.driverId && observation.fence.nativeSessionId === expected.nativeSessionId && observation.fence.receiptId === expected.receiptId && observation.fence.nativeTurnId !== undefined)
     .sort((left, right) => (
       left.receivedAt.localeCompare(right.receivedAt)
       || (left.sequence ?? -1) - (right.sequence ?? -1)

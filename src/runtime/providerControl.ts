@@ -1,5 +1,4 @@
 import {
-  currentProviderActivation,
   currentProviderAuthority,
   currentProviderConversation,
   validateProviderRuntimeBinding,
@@ -40,7 +39,6 @@ export interface ProviderControlAdapter {
 
 export type ProviderWriterFence = Readonly<{
   conversationId: string;
-  activationId: string;
   authorityEpoch: number;
   authorityOwner: Exclude<ProviderAuthorityOwner, "none" | "unknown">;
   holderId: string;
@@ -95,13 +93,8 @@ export class FencedProviderControl {
     const normalized = validateProviderRuntimeBinding(binding);
     this.#assertNamespace(normalized);
     const conversation = currentProviderConversation(normalized);
-    const activation = currentProviderActivation(normalized);
     const authority = currentProviderAuthority(normalized);
-    if (conversation.conversationId !== fence.conversationId
-      || activation?.activationId !== fence.activationId
-      || authority.epoch !== fence.authorityEpoch
-      || authority.owner !== fence.authorityOwner
-      || authority.holderId !== fence.holderId) {
+    if (conversation.conversationId !== fence.conversationId || authority.epoch !== fence.authorityEpoch || authority.owner !== fence.authorityOwner || authority.holderId !== fence.holderId) {
       throw new Error("Provider writer fence is stale.");
     }
   }

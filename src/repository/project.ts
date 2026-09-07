@@ -128,7 +128,7 @@ export type ProjectRetirement = Readonly<{
 
 /** A durable Project Catalog entry maintained by Yui. */
 export type Project = Readonly<{
-  schemaVersion: 5;
+  schemaVersion: 6;
   id: string;
   name: string;
   aliases: readonly string[];
@@ -141,6 +141,8 @@ export type Project = Readonly<{
   /** Present only while `status` is `retired`. */
   retirement?: ProjectRetirement;
   knowledge: readonly ProjectKnowledge[];
+  resourceRefs: readonly string[];
+  defaultCapabilityProviders: Readonly<Record<string, string>>;
   /** Leader-proposed Knowledge candidates awaiting an Operator decision. */
   knowledgeProposals: readonly KnowledgeProposal[];
   createdAt: string;
@@ -167,7 +169,7 @@ export function createProject(
 ): Project {
   const timestamp = now.toISOString();
   return validateProject({
-    schemaVersion: 5,
+    schemaVersion: 6,
     id: requireIdentity(id, "Project id"),
     name: validateProjectName(name),
     aliases: normalizeAliases(metadata.aliases ?? [], name),
@@ -180,6 +182,8 @@ export function createProject(
     developmentBranch: requireGitRef(branches.development, "Project development branch"),
     status: "active" as const,
     knowledge: [],
+    resourceRefs: [],
+    defaultCapabilityProviders: {},
     knowledgeProposals: [],
     createdAt: timestamp,
     updatedAt: timestamp
@@ -541,8 +545,17 @@ export function assertProjectCatalog(
 }
 
 export function validateProject(project: Project): Project {
-  if (project.schemaVersion !== 5) {
-    throw new Error("Project must use schemaVersion 5.");
+  if (project.schemaVersion !== 6) {
+    throw new Error("Project must use schemaVersion 6.");
+  }
+  if (!Array.isArray(project.resourceRefs)) throw new Error("Project resourceRefs must be an array.");
+  for (const id of project.resourceRefs) requireIdentity(id, "Project resource");
+  if (new Set(project.resourceRefs).size !== project.resourceRefs.length) throw new Error("Duplicate Project resource.");
+  if (!project.defaultCapabilityProviders || typeof project.defaultCapabilityProviders !== "object"
+    || Array.isArray(project.defaultCapabilityProviders)) throw new Error("Invalid Project capability defaults.");
+  for (const [name, provider] of Object.entries(project.defaultCapabilityProviders)) {
+    requireText(name, "Capability name");
+    requireText(provider, "Capability provider reference");
   }
   requireIdentity(project.id, "Project id");
   requireIdentity(project.name, "Project name");

@@ -8,18 +8,19 @@ import {
   symlink,
   unlink
 } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import {
+  isAbsolute,
+  join,
+  relative,
+  resolve
+} from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { retireTaskRoleSessionsForWorkspace } from "../executor/agentExecutor.js";
 import { formatWorkspacePreflightError } from "../executor/workspacePreflightClassification.js";
 import { updateRole, type TaskRole } from "../role/role.js";
 import { taskRoleRuntimeIdentity } from "../runtime/managedCaller.js";
-import {
-  hasRuntimeCleanupObligation,
-  isRuntimeLaunchReservation,
-  runtimeLifecycleTarget
-} from "../runtime/lifecycleReservation.js";
+import { hasRuntimeCleanupObligation, runtimeLifecycleTarget } from "../runtime/lifecycleReservation.js";
 import {
   attachReviewRoundWorkspace,
   recordReviewWorkspaceDisposition,
@@ -39,8 +40,8 @@ import { enqueueWork } from "../coordination/workMailboxQueue.js";
 import {
   createCandidateGitSnapshot,
   createDirectTaskMainSnapshot,
-  workItemExecutionGroupById,
   currentWorkItemExecutionGroup,
+  workItemExecutionGroupById,
   recordWorkItemWorkspaceDisposition,
   type CandidateGitSnapshot,
   type DirectTaskMainSnapshot,
@@ -58,7 +59,6 @@ import {
 } from "../worktree/managedWorkspace.js";
 import type { ExecutionLaneGitSnapshot } from "./executionLaneGitSnapshot.js";
 import type { Turn } from "../turn/turn.js";
-import { formatTurnReceiptId } from "../task/taskRecordReference.js";
 import {
   NodeGitWorkspace,
   worktreeIdentity,
@@ -2704,7 +2704,6 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
     || session === undefined
     || session.agentId !== identity.agentId
     || session.adapterId !== run.effective.adapterId
-    || session.runtimeGenerationId === undefined
     || session.nativeSessionId === undefined
     || session.status !== "active"
     || !isDeepStrictEqual(session.effective, run.effective)
@@ -2717,18 +2716,6 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
     roleName: role.name
   }));
   if (hasRuntimeCleanupObligation(lifecycleMailbox)) return false;
-  const lifecycle = lifecycleMailbox?.processing;
-  if (lifecycle !== null
-    && lifecycle !== undefined
-    && isRuntimeLaunchReservation(lifecycle)) {
-    const executionRef = lifecycle.executionRef;
-    if (
-      !isRuntimeLaunchReservation(lifecycle, session.runtimeGenerationId)
-      || executionRef?.type !== "turn"
-      || executionRef.taskId !== taskId
-      || executionRef.id !== run.id
-    ) return false;
-  }
   return true;
 }
 

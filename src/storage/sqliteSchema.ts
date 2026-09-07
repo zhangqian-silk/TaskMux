@@ -22,6 +22,10 @@
  */
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
+import {
+  REMOVE_RUNTIME_GENERATION_SQL,
+  removeRuntimeGenerationRecords
+} from "./migrations/removeRuntimeGeneration.js";
 
 import {
   CURRENT_STORAGE_VERSION,
@@ -29,7 +33,7 @@ import {
 } from "./storageVersions.js";
 
 /** Telemetry retention bounds (§4.4). Open question 3 in §11; defaults from the design. */
-export const TELEMETRY_KEEP_PER_GENERATION = 200;
+export const TELEMETRY_KEEP_PER_TURN = 200;
 export const TELEMETRY_TURN_CAP = 50_000;
 
 /**
@@ -677,6 +681,8 @@ export type StorageMigration = Readonly<{
   name: string;
   introducedIn: string;
   sql: string;
+  /** Version-owned payload migration, executed in the same transaction as SQL. */
+  migrateData?: (db: Database.Database) => void;
 }>;
 
 /** Released migrations are append-only and must never be rewritten. */
@@ -726,8 +732,76 @@ ON durable_jobs(task_id, json_extract(payload, '$.operation.actorId'),
   },
   {
     version: 4,
+    name: "session-and-process-identity",
+    introducedIn: "0.15.8",
+    sql: REMOVE_RUNTIME_GENERATION_SQL,
+    migrateData: removeRuntimeGenerationRecords
+  },
+  {
+    version: 5,
+    name: "project-resource-artifacts",
+    introducedIn: "0.15.8",
+    sql: `
+CREATE TABLE artifacts (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
+CREATE TABLE local_resources (
+  id TEXT PRIMARY KEY,
+  canonical_identity TEXT NOT NULL UNIQUE,
+  payload TEXT NOT NULL
+);
+CREATE TABLE environment_preparations (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
+UPDATE projects SET payload = json_set(payload,
+  '$.schemaVersion', 6, '$.resourceRefs', json('[]'),
+  '$.defaultCapabilityProviders', json('{}'));
+`
+  },
+  {
+    version: 6,
+    name: "session-endpoint-implementation",
+    introducedIn: "0.15.8",
+    // Valid earlier Sessions used these two built-in protocols. Generation 1
+    // retains those codecs and identities behind the new execution boundary.
+    // Preserve native IDs, effective snapshots and all historical results.
+    sql: `
+UPDATE role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.sessions')
+)));
+UPDATE role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_array(json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'array';
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.sessions')
+)));
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_object(key, json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'object';
+`
+  },
+  {
+    version: 7,
     name: "task-facts-and-explicit-acceptance",
-    introducedIn: "0.15.6",
+    introducedIn: "0.15.8",
     // Retain the complete retirement metadata/events and diagnostic facts.
     // Only the public lifecycle changes; ordinary stores read one shape.
     sql: `
@@ -756,19 +830,21 @@ WHERE status = 'accepted' AND json_array_length(payload, '$.candidates') > 0;
 `
   },
   {
-    version: 5,
+    version: 8,
     name: "event-owned-edit-history",
-    introducedIn: "0.15.6",
-    // Move valid v4 embedded histories to one immutable import event per Task.
+    introducedIn: "0.15.8",
+    // Move embedded histories to one immutable import event per Task.
     // Existing events stay byte-identical; imports supply otherwise missing
     // historical fields and are evidence only, never executable lifecycle input.
+    // Candidates may now carry optional fixed Artifact refs; absent refs remain
+    // valid for historical Candidates, so this payload addition needs no backfill.
     sql: `
 CREATE TEMP TABLE migrated_edit_history AS
 SELECT records.task_id,
   COALESCE(sequences.high_water, 0) + 1 AS sequence,
   strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AS imported_at,
   json_object(
-    'sourceStorageVersion', '4',
+    'sourceStorageVersion', '7',
     'taskOutcomes', '' || COALESCE(json_extract(records.payload, '$.outcomeHistory'), '[]'),
     'workAcceptances', '' || COALESCE((
       SELECT json_group_array(json_object(
@@ -824,7 +900,6 @@ if (MIGRATIONS.at(-1)?.version !== CURRENT_STORAGE_VERSION) {
 /** Current hot-path indexes whose absence would invalidate a current Home. */
 const REQUIRED_SCHEMA_INDEXES = [
   "idx_mailboxes_ready",
-  "idx_runtime_session_cleanup_required",
   "idx_input_requests_open_hot"
 ] as const;
 
@@ -1187,6 +1262,7 @@ export function migrateSqliteSchema(
     const newlyApplied: number[] = [];
     for (const migration of pending) {
       db.exec(migration.sql);
+      migration.migrateData?.(db);
       const appliedAt = new Date().toISOString();
       db.prepare(
         `INSERT INTO schema_migrations (version, name, applied_at, checksum)
@@ -1210,6 +1286,9 @@ export function migrateSqliteSchema(
 
 /** The names of every table the schema creates (for tests/introspection). */
 export const SQLITE_SCHEMA_TABLES: readonly string[] = [
+  "artifacts",
+  "local_resources",
+  "environment_preparations",
   "schema_migrations",
   "home_meta",
   "config",
@@ -1225,7 +1304,6 @@ export const SQLITE_SCHEMA_TABLES: readonly string[] = [
   "coordination_locks",
   "integration_queue",
   "durable_jobs",
-  "job_caller_key_hashes",
   "outbox",
   "mailboxes",
   "task_records",

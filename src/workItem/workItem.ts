@@ -1,3 +1,4 @@
+import type { ArtifactRef } from "../resources/projectResource.js";
 import {
   normalizedUniqueIdentities,
   normalizedUniqueText,
@@ -101,6 +102,8 @@ export type WorkItemCandidate = Readonly<{
   gitSnapshot?: CandidateGitSnapshot;
   /** Exact base/head boundary for a metadata-only Task-main Candidate. */
   taskMainSnapshot?: DirectTaskMainSnapshot;
+  /** Fixed T05 artifacts, owned by the same Task and selected at submission. */
+  artifactRefs?: readonly ArtifactRef[];
   createdAt: string;
 }>;
 
@@ -262,6 +265,7 @@ export function submitWorkItemCandidate(
     workspace?: ManagedWorkspace;
     gitSnapshot?: CandidateGitSnapshot;
     taskMainSnapshot?: DirectTaskMainSnapshot;
+    artifactRefs?: readonly ArtifactRef[];
   }>,
   now: Date
 ): WorkItem {
@@ -297,6 +301,7 @@ export function submitWorkItemCandidate(
     ...(input.taskMainSnapshot === undefined
       ? {}
       : { taskMainSnapshot: input.taskMainSnapshot }),
+    ...(input.artifactRefs === undefined ? {} : { artifactRefs: input.artifactRefs.map((ref) => ({ ...ref })) }),
     createdAt: now.toISOString()
   });
   const { outcome: _outcome, endedAt: _endedAt, ...base } = workItem;
@@ -737,6 +742,20 @@ export function validateWorkItemCandidate(
     throw new Error("Work Item candidate revision must be a positive integer.");
   }
   requireText(candidate.summary, "Work Item candidate summary");
+  if (candidate.artifactRefs !== undefined) {
+    if (!Array.isArray(candidate.artifactRefs)) throw new Error("Candidate Artifact refs must be an array.");
+    const ids = new Set<string>();
+    for (const ref of candidate.artifactRefs) {
+      requireIdentity(ref.artifactId, "Candidate Artifact id");
+      if (ref.taskId !== candidate.taskId || !["content", "external-version", "receipt"].includes(ref.kind)
+        || ids.has(ref.artifactId)) throw new Error("Candidate Artifact scope, kind or identity is invalid.");
+      if ((ref.kind !== "external-version" || ref.digest !== undefined)
+        && (typeof ref.digest !== "string" || !/^[a-f0-9]{64}$/u.test(ref.digest))) {
+        throw new Error("Candidate Artifact digest is invalid.");
+      }
+      ids.add(ref.artifactId);
+    }
+  }
   if (typeof candidate.source !== "object" || candidate.source === null) {
     throw new Error("Work Item candidate source is required.");
   }

@@ -37,12 +37,12 @@ Lane workspace and returns one complete original result. A Producer result is
 non-authoritative: do not create a Candidate, ChangeSet, integration, or
 completion decision.
 
-Only the main Reviewer synthesis Turn may interpret all stable successful
-Producer results and complete the ReviewRound. Read every exact source Turn's
+Only the main Reviewer synthesis Turn may interpret the explicitly selected
+Producer results and complete the ReviewRound. Read every selected source Turn's
 original result, inspect every supplied result,
 resolve disagreement through judgment against the frozen sources, and return
 one complete authoritative report. Do not select a winning Lane, mutate
-Producer results, rerun successful Producers, or omit a successful result from
+Producer results, rerun Producers, or omit a selected result from
 the synthesis.
 
 ## Separate infrastructure failure from review judgment

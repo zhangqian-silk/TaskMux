@@ -5,6 +5,7 @@ import { contextContentDigest } from "./contextSnapshot.js";
 import { buildTurnContextPack } from "./turnContextPack.js";
 import { sourceTurnContextValue } from "./sourceTurnContext.js";
 import type { TaskMessage } from "../message/message.js";
+import { managedWorkspaceKey } from "../worktree/managedWorkspace.js";
 
 const MAX_RECORDS = 256;
 const MAX_VALUE_BYTES = 4096;
@@ -190,7 +191,7 @@ function authorizeContext(store: TaskStore, taskId: string, environment: NodeJS.
     throw usageError("Only Operator may read Task context from a global Session.");
   }
   if (caller === undefined && environment.YUI_SESSION_SCOPE === undefined
-    && (environment.YUI_ROLE !== undefined || environment.YUI_JOB_CALLER_KEY !== undefined
+    && (environment.YUI_ROLE !== undefined || environment.YUI_NATIVE_SESSION_ID !== undefined
       || environment.YUI_TASK_ID !== undefined || environment.YUI_AGENT_ID !== undefined)) {
     throw usageError("Incomplete managed Context caller identity.");
   }
@@ -207,7 +208,7 @@ function authorizeContext(store: TaskStore, taskId: string, environment: NodeJS.
     allow.add(`role:${caller.roleName}`);
     allow.add(`turn:${caller.currentTurnId}`);
   }
-  return { task, allow };
+  return { task, allow, caller };
 }
 
 function isAllowed(allow: Set<string> | undefined, family: string, id: string): boolean {
@@ -227,7 +228,7 @@ function roleProfile(role: NonNullable<ReturnType<TaskStore["getRole"]>>) {
  */
 function inspectValue(
   store: TaskStore,
-  { task, allow }: ReturnType<typeof authorizeContext>,
+  { task, allow, caller }: ReturnType<typeof authorizeContext>,
   { store: family, refId }: Readonly<{ store: string; refId: string }>
 ): unknown | null {
   const taskId = task.id;
@@ -255,9 +256,12 @@ function inspectValue(
     case "work-item": return store.getWorkItem(taskId, refId);
     case "accepted-work-item":
       return allow?.has(`accepted-work-item:${refId}`) ? store.getWorkItem(taskId, refId) : null;
-    case "candidate": return store.listWorkItems(taskId)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .flatMap((item) => [...item.candidates].reverse()).find((candidate) => candidate.id === refId) ?? null;
+    case "candidate": {
+      const parts = refId.split("/");
+      if (parts.length !== 2) return null;
+      return store.getWorkItem(taskId, parts[0]!)?.candidates
+        .find((candidate) => candidate.id === parts[1]) ?? null;
+    }
     case "task-message": return store.listMessages(taskId).find((message) => message.id === refId) ?? null;
     case "turn": return store.getTurn(taskId, refId);
     case "source-turn": {
@@ -266,6 +270,18 @@ function inspectValue(
       return turn === null ? null : sourceTurnContextValue(turn);
     }
     case "review-round": return store.getReviewRound(taskId, refId);
+    case "artifact": return store.getArtifact(taskId, refId);
+    case "environment-preparation": return store.getEnvironmentPreparation(taskId, refId);
+    case "change-set": return store.getChangeSet(taskId, refId);
+    case "managed-workspace": {
+      // Existing frozen Turn overlays use the Task/Role alias; owner keys
+      // identify the durable workspace in current Task reads.
+      if (caller?.currentTurnId !== undefined && refId === `${taskId}/${caller.roleName}`) {
+        return store.getTurn(taskId, caller.currentTurnId)?.workspace ?? null;
+      }
+      return store.listManagedWorkspaces(taskId)
+        .find((workspace) => managedWorkspaceKey(workspace.owner) === refId) ?? null;
+    }
     case "mailbox": {
       if (allow !== undefined) return null;
       if (refId === "task") return store.getWorkMailbox({ kind: "task", taskId });
@@ -283,7 +299,7 @@ function inspectValue(
 }
 
 function authorizedEntries(store: TaskStore, taskId: string, environment: NodeJS.ProcessEnv): Entry[] {
-  const { task, allow } = authorizeContext(store, taskId, environment);
+  const { task, allow, caller } = authorizeContext(store, taskId, environment);
   const entries: Entry[] = [];
   const add = (family: string, id: string, value: unknown) => {
     if (value !== null && isAllowed(allow, family, id)) {
@@ -310,8 +326,16 @@ function authorizedEntries(store: TaskStore, taskId: string, environment: NodeJS
   for (const item of store.listWorkItems(taskId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))) {
     add("work-item", item.id, item);
     if (allow?.has(`accepted-work-item:${item.id}`)) add("accepted-work-item", item.id, item);
-    for (const candidate of [...item.candidates].reverse()) add("candidate", candidate.id, candidate);
+    for (const candidate of [...item.candidates].reverse()) add("candidate", `${item.id}/${candidate.id}`, candidate);
   }
+  for (const artifact of store.listArtifacts(taskId)) add("artifact", artifact.id, artifact);
+  for (const preparation of store.listEnvironmentPreparations(taskId)) add("environment-preparation", preparation.id, preparation);
+  for (const workspace of store.listManagedWorkspaces(taskId)) add("managed-workspace", managedWorkspaceKey(workspace.owner), workspace);
+  if (caller?.currentTurnId !== undefined) {
+    add("managed-workspace", `${taskId}/${caller.roleName}`,
+      store.getTurn(taskId, caller.currentTurnId)?.workspace ?? null);
+  }
+  for (const changeSet of store.listChangeSets(taskId)) add("change-set", changeSet.id, changeSet);
   for (const message of store.listMessages(taskId).reverse()) add("task-message", message.id, message);
   for (const turn of store.listTurns(taskId).reverse()) {
     add("turn", turn.id, turn);

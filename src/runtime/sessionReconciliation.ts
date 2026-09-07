@@ -1,13 +1,12 @@
 import type { SessionOwnerIdentity } from "./sessionOwnerIdentity.js";
 
-/** Durable projection of one Role runtime generation, read by reconciliation. */
+/** Durable projection of one Role runtime Session, read by reconciliation. */
 export type DurableSessionFact = Readonly<{
   scope: "task" | "global";
   taskId?: string;
   roleName: string;
   agentId: string;
   adapterId: string;
-  runtimeGenerationId?: string;
   nativeSessionId?: string;
   status: "active" | "ended";
   inHistory: boolean;
@@ -33,7 +32,6 @@ export type SessionReconciliationEntry = Readonly<{
   owner: Readonly<{ scope: "task" | "global"; taskId?: string; roleName: string }>;
   agentId: string;
   adapterId: string;
-  runtimeGenerationId: string;
   nativeSessionId?: string;
   taskStatus?: "draft" | "active" | "completed" | "cancelled" | "archived";
   durableStatus: "active" | "ended" | "absent";
@@ -68,20 +66,19 @@ export type SessionReconciliationInput = Readonly<{
   ) => Readonly<{ target: string; dead: boolean }> | undefined;
   lastStopOutcome: (
     taskId: string | undefined,
-    roleName: string,
-    runtimeGenerationId: string
+    roleName: string
   ) => string | undefined;
   now: Date;
 }>;
 
 /**
- * Bidirectional durable <-> physical reconciliation for Runtime generations.
+ * Bidirectional durable <-> physical reconciliation for Runtime Sessions.
  *
  * Durable -> physical: every owner record's Provider root must be absent once
  * its durable Session is terminal; a live root with a terminal durable state
  * is the exact leak the audit found. Physical -> durable: the owner registry
  * stays enumerable after the durable Session map or history is cleared, so a
- * live generation can always be re-attributed and reported.
+ * live Session can always be re-attributed and reported.
  *
  * Pure: all I/O is injected. Unknown owners are reported, never cleaned.
  * An entry is archive-blocking when its durable state is terminal but the
@@ -122,8 +119,7 @@ function reconcileOne(
   const tmuxPane = input.inspectPane(owner.taskId, owner.roleName);
   const lastStopOutcome = input.lastStopOutcome(
     owner.taskId,
-    owner.roleName,
-    record.runtimeGenerationId
+    owner.roleName
   );
 
   let mismatch: SessionReconciliationMismatch | undefined;
@@ -154,7 +150,6 @@ function reconcileOne(
     },
     agentId: record.agentId,
     adapterId: record.adapterId,
-    runtimeGenerationId: record.runtimeGenerationId,
     ...(record.nativeSessionId === undefined
       ? {}
       : { nativeSessionId: record.nativeSessionId }),
@@ -179,10 +174,6 @@ function matchDurable(
     && (record.owner.scope === "global" || fact.taskId === record.owner.taskId)
     && fact.agentId === record.agentId
   ));
-  const byLaunch = candidates.find(
-    (fact) => fact.runtimeGenerationId !== undefined && fact.runtimeGenerationId === record.runtimeGenerationId
-  );
-  if (byLaunch !== undefined) return byLaunch;
   const byNative = candidates.find(
     (fact) => fact.nativeSessionId !== undefined
       && record.nativeSessionId !== undefined

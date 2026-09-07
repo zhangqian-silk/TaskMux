@@ -1,28 +1,19 @@
-import { createHash } from "node:crypto";
-
 import { activeRoleAgentBinding } from "../role/role.js";
 import type { Role } from "../role/role.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import type { Turn } from "../turn/turn.js";
 
-/** Per-process credential injected at native Session launch. */
-export const MANAGED_CALLER_KEY_ENV = "YUI_JOB_CALLER_KEY";
+/** Native Session identity supplied by the Agent transport. */
+export const MANAGED_NATIVE_SESSION_ENV = "YUI_NATIVE_SESSION_ID";
 
 /**
  * One authority for "is this process the current runtime of a Task Role?".
  *
- * A managed Session process carries only immutable self-identity in its
- * environment: its Home, scope, Task, Role, workspace, and a non-replayable
- * caller key. Everything volatile - the effective Agent, adapter, launch
- * generation, native Session, and Turn - is read from durable state at command
- * time, because a live process environment can never be updated in place and
- * therefore must never carry cross-Turn state.
- *
- * The caller key already has the exact staleness semantics this needs: Yui
- * commits a fresh durable hash whenever it starts a new Host or replaces the
- * native Conversation, and keeps the old hash for a same-Conversation resume.
- * A superseded process therefore fails this check on its own, with no side
- * files, no republication, and nothing to orphan.
+ * The caller names its Task, Role and native Session. Durable state supplies
+ * the active Agent, adapter and current Turn. Reattaching the same Session
+ * does not change authority; replacing that Session does. This is a local
+ * identity boundary, not protection from another process that can read and
+ * modify the same user's Home.
  */
 export type ManagedTaskCaller = Readonly<{
   taskId: string;
@@ -30,6 +21,7 @@ export type ManagedTaskCaller = Readonly<{
   /** Current management Agent, or the Agent of a Worker's active Assignment. */
   agentId: string;
   adapterId: string;
+  nativeSessionId: string;
   /** Workspace the process was launched into. */
   workspace?: string;
   /** Durable active Turn of this Task/Role when the command ran, if any. */
@@ -38,7 +30,7 @@ export type ManagedTaskCaller = Readonly<{
 
 export type ManagedCallerStore = Pick<
   TaskStore,
-  "getRole" | "getActiveTurn" | "getJobCallerKeyHash"
+  "getRole" | "getActiveTurn" | "getTaskRoleSessionSet" | "listEvents"
 >;
 
 /** Immutable self-identity a managed Task Session asserts about its own process. */
@@ -46,7 +38,7 @@ export type ManagedTaskSessionIdentity = Readonly<{
   taskId: string;
   roleName: string;
   workspace?: string;
-  callerKey?: string;
+  nativeSessionId?: string;
 }>;
 
 /**
@@ -77,12 +69,12 @@ export function managedTaskSessionIdentity(
     );
   }
   const workspace = identity(env.YUI_WORKSPACE);
-  const callerKey = identity(env[MANAGED_CALLER_KEY_ENV]);
+  const nativeSessionId = identity(env.CODEX_THREAD_ID ?? env[MANAGED_NATIVE_SESSION_ENV]);
   return Object.freeze({
     taskId,
     roleName,
     ...(workspace === undefined ? {} : { workspace }),
-    ...(callerKey === undefined ? {} : { callerKey })
+    ...(nativeSessionId === undefined ? {} : { nativeSessionId })
   });
 }
 
@@ -162,19 +154,27 @@ function requireCurrentRuntime(
   }
   const activeTurn = store.getActiveTurn(self.taskId, self.roleName);
   const { agentId, adapterId } = taskRoleRuntimeIdentity(role, activeTurn);
-  if (self.callerKey === undefined) {
+  const sessions = store.getTaskRoleSessionSet(self.taskId, self.roleName);
+  const session = sessions?.sessions[agentId];
+  if (self.nativeSessionId === undefined) {
     throw new ManagedRuntimeDriftError(
-      `This managed Session carries no ${MANAGED_CALLER_KEY_ENV}, so it cannot be recognized `
+      `This managed Session carries no native session id, so it cannot be recognized `
         + `as the current runtime of ${self.taskId}/${self.roleName}.`
     );
   }
-  const expectedHash = store.getJobCallerKeyHash(self.taskId, self.roleName, agentId);
-  if (expectedHash === null
-    || createHash("sha256").update(self.callerKey).digest("hex") !== expectedHash) {
+  if (role.name === "leader" && store.listEvents(self.taskId).some((event) =>
+    event.type === "role.agent-bound" && event.payload.role === role.name
+    && event.payload.revokedNativeSessionId === self.nativeSessionId)) {
+    throw new ManagedRuntimeDriftError("This Leader native Session's management authority was explicitly revoked.");
+  }
+  if (sessions?.activeAgentId !== agentId || session === undefined || session.status !== "active"
+    || session.nativeSessionId !== self.nativeSessionId
+    || session.adapterId !== adapterId
+    || (self.workspace !== undefined && self.workspace !== session.effective.workspace.root)) {
     throw new ManagedRuntimeDriftError(
       `This managed Session is no longer the current runtime of ${self.taskId}/${self.roleName} `
         + `(the authorized runtime uses Agent ${agentId}). Its native Session was replaced or its Role was `
-        + "rebound, so its durable caller key no longer matches. Nothing was changed. Read the "
+        + "rebound, so its native session id no longer matches. Nothing was changed. Read the "
         + `current state with \`yui task show ${self.taskId}\`; acting requires the Session Yui `
         + "launched for the current runtime."
     );
@@ -184,6 +184,7 @@ function requireCurrentRuntime(
     roleName: self.roleName,
     agentId,
     adapterId,
+    nativeSessionId: session.nativeSessionId,
     ...(self.workspace === undefined ? {} : { workspace: self.workspace }),
     ...(activeTurn === null || activeTurn.status !== "active"
       || activeTurn.effective.agentId !== agentId

@@ -19,6 +19,8 @@ import {
   CapabilityRegistry, type CapabilityDescriptor, type CapabilityImplementation,
 } from "./capabilityRegistry.js";
 import type { CapabilitySchema } from "./capabilitySchema.js";
+import { createProjectResources, type ArtifactInput, type EnvironmentPlan } from "../resources/projectResourceService.js";
+import { artifactSummary } from "../resources/projectResource.js";
 
 const text: CapabilitySchema = { type: "string", minLength: 1 };
 const strings: CapabilitySchema = { type: "object", additionalProperties: { type: "string" } };
@@ -26,6 +28,8 @@ const object = (properties: Record<string, CapabilitySchema>, required = Object.
   type: "object", properties, required, additionalProperties: false
 });
 const taskInput = object({ taskId: text });
+const recordOutput: CapabilitySchema = { type: "object" };
+const artifactBase = { displayName: text, provenance: text, mediaType: text };
 const taskOutput: CapabilitySchema = { type: "object", required: ["id", "status", "title"], properties: {
   id: text, status: text, title: text
 } };
@@ -51,6 +55,73 @@ const definitions: readonly Omit<CapabilityDescriptor, "contractVersion" | "prov
     outputSchema: { type: "object", required: ["ref", "value", "coreCursor"] }
   },
   {
+    name: "artifact.save", summary: "Save immutable text, external version evidence, a Job receipt, or reference material.",
+    effect: "local-mutation", requiredPermissions: ["task:read"], source: "ProjectResources.saveArtifact",
+    inputSchema: object({ taskId: text, artifact: { anyOf: [
+      object({ ...artifactBase, kind: { const: "content" }, content: { type: "string" } }, ["kind", "displayName", "provenance", "content"]),
+      object({ ...artifactBase, kind: { const: "external-version" }, resourceId: text, version: text, verification: text },
+        ["kind", "displayName", "provenance", "resourceId", "version", "verification"]),
+      object({ ...artifactBase, kind: { const: "receipt" }, jobId: text, receiptRef: text },
+        ["kind", "displayName", "provenance", "jobId", "receiptRef"]),
+      object({ ...artifactBase, kind: { const: "reference" }, locator: text, observedAt: text },
+        ["kind", "displayName", "provenance", "locator", "observedAt"])
+    ] } }), outputSchema: recordOutput
+  },
+  {
+    name: "artifact.read", summary: "Read saved results without starting the original Runtime or plugin.",
+    effect: "query", requiredPermissions: ["task:read"], source: "TaskStore.getArtifact",
+    inputSchema: object({ taskId: text, artifactId: text }), outputSchema: recordOutput
+  },
+  {
+    name: "artifact.list", summary: "List this Task's saved results and references.",
+    effect: "query", requiredPermissions: ["task:read"], source: "TaskStore.listArtifacts",
+    inputSchema: taskInput, outputSchema: { type: "array", items: recordOutput }
+  },
+  {
+    name: "environment.prepare", summary: "Prepare empty, Task-owned scratch, or explicitly granted trusted-local directory; does not adopt it or create a sandbox.",
+    effect: "local-mutation", requiredPermissions: ["task:manage"], source: "ProjectResources.prepare",
+    inputSchema: object({ taskId: text, plan: { anyOf: [
+      object({ kind: { const: "empty" } }), object({ kind: { const: "scratch" } }),
+      object({ kind: { const: "local" }, resourceId: text, access: { enum: ["read", "write"] } })
+    ] } }), outputSchema: recordOutput
+  },
+  {
+    name: "environment.adopt", summary: "Recheck current resource intent, grants and conflicts, then record Task ownership.",
+    effect: "local-mutation", requiredPermissions: ["task:manage"], source: "ProjectResources.adopt",
+    inputSchema: object({ taskId: text, preparationId: text }), outputSchema: recordOutput
+  },
+  {
+    name: "environment.release", summary: "Release exact preparation; adopted resources need actual quiescence evidence. Never deletes user directories.",
+    effect: "local-mutation", requiredPermissions: ["task:manage"], source: "ProjectResources.release",
+    inputSchema: object({ taskId: text, preparationId: text, quiescence: text }, ["taskId", "preparationId"]), outputSchema: recordOutput
+  },
+  {
+    name: "environment.list", summary: "Read preparation/adoption facts, not inferred process state.",
+    effect: "query", requiredPermissions: ["task:read"], source: "TaskStore.listEnvironmentPreparations",
+    inputSchema: taskInput, outputSchema: { type: "array", items: recordOutput }
+  },
+  {
+    name: "resource.local.register", summary: "Register a user-owned local directory by canonical identity (Operator); registration does not grant use.",
+    effect: "local-mutation", requiredPermissions: ["resource:register"], source: "ProjectResources.registerLocalDirectory",
+    inputSchema: object({ displayName: text, path: text }), outputSchema: recordOutput
+  },
+  {
+    name: "resource.local.read", summary: "Read an explicitly granted local resource.",
+    effect: "query", requiredPermissions: ["task:read"], source: "ProjectResources.readLocalResource",
+    inputSchema: object({ taskId: text, resourceId: text }), outputSchema: recordOutput
+  },
+  {
+    name: "project.context", summary: "Read Project Knowledge, resource references and default Provider references; no credential grant.",
+    effect: "query", requiredPermissions: ["task:read"], source: "TaskStore.getProject",
+    inputSchema: object({ taskId: text, projectId: text }), outputSchema: recordOutput
+  },
+  {
+    name: "project.resources.configure", summary: "Configure existing Project resource and Provider references (Operator).",
+    effect: "local-mutation", requiredPermissions: ["resource:register"], source: "ProjectResources.configureProject",
+    inputSchema: object({ projectId: text, resourceRefs: { type: "array", items: text }, defaultCapabilityProviders: strings }),
+    outputSchema: recordOutput
+  },
+  {
     name: "task.read", summary: "Read the current Task record.", effect: "query",
     inputSchema: taskInput, outputSchema: taskOutput, requiredPermissions: ["task:read"],
     source: "TaskStore.getTask (task show)"
@@ -74,6 +145,11 @@ const definitions: readonly Omit<CapabilityDescriptor, "contractVersion" | "prov
     source: "runConfigCommand (config <domain> show)",
     inputSchema: object({ domain: { enum: CONFIG_DOMAINS } }),
     outputSchema: { type: "object" }
+  },
+  {
+    name: "resource.git.result", summary: "Read an original fixed Git ChangeSet and its external-version reference.",
+    effect: "query", requiredPermissions: ["task:read"], source: "TaskStore.getChangeSet",
+    inputSchema: object({ taskId: text, changeSetId: text }), outputSchema: recordOutput
   },
   {
     name: "resource.workspaces", summary: "Read the Task's managed workspace resources.",
@@ -129,6 +205,7 @@ export function createBuiltinCapabilities(
   contextProviders: readonly ContextObservationProvider[] = []
 ) {
   const authority = createJobCallAuthority(store);
+  const resources = createProjectResources(store);
   const callers = new WeakMap<TrustedCallContext, DurableJobCaller>();
   const current = (context: TrustedCallContext) => {
     authority.authorize(context, context.targetId);
@@ -155,8 +232,26 @@ export function createBuiltinCapabilities(
       if (name === "context.inspect") return inspectTaskContext(store, taskId, {
         store: params.store as string, refId: params.refId as string, digest: params.digest as string | undefined
       }, callerEnvironment(caller));
+      if (name === "artifact.save") return resources.saveArtifact(taskId, params.artifact as ArtifactInput);
+      if (name === "artifact.read") {
+        const artifact = store.getArtifact(taskId, params.artifactId as string);
+        if (!artifact) throw new Error("Artifact not found in this Task.");
+        return artifact;
+      }
+      if (name === "artifact.list") return store.listArtifacts(taskId).map(artifactSummary);
+      if (name === "environment.prepare") return resources.prepare(taskId, params.plan as EnvironmentPlan);
+      if (name === "environment.adopt") return resources.adopt(taskId, params.preparationId as string);
+      if (name === "environment.release") return resources.release(taskId, params.preparationId as string,
+        params.quiescence === undefined ? undefined : { quiescence: params.quiescence as string });
+      if (name === "environment.list") return store.listEnvironmentPreparations(taskId);
+      if (name === "resource.local.register") return resources.registerLocalDirectory(params.displayName as string, params.path as string);
+      if (name === "resource.local.read") return resources.readLocalResource(taskId, params.resourceId as string);
+      if (name === "project.context") return resources.projectContext(taskId, params.projectId as string);
+      if (name === "project.resources.configure") return resources.configureProject(params.projectId as string,
+        params.resourceRefs as string[], params.defaultCapabilityProviders as Record<string, string>);
       if (name === "task.read") return requireTask(store, taskId);
       if (name === "resource.workspaces") return store.listManagedWorkspaces(taskId);
+      if (name === "resource.git.result") return resources.gitResult(taskId, params.changeSetId as string);
       if (name === "config.read") return runConfigCommand(params.domain as ConfigDomain, ["show"], store).data;
       if (name === "task.update") {
         const patch = params.patch as Pick<TaskMetadataUpdate, "title" | "description" | "priority" | "tags">;
@@ -202,7 +297,7 @@ export function createBuiltinCapabilities(
         (caller.scope === "task" && caller.role === "leader")
         || (caller.scope === "global" && caller.role === "operator")
       )) continue;
-      if ((permission === "config:read" || permission === "plugin:manage")
+      if ((permission === "config:read" || permission === "plugin:manage" || permission === "resource:register")
         && caller.scope === "global" && caller.role === "operator") continue;
       throw new Error(`Permission unavailable: ${permission}.`);
     }
@@ -229,6 +324,6 @@ function callerEnvironment(caller: DurableJobCaller): NodeJS.ProcessEnv {
   return {
     YUI_SESSION_SCOPE: caller.scope, YUI_TASK_ID: caller.taskId,
     YUI_ROLE: caller.role, YUI_AGENT_ID: caller.agentId,
-    YUI_ADAPTER_ID: caller.adapterId, YUI_JOB_CALLER_KEY: caller.callerKey
+    YUI_ADAPTER_ID: caller.adapterId, YUI_NATIVE_SESSION_ID: caller.nativeSessionId
   };
 }

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { lstat, mkdir, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -1098,7 +1098,8 @@ export class NodeGitWorkspace implements GitWorkspacePort {
       repositoryPath: input.repositoryPath,
       container: input.container,
       identity: integrationWorktreeIdentity(input.taskSegment, input.integrationId),
-      baseRef: input.baseRef
+      baseRef: input.baseRef,
+      allowRebase: true
     });
   }
 
@@ -1107,6 +1108,7 @@ export class NodeGitWorkspace implements GitWorkspacePort {
     container: string;
     identity: Readonly<{ directory: string; branch: string }>;
     baseRef: string;
+    allowRebase?: boolean;
   }>): Promise<PreparedGitWorktree> {
     const container = await canonicalContainer(input.container, true);
     const identity = input.identity;
@@ -1119,7 +1121,7 @@ export class NodeGitWorkspace implements GitWorkspacePort {
       // original base branch/tag is later deleted.
       const project = await this.inspect(input.repositoryPath);
       await assertOwnedWorktree(project, container, path);
-      await assertExpectedBranch(path, identity.branch);
+      await assertExpectedBranch(path, identity.branch, input.allowRebase);
       const head = await gitLine([
         "-C", path, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"
       ]);
@@ -1382,7 +1384,24 @@ function gitRefSegment(identity: string): string {
   return `encoded-${digest}`;
 }
 
-async function assertExpectedBranch(path: string, expected: string): Promise<void> {
+async function assertExpectedBranch(path: string, expected: string, allowRebase = false): Promise<void> {
+  if (allowRebase && !await gitSucceeds(["-C", path, "symbolic-ref", "--quiet", "HEAD"])) {
+    // Rebase temporarily detaches HEAD. Git's per-worktree metadata must still
+    // identify this exact Integration branch; unrelated detachment is invalid.
+    for (const backend of ["rebase-merge", "rebase-apply"]) {
+      const headNamePath = await gitLine(["-C", path, "rev-parse", "--path-format=absolute",
+        "--git-path", `${backend}/head-name`]);
+      let headName: string;
+      try { headName = (await readFile(headNamePath, "utf8")).trim(); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      if (headName === `refs/heads/${expected}`) return;
+      throw new Error(`Managed worktree is rebasing an unexpected branch: ${headName}.`);
+    }
+    throw new Error("Managed worktree has detached HEAD without its expected rebase.");
+  }
   const branch = await gitLine(["-C", path, "symbolic-ref", "--short", "HEAD"]);
   if (branch !== expected) {
     throw new Error(`Managed worktree is on an unexpected branch: ${branch}.`);

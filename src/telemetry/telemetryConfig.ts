@@ -8,7 +8,7 @@
  */
 
 import {
-  TELEMETRY_KEEP_PER_GENERATION,
+  TELEMETRY_KEEP_PER_TURN,
   TELEMETRY_TURN_CAP
 } from "../storage/sqliteSchema.js";
 
@@ -21,8 +21,8 @@ export type TelemetryMode = "off" | "on";
 
 export const DEFAULT_TELEMETRY_MODE: TelemetryMode = "off";
 
-/** Terminal Turn/generation progress rows retained after prune. */
-export const DEFAULT_TERMINAL_KEEP = TELEMETRY_KEEP_PER_GENERATION;
+/** Terminal Turn progress rows retained after prune. */
+export const DEFAULT_TERMINAL_KEEP = TELEMETRY_KEEP_PER_TURN;
 
 /** Hard cap of progress rows per Turn while it is still active. */
 export const DEFAULT_TURN_CAP = TELEMETRY_TURN_CAP;

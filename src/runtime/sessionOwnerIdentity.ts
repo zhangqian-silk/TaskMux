@@ -2,20 +2,16 @@ import { readFileSync, readdirSync } from "node:fs";
 
 import { requireSafeIdentity, requireText, requireTimestamp } from "./validation.js";
 
+/** A concrete OS process identity, not an Agent launch identity. */
+export function sessionOwnerProcessKey(record: Pick<SessionOwnerIdentity, "providerRoot">): string {
+  return `${record.providerRoot.pid}-${record.providerRoot.startIdentity}`;
+}
+
 /**
- * Exact physical owner identity for one Yui runtime generation.
- *
- * The record describes only resources Yui itself created: a tmux pane and the
- * Provider process tree launched into it. Ownership is never inferred from a
- * process name. The Provider root is attributed by the exact `YUI_RUNTIME_GENERATION_ID`
- * fence the launch exported into its environment, and PID liveness is always
- * paired with the Linux process start identity so a reused PID can never
- * rebind a dead generation.
- *
- * This is runtime identity, not aggregate domain state: it lives beside the
- * tmux socket under `runtime/` and survives a Controller restart independently
- * of the durable Session map, so reconciliation can re-attribute generations
- * whose durable pointer was already cleared.
+ * Physical Host ownership, captured directly from the created tmux pane.
+ * PID and Linux process start identity identify the concrete process. Task,
+ * Role and native Session describe its origin, not permission to kill every
+ * descendant application. The record survives Controller restarts.
  */
 export type SessionOwnerIdentity = Readonly<{
   schemaVersion: 2;
@@ -27,7 +23,6 @@ export type SessionOwnerIdentity = Readonly<{
   }>;
   agentId: string;
   adapterId: string;
-  runtimeGenerationId: string;
   nativeSessionId?: string;
   tmux: Readonly<{
     serverName: string;
@@ -43,9 +38,8 @@ export type SessionOwnerIdentity = Readonly<{
     processGroupId?: number;
     processSessionId?: number;
     /**
-     * How the root was proven: `launch-env` matched the exact YUI_RUNTIME_GENERATION_ID
-     * environment fence; `pane-pid` fell back to the tmux pane process and is
-     * a weaker attribution that reconciliation must flag, never auto-kill.
+     * Current records use the created pane PID. `launch-env` is retained only
+     * as attribution of historical recorded processes, never as a live scanner.
      */
     attribution: "launch-env" | "pane-pid";
   }>;
@@ -71,7 +65,6 @@ export type SessionOwnerIdentityInput = Readonly<{
   }>;
   agentId: string;
   adapterId: string;
-  runtimeGenerationId: string;
   nativeSessionId?: string;
   tmux: Readonly<{
     serverName: string;
@@ -135,7 +128,6 @@ export function createSessionOwnerIdentity(
     }),
     agentId: requireSafeIdentity(input.agentId, "Agent id"),
     adapterId: requireText(input.adapterId, "Adapter id"),
-    runtimeGenerationId: requireSafeIdentity(input.runtimeGenerationId, "Runtime generation id"),
     ...(input.nativeSessionId === undefined
       ? {}
       : { nativeSessionId: requireText(input.nativeSessionId, "Native session id") }),
@@ -228,57 +220,6 @@ export function isLinuxProcessLive(
   // to reap. It cannot execute or hold resources, so it is not live.
   if (current.state === "Z") return false;
   return current.startIdentity === startIdentity;
-}
-
-/**
- * Discovers the Provider root for one launch by the exact YUI_RUNTIME_GENERATION_ID
- * environment fence. Returns undefined when no same-user process carries the
- * fence — the caller must not guess from a process name or cwd.
- */
-export function discoverProviderRootByLaunchEnv(
-  runtimeGenerationId: string
-): { pid: number; identity: LinuxProcessIdentity } | undefined {
-  const matches = listLaunchFencedProcesses(runtimeGenerationId);
-  for (const pid of matches) {
-    const identity = readLinuxProcessIdentity(pid);
-    if (identity !== undefined) return { pid, identity };
-  }
-  return undefined;
-}
-
-/**
- * Lists every live process whose initial environment carries the exact
- * `YUI_RUNTIME_GENERATION_ID=<runtimeGenerationId>` fence. The fence is inherited by Provider
- * children, so this is the exact, PID-reuse-safe attribution for a surviving
- * child after its root has exited: a recycled PID never carries the fence.
- * Processes without the fence are unattributed and must never be signaled.
- */
-export function listLaunchFencedProcesses(runtimeGenerationId: string): number[] {
-  if (!Number.isSafeInteger(runtimeGenerationId as unknown as number) && !/^[A-Za-z0-9_.:-]+$/u.test(runtimeGenerationId)) {
-    return [];
-  }
-  let entries: string[];
-  try {
-    entries = readdirSync("/proc", { encoding: "utf8" });
-  } catch {
-    return [];
-  }
-  const needle = `YUI_RUNTIME_GENERATION_ID=${runtimeGenerationId}`;
-  const matches: number[] = [];
-  for (const entry of entries) {
-    if (!/^[0-9]+$/u.test(entry)) continue;
-    const pid = Number(entry);
-    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
-    let environment: string;
-    try {
-      environment = readFileSync(`/proc/${pid}/environ`, "utf8");
-    } catch {
-      continue;
-    }
-    if (!environment.includes(needle)) continue;
-    matches.push(pid);
-  }
-  return matches;
 }
 
 /**

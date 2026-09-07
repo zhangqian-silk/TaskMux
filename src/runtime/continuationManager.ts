@@ -170,17 +170,13 @@ export function applyContinuationObservationAtomically(
 
 function continuationIdentity(observation: RuntimeObservation): ProviderContinuationIdentity {
   const fence = observation.fence;
-  if (fence.taskId === undefined || fence.turnId === undefined
-    || fence.conversationId === undefined || fence.activationId === undefined
-    || fence.continuationId === undefined) {
+  if (fence.taskId === undefined || fence.turnId === undefined || fence.conversationId === undefined || fence.continuationId === undefined) {
     throw new Error("Continuation observation fence is incomplete.");
   }
   return {
     providerNamespace: fence.driverId,
     accountScope: fence.agentId,
     conversationId: fence.conversationId,
-    activationId: fence.activationId,
     continuationId: fence.continuationId,
-    generation: fence.continuationGeneration!
   };
 }

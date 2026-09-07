@@ -1,6 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
 
-import { retireConfirmedAbsentInactiveTaskRolePlaceholders } from "../executor/agentExecutor.js";
 import {
   hasRuntimeLifecycleWork,
   runtimeLifecycleTarget
@@ -555,13 +554,6 @@ export class TaskWorkspaceCoordinator {
         )) {
           throw new Error(`Role has unsettled runtime lifecycle state: ${taskId}/${roleName}.`);
         }
-        const sessions = tx.getTaskRoleSessionSet(taskId, roleName);
-        if (sessions === null) continue;
-        const retired = retireConfirmedAbsentInactiveTaskRolePlaceholders(
-          sessions,
-          this.preparer.now()
-        );
-        if (retired !== sessions) tx.saveTaskRoleSessionSet(retired);
       }
     });
   }

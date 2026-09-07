@@ -390,7 +390,7 @@ const taskChildren: readonly NodeInput[] = [
   {
     name: "complete",
     summary: "Complete an active Task and stop automatic wakeups.",
-    usage: "yui task complete <id> (--summary <text>|--summary-file <path|->) [--artifact-ref <turn:id|url> ...] [--refresh-remote] [--accept-published-tree <publication-id>]",
+    usage: "yui task complete <id> (--summary <text>|--summary-file <path|->) [--artifact-ref <artifact-id|turn:id|url> ...] [--refresh-remote] [--accept-published-tree <publication-id>]",
     options: ["--summary", "--summary-file", "--artifact-ref", "--refresh-remote", "--accept-published-tree"],
     fileOptions: ["--summary-file"]
   },
@@ -429,6 +429,16 @@ const taskChildren: readonly NodeInput[] = [
     options: ["--all", "--verbose"]
   },
   { name: "show", summary: "Show a Task.", usage: "yui task show <id>" },
+  {
+    name: "artifact",
+    summary: "Save fixed Task results and read history without the original Runtime.",
+    sections: [{ id: "manage", title: "Commands", entries: ["list", "show", "save"] }],
+    children: [
+      { name: "list", summary: "List saved Task artifacts.", usage: "yui task artifact list <task>" },
+      { name: "show", summary: "Read one saved artifact.", usage: "yui task artifact show <task> <artifact-id>" },
+      { name: "save", summary: "Save content, a version, receipt, or reference.", usage: "yui task artifact save <task> <artifact-json>" }
+    ]
+  },
   {
     name: "context",
     summary: "Read compact authorized facts, fixed-bound delta, or inspect a Context reference.",
@@ -687,12 +697,12 @@ const taskChildren: readonly NodeInput[] = [
         children: [
           {
             name: "inspect",
-            summary: "Read the current Session, Host activation, and Turn facts.",
+            summary: "Read the current Session, Host process, and Turn facts.",
             usage: "yui task role session inspect <task> <role>"
           },
           {
             name: "stop",
-            summary: "Stop one idle Session and its exact Host activation.",
+            summary: "Stop one idle Session and its exact Host process.",
             usage: "yui task role session stop <task> <role> --reason <text>",
             options: ["--reason"]
           }
@@ -722,7 +732,7 @@ const taskChildren: readonly NodeInput[] = [
       id: "manage",
       title: "Commands",
       entries: [
-        "create", "list", "show", "edit", "update", "scope", "dispatch", "isolate", "capture", "cleanup",
+        "create", "list", "show", "edit", "update", "scope", "dispatch", "synthesize", "isolate", "capture", "cleanup",
         "review", "accept", "reject", "retire"
       ]
     }],
@@ -748,8 +758,8 @@ const taskChildren: readonly NodeInput[] = [
       {
         name: "update",
         summary: "Record progress or submit a Candidate; acceptance remains explicit.",
-        usage: "yui task work update <task>/<work> <todo|running|done|failed> [--summary <text>]",
-        options: ["--summary"],
+        usage: "yui task work update <task>/<work> <todo|running|done|failed> [--summary <text>] [--artifact-ref <artifact-id> ...]",
+        options: ["--summary", "--artifact-ref"],
         argumentValues: {
           1: ["todo", "running", "done", "failed"]
         }
@@ -765,6 +775,12 @@ const taskChildren: readonly NodeInput[] = [
         summary: "Dispatch a work item to its Role.",
         usage: "yui task work dispatch <task>/<work> [--input <text>] [--lane-role <role> ...]",
         options: ["--input", "--lane-role"]
+      },
+      {
+        name: "synthesize",
+        summary: "Dispatch synthesis over explicitly selected original Producer Turns.",
+        usage: "yui task work synthesize <task>/<work> --source-turn <task>/<turn> ...",
+        options: ["--source-turn"]
       },
       {
         name: "isolate",
@@ -884,16 +900,22 @@ const taskChildren: readonly NodeInput[] = [
       {
         name: "retire",
         summary: "Retire an incorrect historical Turn without deleting its audit record.",
-        usage: "yui task turn retire <task>/<turn> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>] [--launch-id <id>]",
-        options: ["--reason", "--expected-progress-at", "--progress-at", "--agent-id", "--adapter-id", "--native-session-id", "--launch-id"]
+        usage: "yui task turn retire <task>/<turn> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>]",
+        options: ["--reason", "--expected-progress-at", "--progress-at", "--agent-id", "--adapter-id", "--native-session-id"]
       }
     ]
   },
   {
     name: "review",
     summary: "Control Task-final ReviewRounds.",
-    sections: [{ id: "manage", title: "Commands", entries: ["request", "retry"] }],
+    sections: [{ id: "manage", title: "Commands", entries: ["request", "synthesize", "retry"] }],
     children: [
+      {
+        name: "synthesize",
+        summary: "Dispatch main Review over selected Producer Turns and the frozen candidate.",
+        usage: "yui task review synthesize <task>/<review-round> --source-turn <task>/<turn> ...",
+        options: ["--source-turn"]
+      },
       {
         name: "request",
         summary: "Request a direct or replicated Task-local final ReviewRound.",
@@ -1135,7 +1157,7 @@ export const ROOT_COMMAND = buildNode({
         },
         {
           name: "live-identity",
-          summary: "Read the authenticated live Controller runtime generation identity.",
+          summary: "Read the authenticated live Controller runtime identity.",
           hidden: true
         },
         { name: "stop", summary: "Stop the Controller." },
@@ -1248,7 +1270,7 @@ export const ROOT_COMMAND = buildNode({
         },
         {
           name: "role",
-          summary: "Manage reusable global Roles and desired Agent launch configuration for the next Host activation.",
+          summary: "Manage reusable global Roles and desired Agent launch configuration for the next Host process.",
           examples: ["yui config role list", "yui config role show operator"],
           sections: [
             { id: "inspect", title: "Inspect", entries: ["list", "show"] },
@@ -1476,7 +1498,7 @@ export const ROOT_COMMAND = buildNode({
       name: "task",
       summary: "Manage Tasks, WorkItems, Turns, and integration.",
       sections: [
-        { id: "lifecycle", title: "Lifecycle", entries: ["create", "project", "base", "update", "activate", "execution", "complete", "cancel", "reopen", "retire", "list", "show", "context", "next-action", "remote-delivery", "archive", "replace", "reconcile", "upstream"] },
+        { id: "lifecycle", title: "Lifecycle", entries: ["create", "project", "base", "update", "activate", "execution", "complete", "cancel", "reopen", "retire", "list", "show", "context", "next-action", "remote-delivery", "archive", "replace", "reconcile", "upstream", "artifact"] },
         { id: "collaboration", title: "Collaboration", entries: ["message", "input", "grant", "workflow", "publication", "work", "turn", "review", "integration", "role", "overlap", "change-set"] },
         { id: "knowledge", title: "Task Knowledge", entries: ["brief", "decision", "milestone", "event", "continuation", "wake"] }
       ],
@@ -1535,7 +1557,7 @@ export const ROOT_COMMAND = buildNode({
         {
           name: "agent-host",
           summary: "Run the persistent structured Provider host.",
-          usage: "yui internal agent-host <launch-id> <ticket>"
+          usage: "yui internal agent-host <ticket>"
         },
         {
           name: "session-notify",

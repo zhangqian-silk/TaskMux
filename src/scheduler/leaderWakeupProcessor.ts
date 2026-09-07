@@ -213,18 +213,13 @@ async function forceLeaderSteer(
   let inputMayBeAccepted = false;
   let inputAccepted = false;
   let deliveryReturned = false;
-  let runtimeGenerationId: string | undefined;
   try {
     const sessions = store.getTaskRoleSessionSet?.(taskId, roleName) ?? null;
     const session = sessions?.sessions[active.effective.agentId];
     const binding = sessions?.providerBinding;
     const providerTurn = binding?.turn;
     const authority = binding?.authority;
-    if (session?.runtimeGenerationId === undefined || session.nativeSessionId === undefined
-      || providerTurn === null || providerTurn === undefined
-      || providerTurn.turnId !== active.id || providerTurn.nativeTurnId === undefined
-      || providerTurn.status !== "accepted"
-      || authority?.owner !== "controller" || authority.holderId === undefined) {
+    if (session?.nativeSessionId === undefined || providerTurn === null || providerTurn === undefined || providerTurn.turnId !== active.id || providerTurn.nativeTurnId === undefined || providerTurn.status !== "accepted" || authority?.owner !== "controller" || authority.holderId === undefined) {
       store.releaseWorkMailbox(target, batchId);
       return { taskId, status: "failed", reason: "not-ready", error: "Active Leader Turn has no steerable Provider fence." };
     }
@@ -252,14 +247,12 @@ async function forceLeaderSteer(
       directive,
       deltaRefIds: []
     });
-    runtimeGenerationId = session.runtimeGenerationId;
     inputMayBeAccepted = true;
     const outcome = await delivery.steerOnce({
       taskId,
       roleName,
       agentId: active.effective.agentId,
       adapterId: active.effective.adapterId,
-      runtimeGenerationId: session.runtimeGenerationId,
       nativeSessionId: session.nativeSessionId,
       nativeTurnId: providerTurn.nativeTurnId,
       authority: {
@@ -273,7 +266,14 @@ async function forceLeaderSteer(
     deliveryReturned = true;
     inputAccepted = outcome.status === "sent" || outcome.status === "already-sent"
       || outcome.failure?.inputDisposition === "accepted";
-    inputMayBeAccepted = outcome.status === "delivery-unknown" || inputAccepted;
+    inputMayBeAccepted = outcome.status === "pending"
+      || outcome.status === "delivery-unknown"
+      || outcome.failure?.inputDisposition === "unknown" || inputAccepted;
+    if (outcome.status === "pending") {
+      // Keep the exact claimed steer input while its original receipt is
+      // pending; the next observation must not allocate a replacement input.
+      return { taskId, turnId: active.id, status: "skipped", reason: "not-ready" };
+    }
     if (outcome.status !== "sent" && outcome.status !== "already-sent") {
       if (!inputMayBeAccepted) store.releaseWorkMailbox(target, batchId);
       const failure = outcome.failure;
@@ -320,7 +320,6 @@ async function forceLeaderSteer(
       inputDisposition: inputAccepted ? "accepted" : inputMayBeAccepted ? "unknown" : "not-accepted",
       ...(error instanceof Error ? { errorName: error.name } : {}),
       causeName: innermostCauseName(error),
-      expectedRuntimeGenerationId: runtimeGenerationId,
       attemptId: receiptId
     }, now);
     return {

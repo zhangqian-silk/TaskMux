@@ -28,7 +28,7 @@ import type { ManagedWorkspace } from "../worktree/managedWorkspace.js";
 import { activeLiveRoleAgentSession } from "../executor/agentExecutor.js";
 import { CallAuthority } from "../kernel/callAuthority.js";
 import { redactLaunchText } from "../runtime/launchDiagnostics.js";
-import { requireManagedTaskCaller, taskRoleRuntimeIdentity } from "../runtime/managedCaller.js";
+import { requireManagedTaskCaller } from "../runtime/managedCaller.js";
 
 /**
  * rr8: The caller identity a `job.start`/`job.cancel` request is bound to.
@@ -40,9 +40,9 @@ import { requireManagedTaskCaller, taskRoleRuntimeIdentity } from "../runtime/ma
  * rather than trusted as a literal:
  * - A `task` caller must carry `turnId`; the Controller looks up that Turn,
  *   requires `turn.roleName === role` and `turn.status === "active"`, and verifies
- *   the per-Session caller key. Role does not narrow authority within the Task.
+ *   the current native Session binding. Role does not narrow authority within the Task.
  * - A `global` caller is verified against the current global Role, Agent,
- *   launch, and native Session and then has full Task control authority.
+ *   and native Session and then has full Task control authority.
  * - A literal `scope: "user"` is never authority on its own.
  */
 export type DurableJobCaller = Readonly<{
@@ -51,16 +51,8 @@ export type DurableJobCaller = Readonly<{
   role?: string;
   agentId?: string;
   adapterId?: string;
-  runtimeGenerationId?: string;
   nativeSessionId?: string;
   turnId?: string;
-  /**
-   * rr13: task-scope caller — the per-Session job caller key injected at native
-   * Session launch as `YUI_JOB_CALLER_KEY`. The Controller verifies its SHA-256
-   * hash against the durable `jobCallerKeyHashes` map. The plaintext key is
-   * never persisted, so a client that reads durable state cannot replay it.
-   */
-  callerKey?: string;
 }>;
 
 export type DurableJobStartParams = Readonly<{
@@ -245,18 +237,21 @@ function jobAuthorityBinding(store: TaskStore, scope: string, roleName: string, 
   // Authenticate the live launch at ingress, but bind accepted Jobs to the
   // caller's durable Session identity, not its disposable Host generation.
   if (scope === "task") {
-    const role = store.getRole(taskId, roleName);
-    const identity = role === null ? null
-      : taskRoleRuntimeIdentity(role, store.getActiveTurn(taskId, roleName));
     const sessions = store.getTaskRoleSessionSet(taskId, roleName);
     const session = activeLiveRoleAgentSession(sessions);
-    const hash = identity === null ? null : store.getJobCallerKeyHash(taskId, roleName, identity.agentId);
-    if (hash === null || identity === null || sessions?.activeAgentId !== identity.agentId
-      || session === null || session.agentId !== identity.agentId || session.adapterId !== identity.adapterId) {
+    if (session === null) {
       throw jobDomainError("Current Job caller Session is unavailable.");
     }
+    try {
+      requireManagedTaskCaller(store, {
+        YUI_SESSION_SCOPE: "task", YUI_TASK_ID: taskId, YUI_ROLE: roleName,
+        YUI_NATIVE_SESSION_ID: session.nativeSessionId
+      });
+    } catch {
+      throw jobDomainError("Job caller binding was revoked; no execution was started.");
+    }
     return createHash("sha256").update(JSON.stringify([
-      hash, session.agentId, session.adapterId, session.nativeSessionId
+      session.agentId, session.adapterId, session.nativeSessionId
     ])).digest("hex");
   }
   const role = store.getGlobalRole(roleName);
@@ -443,32 +438,17 @@ function validateJobTarget(store: TaskStore, params: Omit<DurableJobStartParams,
  * - `task` + Turn not found / not active / `roleName !== role`: rejected — the
  *   claimed Role must be the real Role of an active Turn.
  * - `task`: full authority inside the matching Task after active Turn and
- *   per-Session caller-key verification; Role does not narrow it.
+ *   native Session verification; Role does not narrow it.
  */
 /**
- * rr13: `job.start`/`job.cancel` caller authorization at the Controller
- * boundary. Every identity claim the Controller can verify from durable state
- * (role and turnId) is replayable by any client in the
- * same authoritative Controller. The channel itself is therefore not
- * authenticated by those claims alone. A non-replayable per-Session caller key
- * closes the gap:
- *
- * - `user` scope: **rejected outright** for start/cancel. A bare shell or a
- *   managed Session that sheds its identity has no managed Session binding.
- * - `global` scope: verified against the current global Role Session.
- * - `task` scope: the caller must present `callerKey` — the
- *   `YUI_JOB_CALLER_KEY` injected at its native Session launch. The Controller
- *   hashes it (SHA-256) and compares against the durable `jobCallerKeyHashes`
- *   map for the caller's Role + Agent. An absent hash or a
- *   mismatched key is UNAUTHORIZED.
- *
- * The existing Turn binding checks run after the key check, so a forged
- * identity that also lacks the key is rejected at the channel boundary.
+ * Verify the caller's current native Session and Task scope. This local Home
+ * identity contract does not defend against another process with the same
+ * user's filesystem access. Bare user calls cannot start or cancel Jobs.
  */
 function assertCallerAuthorized(
   store: Pick<
     TaskStore,
-    "getTurn" | "getActiveTurn" | "getRole" | "getTaskRoleSessionSet" | "getJobCallerKeyHash"
+    "getTurn" | "getActiveTurn" | "getRole" | "getTaskRoleSessionSet" | "listEvents"
       | "getGlobalRole" | "getGlobalRoleSessionSet"
   >,
   caller: DurableJobCaller,
@@ -480,33 +460,19 @@ function assertCallerAuthorized(
     // by any client in the same Home. Reject outright (fail-closed).
     throw jobControlError(
       "UNAUTHORIZED",
-      "job.start/job.cancel requires a managed Session caller key; user scope is rejected."
+      "job.start/job.cancel requires a managed native Session; user scope is rejected."
     );
   }
   if (caller.scope === "global") {
     const roleName = caller.role;
-    const agentId = caller.agentId;
+    const agentId = roleName === undefined ? undefined : store.getGlobalRole(roleName)?.activeAgentId;
     const role = roleName === undefined ? null : store.getGlobalRole(roleName);
     const binding = role === null || agentId === undefined
       ? undefined
       : role.agentBindings[role.activeAgentId];
     const sessions = roleName === undefined ? null : store.getGlobalRoleSessionSet(roleName);
     const session = activeLiveRoleAgentSession(sessions);
-    if (role === null
-      || binding === undefined
-      || agentId === undefined
-      || caller.adapterId === undefined
-      || caller.runtimeGenerationId === undefined
-      || sessions === null
-      || sessions.activeAgentId !== role.activeAgentId
-      || session === null
-      || binding.agentId !== agentId
-      || binding.adapterId !== caller.adapterId
-      || session.agentId !== agentId
-      || session.adapterId !== caller.adapterId
-      || session.runtimeGenerationId !== caller.runtimeGenerationId
-      || (caller.nativeSessionId !== undefined
-        && session.nativeSessionId !== caller.nativeSessionId)) {
+    if (role === null || binding === undefined || agentId === undefined || sessions === null || sessions.activeAgentId !== role.activeAgentId || session === null || binding.agentId !== agentId || session.agentId !== agentId || session.adapterId !== binding.adapterId || caller.nativeSessionId === undefined || session.nativeSessionId !== caller.nativeSessionId) {
       throw jobControlError(
         "UNAUTHORIZED",
         "DurableJob control requires the current managed global Agent Session."
@@ -528,7 +494,7 @@ function assertCallerAuthorized(
     try {
       return requireManagedTaskCaller(store, {
         YUI_SESSION_SCOPE: "task", YUI_TASK_ID: taskId, YUI_ROLE: caller.role,
-        YUI_JOB_CALLER_KEY: caller.callerKey
+        YUI_NATIVE_SESSION_ID: caller.nativeSessionId
       });
     } catch (error) {
       throw jobControlError("UNAUTHORIZED", error instanceof Error ? error.message : String(error));
@@ -540,7 +506,8 @@ function assertCallerAuthorized(
   const sessions = store.getTaskRoleSessionSet(taskId, current.roleName);
   const session = activeLiveRoleAgentSession(sessions);
   if (sessions?.activeAgentId !== current.agentId || session === null
-    || session.agentId !== current.agentId || session.adapterId !== current.adapterId) {
+    || session.agentId !== current.agentId || session.adapterId !== current.adapterId
+    || caller.nativeSessionId === undefined || session.nativeSessionId !== caller.nativeSessionId) {
     throw jobControlError("UNAUTHORIZED", "DurableJob control requires the current live Task Session.");
   }
 }
@@ -789,8 +756,8 @@ function parseCaller(value: JsonValue | undefined): DurableJobCaller {
   }
   const record = value as Readonly<Record<string, JsonValue>>;
   const allowed = new Set([
-    "scope", "taskId", "role", "agentId", "adapterId", "runtimeGenerationId", "nativeSessionId",
-    "turnId", "callerKey"
+    "scope", "taskId", "role", "agentId", "adapterId", "nativeSessionId",
+    "turnId"
   ]);
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) {
@@ -800,7 +767,7 @@ function parseCaller(value: JsonValue | undefined): DurableJobCaller {
   if (record.scope !== "user" && record.scope !== "global" && record.scope !== "task") {
     throw jobControlError("INVALID_PARAMS", "job caller scope is invalid.");
   }
-  const optionalId = (key: "taskId" | "role" | "agentId" | "adapterId" | "runtimeGenerationId"
+  const optionalId = (key: "taskId" | "role" | "agentId" | "adapterId"
     | "nativeSessionId" | "turnId"): string | undefined => {
     const entry = record[key];
     if (entry === undefined) return undefined;
@@ -810,22 +777,16 @@ function parseCaller(value: JsonValue | undefined): DurableJobCaller {
   const role = optionalId("role");
   const agentId = optionalId("agentId");
   const adapterId = optionalId("adapterId");
-  const runtimeGenerationId = optionalId("runtimeGenerationId");
   const nativeSessionId = optionalId("nativeSessionId");
   const turnId = optionalId("turnId");
-  const callerKey = record.callerKey === undefined
-    ? undefined
-    : requiredId(record.callerKey, "job caller callerKey");
   return {
     scope: record.scope,
     ...(taskId === undefined ? {} : { taskId }),
     ...(role === undefined ? {} : { role }),
     ...(agentId === undefined ? {} : { agentId }),
     ...(adapterId === undefined ? {} : { adapterId }),
-    ...(runtimeGenerationId === undefined ? {} : { runtimeGenerationId }),
     ...(nativeSessionId === undefined ? {} : { nativeSessionId }),
-    ...(turnId === undefined ? {} : { turnId }),
-    ...(callerKey === undefined ? {} : { callerKey })
+    ...(turnId === undefined ? {} : { turnId })
   };
 }
 

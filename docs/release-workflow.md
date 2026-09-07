@@ -178,10 +178,23 @@ the test suite proves at-most-once execution directly.
 
 ## Operator guide
 
+The unreleased Storage 4 migration (planned for 0.15.8, after released 0.15.7 /
+Storage 3) removes Agent launch generations and per-Host caller keys through the
+central migration chain (including the released storage-3 boundary). Session
+and Turn history remain; telemetry is grouped by Role/Turn and process owners
+by PID/start identity. Accepted Jobs retain only authority that was valid before
+the migration. Old runtime directories are not renamed or deleted: they remain
+resource inventory for explicit Agent cleanup. This storage change requires the
+normal explicit upgrade boundary, not a live schema rewrite by ordinary commands.
+
 Grant issue and revoke are irreversible-authority operations. They require
-the authenticated global Operator session: the command must run inside the
-Operator role's launched session, whose env claims are verified against the
-durable live session binding. A managed Task Agent cannot self-issue or
+the current registered global Operator conversation. Its native session ID
+must match the durable live session binding: Codex commands use `CODEX_THREAD_ID`
+when present, otherwise `YUI_NATIVE_SESSION_ID`; Claude uses `YUI_NATIVE_SESSION_ID`.
+Host generation and launch-time Agent labels are not caller identity. Resuming
+the same conversation through another entry point does not revoke its authority.
+An unregistered, replaced, or ended conversation has no such authority.
+A managed Task Agent cannot self-issue or
 self-revoke a grant, and clearing the child-process environment does not
 confer user authority. The recorded granter/revoker is bound to that
 Operator session (`operator:<agent-id>`); there is no `--granter`/`--by`
@@ -230,6 +243,18 @@ each step. A local test request never substitutes for that authority.
 The tag-triggered `publish.yml` workflow is the only maintained release smoke.
 It reuses the exact commit that passed core CI and adds only artifact assembly,
 fresh installation, and provenance checks required to publish.
+
+That workflow authenticates through npm Trusted Publishing (OIDC), so the
+release identity lives in two places outside the tag: `repository`, `bugs`, and
+`homepage` are copied verbatim from the source `package.json` into the published
+manifest by `assemble-runtime-package.mjs`, and the package's npm Trusted
+Publisher entry names the GitHub owner, repository, workflow file, and
+environment. npm compares `repository.url` against the building repository
+case-sensitively before accepting provenance. Renaming or transferring the
+GitHub repository therefore has to update those URLs and the npm Trusted
+Publisher entry together with the rename; otherwise the next tag reaches
+`npm publish` and fails there, after the tag and the gated build already
+succeeded.
 
 ## Adapter security hardening
 

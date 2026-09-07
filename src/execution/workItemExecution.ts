@@ -21,11 +21,10 @@ import { MAX_SYNTHESIS_SOURCE_TURNS } from "../context/sourceTurnContext.js";
 export const WORK_ITEM_EXECUTION_GROUP_SCHEMA_VERSION = 2 as const;
 export const WORK_ITEM_EXECUTION_LANE_SCHEMA_VERSION = 2 as const;
 export const WORK_ITEM_EXECUTION_ASSIGNMENT_SCHEMA_VERSION = 1 as const;
-export const MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS = 2;
+export const MINIMUM_EXECUTION_GROUP_LANES = 2;
 export const EXECUTION_GROUP_SCHEMA_VERSION = WORK_ITEM_EXECUTION_GROUP_SCHEMA_VERSION;
 export const EXECUTION_LANE_SCHEMA_VERSION = WORK_ITEM_EXECUTION_LANE_SCHEMA_VERSION;
 export const EXECUTION_ASSIGNMENT_SCHEMA_VERSION = WORK_ITEM_EXECUTION_ASSIGNMENT_SCHEMA_VERSION;
-export const MINIMUM_SYNTHESIS_RESULTS = MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS;
 export const MAXIMUM_SYNTHESIS_RESULTS = MAX_SYNTHESIS_SOURCE_TURNS;
 
 export type WorkItemExecutionProjectBase = Readonly<{
@@ -191,7 +190,7 @@ export function createExecutionGroup<Assignment extends ExecutionAssignment>(
   laneInputs: readonly ExecutionLaneInput[],
   now: Date
 ): ExecutionGroup<Assignment> {
-  if (laneInputs.length < MINIMUM_SYNTHESIS_RESULTS) {
+  if (laneInputs.length < MINIMUM_EXECUTION_GROUP_LANES) {
     throw new Error("A replicated ExecutionGroup requires at least two Lanes.");
   }
   if (laneInputs.length > MAXIMUM_SYNTHESIS_RESULTS) {
@@ -467,7 +466,7 @@ export function validateExecutionGroup(
   if (assignment.taskId !== group.taskId) {
     throw new Error("ExecutionGroup Assignment Task does not match its Group.");
   }
-  if (!Array.isArray(group.lanes) || group.lanes.length < MINIMUM_SYNTHESIS_RESULTS) {
+  if (!Array.isArray(group.lanes) || group.lanes.length < MINIMUM_EXECUTION_GROUP_LANES) {
     throw new Error("A replicated ExecutionGroup requires at least two Lanes.");
   }
   if (group.lanes.length > MAXIMUM_SYNTHESIS_RESULTS) {

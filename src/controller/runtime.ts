@@ -21,9 +21,7 @@ import {
 } from "../agent/launchEnvironment.js";
 import {
   hasRuntimeCleanupObligation,
-  runtimeLifecycleSignalKey,
-  runtimeLifecycleTarget,
-  type RuntimeLifecycleTarget
+  runtimeLifecycleTarget
 } from "../runtime/lifecycleReservation.js";
 import {
   agentProcessReadinessProbe,
@@ -71,7 +69,6 @@ import {
   ProviderContinuationReconciliationService,
   type ProviderContinuationMetadataPort,
   type TaskRuntimeIsolationPort,
-  type TaskRuntimeLifecycleCleanupPort,
   type SessionHostPort
 } from "../runtime/index.js";
 import {
@@ -97,7 +94,7 @@ import { AgentRuntimeObserver } from "./agentRuntimeObserver.js";
 import {
   AsyncRuntimeEventProcessor,
   FileRuntimeEventProcessor,
-  createAsyncRuntimeObserver,
+  createAsyncRuntimeObserver
 } from "./runtimeEventProcessor.js";
 import {
   RuntimeLaunchCoordinator,
@@ -142,7 +139,7 @@ export type FileTaskControllerFactoryOptions = ControllerRuntimeOptions & Readon
   dispatcher?: ControllerDispatcher;
   environment?: NodeJS.ProcessEnv;
   workspacePreparer?: TaskWorkspacePreparer;
-  runtimeIsolation?: TaskRuntimeIsolationPort & Partial<TaskRuntimeLifecycleCleanupPort>;
+  runtimeIsolation?: TaskRuntimeIsolationPort;
   catalogs?: AgentConfigurationCatalogService;
   /** Optional Adapter metadata query; never grants model/launch authority. */
   continuationMetadata?: ProviderContinuationMetadataPort;
@@ -156,7 +153,7 @@ export type RunningFileTaskControllerRuntime = RunningFileTaskController & Reado
   delivery: ExecutorRegistry;
   sessionHost: SessionHostPort;
   promptPush: ActivePromptPushPort;
-  runtimeIsolation: TaskRuntimeIsolationPort & Partial<TaskRuntimeLifecycleCleanupPort>;
+  runtimeIsolation: TaskRuntimeIsolationPort;
   workspacePreparer: TaskWorkspacePreparer;
   kernel: ReturnType<typeof createKernelPorts>;
 }>;
@@ -265,21 +262,19 @@ export async function startFileTaskControllerRuntime(
           request.agentId
         );
         if (
-          session !== null
-          && session.runtimeGenerationId === request.runtimeGenerationId
-          && typeof session.nativeSessionId === "string"
-          && session.nativeSessionId.trim().length > 0
+          session !== null && session.status === "active"
+          && session.adapterId === request.adapterId
+          && typeof session.nativeSessionId === "string" && session.nativeSessionId.trim().length > 0
         ) {
           return session.nativeSessionId;
         }
         for (const event of runtimeEventInbox.list()) {
           if (
-            event.type === "runtime-observation"
-            && event.observation.kind === "session.started"
+            event.type === "runtime-observation" && event.observation.kind === "session.started"
             && event.observation.fence.taskId === owner.taskId
             && event.observation.fence.roleName === owner.roleName
             && event.observation.fence.agentId === request.agentId
-            && event.observation.fence.runtimeGenerationId === request.runtimeGenerationId
+            && event.observation.fence.turnId === request.turnId
             && typeof event.observation.fence.nativeSessionId === "string"
             && event.observation.fence.nativeSessionId.trim().length > 0
           ) {
@@ -298,7 +293,6 @@ export async function startFileTaskControllerRuntime(
         owner: binding.owner,
         agentId: binding.agentId,
         adapterId: binding.adapterId,
-        runtimeGenerationId: binding.runtimeGenerationId,
         ...(binding.nativeSessionId === undefined
           ? {}
           : { nativeSessionId: binding.nativeSessionId }),
@@ -341,7 +335,7 @@ export async function startFileTaskControllerRuntime(
             new Error(
               `Role runtime cleanup could not prove physical exit: ${
                 result.remaining
-                  .map(({ record, detail }) => `${record.runtimeGenerationId}: ${detail}`)
+                  .map(({ record, detail }) => `PID ${record.providerRoot.pid}: ${detail}`)
                   .join("; ")
               }`
             )
@@ -350,30 +344,10 @@ export async function startFileTaskControllerRuntime(
         return result.outcome === "stop-confirmed";
       });
     },
-    ...(runtimeIsolation.cleanupTaskLaunch === undefined
-      ? {}
-      : {
-          cleanupTaskLaunch: (
-            input: Parameters<NonNullable<
-              TaskRuntimeLifecycleCleanupPort["cleanupTaskLaunch"]
-            >>[0]
-          ) => runtimeIsolation.cleanupTaskLaunch!(input)
-        })
   };
   const resourceActivity = createRuntimeResourceActivityTracker();
   let runningRuntime: RunningFileTaskController["runtime"] | undefined;
   let runningController: RunningFileTaskController | undefined;
-  const signalRuntimeCleanup = (target: RuntimeLifecycleTarget) => {
-    runningRuntime?.signal(runtimeLifecycleSignalKey(
-      target.kind === "role-runtime"
-        ? {
-            scope: "task",
-            taskId: target.taskId,
-            roleName: target.roleName
-          }
-        : { scope: "global", roleName: target.roleName }
-    ));
-  };
   const launchCoordinator = new RuntimeLaunchCoordinator(
     schedulerStore,
     sessionHost,
@@ -382,7 +356,6 @@ export async function startFileTaskControllerRuntime(
       assertCurrent: (request) => {
         assertRuntimeLaunchRequestCurrent(store, request);
       },
-      onCleanupRequired: signalRuntimeCleanup,
       runtimeIsolation
     }
   );
@@ -426,11 +399,7 @@ export async function startFileTaskControllerRuntime(
             && candidate.roleName === owner.roleName
           ));
           if (input === undefined) return [];
-          const identity = owner.turnId === undefined
-            || owner.adapterId === undefined
-            || (owner.nativeSessionId === undefined && owner.runtimeGenerationId === undefined)
-            || (owner.nativeSessionId !== undefined && owner.nativeSessionId.trim().length === 0)
-            || (owner.runtimeGenerationId !== undefined && owner.runtimeGenerationId.trim().length === 0)
+          const identity = owner.turnId === undefined || owner.adapterId === undefined || (owner.nativeSessionId === undefined) || (owner.nativeSessionId !== undefined && owner.nativeSessionId.trim().length === 0)
             ? undefined
             : {
                 taskId: owner.taskId,
@@ -441,7 +410,6 @@ export async function startFileTaskControllerRuntime(
                 ...(owner.nativeSessionId === undefined
                   ? {}
                   : { nativeSessionId: owner.nativeSessionId }),
-                ...(owner.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: owner.runtimeGenerationId })
               };
           const changed = !active || input.turnId === undefined
             ? false
@@ -454,7 +422,6 @@ export async function startFileTaskControllerRuntime(
                 ...(input.nativeSessionId === undefined
                   ? {}
                   : { nativeSessionId: input.nativeSessionId }),
-                ...(input.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: input.runtimeGenerationId })
               } satisfies RuntimeResourceSampleIdentity, resource);
           return [{
             taskId: owner.taskId,
@@ -520,7 +487,6 @@ export async function startFileTaskControllerRuntime(
     schedulerStore,
     sessionHost,
     options.dispatcher,
-    signalRuntimeCleanup,
     launchCoordinator,
     planner
   );
@@ -702,7 +668,6 @@ export function createRuntimeLifecycleDispatcher(
   schedulerStore: FileSchedulerStoreAdapter,
   sessionHost: SessionHostPort,
   fallback?: ControllerDispatcher,
-  onCleanupRequired?: (target: RuntimeLifecycleTarget) => void,
   sharedLaunchCoordinator?: RuntimeLaunchPreparationPort,
   environmentRefresher?: AgentEnvironmentRefreshPort
 ): ControllerDispatcher {
@@ -711,7 +676,6 @@ export function createRuntimeLifecycleDispatcher(
       assertCurrent: (request) => {
         assertRuntimeLaunchRequestCurrent(store, request);
       },
-      onCleanupRequired
     });
   const lifecycleTails = new Map<string, Promise<void>>();
   return async (method, params) => {
@@ -738,7 +702,6 @@ export function createRuntimeLifecycleDispatcher(
           roleName: value.roleName,
           ...(value.turnId === undefined ? {} : { turnId: value.turnId }),
           agentId: value.agentId,
-          runtimeGenerationId: value.runtimeGenerationId,
           nativeSessionId: value.nativeSessionId,
           attemptId: value.attemptId,
           authorityEpoch: value.authorityEpoch,
@@ -798,13 +761,11 @@ export function createRuntimeLifecycleDispatcher(
             && ["turn.completed", "turn.failed", "turn.cancelled"].includes(runtime.kind)
             && Date.parse(runtime.receivedAt) <= Date.parse(observation.observedAt);
         });
-      const turnFailureObserved = observation.taskId !== undefined
-        && observation.turnId !== undefined
-        && store.listEvents(observation.taskId).some((event) => {
+      const turnFailureObserved = observation.taskId !== undefined && observation.turnId !== undefined && store.listEvents(observation.taskId).some((event) => {
           const runtime = runtimeObservationFromTaskEvent(event);
           return runtime !== null
             && runtime.fence.turnId === observation.turnId
-            && runtime.fence.runtimeGenerationId === observation.runtimeGenerationId
+            && runtime.fence.nativeSessionId === observation.nativeSessionId
             && runtime.kind === "turn.failed"
             && Date.parse(runtime.receivedAt) <= Date.parse(observation.observedAt);
         });
@@ -840,7 +801,6 @@ export function createRuntimeLifecycleDispatcher(
             observationId: observation.observationId,
             processKind: observation.processKind,
             roleName: observation.roleName,
-            runtimeGenerationId: observation.runtimeGenerationId,
             observedAt: observation.observedAt,
             classification,
             observation: JSON.stringify(observation)
@@ -855,16 +815,14 @@ export function createRuntimeLifecycleDispatcher(
       if (params === null || typeof params !== "object" || Array.isArray(params)) {
         throw applicationError("INVALID_PARAMS", "Launch redemption params are invalid.");
       }
-      const runtimeGenerationId = (params as Record<string, unknown>).runtimeGenerationId;
       const ticket = (params as Record<string, unknown>).ticket;
       const hostPid = (params as Record<string, unknown>).hostPid;
-      if (typeof runtimeGenerationId !== "string" || typeof ticket !== "string"
-        || !Number.isSafeInteger(hostPid) || (hostPid as number) <= 0) {
+      if (typeof ticket !== "string" || !Number.isSafeInteger(hostPid) || (hostPid as number) <= 0) {
         throw applicationError("INVALID_PARAMS", "Launch redemption identity is invalid.");
       }
       // The launch payload is validated at reservation time and every member
       // of its discriminated Provider-control union is JSON serializable.
-      return launchBrokerForHome(store.rootDirectory()).redeem(runtimeGenerationId, ticket) as unknown as JsonValue;
+      return launchBrokerForHome(store.rootDirectory()).redeem(ticket) as unknown as JsonValue;
     }
     if (method === "runtime.replace-agent-environment") {
       if (environmentRefresher === undefined) {
@@ -1018,7 +976,6 @@ export function createRuntimeLifecycleDispatcher(
     const assertCurrent = () => assertRuntimeLaunchRequestCurrent(store, launchRequest);
     const runtimeBinding = await launchCoordinator.prepare(
       launchRequest,
-      "immediate",
       assertCurrent
     );
     return {
@@ -1144,17 +1101,6 @@ function assertRuntimeLaunchRequestCurrent(
     if (session === null || session === undefined
       || session.nativeSessionId !== request.nativeSessionId) {
       throw new Error(`Native session changed: ${request.owner.roleName}.`);
-    }
-    // The Role's durable Session record is the only authority for which Host
-    // activation may be restored. Targeting anything else would revive a
-    // historical activation.
-    if (request.hostActivationId !== undefined
-      && session.runtimeGenerationId !== request.hostActivationId) {
-      throw new Error(
-        `Session restore does not target the Role's current Host activation: ${
-          request.owner.roleName
-        }.`
-      );
     }
     if (!roleSessionMayContinue(session.effective, request.effective)) {
       throw new Error(
@@ -1452,7 +1398,6 @@ function providerTurnControlParams(params: JsonValue): Readonly<{
   roleName: string;
   turnId?: string;
   agentId: string;
-  runtimeGenerationId: string;
   nativeSessionId: string;
   attemptId: string;
   authorityEpoch: number;
@@ -1477,7 +1422,6 @@ function providerTurnControlParams(params: JsonValue): Readonly<{
     roleName: requiredParam(value.roleName),
     ...(value.turnId === undefined ? {} : { turnId: requiredParam(value.turnId) }),
     agentId: requiredParam(value.agentId),
-    runtimeGenerationId: requiredParam(value.runtimeGenerationId),
     nativeSessionId: requiredParam(value.nativeSessionId),
     attemptId: requiredParam(value.attemptId),
     authorityEpoch: authorityEpoch as number,

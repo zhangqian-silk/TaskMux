@@ -21,9 +21,6 @@ export type RuntimeObservationKind =
   | "session.ended"
   | "session.failed"
   | "conversation.observed"
-  | "activation.started"
-  | "activation.ended"
-  | "activation.failed"
   | "goal.updated"
   | "goal.cleared"
   | "turn.accepted"
@@ -39,6 +36,7 @@ export type RuntimeObservationKind =
   | "continuation.reported"
   | "continuation.settled"
   | "input.accepted"
+  | "input.rejected"
   | "input.delivery-unknown"
   | "activity.observed"
   | "observer.health";
@@ -58,11 +56,8 @@ export type RuntimeObservationFence = Readonly<{
   agentId: string;
   /** Open, namespaced Driver identity; never a closed provider union. */
   driverId: string;
-  runtimeGenerationId: string;
   conversationId?: string;
-  activationId?: string;
   continuationId?: string;
-  continuationGeneration?: number;
   parentContinuationId?: string;
   nativeSessionId?: string;
   nativeTurnId?: string;
@@ -162,9 +157,6 @@ const KINDS: readonly RuntimeObservationKind[] = [
   "session.ended",
   "session.failed",
   "conversation.observed",
-  "activation.started",
-  "activation.ended",
-  "activation.failed",
   "goal.updated",
   "goal.cleared",
   "turn.accepted",
@@ -180,6 +172,7 @@ const KINDS: readonly RuntimeObservationKind[] = [
   "continuation.reported",
   "continuation.settled",
   "input.accepted",
+  "input.rejected",
   "input.delivery-unknown",
   "activity.observed",
   "observer.health"
@@ -252,21 +245,13 @@ export function createRuntimeObservation(input: RuntimeObservation): RuntimeObse
     && fence.receiptId === undefined) {
     throw new Error(`${input.kind} requires a native Turn or exact receipt identity.`);
   }
-  if ((input.kind.startsWith("activation.") || CONTINUATION_SCOPED.has(input.kind)
-      || input.kind === "native-work.snapshot")
-    && fence.activationId === undefined) {
-    throw new Error(`${input.kind} requires activationId.`);
-  }
-  if ((input.kind === "conversation.observed" || input.kind.startsWith("activation.")
+  if ((input.kind === "conversation.observed"
       || CONTINUATION_SCOPED.has(input.kind) || input.kind === "native-work.snapshot")
     && fence.conversationId === undefined) {
     throw new Error(`${input.kind} requires conversationId.`);
   }
   if (CONTINUATION_SCOPED.has(input.kind) && fence.continuationId === undefined) {
     throw new Error(`${input.kind} requires continuationId.`);
-  }
-  if (CONTINUATION_SCOPED.has(input.kind) && fence.continuationGeneration === undefined) {
-    throw new Error(`${input.kind} requires continuationGeneration.`);
   }
   const payload = normalizePayload(input.kind, input.payload);
   const sequence = input.sequence;
@@ -304,11 +289,8 @@ export function runtimeObservationFenceMatches(
     "turnId",
     "agentId",
     "driverId",
-    "runtimeGenerationId",
     "conversationId",
-    "activationId",
     "continuationId",
-    "continuationGeneration",
     "parentContinuationId",
     "nativeSessionId",
     "nativeTurnId",
@@ -320,7 +302,7 @@ export function runtimeObservationFenceMatches(
 }
 
 /**
- * Matches observations that belong to one durable Turn/Runtime generation.
+ * Matches observations that belong to one durable Turn/Runtime Session.
  * A provider may advance its native Turn while background subagents from an
  * earlier Turn are still active and later mailbox activations use their own
  * exactly-once receipt, so nativeTurnId and receiptId are intentionally
@@ -336,7 +318,6 @@ export function runtimeObservationTurnFenceMatches(
     "turnId",
     "agentId",
     "driverId",
-    "runtimeGenerationId",
     "nativeSessionId"
   ] as const) {
     if (expected[field] !== actual[field]) return false;
@@ -355,7 +336,6 @@ export function runtimeObservationTaskEventPayload(
     roleName: observation.fence.roleName,
     agentId: observation.fence.agentId,
     driverId: observation.fence.driverId,
-    runtimeGenerationId: observation.fence.runtimeGenerationId,
     ...(observation.fence.taskId === undefined ? {} : { taskId: observation.fence.taskId }),
     ...(observation.fence.turnId === undefined ? {} : { turnId: observation.fence.turnId }),
     ...(observation.fence.nativeSessionId === undefined
@@ -410,7 +390,6 @@ function normalizeFence(input: RuntimeObservationFence): RuntimeObservationFence
     ...(input.turnId === undefined ? {} : { turnId: requireIdentity(input.turnId, "Turn id") }),
     agentId: requireIdentity(input.agentId, "Agent id"),
     driverId: requireDriverId(input.driverId),
-    runtimeGenerationId: requireIdentity(input.runtimeGenerationId, "Runtime generation id"),
     ...(input.nativeSessionId === undefined
       ? {}
       : { nativeSessionId: requireIdentity(input.nativeSessionId, "Native Session id") }),
@@ -423,21 +402,9 @@ function normalizeFence(input: RuntimeObservationFence): RuntimeObservationFence
     ...(input.conversationId === undefined
       ? {}
       : { conversationId: requireIdentity(input.conversationId, "Provider Conversation id") }),
-    ...(input.activationId === undefined
-      ? {}
-      : { activationId: requireIdentity(input.activationId, "Provider Activation id") }),
     ...(input.continuationId === undefined
       ? {}
       : { continuationId: requireIdentity(input.continuationId, "Provider Continuation id") }),
-    ...(input.continuationGeneration === undefined
-      ? {}
-      : {
-          continuationGeneration: requireNonNegativeInteger(
-            input.continuationGeneration,
-            1,
-            "Provider Continuation generation"
-          )
-        }),
     ...(input.parentContinuationId === undefined
       ? {}
       : {
@@ -649,15 +616,13 @@ export function runtimeObservationSemanticKey(input: Readonly<{
   const continuationIdentity = [
     fence.driverId,
     fence.agentId,
-    fence.conversationId ?? fence.nativeSessionId ?? fence.runtimeGenerationId,
-    fence.activationId ?? fence.runtimeGenerationId,
-    fence.continuationId ?? "none",
-    fence.continuationGeneration ?? "none"
+    fence.conversationId ?? fence.nativeSessionId ?? "none",
+    fence.continuationId ?? "none"
   ];
   // Terminal boundaries are semantic facts. Providers may replay them with a
   // fresh transport sequence after reconnect, so terminal identity must win
   // over occurrence ordering or one SessionEnd storm becomes many facts.
-  if (["session.ended", "session.failed", "activation.ended", "activation.failed",
+  if (["session.ended", "session.failed",
     "goal.cleared", "turn.completed", "turn.failed", "turn.cancelled", "continuation.settled"].includes(input.kind)) {
     return [
       "terminal",
@@ -675,7 +640,7 @@ export function runtimeObservationSemanticKey(input: Readonly<{
     return [
       "goal-state",
       fence.driverId,
-      fence.conversationId ?? fence.nativeSessionId ?? fence.runtimeGenerationId,
+      fence.conversationId ?? fence.nativeSessionId ?? "none",
       input.payload?.goalStatus ?? "unknown",
       input.payload?.goalUpdatedAt ?? "unknown"
     ].join(":");
@@ -700,18 +665,8 @@ export function runtimeObservationSemanticKey(input: Readonly<{
       input.payload?.resultRef ?? "none"
     ].join(":");
   }
-  if (input.sequence !== undefined) {
-    return [
-      "provider-sequence",
-      fence.driverId,
-      fence.conversationId ?? fence.nativeSessionId ?? fence.runtimeGenerationId,
-      fence.activationId ?? fence.runtimeGenerationId,
-      fence.continuationId ?? fence.receiptId ?? fence.nativeTurnId ?? "none",
-      fence.continuationGeneration ?? "none",
-      input.sequence,
-      input.kind
-    ].join(":");
-  }
+  // Sequence is transport-local ordering, not identity: it may restart when
+  // a Host reconnects to the same Session. Inbox retries retain the event id.
   return `provider-event:${requireIdentity(input.eventId, "Runtime observation event id")}`;
 }
 

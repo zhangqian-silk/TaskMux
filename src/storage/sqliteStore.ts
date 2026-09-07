@@ -38,6 +38,10 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import Database from "better-sqlite3";
+import {
+  validateArtifact, validateLocalResource, validateEnvironmentPreparation,
+  type Artifact, type LocalResource, type EnvironmentPreparation
+} from "../resources/projectResource.js";
 import type { ConfiguredAgent } from "../agent/agent.js";
 import { validateTaskBrief, type TaskBrief } from "../brief/taskBrief.js";
 import type { MailboxTarget, WorkMailbox } from "../coordination/workMailbox.js";
@@ -64,10 +68,10 @@ import {
   type RuntimeSessionCandidate,
   type RuntimeSessionCandidateQuery
 } from "../runtime/runtimeSessionCandidate.js";
-import type { SessionOwnerIdentity } from "../runtime/sessionOwnerIdentity.js";
+import { sessionOwnerProcessKey, type SessionOwnerIdentity } from "../runtime/sessionOwnerIdentity.js";
 import type { ReviewConfig } from "../review/reviewConfig.js";
 import { validateReviewRound, type ReviewRound } from "../review/reviewRound.js";
-import type { Project, ProjectReferenceSummary } from "../repository/project.js";
+import { validateProject, type Project, type ProjectReferenceSummary } from "../repository/project.js";
 import {
   generateHomeIdentity,
   validateHomeIdentity,
@@ -102,7 +106,6 @@ import { validateWorkItem, type WorkItem } from "../workItem/workItem.js";
 import { managedWorkspaceKey, type ManagedWorkspace, type ManagedWorkspaceOwner } from "../worktree/managedWorkspace.js";
 import {
   CURRENT_CONFIG_SCHEMA_VERSION,
-  CURRENT_PENDING_WAKEUP_SCHEMA_VERSION,
   CURRENT_WORK_MAILBOX_SCHEMA_VERSION,
   executionLaneActiveTurnKey,
   executionLaneActiveTurnKeyParts,
@@ -137,7 +140,7 @@ import {
   inspectSqliteSchemaMigrations,
   migrateSqliteSchema,
   SqliteSchemaMigrationError,
-  TELEMETRY_KEEP_PER_GENERATION,
+  TELEMETRY_KEEP_PER_TURN,
   TELEMETRY_TURN_CAP
 } from "./sqliteSchema.js";
 import { StorageSchemaError } from "./storageSchema.js";
@@ -193,7 +196,6 @@ export type TelemetryProgress = Readonly<{
   taskId: string;
   roleName: string;
   turnId: string;
-  generation: string;
   progressId: string;
   sequence?: number;
   payload: unknown;
@@ -811,9 +813,86 @@ export class SqliteTaskStore implements TaskStore {
 
   // -- projects ---------------------------------------------------------------
 
+  saveArtifact(artifact: Artifact): void {
+    validateArtifact(artifact);
+    this.#mutate(() => {
+      const previous = this.getArtifact(artifact.taskId, artifact.id);
+      if (previous !== null) {
+        if (!isDeepStrictEqual(previous, artifact)) throw new StorageRecordError("Artifacts are immutable.");
+        return;
+      }
+      this.#db.prepare("INSERT INTO artifacts (task_id, id, payload) VALUES (?, ?, ?)")
+        .run(artifact.taskId, artifact.id, this.#json(artifact));
+    });
+  }
+
+  getArtifact(taskId: string, artifactId: string): Artifact | null {
+    const artifact = this.#getPayload<Artifact>("artifacts", "task_id = ? AND id = ?", [taskId, artifactId]);
+    return artifact === null ? null : validateArtifact(artifact);
+  }
+
+  listArtifacts(taskId: string): Artifact[] {
+    return this.#listPayload<Artifact>("artifacts", "task_id = ?", [taskId]).map(validateArtifact);
+  }
+
+  saveLocalResource(resource: LocalResource): void {
+    validateLocalResource(resource);
+    this.#mutate(() => {
+      const previous = this.getLocalResource(resource.id);
+      if (previous !== null) {
+        if (!isDeepStrictEqual(previous, resource)) throw new StorageRecordError("Resource identity is immutable.");
+        return;
+      }
+      this.#db.prepare("INSERT INTO local_resources (id, canonical_identity, payload) VALUES (?, ?, ?)")
+        .run(resource.id, `${resource.device}:${resource.inode}`, this.#json(resource));
+    });
+  }
+
+  getLocalResource(resourceId: string): LocalResource | null {
+    const resource = this.#getPayload<LocalResource>("local_resources", "id = ?", [resourceId]);
+    return resource === null ? null : validateLocalResource(resource);
+  }
+
+  listLocalResources(): LocalResource[] {
+    return this.#listPayload<LocalResource>("local_resources", "1=1", []).map(validateLocalResource);
+  }
+
+  saveEnvironmentPreparation(preparation: EnvironmentPreparation): void {
+    validateEnvironmentPreparation(preparation);
+    this.#mutate(() => {
+      const previous = this.getEnvironmentPreparation(preparation.taskId, preparation.id);
+      if (previous) {
+        const { disposition: before, updatedAt: _beforeTime, releaseEvidence: _beforeEvidence, ...identity } = previous;
+        const { disposition: after, updatedAt: _afterTime, releaseEvidence: _afterEvidence, ...nextIdentity } = preparation;
+        if (!isDeepStrictEqual(identity, nextIdentity)
+          || (before === "released" && !isDeepStrictEqual(previous, preparation))
+          || (before === "adopted" && after === "prepared")) {
+          throw new StorageRecordError("Preparation ownership/identity cannot be rewritten.");
+        }
+      } else if (preparation.disposition !== "prepared") {
+        throw new StorageRecordError("Environment must be prepared before adoption.");
+      }
+      this.#db.prepare(`INSERT INTO environment_preparations (task_id, id, payload) VALUES (?, ?, ?)
+        ON CONFLICT(task_id, id) DO UPDATE SET payload = excluded.payload`)
+        .run(preparation.taskId, preparation.id, this.#json(preparation));
+    });
+  }
+
+  getEnvironmentPreparation(taskId: string, preparationId: string): EnvironmentPreparation | null {
+    const preparation = this.#getPayload<EnvironmentPreparation>("environment_preparations",
+      "task_id = ? AND id = ?", [taskId, preparationId]);
+    return preparation === null ? null : validateEnvironmentPreparation(preparation);
+  }
+
+  listEnvironmentPreparations(taskId: string): EnvironmentPreparation[] {
+    return this.#listPayload<EnvironmentPreparation>("environment_preparations", "task_id = ?", [taskId])
+      .map(validateEnvironmentPreparation);
+  }
+
   nextProjectId(): string { return this.#nextGlobalId("project"); }
 
   saveProject(project: Project): void {
+    validateProject(project);
     this.#mutate(() => {
       this.#db.prepare(
         `INSERT INTO projects (id, name, path, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -823,6 +902,7 @@ export class SqliteTaskStore implements TaskStore {
   }
 
   createProjectIfAbsent(project: Project): Project | null {
+    validateProject(project);
     return this.#mutate(() => {
       const result = this.#db.prepare(
         "INSERT OR IGNORE INTO projects (id, name, path, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
@@ -832,11 +912,12 @@ export class SqliteTaskStore implements TaskStore {
   }
 
   listProjects(): Project[] {
-    return this.#sortById(this.#listPayload<Project>("projects", "1=1", []), (project) => project.id);
+    return this.#sortById(this.#listPayload<Project>("projects", "1=1", []).map(validateProject), (project) => project.id);
   }
 
   getProject(id: string): Project | null {
-    return this.#getPayload<Project>("projects", "id = ?", [id]);
+    const project = this.#getPayload<Project>("projects", "id = ?", [id]);
+    return project === null ? null : validateProject(project);
   }
 
   removeProject(id: string): boolean {
@@ -1364,29 +1445,6 @@ export class SqliteTaskStore implements TaskStore {
     return row !== undefined;
   }
 
-  // -- job caller key hashes (rr13) -------------------------------------------
-
-  getJobCallerKeyHash(taskId: string, roleName: string, agentId: string): string | null {
-    const row = this.#db.prepare(
-      "SELECT hash FROM job_caller_key_hashes WHERE task_id = ? AND role_name = ? AND agent_id = ?"
-    ).get(taskId, roleName, agentId) as { hash: string } | undefined;
-    return row === undefined ? null : row.hash;
-  }
-
-  setJobCallerKeyHash(taskId: string, roleName: string, agentId: string, hash: string): void {
-    this.#requireTask(taskId);
-    if (!/^[a-f0-9]{64}$/u.test(hash)) {
-      throw new StorageRecordError(`Job caller key hash is invalid: ${taskId}/${roleName}.`);
-    }
-    this.#mutate(() => {
-      this.#db.prepare(
-        `INSERT INTO job_caller_key_hashes (task_id, role_name, agent_id, hash, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(task_id, role_name, agent_id) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at`
-      ).run(taskId, roleName, agentId, hash, this.#now());
-    });
-  }
-
   // -- session owners (Issue 03) ----------------------------------------------
 
   saveSessionOwner(identity: SessionOwnerIdentity): void {
@@ -1394,17 +1452,17 @@ export class SqliteTaskStore implements TaskStore {
     this.#mutate(() => {
       this.#db.prepare(
         `INSERT INTO session_owners
-           (launch_id, scope, task_id, role_name, agent_id, native_session_id,
+           (process_key, scope, task_id, role_name, agent_id, native_session_id,
             provider_root_pid, payload, recorded_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(launch_id) DO UPDATE SET
+         ON CONFLICT(process_key) DO UPDATE SET
            scope = excluded.scope, task_id = excluded.task_id,
            role_name = excluded.role_name, agent_id = excluded.agent_id,
            native_session_id = excluded.native_session_id,
            provider_root_pid = excluded.provider_root_pid,
            payload = excluded.payload, recorded_at = excluded.recorded_at`
       ).run(
-        identity.runtimeGenerationId,
+        sessionOwnerProcessKey(identity),
         owner.scope,
         owner.scope === "task" ? owner.taskId : null,
         owner.roleName,
@@ -1417,10 +1475,10 @@ export class SqliteTaskStore implements TaskStore {
     });
   }
 
-  getSessionOwner(runtimeGenerationId: string): SessionOwnerIdentity | null {
+  getSessionOwner(processKey: string): SessionOwnerIdentity | null {
     const row = this.#db.prepare(
-      "SELECT payload FROM session_owners WHERE launch_id = ?"
-    ).get(runtimeGenerationId) as { payload: string } | undefined;
+      "SELECT payload FROM session_owners WHERE process_key = ?"
+    ).get(processKey) as { payload: string } | undefined;
     return row === undefined ? null : this.#parse<SessionOwnerIdentity>(row.payload);
   }
 
@@ -1442,9 +1500,9 @@ export class SqliteTaskStore implements TaskStore {
     );
   }
 
-  removeSessionOwner(runtimeGenerationId: string): void {
+  removeSessionOwner(processKey: string): void {
     this.#mutate(() => {
-      this.#db.prepare("DELETE FROM session_owners WHERE launch_id = ?").run(runtimeGenerationId);
+      this.#db.prepare("DELETE FROM session_owners WHERE process_key = ?").run(processKey);
     });
   }
 
@@ -1591,7 +1649,6 @@ export class SqliteTaskStore implements TaskStore {
     }
     const predicates: string[] = [];
     const parameters: string[] = [];
-    if (query.cleanupRequiredOnly) predicates.push("cleanup_required = 1");
     if (taskIds !== undefined) {
       predicates.push("scope = 'task'");
       predicates.push(`task_id IN (${taskIds.map(() => "?").join(", ")})`);
@@ -1605,8 +1662,7 @@ export class SqliteTaskStore implements TaskStore {
       : ` WHERE ${predicates.join(" AND ")}`;
     const rows = this.#db.prepare(
       `SELECT scope, task_id, role_name, agent_id, adapter_id,
-              native_session_id, launch_id AS runtime_generation_id, session_updated_at,
-              cleanup_required
+              native_session_id, session_updated_at
        FROM runtime_session_candidates${where}`
     ).all(...parameters) as Array<{
       scope: "task" | "global";
@@ -1615,9 +1671,7 @@ export class SqliteTaskStore implements TaskStore {
       agent_id: string;
       adapter_id: string;
       native_session_id: string;
-      runtime_generation_id: string | null;
       session_updated_at: string;
-      cleanup_required: 0 | 1;
     }>;
     const candidates = rows.map((row): RuntimeSessionCandidate => ({
       owner: row.scope === "task"
@@ -1626,9 +1680,7 @@ export class SqliteTaskStore implements TaskStore {
       agentId: row.agent_id,
       adapterId: row.adapter_id,
       nativeSessionId: row.native_session_id,
-      ...(row.runtime_generation_id === null ? {} : { runtimeGenerationId: row.runtime_generation_id }),
-      sessionUpdatedAt: row.session_updated_at,
-      cleanupRequired: row.cleanup_required === 1
+      sessionUpdatedAt: row.session_updated_at
     })).sort(compareRuntimeSessionCandidates);
     for (const candidate of candidates) {
       if (!this.#runtimeSessionCandidateMatchesSource(candidate)) {
@@ -1670,10 +1722,8 @@ export class SqliteTaskStore implements TaskStore {
       agent_id: string | null;
       adapter_id: string | null;
       native_session_id: string | null;
-      runtime_generation_id: string | null;
       is_active: 0 | 1 | null;
       session_updated_at: string | null;
-      cleanup_required: 0 | 1 | null;
     };
     let row: SourceRow | undefined;
     try {
@@ -1700,17 +1750,11 @@ export class SqliteTaskStore implements TaskStore {
            json_extract(active_session, '$.agentId') AS agent_id,
            json_extract(active_session, '$.adapterId') AS adapter_id,
            json_extract(active_session, '$.nativeSessionId') AS native_session_id,
-           json_extract(active_session, '$.runtimeGenerationId') AS runtime_generation_id,
            CASE
              WHEN json_extract(active_session, '$.status') = 'active'
              THEN 1 ELSE 0
            END AS is_active,
-           json_extract(active_session, '$.updatedAt') AS session_updated_at,
-           CASE
-             WHEN json_extract(active_session, '$.status') = 'active'
-               AND json_type(active_session, '$.runtimeGenerationId') = 'text'
-             THEN 1 ELSE 0
-           END AS cleanup_required
+           json_extract(active_session, '$.updatedAt') AS session_updated_at
          FROM active`
       ).get(...source.parameters) as SourceRow | undefined;
     } catch (error) {
@@ -1724,19 +1768,9 @@ export class SqliteTaskStore implements TaskStore {
       );
     }
     if (row === undefined) return false;
-    return row.owner_scope === candidate.owner.scope
-      && row.owner_task_id === (
+    return row.owner_scope === candidate.owner.scope && row.owner_task_id === (
         candidate.owner.scope === "task" ? candidate.owner.taskId : null
-      )
-      && row.owner_role_name === candidate.owner.roleName
-      && row.active_agent_id === candidate.agentId
-      && row.agent_id === candidate.agentId
-      && row.adapter_id === candidate.adapterId
-      && row.native_session_id === candidate.nativeSessionId
-      && (row.runtime_generation_id ?? undefined) === candidate.runtimeGenerationId
-      && row.is_active === 1
-      && row.session_updated_at === candidate.sessionUpdatedAt
-      && row.cleanup_required === (candidate.cleanupRequired ? 1 : 0);
+      ) && row.owner_role_name === candidate.owner.roleName && row.active_agent_id === candidate.agentId && row.agent_id === candidate.agentId && row.adapter_id === candidate.adapterId && row.native_session_id === candidate.nativeSessionId && row.is_active === 1 && row.session_updated_at === candidate.sessionUpdatedAt;
   }
 
 
@@ -1775,15 +1809,13 @@ export class SqliteTaskStore implements TaskStore {
     this.#db.prepare(
       `INSERT INTO runtime_session_candidates (
          scope, task_id, role_name, agent_id, adapter_id, native_session_id,
-         launch_id, session_updated_at, cleanup_required
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         session_updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(scope, task_id, role_name) DO UPDATE SET
          agent_id = excluded.agent_id,
          adapter_id = excluded.adapter_id,
          native_session_id = excluded.native_session_id,
-         launch_id = excluded.launch_id,
-         session_updated_at = excluded.session_updated_at,
-         cleanup_required = excluded.cleanup_required`
+         session_updated_at = excluded.session_updated_at`
     ).run(
       candidate.owner.scope,
       taskId,
@@ -1791,9 +1823,7 @@ export class SqliteTaskStore implements TaskStore {
       candidate.agentId,
       candidate.adapterId,
       candidate.nativeSessionId,
-      candidate.runtimeGenerationId ?? null,
-      candidate.sessionUpdatedAt,
-      candidate.cleanupRequired ? 1 : 0
+      candidate.sessionUpdatedAt
     );
   }
 
@@ -2956,7 +2986,7 @@ export class SqliteTaskStore implements TaskStore {
   // -- telemetry (§4.4) -----------------------------------------------------------
 
   /**
-   * Upsert one progress row. The PK is (task_id, role_name, turn_id, generation,
+   * Upsert one progress row. The PK is (task_id, role_name, turn_id,
    * progress_id): a repeated progress id updates in place, so a high-frequency
    * runtime telemetry observation is a single-row write that never
    * rewrites global state or another Task's rows.
@@ -2964,12 +2994,12 @@ export class SqliteTaskStore implements TaskStore {
   upsertTelemetryProgress(entry: TelemetryProgress): void {
     this.#mutate(() => {
       this.#db.prepare(
-        `INSERT INTO telemetry (task_id, role_name, turn_id, generation, progress_id, sequence, payload, received_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(task_id, role_name, turn_id, generation, progress_id)
+        `INSERT INTO telemetry (task_id, role_name, turn_id, progress_id, sequence, payload, received_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(task_id, role_name, turn_id, progress_id)
          DO UPDATE SET sequence = excluded.sequence, payload = excluded.payload, received_at = excluded.received_at`
       ).run(
-        entry.taskId, entry.roleName, entry.turnId, entry.generation, entry.progressId,
+        entry.taskId, entry.roleName, entry.turnId, entry.progressId,
         entry.sequence ?? null, this.#json(entry.payload), entry.receivedAt
       );
     });
@@ -2978,17 +3008,16 @@ export class SqliteTaskStore implements TaskStore {
   listTelemetry(taskId: string, turnId?: string): TelemetryProgress[] {
     const rows = turnId === undefined
       ? this.#db.prepare(
-          "SELECT task_id, role_name, turn_id, generation, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? ORDER BY received_at"
+          "SELECT task_id, role_name, turn_id, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? ORDER BY received_at"
         ).all(taskId)
       : this.#db.prepare(
-          "SELECT task_id, role_name, turn_id, generation, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? AND turn_id = ? ORDER BY received_at"
+          "SELECT task_id, role_name, turn_id, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? AND turn_id = ? ORDER BY received_at"
         ).all(taskId, turnId);
-    return (rows as Array<{ task_id: string; role_name: string; turn_id: string; generation: string; progress_id: string; sequence: number | null; payload: string; received_at: string }>)
+    return (rows as Array<{ task_id: string; role_name: string; turn_id: string; progress_id: string; sequence: number | null; payload: string; received_at: string }>)
       .map((row) => ({
         taskId: row.task_id,
         roleName: row.role_name,
         turnId: row.turn_id,
-        generation: row.generation,
         progressId: row.progress_id,
         sequence: row.sequence ?? undefined,
         payload: this.#parse(row.payload),
@@ -3005,23 +3034,23 @@ export class SqliteTaskStore implements TaskStore {
 
   /**
    * Bounded retention (§4.4): keep the newest `keep` rows per
-   * (task, role, run, generation) and delete older ones. The DELETE is scoped
+   * (task, role, Turn) and delete older ones. The DELETE is scoped
    * by task_id; it never rewrites global rows or other Tasks. Returns the number
    * of rows deleted. Terminal/semantic events go to `events` and are never pruned.
    */
-  pruneTelemetry(taskId: string, roleName: string, turnId: string, generation: string, keep: number = TELEMETRY_KEEP_PER_GENERATION): number {
+  pruneTelemetry(taskId: string, roleName: string, turnId: string, keep: number = TELEMETRY_KEEP_PER_TURN): number {
     return this.#mutate(() => {
       const result = this.#db.prepare(
         `DELETE FROM telemetry
-         WHERE task_id = ? AND role_name = ? AND turn_id = ? AND generation = ?
-           AND (task_id, role_name, turn_id, generation, progress_id) NOT IN (
-             SELECT task_id, role_name, turn_id, generation, progress_id
+         WHERE task_id = ? AND role_name = ? AND turn_id = ?
+           AND (task_id, role_name, turn_id, progress_id) NOT IN (
+             SELECT task_id, role_name, turn_id, progress_id
              FROM telemetry
-             WHERE task_id = ? AND role_name = ? AND turn_id = ? AND generation = ?
-             ORDER BY COALESCE(sequence, -1) DESC, received_at DESC, progress_id ASC
+             WHERE task_id = ? AND role_name = ? AND turn_id = ?
+             ORDER BY received_at DESC, COALESCE(sequence, -1) DESC, progress_id ASC
              LIMIT ?
            )`
-      ).run(taskId, roleName, turnId, generation, taskId, roleName, turnId, generation, keep);
+      ).run(taskId, roleName, turnId, taskId, roleName, turnId, keep);
       return result.changes;
     });
   }
@@ -3035,11 +3064,11 @@ export class SqliteTaskStore implements TaskStore {
       const result = this.#db.prepare(
         `DELETE FROM telemetry
          WHERE task_id = ? AND turn_id = ?
-           AND (task_id, role_name, turn_id, generation, progress_id) NOT IN (
-             SELECT task_id, role_name, turn_id, generation, progress_id
+           AND (task_id, role_name, turn_id, progress_id) NOT IN (
+             SELECT task_id, role_name, turn_id, progress_id
              FROM telemetry
              WHERE task_id = ? AND turn_id = ?
-             ORDER BY COALESCE(sequence, -1) DESC, received_at DESC, progress_id ASC
+             ORDER BY received_at DESC, COALESCE(sequence, -1) DESC, progress_id ASC
              LIMIT ?
            )`
       ).run(taskId, turnId, taskId, turnId, cap);

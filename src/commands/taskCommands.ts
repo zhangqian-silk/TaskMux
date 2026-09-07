@@ -1,5 +1,5 @@
 import type { ConfiguredAgent } from "../agent/agent.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createTurnInput } from "../context/turnInputContract.js";
 import {
@@ -41,14 +41,10 @@ import {
 import {
   createRoleSessionSet,
   roleAgentSessionResumeMode,
-  retireTaskRoleSessionsForWorkspace,
   updateTaskRoleProviderRuntime,
   type TaskRoleSessionSet
 } from "../executor/agentExecutor.js";
-import {
-  currentProviderActivation,
-  transferProviderAuthority
-} from "../runtime/providerRuntimeIdentity.js";
+import { transferProviderAuthority } from "../runtime/providerRuntimeIdentity.js";
 import type { ProviderAuthorityFence } from "../runtime/providerAuthorityFence.js";
 import {
   resolveEffectiveLaunch,
@@ -82,14 +78,12 @@ import {
   validateExactTurnReviewRound
 } from "../lifecycle/exactTurnTerminalization.js";
 import {
-  activeRoleAgentBinding,
   copyGlobalRoleToTaskRole,
   createRole,
   createRoleAgentBinding,
   switchActiveRoleAgent,
   unbindRoleAgent,
   updateRole,
-  type GlobalRole,
   type Role,
   type RoleAgentBinding
 } from "../role/role.js";
@@ -140,7 +134,6 @@ import {
 import {
   enqueueRoleTurnDispatch,
   enqueueWork,
-  requireCompleteWorkExecution,
   settleExactWorkExecution
 } from "../coordination/workMailboxQueue.js";
 import {
@@ -149,14 +142,11 @@ import {
   type MailboxTarget
 } from "../coordination/workMailbox.js";
 import {
-  RUNTIME_CLEANUP_REQUIRED_REASON,
-  runtimeLifecycleTarget,
-  type RuntimeLifecycleTarget
+  runtimeLifecycleTarget
 } from "../runtime/lifecycleReservation.js";
 import { projectProviderContinuations } from "../runtime/runtimeContinuationProjection.js";
 import { runtimeObservationFromTaskEvent } from "../runtime/runtimeObservation.js";
 import {
-  activateTask,
   addTaskProjectBinding,
   archiveTask,
   completeTask,
@@ -172,7 +162,6 @@ import {
   type TaskPriority
 } from "../task/task.js";
 import {
-  formatTurnReceiptId,
   resolveTaskRecordReference
 } from "../task/taskRecordReference.js";
 import {
@@ -218,17 +207,20 @@ import {
   createReviewExecutionAssignment,
   createWorkItemExecutionAssignment,
   createWorkItemExecutionGroup,
-  MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS,
   updateExecutionLane as updateUnifiedExecutionLane,
   updateWorkItemExecutionLane,
   workItemExecutionGroupSettled,
   type WorkItemExecutionLaneWorkspace
 } from "../execution/workItemExecution.js";
 import {
-  reconcileWorkItemMainTurns,
-  successfulWorkItemSynthesisProducers
+  dispatchWorkItemSynthesis,
+  selectedWorkItemSynthesisProducers
 } from "../execution/workItemMainTurn.js";
-import { reconcileReviewMainTurns } from "../execution/reviewMainTurn.js";
+import {
+  dispatchReviewSynthesis,
+  selectedReviewSynthesisProducers
+} from "../execution/reviewMainTurn.js";
+import { synthesisSourceTurnIds } from "../context/turnContextPack.js";
 import {
   projectWorkItemExecution,
   type WorkItemExecutionProjection
@@ -266,6 +258,8 @@ import {
 } from "./roleRuntimeGuard.js";
 import { runTaskContextCommand } from "./taskContextCommand.js";
 import { listContextMessages } from "../context/taskContext.js";
+import { createProjectResources, validateArtifactInput, type ArtifactInput } from "../resources/projectResourceService.js";
+import { artifactSummary, type ArtifactRef } from "../resources/projectResource.js";
 import { runTaskNextActionCommand } from "./taskNextActionCommand.js";
 import {
   runDeliveryGuardPreflight,
@@ -282,7 +276,6 @@ import {
 } from "./taskRoleRuntimeStatus.js";
 import {
   assertNoOpenInputRequests,
-  isCurrentGlobalOperator,
   openInputRequestCount,
   runTaskInputCommand
 } from "./taskInputCommands.js";
@@ -406,7 +399,6 @@ export type TaskCommandExecution =
       agentId: string;
       adapterId: string;
       nativeSessionId: string;
-      runtimeGenerationId?: string;
       sessionUpdatedAt: string;
       reason: string;
       output: string;
@@ -423,7 +415,6 @@ export type TaskCommandExecution =
       action: "takeover" | "release";
       taskId: string;
       roleName: string;
-      runtimeGenerationId: string;
       nativeSessionId: string;
       authority: ProviderAuthorityFence;
       output: string;
@@ -712,6 +703,33 @@ export function runTaskCommand(
 ): TaskCommandExecution {
   const [command, ...rest] = args;
   switch (command) {
+    case "artifact": {
+      const [action, taskId, value] = rest;
+      if (!taskId || !["list", "show", "save"].includes(action)
+        || rest.length !== (action === "list" ? 2 : 3)) {
+        throw usageError("Usage: yui task artifact list <task> | show <task> <artifact-id> | save <task> <artifact-json>");
+      }
+      if (options.environment?.YUI_SESSION_SCOPE === "task" && options.environment.YUI_TASK_ID !== taskId) {
+        throw usageError("Artifact is outside the managed Task scope.");
+      }
+      requireTask(store, taskId);
+      let data: unknown;
+      if (action === "list") data = store.listArtifacts(taskId).map(artifactSummary);
+      else if (action === "show") {
+        data = store.getArtifact(taskId, value);
+        if (data === null) throw usageError("Artifact not found in this Task.");
+      } else {
+        taskActor(store, options, taskId);
+        let parsed: unknown;
+        try { parsed = JSON.parse(value); }
+        catch { throw usageError("Artifact input must be JSON."); }
+        let input: ArtifactInput;
+        try { input = validateArtifactInput(parsed); }
+        catch (error) { throw usageError(`Artifact input is invalid: ${error instanceof Error ? error.message : String(error)}`); }
+        data = createProjectResources(store).saveArtifact(taskId, input);
+      }
+      return output(JSON.stringify(data, null, 2), data);
+    }
     case "create": return createTaskCommand(rest, store, options);
     case "update": return output(updateTaskCommand(rest, store, options));
     case "list": return listTaskCommand(rest, store);
@@ -841,7 +859,9 @@ function workItemCandidateProducerRoles(
         + `${item.id}/${sourceTurn.sourceExecutionGroupId}.`
       );
     }
-    for (const producer of successfulWorkItemSynthesisProducers(store, item, group)) {
+    for (const producer of selectedWorkItemSynthesisProducers(
+      store, item, group, synthesisSourceTurnIds(store, sourceTurn)
+    )) {
       roles.add(producer.roleName);
     }
   }
@@ -1380,13 +1400,15 @@ function completeTaskCommand(
     }
 
     for (const ref of request.artifactRefs) {
-      if (ref.startsWith("turn:")) {
+      if (ref.startsWith("artifact-")) {
+        fixedArtifactRefs(tx, task.id, [ref]);
+      } else if (ref.startsWith("turn:")) {
         const turn = tx.getTurn(task.id, ref.slice("turn:".length));
         if (turn === null || turn.result === undefined) {
           throw usageError(`Task completion result ref is not readable: ${ref}.`);
         }
       } else if (!/^https?:\/\/[^\s]+$/u.test(ref)) {
-        throw usageError("Completion --artifact-ref must be turn:<local-turn-id> or an explicit HTTP(S) artifact URL.");
+        throw usageError("Completion --artifact-ref must be a saved artifact id, turn:<local-turn-id>, or an explicit HTTP(S) reference URL.");
       }
     }
     const completed = completeTask(task, now, { by: actor, summary, artifactRefs: request.artifactRefs });
@@ -1519,11 +1541,6 @@ function reopenTaskCommand(
       previous: editedFieldValues(task, [
         "status", "completedAt", "completedBy", "completionSummary", "completionArtifactRefs",
         "retiredAt", "retiredBy", "retirementSummary", "replacementTaskId", "retirementIsolation"
-      ]),
-      historicalExecutionGroupIds: JSON.stringify([
-        ...tx.listWorkItems(task.id).flatMap((item) => item.executionGroups.map(({ id }) => id)),
-        ...tx.listReviewRounds(task.id).flatMap((round) =>
-          round.executionGroup === undefined ? [] : [round.executionGroup.id])
       ])
     }, now);
     return { task: active, changed: true } as const;
@@ -2278,7 +2295,6 @@ function taskRoleSessionCommand(
             `Session ${task.id}/${role.name}`,
             `Agent: ${active.agentId}/${active.adapterId}`,
             `Native id: ${active.nativeSessionId}`,
-            `Host activation: ${active.runtimeGenerationId ?? "none"}`,
             `Session: ${active.status}${active.endReason === undefined ? "" : `/${active.endReason}`}`,
             `Turn: ${binding?.turn?.status ?? "none"}`
           ].join("\n") + "\n",
@@ -2328,7 +2344,6 @@ function taskRoleSessionCommand(
         agentId: session.agentId,
         adapterId: session.adapterId,
         nativeSessionId: session.nativeSessionId,
-        runtimeGenerationId: session.runtimeGenerationId ?? "",
         reason,
         requestedBy: actor
       }, now);
@@ -2338,7 +2353,6 @@ function taskRoleSessionCommand(
         agentId: session.agentId,
         adapterId: session.adapterId,
         nativeSessionId: session.nativeSessionId,
-        ...(session.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId }),
         sessionUpdatedAt: session.updatedAt
       };
     });
@@ -2691,17 +2705,13 @@ function bindTaskRole(
       }
     })();
     tx.saveTaskRoleWithSessionSet(switched.role, switched.sessions);
-    if (role.name === LEADER_ROLE) {
-      // Revocation survives a later selection of the same Agent. Do not erase
-      // the old Turn, Session, or any WorkItem to withdraw management authority.
-      tx.setJobCallerKeyHash(
-        task.id, role.name, role.activeAgentId,
-        createHash("sha256").update(randomUUID()).digest("hex")
-      );
-    }
     recordTaskEvent(tx, task.id, "role.agent-bound", {
       role: switched.role.name,
       agentId: agent.id,
+      // Re-selecting an Agent must not revive its old management entrance.
+      // This revokes authority, not the Session's independent execution fact.
+      ...(role.name === LEADER_ROLE && currentSession?.nativeSessionId !== undefined
+        ? { revokedNativeSessionId: currentSession.nativeSessionId } : {}),
       ...roleLaunchEventPayload(switched.role, switched.sessions)
     }, now);
     return { role: switched.role, mode: switched.mode };
@@ -2792,15 +2802,8 @@ function transferTaskRoleAuthority(
       const sessions = tx.getTaskRoleSessionSet(task.id, role.name);
       const session = sessions?.sessions[role.activeAgentId];
       const binding = sessions?.providerBinding;
-      if (sessions === null || sessions === undefined || session === undefined
-        || binding === null || binding === undefined
-        || session.runtimeGenerationId === undefined
-        || session.status === "ended") {
+      if (sessions === null || sessions === undefined || session === undefined || binding === null || binding === undefined || session.status === "ended") {
         throw new Error(`Task Role has no live managed Provider: ${task.id}/${role.name}.`);
-      }
-      const activation = currentProviderActivation(binding);
-      if (activation === null) {
-        throw new Error(`Provider Activation is not live: ${task.id}/${role.name}.`);
       }
       if (action === "takeover") {
         const activeTurn = tx.getActiveTurn(task.id, role.name);
@@ -2826,7 +2829,7 @@ function transferTaskRoleAuthority(
             expectedEpoch: binding.authority.epoch,
             expectedOwner: binding.authority.owner,
             owner: desiredOwner,
-            holderId: action === "takeover" ? `human:${randomUUID()}` : activation.activationId,
+            holderId: action === "takeover" ? `human:${randomUUID()}` : "controller",
             changedAt: now.toISOString()
           });
       const authority = updatedBinding.authority;
@@ -2847,7 +2850,6 @@ function transferTaskRoleAuthority(
         action,
         taskId: task.id,
         roleName: role.name,
-        runtimeGenerationId: session.runtimeGenerationId,
         nativeSessionId: session.nativeSessionId,
         authority: {
           epoch: authority.epoch,
@@ -2877,6 +2879,7 @@ function taskWorkCommand(
   if (command === "update") return updateWork(rest, store, options);
   if (command === "scope") return output(updateWorkScope(rest, store, options));
   if (command === "dispatch") return output(dispatchWork(rest, store, options));
+  if (command === "synthesize") return synthesizeTurns(rest, "workItem", store, options);
   if (command === "review") {
     return rest[0] === "retry"
       ? retryFailedTaskReviewRound(rest.slice(1), store, options)
@@ -3147,12 +3150,16 @@ function updateWork(
   store: TaskWorkflowStore,
   options: TaskCommandOptions
 ): TaskCommandExecution {
-  const usage = "Task work update usage: yui task work update <task>/<work> <todo|running|done|failed> [--summary <text>].";
-  const parsed = parseTail(args, new Set(["--summary"]), usage);
+  const usage = "Task work update usage: yui task work update <task>/<work> <todo|running|done|failed> [--summary <text>] [--artifact-ref <artifact-id> ...].";
+  const parsed = parseMultiValueTail(args, new Set(["--summary"]), new Set(["--artifact-ref"]), usage);
   exactPositionals(parsed.positionals, 2, usage);
   const requested = parsed.positionals[1];
   const status = parseWorkStatus(requested);
   const summary = trimmed(parsed.options.get("--summary"));
+  const artifactIds = parsed.multiOptions.get("--artifact-ref") ?? [];
+  if (artifactIds.length > 0 && status !== "completed") {
+    throw usageError("--artifact-ref is only valid when submitting a done Candidate.");
+  }
   if (["completed", "failed"].includes(status)
     && summary === undefined) {
     throw usageError(`--summary is required when work becomes ${requested}.`);
@@ -3162,6 +3169,7 @@ function updateWork(
     const current = requireWorkItem(tx, parsed.positionals[0], options);
     const task = requireTask(tx, current.taskId);
     assertTaskOpen(task);
+    const artifactRefs = artifactIds.length === 0 ? undefined : fixedArtifactRefs(tx, task.id, artifactIds);
     if (current.assignee === undefined) {
       taskActor(tx, options, task.id);
       if (status === "running") {
@@ -3194,6 +3202,7 @@ function updateWork(
         ? submitWorkItemCandidate(current, {
             summary: summary!,
             source: { type: "direct" },
+            ...(artifactRefs === undefined ? {} : { artifactRefs }),
             ...(candidatePolicy === null ? {} : { reviewPolicy: candidatePolicy }),
             ...(taskFinalContract === undefined
               ? {}
@@ -3289,6 +3298,7 @@ function updateWork(
     const updated = submitWorkItemCandidate(current, {
       summary: `Result from Turn ${mainTurn.id}.`,
       source: { type: "turn", turnId: mainTurn.id },
+      ...(artifactRefs === undefined ? {} : { artifactRefs }),
       ...(candidatePolicy === null ? {} : { reviewPolicy: candidatePolicy }),
       ...(taskFinalContract === undefined
         ? {}
@@ -3663,6 +3673,10 @@ function acceptWork(
     const candidate = candidateId === undefined ? requireWorkItemCandidate(item)
       : item.candidates.find(({ id }) => id === candidateId);
     if (candidate === undefined) throw usageError(`Work Item Candidate not found: ${candidateId}.`);
+    if (candidate.artifactRefs !== undefined && !isDeepStrictEqual(
+      fixedArtifactRefs(tx, task.id, candidate.artifactRefs.map((ref) => ref.artifactId)),
+      candidate.artifactRefs
+    )) throw usageError("Candidate Artifact references no longer match their saved immutable results.");
     const taskFinalContract = taskFinalReviewContractForMutation(tx, task.id, options);
     const latestReview = reviewRoundsByIdentity(tx.listReviewRounds(item.taskId)
       .filter((round) => round.workItemId === item.id
@@ -3916,7 +3930,7 @@ function listWork(args: string[], store: TaskWorkflowStore): TaskCommandExecutio
   const items = store.listWorkItems(task.id);
   const turns = store.listTurns(task.id);
   const sessionSets = store.listRoleSessionSets(task.id);
-  const executions = items.map((item) => projectWorkItemExecution(item, turns, sessionSets));
+  const executions = items.map((item) => projectWorkItemExecution(item, turns, sessionSets, store));
   const rendered = items.length === 0
     ? "No work items found.\n"
     : `${renderTable(
@@ -3956,7 +3970,8 @@ function showWork(
   const execution = projectWorkItemExecution(
     item,
     store.listTurns(item.taskId),
-    store.listRoleSessionSets(item.taskId)
+    store.listRoleSessionSets(item.taskId),
+    store
   );
   const replacement = item.disposition?.replacementWorkItemId;
   const rendered = [
@@ -3999,7 +4014,7 @@ function renderWorkItemExecutionProjection(
             + `retry=${lane.retryTurnId ?? "none"}; settle=${lane.settleTurnId ?? "none"}`
           ))
         ]),
-    `Synthesis: ${projection.synthesis.status}; successful=${projection.synthesis.successfulLaneCount}/${projection.synthesis.requiredSuccessfulLaneCount}`,
+    `Synthesis: ${projection.synthesis.status}; successful=${projection.synthesis.successfulLaneCount}; sources selected by Leader`,
     `Main Turn: ${projection.mainTurn.turnId ?? "unobserved"} [${projection.mainTurn.status}]; role=${projection.mainTurn.roleName ?? "unobserved"}; session=${projection.mainTurn.session}; retry=${projection.mainTurn.retryTurnId ?? "none"}`,
     `Candidate Source: ${projection.candidate.candidateId ?? "none"} [${projection.candidate.status}]; source=${projection.candidate.sourceType ?? "unobserved"}; main=${projection.candidate.mainTurnId ?? "unobserved"}`,
     ...(projection.candidate.sourceExecutionGroupId === undefined
@@ -4151,6 +4166,41 @@ function reviewWork(
  * committed Integration/ChangeSet provenance and Reviewer independence fences
  * pass again.
  */
+function synthesizeTurns(
+  args: string[],
+  kind: "workItem" | "reviewRound",
+  store: TaskWorkflowStore,
+  options: TaskCommandOptions
+): TaskCommandExecution {
+  const subject = kind === "workItem" ? "work" : "review";
+  const usage = `Usage: yui task ${subject} synthesize <task>/<${subject}> --source-turn <task>/<turn> ...`;
+  const parsed = parseMultiValueTail(args, new Set(), new Set(["--source-turn"]), usage);
+  exactPositionals(parsed.positionals, 1, usage);
+  const reference = taskRecordReference(parsed.positionals[0], kind, "Synthesis target", options);
+  const sources = parsed.multiOptions.get("--source-turn") ?? [];
+  const sourceTurnIds = sources.map((value) => {
+    const source = taskRecordReference(value, "turn", "Source Turn", options);
+    if (source.taskId !== reference.taskId) throw usageError("Synthesis sources must belong to the same Task.");
+    return source.localId;
+  });
+  const now = clock(options);
+  const turn = store.transaction((tx) => {
+    const actor = taskActor(tx, options, reference.taskId);
+    const created = kind === "workItem"
+      ? dispatchWorkItemSynthesis(tx, reference.taskId, reference.localId, sourceTurnIds, now)
+      : dispatchReviewSynthesis(tx, reference.taskId, reference.localId, sourceTurnIds, now);
+    recordTaskEvent(tx, reference.taskId, "turn.synthesis-requested", {
+      turnId: created.id,
+      requestedBy: actor,
+      sourceTurnIds: sourceTurnIds.join(","),
+      ...(actor === "leader" ? leaderActionEventPayload(tx, reference.taskId, options) : {})
+    }, now);
+    return created;
+  });
+  notifyMailbox(options.runtime, roleMailbox(turn.taskId, turn.roleName), turn.taskId);
+  return output(`Dispatched synthesis Turn ${turn.taskId}/${turn.id}\n`, { turn });
+}
+
 function taskReviewCommand(
   args: string[],
   store: TaskWorkflowStore,
@@ -4158,6 +4208,7 @@ function taskReviewCommand(
 ): TaskCommandExecution {
   const [command, ...rest] = args;
   if (command === "request") return requestTaskReviewRound(rest, store, options);
+  if (command === "synthesize") return synthesizeTurns(rest, "reviewRound", store, options);
   if (command === "retry") return retryFailedTaskReviewRound(rest, store, options);
   throw usageError(command === undefined
     ? "Task review command is required."
@@ -4684,12 +4735,11 @@ function settleFailedReviewExecutionLaneTurn(
       settledBy: actor,
       ...(actor === "leader" ? leaderActionEventPayload(tx, task.id, options) : {})
     }, now);
-    const reconciliation = reconcileReviewMainTurns(tx, task.id, now);
     return {
       turn: run,
       reviewRound: tx.getReviewRound(task.id, round.id)!,
       changed: true,
-      mainTurns: reconciliation.createdTurns
+      mainTurns: [] as readonly Turn[]
     } as const;
   });
   for (const turn of result.mainTurns) {
@@ -4768,12 +4818,11 @@ function settleFailedExecutionLaneTurn(
       settledBy: actor,
       ...(actor === "leader" ? leaderActionEventPayload(tx, task.id, options) : {})
     }, now);
-    const reconciliation = reconcileWorkItemMainTurns(tx, task.id, now);
     return {
       turn: run,
       workItem: tx.getWorkItem(task.id, item.id) ?? settledItem,
       changed: true,
-      mainTurns: reconciliation.createdTurns
+      mainTurns: [] as readonly Turn[]
     } as const;
   });
   for (const turn of result.mainTurns) {
@@ -4796,15 +4845,14 @@ function retireTurn(
   store: TaskWorkflowStore,
   options: TaskCommandOptions
 ): TaskCommandExecution {
-  const usage = "Task turn retire usage: yui task turn retire <task>/<turn> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>] [--launch-id <id>].";
+  const usage = "Task turn retire usage: yui task turn retire <task>/<turn> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>].";
   const parsed = parseTail(args, new Set([
     "--reason",
     "--expected-progress-at",
     "--progress-at",
     "--agent-id",
     "--adapter-id",
-    "--native-session-id",
-    "--launch-id"
+    "--native-session-id"
   ]), usage);
   exactPositionals(parsed.positionals, 1, usage);
   const reason = requiredOption(parsed.options, "--reason");
@@ -4845,14 +4893,10 @@ function retireTurn(
       const agentId = requiredOption(parsed.options, "--agent-id");
       const adapterId = requiredOption(parsed.options, "--adapter-id");
       const nativeSessionId = parsed.options.get("--native-session-id");
-      const runtimeGenerationId = parsed.options.get("--launch-id");
       const sessions = tx.getTaskRoleSessionSet(task.id, run.roleName);
       const session = sessions?.sessions[run.effective.agentId];
       if (session?.nativeSessionId !== undefined && nativeSessionId === undefined) {
         throw usageError("--native-session-id is required for this active Turn.", usage);
-      }
-      if (session?.nativeSessionId === undefined && runtimeGenerationId === undefined) {
-        throw usageError("--launch-id is required for an opaque active Turn.", usage);
       }
       const terminal = retireExactActiveTurn(tx, {
         taskId: task.id,
@@ -4861,7 +4905,6 @@ function retireTurn(
         agentId,
         adapterId,
         ...(nativeSessionId === undefined ? {} : { nativeSessionId }),
-        ...(runtimeGenerationId === undefined ? {} : { runtimeGenerationId }),
         expectedProgressAt,
         reason: `Turn retired: ${reason}`
       }, now);
@@ -4887,9 +4930,6 @@ function retireTurn(
       ...(parsed.options.get("--native-session-id") === undefined
         ? {}
         : { nativeSessionId: parsed.options.get("--native-session-id")! }),
-      ...(parsed.options.get("--launch-id") === undefined
-        ? {}
-        : { runtimeGenerationId: parsed.options.get("--launch-id")! }),
       ...(actor === "leader"
         ? leaderActionEventPayload(tx, task.id, options)
         : { retiredBy: actor })
@@ -5239,9 +5279,9 @@ function retryTurn(
       && retryItem.assignee === previous.roleName
       && sourceGroup !== undefined
       && currentRetryGroup?.id === sourceGroup.id
-      && workItemExecutionGroupSettled(sourceGroup)
-      && successfulWorkItemSynthesisProducers(tx, retryItem, sourceGroup).length
-        >= MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS
+      && selectedWorkItemSynthesisProducers(
+        tx, retryItem, sourceGroup, synthesisSourceTurnIds(tx, previous)
+      ).length > 0
       && sourceMainTurns.at(-1)?.id === previous.id
     );
     if (!exactSourceMain) {
@@ -5627,10 +5667,11 @@ function taskReviewProvenance(
             + `${item.id}/${sourceRun.sourceExecutionGroupId}.`
           );
         }
-        for (const producer of successfulWorkItemSynthesisProducers(
+        for (const producer of selectedWorkItemSynthesisProducers(
           store,
           item,
-          executionGroup
+          executionGroup,
+          synthesisSourceTurnIds(store, sourceRun)
         )) {
           recordProducer(producer.roleName, item.id);
         }
@@ -6100,6 +6141,58 @@ function retryFailedReviewRun(
       );
     }
 
+    if (run.sourceExecutionGroupId !== undefined) {
+      assertTaskExecutionEnabled(task, "retrying Review synthesis");
+      const group = round.executionGroup;
+      if (round.status !== "failed" || round.reviewerTurnId !== run.id
+        || group?.id !== run.sourceExecutionGroupId
+        || run.workspace === undefined) {
+        throw usageError(`Review Turn ${run.id} no longer owns the current main synthesis.`);
+      }
+      selectedReviewSynthesisProducers(tx, round, group, synthesisSourceTurnIds(tx, run));
+      const effective = resolveEffectiveLaunch({
+        role: reviewer,
+        purpose: "review",
+        workspace: run.workspace,
+        reviewRoundId: round.id,
+        reviewBaseCommit: round.reviewBaseCommit
+      });
+      const created = createTurn(
+        tx.nextTurnId(task.id),
+        task.id,
+        reviewer.name,
+        roleAgentSessionResumeMode(
+          tx.getTaskRoleSessionSet(task.id, reviewer.name), effective.agentId, effective
+        ),
+        run.inputs[0]!.input,
+        now,
+        {
+          purpose: "review",
+          ...(run.workItemId === undefined ? {} : { workItemId: run.workItemId }),
+          reviewRoundId: round.id,
+          sourceExecutionGroupId: group.id,
+          workspace: run.workspace,
+          effective
+        }
+      );
+      const restarted = startReviewRound(retryReviewRound(round, requestedBy, now), created.id);
+      tx.saveReviewRound(task.id, restarted);
+      tx.saveTurn(created);
+      tx.saveActiveTurn(created);
+      enqueueRoleTurnDispatch(tx, {
+        taskId: task.id,
+        roleName: reviewer.name,
+        turnId: created.id,
+        reason: "turn-retried",
+        occurredAt: now
+      });
+      recordTaskEvent(tx, task.id, "turn.review-retried", {
+        ...turnLaunchEventPayload(created),
+        previousTurnId: run.id
+      }, now);
+      return { round: restarted, previousRun: run, created: true, turn: created };
+    }
+
     if (runningPanelLaneRetry) {
       const resetRound = retryRunningReviewExecutionLane(
         round,
@@ -6138,11 +6231,14 @@ function retryFailedReviewRun(
     }, now);
     return { round: resetRound, previousRun: run, created: true };
   });
+  if ("turn" in result && result.turn !== undefined) {
+    notifyMailbox(options.runtime, roleMailbox(result.turn.taskId, result.turn.roleName), result.turn.taskId);
+  }
   return output(
     result.created
       ? `Review retry requested as ${result.round.id}\n`
       : `Review retry already requested as ${result.round.id} (${result.round.status})\n`,
-    { reviewRound: result.round }
+    { reviewRound: result.round, ...("turn" in result ? { turn: result.turn } : {}) }
   );
 }
 
@@ -6878,8 +6974,6 @@ export function dispatchPreparedReviewRound(
       });
       recordTaskEvent(tx, taskId, "turn.review-dispatched", turnLaunchEventPayload(created), now);
     }
-    const reconciliation = reconcileReviewMainTurns(tx, taskId, now);
-    createdTurns.push(...reconciliation.createdTurns);
     return createdTurns;
   });
   for (const run of runs) {
@@ -6949,6 +7043,12 @@ function requireWorkItemCandidate(item: WorkItem): WorkItemCandidate {
     throw dataError(`Work Item has no submitted candidate: ${item.id}.`);
   }
   return candidate;
+}
+
+function fixedArtifactRefs(store: TaskWorkflowStore, taskId: string, ids: readonly string[]): readonly ArtifactRef[] {
+  if (new Set(ids).size !== ids.length) throw usageError("Artifact references must be unique.");
+  try { return createProjectResources(store).resultRefs(taskId, ids); }
+  catch (error) { throw usageError(`Result Artifact is unavailable: ${messageOf(error)}`); }
 }
 
 /** ReviewRound ids are the durable Task-local creation order; wall time is not causal. */
@@ -7404,7 +7504,7 @@ function assertTaskExecutionEnabled(task: Task, action: string): void {
 function taskActor(
   store: Pick<
     TaskWorkflowStore,
-    "getRole" | "getActiveTurn" | "getJobCallerKeyHash"
+    "getRole" | "getActiveTurn" | "getTaskRoleSessionSet" | "listEvents"
   >,
   options: TaskCommandOptions,
   taskId: string
@@ -7960,13 +8060,10 @@ function taskContinuationCommand(
     const reportEvent = report === undefined
       ? undefined
       : reportEvents.find((entry) => (
-        entry.continuationId === identity.continuationId
-        && entry.continuationGeneration === identity.generation
-        && entry.reportId === report.reportId
+        entry.continuationId === identity.continuationId && entry.reportId === report.reportId
       ));
     return Object.freeze({
       continuationId: identity.continuationId,
-      generation: identity.generation,
       driver: identity.providerNamespace,
       turnId: continuation.turnId,
       execution: continuation.execution,
@@ -8021,25 +8118,20 @@ function continuationReportEvents(
 ): readonly Readonly<{
   event: TaskEvent;
   continuationId: string;
-  continuationGeneration: number;
   reportId: string;
 }>[] {
   const result: {
     event: TaskEvent;
     continuationId: string;
-    continuationGeneration: number;
     reportId: string;
   }[] = [];
   for (const event of events) {
     const observation = runtimeObservationFromTaskEvent(event);
     if (observation !== null && observation.kind === "continuation.reported") {
       const continuationId = observation.fence.continuationId;
-      const continuationGeneration = observation.fence.continuationGeneration;
       const reportId = observation.payload?.reportId;
-      if (continuationId !== undefined
-        && continuationGeneration !== undefined
-        && reportId !== undefined) {
-        result.push({ event, continuationId, continuationGeneration, reportId });
+      if (continuationId !== undefined && reportId !== undefined) {
+        result.push({ event, continuationId, reportId });
       }
     }
   }
