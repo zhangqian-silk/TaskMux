@@ -8,6 +8,7 @@ import { contextSnapshotRef } from "../context/contextSnapshot.js";
 import { roleAgentSessionResumeMode } from "../executor/agentExecutor.js";
 import { resolveEffectiveLaunch } from "../executor/effectiveLaunch.js";
 import { createTaskEvent } from "../event/taskEvent.js";
+import { historicalExecutionDormant } from "../task/task.js";
 import {
   finishReviewRound,
   startReviewRound,
@@ -91,6 +92,7 @@ export function reconcileReviewMainTurns(
       || group === undefined
       || round.reviewerTurnId !== undefined
       || !executionGroupSettled(group)) continue;
+    if (historicalExecutionDormant(store.listEvents(taskId), group.id)) continue;
     const producers = successfulReviewSynthesisProducers(store, round, group);
     if (producers.length < MINIMUM_SYNTHESIS_RESULTS) {
       const summary = `Review ExecutionGroup ${group.id} settled with ${producers.length} `

@@ -723,6 +723,37 @@ ON durable_jobs(task_id, json_extract(payload, '$.operation.actorId'),
     // Accepted inputs/results can use an exact attempt without a native Turn id.
     // Preserve all valid historical records; never repair failed Turns or logs.
     sql: "SELECT 1; -- exact attempt identity without a fabricated native Turn id"
+  },
+  {
+    version: 4,
+    name: "task-facts-and-explicit-acceptance",
+    introducedIn: "0.15.6",
+    // Retain the complete retirement metadata/events and diagnostic facts.
+    // Only the public lifecycle changes; ordinary stores read one shape.
+    sql: `
+UPDATE task_records SET payload = json_set(payload, '$.status', 'cancelled')
+WHERE json_extract(payload, '$.status') = 'retired';
+UPDATE task_records SET payload = json_set(payload, '$.retirementIsolation', json('true'))
+WHERE json_extract(payload, '$.retiredAt') IS NOT NULL;
+UPDATE tasks_catalog SET status = 'cancelled' WHERE status = 'retired';
+UPDATE tasks_catalog SET lifecycle = 'cancelled' WHERE lifecycle = 'retired';
+UPDATE task_records SET brief = json_set(brief, '$.revision', 1) WHERE brief IS NOT NULL;
+UPDATE work_items SET payload = json_set(payload,
+  '$.historicalState', json_patch(json('{}'), json_object(
+    'status', json_extract(payload, '$.status'),
+    'outcome', json_extract(payload, '$.outcome'),
+    'endedAt', json_extract(payload, '$.endedAt'))),
+  '$.status', CASE status WHEN 'completed' THEN 'accepted' WHEN 'retired' THEN 'retired' ELSE 'open' END);
+UPDATE work_items SET payload = json_remove(payload, '$.outcome', '$.endedAt')
+WHERE json_extract(payload, '$.status') = 'open';
+UPDATE work_items SET status = json_extract(payload, '$.status');
+UPDATE work_items SET payload = json_set(payload, '$.currentCandidateId',
+  json_extract(payload, '$.candidates[#-1].id'))
+WHERE json_extract(payload, '$.historicalState.status') = 'awaiting_acceptance';
+UPDATE work_items SET payload = json_set(payload, '$.acceptedCandidateId',
+  json_extract(payload, '$.candidates[#-1].id'))
+WHERE status = 'accepted' AND json_array_length(payload, '$.candidates') > 0;
+`
   }
 ]);
 

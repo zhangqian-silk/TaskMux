@@ -102,6 +102,9 @@ const EXEC_STATUS_TONE = {
   "working": "is-active",
   "completed": "is-muted",
   "retired": "is-muted",
+  "cancelled": "is-muted",
+  "accepted": "is-muted",
+  "open": "is-active",
   "archived": "is-muted"
 };
 
@@ -455,13 +458,13 @@ export function inputCard(input, _options, t, locale, actions) {
 export function conclusionMeta(task, t, locale, kind) {
   const meta = node("div", "conclusion-meta");
   const actor = kind === "archived" ? task.archivedBy
-    : kind === "retired" ? task.retiredBy
+    : kind === "cancelled" ? task.retiredBy
     : task.completedBy;
   const at = kind === "archived" ? task.archivedAt
-    : kind === "retired" ? task.retiredAt
+    : kind === "cancelled" ? task.retiredAt
     : task.completedAt;
   const label = kind === "archived" ? t("detail.archivedBy")
-    : kind === "retired" ? t("detail.retiredBy")
+    : kind === "cancelled" ? t("detail.cancelledBy")
     : t("detail.completedBy");
   if (actor) meta.append(node("span", "", label + " · " + authorName(t, actor)));
   if (at) meta.append(node("time", "", formatDateTime(at, locale)));
@@ -471,7 +474,7 @@ export function conclusionMeta(task, t, locale, kind) {
 // --- Record cards -----------------------------------------------------------------
 // WorkItems that no longer need action render collapsed; everything actionable
 // (pending, running, awaiting acceptance, failed) stays expanded.
-const WORK_ITEM_OPEN_STATUSES = ["pending", "running", "awaiting_acceptance", "failed"];
+const WORK_ITEM_OPEN_STATUSES = ["open"];
 
 export function workItemCard(item, titles, t, locale, actions, taskId) {
   const collapsible = WORK_ITEM_OPEN_STATUSES.indexOf(item.status) === -1;

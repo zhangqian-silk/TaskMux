@@ -133,10 +133,18 @@ WorkItem delivery has one Leader-owned acceptance path regardless of execution
 shape:
 
 ```text
-todo -> running -> awaiting_acceptance
-                      | accept -> completed
-                      | reject -> failed -> redispatch -> running
+open --explicit acceptance--> accepted
+ ^                              |
+ +------withdraw acceptance-----+
+open/accepted --retire--> retired
 ```
+
+Execution, waiting and failure belong to Turns, not WorkItem responsibility.
+Submitting or rejecting a Candidate leaves the WorkItem open. Brief and
+definition edits preserve acceptance until the Leader explicitly withdraws it.
+Task lifecycle is draft / active / completed / cancelled / archived; ending
+intent does not prove execution resources stopped. Reopening does not replay
+historical delivery requests, and archived Tasks cannot reopen.
 
 For `direct`, the assignee's successful main Turn supplies the result. For
 `replicated`, Lane Turns supply immutable Producer results and only the

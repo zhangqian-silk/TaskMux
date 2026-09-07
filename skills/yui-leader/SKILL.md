@@ -113,6 +113,9 @@ Maintain only context that changes future decisions:
 
 - Keep the Brief's objective, boundaries, approach, current focus, and Leader
   summary current after material semantic progress.
+  Read `task brief show` first and pass its `revision` as
+  `task brief update --expected-revision <n>` (0 to create); a conflict returns
+  the current Brief and requested fields so you can reread and retry.
 - Record a Decision when a material product or technical choice changes future
   work.
 - Add a Milestone for an independently meaningful phase result.
@@ -149,6 +152,7 @@ its actual result:
 ```sh
 yui task work update <work-id> running
 yui task work update <work-id> done --summary "<result and evidence>"
+yui task work accept <work-id> --summary "<explicit acceptance and evidence>"
 ```
 
 For a native child, keep the WorkItem roleless, mark it running, select the
@@ -157,7 +161,10 @@ provider's native child tools. Native children inherit the current Turn's
 authority and gain no Yui Role, Turn, Session, or broader workspace. Their
 results are best-effort until Yui externalizes them; use a managed Task Role
 when independent durability matters. Inspect the returned result before
-recording `done` or `failed`. A Profile's runtime source applies when
+submitting `done` or recording failure progress. `done` creates a Candidate;
+`work accept` records the separate acceptance. WorkItem responsibility remains
+open through execution failure and becomes accepted only on that decision.
+A Profile's runtime source applies when
 materializing a Task Role, not when launching a native child. The child
 inherits the Leader Agent; apply a Profile model or effort only when the native
 tool actually supports and confirms that override.

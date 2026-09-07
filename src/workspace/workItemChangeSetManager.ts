@@ -24,9 +24,8 @@ import { managedWorkspaceKey } from "../worktree/managedWorkspace.js";
 import { captureManagedGitChanges } from "./gitChangeSetCapture.js";
 
 const CAPTURABLE_WORK_ITEM_STATUSES = new Set([
-  "awaiting_acceptance",
-  "completed",
-  "failed",
+  "open",
+  "accepted",
   "retired"
 ]);
 
@@ -107,10 +106,16 @@ export class WorkItemChangeSetManager {
 
   async assertIntegrated(
     taskId: string,
-    workItemId: string
+    workItemId: string,
+    candidateId?: string
   ): Promise<WorkItemIntegrationProof | null> {
     const item = this.store.getWorkItem(taskId, workItemId);
     if (item === null) throw new Error(`Work item not found: ${taskId}/${workItemId}.`);
+    const candidate = candidateId === undefined ? governingWorkItemCandidate(item)
+      : item.candidates.find(({ id }) => id === candidateId);
+    if (candidateId !== undefined && candidate === undefined) {
+      throw new Error(`Candidate not found: ${taskId}/${workItemId}/${candidateId}.`);
+    }
     const workspace = this.store.getWorkItemWorkspace(item.taskId, item.id);
     if (
       workspace === null
@@ -125,18 +130,21 @@ export class WorkItemChangeSetManager {
           `WorkItem Project workspace is not clean: ${item.id}/${entry.projectId}.`
         );
       }
-      const headCommit = (await git.inspect(entry.path, "HEAD")).baseCommit;
-      const candidate = governingWorkItemCandidate(item);
+      const workspaceHeadCommit = (await git.inspect(entry.path, "HEAD")).baseCommit;
       const resultCommit = candidate?.gitSnapshot?.projects.find(
         ({ projectId }) => projectId === entry.projectId
       )?.commit;
       if (candidate?.workspace === undefined
         || !isDeepStrictEqual(candidate.workspace, workspace)
-        || resultCommit !== headCommit) {
+        || resultCommit === undefined
+        || (candidateId === undefined && resultCommit !== workspaceHeadCommit)) {
         throw new Error(
           `WorkItem Project no longer matches its frozen result: ${item.id}/${entry.projectId}.`
         );
       }
+      // An explicit historical selection is proved against its immutable
+      // integrated commit, not mislabeled as the workspace's current HEAD.
+      const headCommit = resultCommit;
       const integrated = this.store.listIntegrationAttempts(item.taskId).some(
         (integration) => (
           integration.status === "committed"
@@ -430,7 +438,7 @@ function requireCapturableContext(
     if (taskFinalReviewContract === undefined) {
       throw new Error(`Work item has no managed workspace: ${item.id}.`);
     }
-    const candidate = item.candidates.at(-1);
+    const candidate = governingWorkItemCandidate(item);
     if (
       candidate === undefined
       || !sameTaskFinalReviewContract(
@@ -516,7 +524,7 @@ function assertCaptureStillCurrent(store: TaskStore, expected: CapturableContext
   const workspace = expected.source === "task-main"
     ? store.getTaskWorkspace(expected.taskId)
     : store.getWorkItemWorkspace(expected.taskId, expected.workItemId);
-  const candidate = item?.candidates.at(-1);
+  const candidate = item === null ? undefined : governingWorkItemCandidate(item);
   if (
     task?.status !== "active"
     || item === null

@@ -1125,7 +1125,7 @@ export async function main(): Promise<void> {
           },
           candidateForTask: async (taskId) => {
             const status = store.getTask(taskId)?.status;
-            return status === "active" || status === "retired"
+            return status === "active" || status === "cancelled"
               ? snapshotActualTaskReviewCandidate(taskId, store, workspacePreparer)
               : null;
           },
@@ -1395,7 +1395,7 @@ export async function main(): Promise<void> {
           .flatMap(({ owner }) => owner.type === "work-item" ? [owner.workItemId] : []);
         for (const workItemId of workItemIds) {
           const item = store.getWorkItem(task.id, workItemId);
-          if (item?.status !== "completed" || disposition !== "integrated") continue;
+          if (item?.status !== "accepted" || disposition !== "integrated") continue;
           try {
             await new WorkItemChangeSetManager(store).assertIntegrated(task.id, item.id);
           } catch (error) {
@@ -1463,7 +1463,7 @@ export async function main(): Promise<void> {
       // A rejected Candidate starts a new execution iteration. Release every
       // terminal Lane Role runtime before preparing the new Lane workspaces;
       // durable Turns, Groups, Candidates, and workspace owners remain intact.
-      if (item?.status === "failed"
+      if (item?.status === "open"
         && currentWorkItemExecutionGroup(item)?.lanes.every(
           ({ disposition }) => disposition !== "open"
         )) {
@@ -1504,7 +1504,8 @@ export async function main(): Promise<void> {
         try {
           const reference = cliWorkItemReference(workItemId, process.env);
           workItemIntegrationProof = await new WorkItemChangeSetManager(store)
-            .assertIntegrated(reference.taskId, reference.localId) ?? undefined;
+            .assertIntegrated(reference.taskId, reference.localId,
+              optionValue(resolved, "--candidate")) ?? undefined;
         } catch (error) {
           throw usageError(error instanceof Error ? error.message : String(error));
         }
@@ -2472,7 +2473,6 @@ async function actualTaskReviewCandidateForTaskCommand(
     taskId = store.getTask(args[2])?.id;
   } else if ((
     args[1] === "show"
-    || args[1] === "context"
     || args[1] === "next-action"
     || args[1] === "remote-delivery"
   )
@@ -2481,7 +2481,7 @@ async function actualTaskReviewCandidateForTaskCommand(
     decisionSupportRead = true;
   }
   const status = taskId === undefined ? undefined : store.getTask(taskId)?.status;
-  if (taskId === undefined || (status !== "active" && status !== "retired")) return undefined;
+  if (taskId === undefined || (status !== "active" && status !== "cancelled")) return undefined;
   try {
     return await snapshotActualTaskReviewCandidate(taskId, store, preparer);
   } catch (error) {

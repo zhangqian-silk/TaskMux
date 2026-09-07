@@ -205,7 +205,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     }
     const assignedWorkItem = this.store.listWorkItems(task.id).find((item) =>
       item.assignee === role.name
-      && !["completed", "failed", "retired"].includes(item.status)
+      && !["accepted", "retired"].includes(item.status)
     );
     // A Turn snapshot is authoritative for the live launch. In particular,
     // a Reviewer Turn must launch from its ReviewRound-owned workspace rather
@@ -234,7 +234,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         && workspace.owner.type === "work-item"
         && isolatedWorkItem !== null
         && (isolatedWorkItem.assignee === undefined || isolatedWorkItem.assignee === role.name)
-        && !["completed", "failed", "retired"].includes(isolatedWorkItem.status)
+        && !["accepted", "retired"].includes(isolatedWorkItem.status)
         && (activeTurn === null
           || activeTurn.workItemId === workspace.owner.workItemId)
         && sameWorkspaceProjects(workspace, task.projectBindings.map(({ projectId }) => projectId))
@@ -807,12 +807,12 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ?? (role.name === "leader"
         ? this.store.getTaskWorkspace(taskId)
         : this.store.listWorkItems(taskId)
-          .find((item) => item.assignee === role.name && item.status === "running") === undefined
+          .find((item) => item.assignee === role.name && item.status === "open") === undefined
           ? this.store.getTaskWorkspace(taskId)
           : this.store.getWorkItemWorkspace(
             taskId,
             this.store.listWorkItems(taskId).find(
-              (item) => item.assignee === role.name && item.status === "running"
+              (item) => item.assignee === role.name && item.status === "open"
             )!.id
           ));
     if (workspace === null || workspace === undefined) return launch;
@@ -883,7 +883,7 @@ function resolveTaskRoleEffectiveLaunch(
 ): EffectiveLaunchSnapshot {
   const item = store.listWorkItems(role.taskId).find((candidate) => (
     candidate.assignee === role.name
-      && !["completed", "failed", "retired"].includes(candidate.status)
+      && !["accepted", "retired"].includes(candidate.status)
   )) ?? null;
   const workspace = (item === null
     ? store.getTaskWorkspace(role.taskId)

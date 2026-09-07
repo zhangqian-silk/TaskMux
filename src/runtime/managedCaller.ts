@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 
 import { activeRoleAgentBinding } from "../role/role.js";
+import type { Role } from "../role/role.js";
 import type { TaskStore } from "../storage/taskStore.js";
+import type { Turn } from "../turn/turn.js";
 
 /** Per-process credential injected at native Session launch. */
 export const MANAGED_CALLER_KEY_ENV = "YUI_JOB_CALLER_KEY";
@@ -11,7 +13,7 @@ export const MANAGED_CALLER_KEY_ENV = "YUI_JOB_CALLER_KEY";
  *
  * A managed Session process carries only immutable self-identity in its
  * environment: its Home, scope, Task, Role, workspace, and a non-replayable
- * caller key. Everything volatile - the active Agent, adapter, launch
+ * caller key. Everything volatile - the effective Agent, adapter, launch
  * generation, native Session, and Turn - is read from durable state at command
  * time, because a live process environment can never be updated in place and
  * therefore must never carry cross-Turn state.
@@ -25,7 +27,7 @@ export const MANAGED_CALLER_KEY_ENV = "YUI_JOB_CALLER_KEY";
 export type ManagedTaskCaller = Readonly<{
   taskId: string;
   roleName: string;
-  /** Durable active Agent of the Role this process belongs to. */
+  /** Current management Agent, or the Agent of a Worker's active Assignment. */
   agentId: string;
   adapterId: string;
   /** Workspace the process was launched into. */
@@ -132,6 +134,21 @@ export function currentManagedRuntime(
   return caller;
 }
 
+/** Select execution identity, not a credential or grant. Workers retain their
+ * active Assignment; Leader management follows the current Role selection. */
+export function taskRoleRuntimeIdentity(role: Role, activeTurn: Turn | null): Readonly<{
+  agentId: string;
+  adapterId: string;
+}> {
+  const effective = role.name !== "leader" && activeTurn?.status === "active"
+    ? activeTurn.effective
+    : undefined;
+  return {
+    agentId: effective?.agentId ?? role.activeAgentId,
+    adapterId: effective?.adapterId ?? activeRoleAgentBinding(role).adapterId
+  };
+}
+
 function requireCurrentRuntime(
   store: ManagedCallerStore,
   self: ManagedTaskSessionIdentity
@@ -143,7 +160,8 @@ function requireCurrentRuntime(
         + "A new Session must be launched to act on this Task."
     );
   }
-  const agentId = role.activeAgentId;
+  const activeTurn = store.getActiveTurn(self.taskId, self.roleName);
+  const { agentId, adapterId } = taskRoleRuntimeIdentity(role, activeTurn);
   if (self.callerKey === undefined) {
     throw new ManagedRuntimeDriftError(
       `This managed Session carries no ${MANAGED_CALLER_KEY_ENV}, so it cannot be recognized `
@@ -155,20 +173,20 @@ function requireCurrentRuntime(
     || createHash("sha256").update(self.callerKey).digest("hex") !== expectedHash) {
     throw new ManagedRuntimeDriftError(
       `This managed Session is no longer the current runtime of ${self.taskId}/${self.roleName} `
-        + `(the Role now runs Agent ${agentId}). Its native Session was replaced or its Role was `
+        + `(the authorized runtime uses Agent ${agentId}). Its native Session was replaced or its Role was `
         + "rebound, so its durable caller key no longer matches. Nothing was changed. Read the "
         + `current state with \`yui task show ${self.taskId}\`; acting requires the Session Yui `
         + "launched for the current runtime."
     );
   }
-  const activeTurn = store.getActiveTurn(self.taskId, self.roleName);
   return Object.freeze({
     taskId: self.taskId,
     roleName: self.roleName,
     agentId,
-    adapterId: activeRoleAgentBinding(role).adapterId,
+    adapterId,
     ...(self.workspace === undefined ? {} : { workspace: self.workspace }),
     ...(activeTurn === null || activeTurn.status !== "active"
+      || activeTurn.effective.agentId !== agentId
       ? {}
       : { currentTurnId: activeTurn.id })
   });

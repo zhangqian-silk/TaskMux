@@ -406,8 +406,8 @@ function projectNextAction(
   mainTurn: WorkItemMainTurnProjection,
   candidate: WorkItemCandidateSourceProjection
 ): WorkItemExecutionNextAction {
-  if (["completed", "retired"].includes(item.status)) return action("none", [], []);
-  if (item.status === "awaiting_acceptance") {
+  if (["accepted", "retired"].includes(item.status)) return action("none", [], []);
+  if ((item.status === "open" && item.currentCandidateId !== undefined)) {
     return candidate.status === "observed"
       ? action("decide-candidate", ["leader"], [candidate.candidateId!])
       : action("inspect-unknown", ["leader"], candidate.candidateId === undefined ? [] : [candidate.candidateId]);
@@ -439,13 +439,13 @@ function projectNextAction(
       ? action("inspect-unknown", ["leader"], mainTurn.turnId === undefined ? [] : [mainTurn.turnId])
       : action("retry-main", ["leader"], [mainTurn.retryTurnId]);
   }
-  if (mainTurn.status === "succeeded" && item.status === "running") {
+  if (mainTurn.status === "succeeded" && item.status === "open") {
     return action("submit-candidate", ["leader"], [mainTurn.turnId!]);
   }
   if (mainTurn.status === "unknown" || synthesis.status === "unknown") {
     return action("inspect-unknown", ["leader"], mainTurn.turnId === undefined ? [item.id] : [mainTurn.turnId]);
   }
-  if (item.status === "pending" || item.status === "failed") {
+  if (item.status === "open") {
     return action("dispatch-work", ["leader"], [item.id]);
   }
   return action("inspect-unknown", ["leader"], [item.id]);

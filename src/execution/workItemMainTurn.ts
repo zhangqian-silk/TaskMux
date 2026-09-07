@@ -10,11 +10,11 @@ import { contextSnapshotRef } from "../context/contextSnapshot.js";
 import { roleAgentSessionResumeMode } from "../executor/agentExecutor.js";
 import { resolveEffectiveLaunch } from "../executor/effectiveLaunch.js";
 import { createTaskEvent } from "../event/taskEvent.js";
+import { historicalExecutionDormant } from "../task/task.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import { createTurn, type Turn } from "../turn/turn.js";
 import {
   currentWorkItemExecutionGroup,
-  updateWorkItemStatus,
   type WorkItem
 } from "../workItem/workItem.js";
 import {
@@ -87,15 +87,17 @@ export function reconcileWorkItemMainTurns(
     left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
   ));
   for (const item of items) {
-    if (item.status !== "running") continue;
+    if (item.status !== "open") continue;
     const group = currentWorkItemExecutionGroup(item);
     if (group === undefined || !workItemExecutionGroupSettled(group)) continue;
+    if (historicalExecutionDormant(store.listEvents(taskId), group.id)) continue;
     const producers = successfulWorkItemSynthesisProducers(store, item, group);
     if (producers.length < MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS) {
+      if (store.listEvents(taskId).some((event) =>
+        event.type === "work.execution-group-failed" && event.payload.executionGroupId === group.id)) continue;
       const summary = `ExecutionGroup ${group.id} settled with ${producers.length} successful `
         + `Producer result${producers.length === 1 ? "" : "s"}; at least `
         + `${MINIMUM_WORK_ITEM_SYNTHESIS_RESULTS} are required.`;
-      store.saveWorkItem(taskId, updateWorkItemStatus(item, "failed", now, summary));
       store.saveEvent(taskId, createTaskEvent(
         store.nextEventId(taskId),
         taskId,

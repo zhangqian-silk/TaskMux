@@ -30,7 +30,7 @@ import {
   workItemCard
 } from "/assets/js/components.js";
 
-const statuses = ["all", "active", "draft", "completed", "retired", "archived"];
+const statuses = ["all", "active", "draft", "completed", "cancelled", "archived"];
 
 export function renderFilters(container, state, t, onFilter) {
   const counts = state.counts || {};
@@ -83,7 +83,7 @@ function taskGroupOf(task, attentionIds) {
   if (attentionIds.has(task.id)) return "attention";
   if (task.status === "active") return "active";
   if (task.status === "draft") return "draft";
-  if (task.status === "retired") return "retired";
+  if (task.status === "cancelled") return "cancelled";
   if (task.status === "archived") return "archived";
   return "finished";
 }
@@ -102,7 +102,7 @@ export function renderTasks(container, state, t, locale, onSelect) {
   clear(container);
   const query = state.query.trim().toLocaleLowerCase(locale);
   const attentionIds = new Set((state.attention || []).map(function (item) { return item.taskId; }));
-  const groups = { attention: [], active: [], draft: [], finished: [], retired: [], archived: [] };
+  const groups = { attention: [], active: [], draft: [], finished: [], cancelled: [], archived: [] };
   (state.tasks || []).forEach(function (task) {
     if (state.filter !== "all" && task.status !== state.filter) return;
     if (!taskMatchesQuery(task, query, locale)) return;
@@ -114,7 +114,7 @@ export function renderTasks(container, state, t, locale, onSelect) {
     ["active", t("group.active")],
     ["draft", t("group.draft")],
     ["finished", t("group.finished")],
-    ["retired", t("group.retired")],
+    ["cancelled", t("group.cancelled")],
     ["archived", t("group.archived")]
   ];
   const firstGroup = order.find(function (entry) { return groups[entry[0]].length > 0; });
@@ -346,14 +346,14 @@ export function renderTaskDetail(detail, data, t, locale, actions) {
     conclusion.append(richText(null, task.completionSummary, t));
     conclusion.append(conclusionMeta(task, t, locale, "completed"));
     summaryBody.append(conclusion);
-  } else if (task.status === "retired" || task.retirementSummary) {
+  } else if (task.status === "cancelled" || task.retirementSummary) {
     const conclusion = node("div", "conclusion archived");
-    conclusion.append(node("h3", "", t("detail.retired")));
+    conclusion.append(node("h3", "", t("detail.cancelled")));
     if (task.retirementSummary) conclusion.append(richText(null, task.retirementSummary, t));
     if (task.replacementTaskId) {
       conclusion.append(node("p", "muted", t("detail.replacement") + " · " + task.replacementTaskId));
     }
-    conclusion.append(conclusionMeta(task, t, locale, "retired"));
+    conclusion.append(conclusionMeta(task, t, locale, "cancelled"));
     summaryBody.append(conclusion);
   } else if (task.status === "archived" || task.archiveSummary || task.archiveReason) {
     const conclusion = node("div", "conclusion archived");

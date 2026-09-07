@@ -82,7 +82,8 @@ export type RuntimeRoleFact = Readonly<{
   ownerKind: "task-role" | "global-role";
   taskId?: string;
   taskTitle?: string;
-  taskStatus?: "draft" | "active" | "completed" | "retired" | "archived";
+  taskStatus?: "draft" | "active" | "completed" | "cancelled" | "archived";
+  taskRetirementIsolated?: boolean;
   roleName: string;
   agentId: string;
   adapterId?: string;
@@ -135,7 +136,7 @@ export type RuntimeOwner =
       kind: "task-role";
       taskId: string;
       taskTitle?: string;
-      taskStatus?: "draft" | "active" | "completed" | "retired" | "archived";
+      taskStatus?: "draft" | "active" | "completed" | "cancelled" | "archived";
       roleName: string;
       agentId: string;
       adapterId?: string;
@@ -376,7 +377,7 @@ export function buildControllerResourceInventory(
         : processTree(processes, pane.pid);
       for (const process of paneProcesses) claimed.add(process.pid);
       const role = findRole(homeFact.roles, pane);
-      const terminalIsolation = role?.taskStatus === "retired"
+      const terminalIsolation = (role?.taskStatus === "cancelled" && role.taskRetirementIsolated === true)
         || role?.taskStatus === "archived";
       resources.push(processResource({
         kind: "agent-session",
@@ -386,7 +387,7 @@ export function buildControllerResourceInventory(
           : terminalIsolation ? "safe" : "protected",
         reasonCode: role === undefined
           ? pane.dead ? "dead-orphan-pane" : "orphan-pane"
-          : terminalIsolation ? `${role.taskStatus}-task-pane` : "owned-role-pane",
+          : terminalIsolation ? (role.taskStatus === "cancelled" ? "retired-task-pane" : "archived-task-pane") : "owned-role-pane",
         yuiHome,
         owner: role === undefined ? { kind: "none" } : roleOwner(role),
         processes: paneProcesses,

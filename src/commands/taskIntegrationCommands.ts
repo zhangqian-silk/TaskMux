@@ -17,6 +17,7 @@ import { FileTaskWorkspacePreparer } from "../repository/taskWorkspacePreparer.j
 import { runTaskIntegrationQueueCommand } from "./taskIntegrationQueueCommands.js";
 import { taskLocalActor } from "./taskActor.js";
 import { resolveTaskRecordReference } from "../task/taskRecordReference.js";
+import { governingWorkItemCandidate } from "../workItem/workItem.js";
 
 export type TaskIntegrationCommandOptions = Readonly<{
   now?: () => Date;
@@ -146,7 +147,7 @@ async function start(
   }
   const workItem = store.getWorkItem(task.id, workItemId);
   if (workItem === null) throw usageError(`WorkItem not found: ${workItemId}.`);
-  const candidate = workItem.candidates.at(-1);
+  const candidate = governingWorkItemCandidate(workItem);
   if (candidate?.gitSnapshot === undefined || candidate.workspace === undefined) {
     throw usageError(`WorkItem has no committed result snapshot: ${workItem.id}.`);
   }

@@ -147,6 +147,23 @@ yui task context <task-id>
 yui task activate <task-id>
 ```
 
+Context 返回受权、有界的工作集和 `coreCursor`；`task context delta <task-id>
+--after <coreCursor>` 使用 continuation 固定分页上界，`task context inspect
+<task-id> --store <store> --ref <id> --digest <digest>` 展开当前记录。
+读取不确认消息送达；`task next-action` 保留为独立决策辅助查询。
+
+Brief 修改需先读取 revision，再用 `task brief update <task-id>
+--expected-revision <n>`（创建为 0）；过期修改返回当前版本，不改写已有验收。
+WorkItem 当前状态为 open／accepted／retired，执行失败属于原 Turn。
+提交 Candidate 不等于接受，Leader 通过 `task work accept` 明确验收。
+
+Task 生命周期为 draft／active／completed／cancelled／archived。
+`task cancel <task-id> --summary "..."` 停止追求目标，不证明资源停止。
+cancelled 需用户／Operator 明确重开；Leader 可重开 completed。重开不重播
+历史输入，归档仍是独立的用户／Operator 操作，archived 不可重开。
+Role 当前配置与 Turn effective 分开；Worker 改选 B 不改写正在执行的 A。
+显式重应用 Profile 会重新复制其已解析 runtime，必须匹配目标 Agent binding。
+
 Draft 只保存规划记录和 Project 绑定，不采用可写 managed Workspace。Message
 与 WorkItem 编辑只替换显式指定的可变字段，记录 ID 和审计历史保持不变；重复
 选项表示整体替换，对应 `--clear-*` 显式表示空集合。retired 记录继续保留在历史

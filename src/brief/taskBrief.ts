@@ -1,5 +1,6 @@
 export type TaskBrief = {
   schemaVersion: 2;
+  revision: number;
   objective: string;
   boundaries: string[];
   technicalApproach: string;
@@ -27,6 +28,7 @@ export type TaskBriefPatch = Partial<Pick<
 export function createTaskBrief(input: TaskBriefContent, now: Date): TaskBrief {
   return {
     schemaVersion: 2,
+    revision: 1,
     objective: requireText(input.objective, "Task objective"),
     boundaries: normalizeBoundaries(input.boundaries),
     technicalApproach: optionalText(input.technicalApproach, "Task technical approach"),
@@ -43,14 +45,27 @@ export function updateTaskBrief(
   updatedBy: string,
   now: Date
 ): TaskBrief {
-  return createTaskBrief({
+  validateTaskBrief(brief);
+  return { ...createTaskBrief({
     objective: patch.objective ?? brief.objective,
     boundaries: patch.boundaries ?? brief.boundaries,
     technicalApproach: patch.technicalApproach ?? brief.technicalApproach,
     currentFocus: patch.currentFocus ?? brief.currentFocus,
     leaderSummary: patch.leaderSummary ?? brief.leaderSummary,
     updatedBy
-  }, now);
+  }, now), revision: brief.revision + 1 };
+}
+
+export function validateTaskBrief(brief: TaskBrief): TaskBrief {
+  if (brief.schemaVersion !== 2 || !Number.isSafeInteger(brief.revision) || brief.revision < 1) {
+    throw new Error("Task Brief requires schemaVersion 2 and a positive revision.");
+  }
+  if (!Array.isArray(brief.boundaries) || typeof brief.technicalApproach !== "string"
+    || typeof brief.updatedAt !== "string" || !Number.isFinite(Date.parse(brief.updatedAt))) {
+    throw new Error("Task Brief content or timestamp is invalid.");
+  }
+  createTaskBrief(brief, new Date(brief.updatedAt));
+  return brief;
 }
 
 function normalizeBoundaries(values: readonly string[]): string[] {

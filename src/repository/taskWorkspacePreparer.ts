@@ -14,6 +14,7 @@ import { isDeepStrictEqual } from "node:util";
 import { retireTaskRoleSessionsForWorkspace } from "../executor/agentExecutor.js";
 import { formatWorkspacePreflightError } from "../executor/workspacePreflightClassification.js";
 import { updateRole, type TaskRole } from "../role/role.js";
+import { taskRoleRuntimeIdentity } from "../runtime/managedCaller.js";
 import {
   hasRuntimeCleanupObligation,
   isRuntimeLaunchReservation,
@@ -645,17 +646,17 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
           // reading Task context must not migrate its resumable Worker either.
           const retainedItem = tx.listWorkItems(task.id).find((candidate) => (
             candidate.assignee === role.name
-              && candidate.status === "failed"
+              && candidate.status === "open"
               && currentWorkItemExecutionGroup(candidate) === undefined
               && tx.getWorkItemWorkspace(task.id, candidate.id)?.root === role.workspace
           ));
           const assignedItem = activeTurnItem !== null
             && activeTurnItem.assignee === role.name
-            && !["completed", "failed", "retired"].includes(activeTurnItem.status)
+            && !["accepted", "retired"].includes(activeTurnItem.status)
             ? activeTurnItem
             : retainedItem ?? tx.listWorkItems(task.id).find((candidate) => (
               candidate.assignee === role.name
-                && !["completed", "failed", "retired"]
+                && !["accepted", "retired"]
                   .includes(candidate.status)
             ));
           const assignedWorkspace = assignedItem === undefined
@@ -2104,7 +2105,7 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
   ): Promise<GitWorkspaceRemoval> {
     const item = requireWorkItem(this.store, taskId, workItemId);
     const task = requireTask(this.store, item.taskId);
-    if (!["completed", "failed", "retired"].includes(item.status)) {
+    if (!["accepted", "retired"].includes(item.status)) {
       throw new Error(`Work item must be terminal before cleanup: ${item.id}.`);
     }
     if (item.workspaceDisposition !== undefined && item.workspaceDisposition !== disposition) {
@@ -2503,7 +2504,7 @@ function requireTask(store: TaskStore, taskId: string): Task {
 }
 
 function assertTaskArchiveState(current: Task, expected: Task): void {
-  if ((current.status !== "completed" && current.status !== "retired")
+  if ((current.status !== "completed" && current.status !== "cancelled")
     || !isDeepStrictEqual(current, expected)) {
     throw new WorkspaceCleanupBlockedError(
       "task-changed",
@@ -2590,7 +2591,7 @@ function assertWorkItemWorkspaceEligible(
   item: WorkItem
 ): void {
   if (task.status !== "active") throw new Error(`Task is not active: ${task.id}.`);
-  if (["completed", "failed", "retired"].includes(item.status)) {
+  if (["accepted", "retired"].includes(item.status)) {
     throw new Error(`Work item is already terminal: ${item.id}.`);
   }
   const activeDevelopTurn = store.listTurns(task.id)
@@ -2667,7 +2668,7 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
     role.taskId !== taskId
     || item.taskId !== taskId
     || item.assignee !== role.name
-    || ["completed", "failed", "retired"].includes(item.status)
+    || ["accepted", "retired"].includes(item.status)
     || workspace.owner.type !== "work-item"
     || workspace.owner.taskId !== taskId
     || workspace.owner.workItemId !== item.id
@@ -2680,6 +2681,7 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
   if (!isDeepStrictEqual(writableProjects, [...item.writeProjectIds].sort())) return false;
 
   const run = store.getActiveTurn(taskId, role.name);
+  const identity = taskRoleRuntimeIdentity(role, run);
   if (
     run === null
     || run.status !== "active"
@@ -2687,7 +2689,7 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
     || run.workItemId !== item.id
     || run.workspace === undefined
     || !sameManagedWorkspaceIdentity(run.workspace, workspace)
-    || run.effective.agentId !== role.activeAgentId
+    || run.effective.agentId !== identity.agentId
     || !sameEffectiveWorkspace(run.effective.workspace, workspace)
   ) return false;
 
@@ -2698,13 +2700,13 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
     || sessions.owner.scope !== "task"
     || sessions.owner.taskId !== taskId
     || sessions.owner.roleName !== role.name
-    || sessions.activeAgentId !== role.activeAgentId
+    || sessions.activeAgentId !== identity.agentId
     || session === undefined
-    || session.agentId !== role.activeAgentId
+    || session.agentId !== identity.agentId
     || session.adapterId !== run.effective.adapterId
     || session.runtimeGenerationId === undefined
     || session.nativeSessionId === undefined
-    || !["ready", "running"].includes(session.status)
+    || session.status !== "active"
     || !isDeepStrictEqual(session.effective, run.effective)
     || !sameEffectiveWorkspace(session.effective.workspace, workspace)
   ) return false;

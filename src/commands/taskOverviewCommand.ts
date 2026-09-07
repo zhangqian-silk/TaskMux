@@ -290,7 +290,7 @@ function buildTaskOverviewEntry(
       executionGroups: execution.executionGroups
     })
   );
-  const persistedCandidate = task.status === "active" || task.status === "retired"
+  const persistedCandidate = task.status === "active" || task.status === "cancelled"
     ? taskRemoteDeliveryCandidate(task)
     : null;
   const remoteDelivery = projectTaskRemoteDeliveryFromStore(
@@ -370,19 +370,7 @@ function collectBlockers(
   const blockers: TaskOverviewBlocker[] = [];
   const workById = new Map(workItems.map((item) => [item.id, item]));
   for (const item of workItems) {
-    if (item.status === "failed") {
-      blockers.push({
-        kind: "work",
-        type: "work",
-        id: item.id,
-        status: item.status,
-        owner: item.assignee ?? "leader",
-        action: "review-failed-work",
-        summary: item.outcome ?? `Work Item ${item.id} failed.`
-      });
-      continue;
-    }
-    if (item.status === "awaiting_acceptance") {
+    if ((item.status === "open" && item.currentCandidateId !== undefined)) {
       blockers.push({
         kind: "work",
         type: "work",
@@ -394,9 +382,9 @@ function collectBlockers(
       });
       continue;
     }
-    if (item.status !== "pending") continue;
+    if (item.status !== "open") continue;
     const dependencies = item.dependsOn.filter((dependency) => (
-      workById.get(dependency)?.status !== "completed"
+      workById.get(dependency)?.status !== "accepted"
     ));
     if (dependencies.length === 0) continue;
     blockers.push({
@@ -470,11 +458,8 @@ function overviewNextAction(
 function countWorkItems(items: readonly WorkItem[]): TaskOverviewWorkCounts {
   const counts: Record<WorkItemStatus, number> & { total: number } = {
     total: items.length,
-    pending: 0,
-    running: 0,
-    awaiting_acceptance: 0,
-    completed: 0,
-    failed: 0,
+    open: 0,
+    accepted: 0,
     retired: 0
   };
   for (const item of items) counts[item.status] += 1;

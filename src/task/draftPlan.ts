@@ -167,7 +167,7 @@ function firstDraftExecutionFact(store: TaskStore, task: Task): string | undefin
     || item.currentExecutionGroupId !== undefined
     || item.candidates.length > 0
     || item.workspaceDisposition !== undefined
-    || !["pending", "retired"].includes(item.status)
+    || !["open", "retired"].includes(item.status)
   ));
   if (itemWithExecution !== undefined) {
     return `Work Item execution (${itemWithExecution.id})`;

@@ -1051,7 +1051,7 @@ function resolveRuntimeDesiredEffective(
   const taskRole = role as Role;
   const item = store.listWorkItems(request.taskId).find((candidate) => (
     candidate.assignee === request.roleName
-      && !["completed", "failed", "retired"].includes(candidate.status)
+      && !["accepted", "retired"].includes(candidate.status)
   )) ?? null;
   const workspace = (item === null
     ? store.getTaskWorkspace(request.taskId)
@@ -1174,7 +1174,7 @@ function currentDesiredEffective(
   }
   const item = store.listWorkItems(request.owner.taskId).find((candidate) => (
     candidate.assignee === request.owner.roleName
-      && !["completed", "failed", "retired"].includes(candidate.status)
+      && !["accepted", "retired"].includes(candidate.status)
   )) ?? null;
   const workspace = (item === null
     ? store.getTaskWorkspace(request.owner.taskId)
@@ -1196,7 +1196,7 @@ function currentDesiredManagedWorkspace(
 ) {
   const item = store.listWorkItems(taskId).find((candidate) => (
     candidate.assignee === roleName
-      && !["completed", "failed", "retired"].includes(candidate.status)
+      && !["accepted", "retired"].includes(candidate.status)
   )) ?? null;
   return (item === null
     ? store.getTaskWorkspace(taskId)

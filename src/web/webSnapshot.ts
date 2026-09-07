@@ -97,7 +97,7 @@ export function buildWebDashboardSnapshot(
       draft: 0,
       active: 0,
       completed: 0,
-      retired: 0,
+      cancelled: 0,
       archived: 0
     };
     const projectNames = new Map(reader.listProjects().map((project) => [project.id, project.name]));
@@ -381,11 +381,8 @@ function latestStallField(
 function countWorkItems(items: readonly WorkItem[]): WorkItemCounts {
   const counts: WorkItemCounts = {
     total: items.length,
-    pending: 0,
-    running: 0,
-    awaiting_acceptance: 0,
-    completed: 0,
-    failed: 0,
+    open: 0,
+    accepted: 0,
     retired: 0
   };
   const mutable = counts as Record<keyof WorkItemCounts, number>;
@@ -400,7 +397,7 @@ function compareDashboardTasks(left: DashboardTask, right: DashboardTask): numbe
     active: 0,
     draft: 1,
     completed: 2,
-    retired: 3,
+    cancelled: 3,
     archived: 4
   };
   return statusOrder[left.status] - statusOrder[right.status]

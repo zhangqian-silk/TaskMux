@@ -49,7 +49,7 @@ export type DeliveryGuardOutcome = Readonly<{
   warnings: readonly DeliveryDuplicate[];
 }>;
 
-const OPEN_WORK_ITEM_STATUSES = new Set(["pending", "running", "awaiting_acceptance"]);
+const OPEN_WORK_ITEM_STATUSES = new Set(["open"]);
 
 export function detectDeliveryDuplicates(
   facts: NextActionFacts,
@@ -122,7 +122,7 @@ function detectWorkItemDuplicates(
       });
       continue;
     }
-    if (sameScope && item.status === "completed") {
+    if (sameScope && item.status === "accepted") {
       duplicates.push({
         severity: "suspected",
         reason: `Work Item ${item.id} already delivered the identical scope; re-creating it may be a duplicate successor`,

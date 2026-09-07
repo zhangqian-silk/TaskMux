@@ -107,6 +107,11 @@
       "sha256": "977ec9f0a8e8ff1cdb93c01c89b242f567f5a550b749aa95c05bd602fac61f93"
     },
     {
+      "path": "implementation/designs/T03-evidence.md",
+      "bytes": 7305,
+      "sha256": "0a7ef69b1836b185d20e90aea309ab486e16ac4648defbd051563e85ce895691"
+    },
+    {
       "path": "implementation/designs/T03-task-context.md",
       "bytes": 4179,
       "sha256": "c4c4b3665f78b4b1fde2a9cfa34c63cbf8e106a2b91a8126a2f27ce7a0d5f5fd"
@@ -218,8 +223,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 464018,
-      "sha256": "6dd8450f05ae6f3598ca1fff708fbe5bd75870f08f06a6eb1e32d0e63ff91d96"
+      "bytes": 472619,
+      "sha256": "c9f485425fc7948b6d219316d79ed2bc4ac45c7b135a7402734c88c04a7cce8f"
     },
     {
       "path": "modules/01-kernel.md",
@@ -228,8 +233,8 @@
     },
     {
       "path": "modules/02-task.md",
-      "bytes": 7553,
-      "sha256": "85908aab1c61bc6156959c1a969c02b9e61819c07831695fab912d8962ada447"
+      "bytes": 7665,
+      "sha256": "e0327c20833adf94ae47d220c6dbb9fba5a678aa212bab00c6c4093027f6e689"
     },
     {
       "path": "modules/03-agent-context.md",

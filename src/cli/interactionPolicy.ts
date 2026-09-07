@@ -246,7 +246,11 @@ export const INTERACTION_POLICIES: readonly InteractionPolicy[] = Object.freeze(
     ...taskTarget("complete", 2, ["active"]),
     trailingOptions: { "--summary": "value" }
   },
-  taskTarget("reopen", 2, ["completed"]),
+  taskTarget("reopen", 2, ["completed", "cancelled"]),
+  {
+    ...taskTarget("cancel", 2, ["draft", "active"]),
+    trailingOptions: { "--summary": "value", "--summary-file": "value" }
+  },
   {
     ...taskTarget("retire", 2, ["draft", "active"]),
     trailingOptions: {
@@ -266,7 +270,7 @@ export const INTERACTION_POLICIES: readonly InteractionPolicy[] = Object.freeze(
     trailingOptions: { "--json": "flag" }
   },
   {
-    ...taskTarget("archive", 2, ["completed", "retired"]),
+    ...taskTarget("archive", 2, ["completed", "cancelled"]),
     trailingOptions: { "--integrated": "flag", "--abandon": "flag", "--force": "flag" },
     confirmation: { action: "Archive task", targetArgumentIndex: 2 }
   },
@@ -639,7 +643,7 @@ export const INTERACTION_POLICIES: readonly InteractionPolicy[] = Object.freeze(
   ] as const).map(([group, command]): InteractionPolicy => {
     const trailingOptions: Record<string, TrailingOptionKind> = {};
     if (group === "brief" && command === "update") {
-      Object.assign(trailingOptions, { "--objective": "value", "--boundary": "value", "--focus": "value", "--leader-summary": "value" });
+      Object.assign(trailingOptions, { "--expected-revision": "value", "--objective": "value", "--boundary": "value", "--approach": "value", "--focus": "value", "--leader-summary": "value" });
     } else if (group === "decision" && command === "record") {
       Object.assign(trailingOptions, { "--title": "value", "--rationale": "value" });
     } else if (group === "decision" && command === "list") {

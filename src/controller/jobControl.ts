@@ -28,6 +28,7 @@ import type { ManagedWorkspace } from "../worktree/managedWorkspace.js";
 import { activeLiveRoleAgentSession } from "../executor/agentExecutor.js";
 import { CallAuthority } from "../kernel/callAuthority.js";
 import { redactLaunchText } from "../runtime/launchDiagnostics.js";
+import { requireManagedTaskCaller, taskRoleRuntimeIdentity } from "../runtime/managedCaller.js";
 
 /**
  * rr8: The caller identity a `job.start`/`job.cancel` request is bound to.
@@ -245,11 +246,13 @@ function jobAuthorityBinding(store: TaskStore, scope: string, roleName: string, 
   // caller's durable Session identity, not its disposable Host generation.
   if (scope === "task") {
     const role = store.getRole(taskId, roleName);
+    const identity = role === null ? null
+      : taskRoleRuntimeIdentity(role, store.getActiveTurn(taskId, roleName));
     const sessions = store.getTaskRoleSessionSet(taskId, roleName);
     const session = activeLiveRoleAgentSession(sessions);
-    const hash = role === null ? null : store.getJobCallerKeyHash(taskId, roleName, role.activeAgentId);
-    if (hash === null || role === null || sessions?.activeAgentId !== role.activeAgentId
-      || session === null || session.agentId !== role.activeAgentId) {
+    const hash = identity === null ? null : store.getJobCallerKeyHash(taskId, roleName, identity.agentId);
+    if (hash === null || identity === null || sessions?.activeAgentId !== identity.agentId
+      || session === null || session.agentId !== identity.agentId || session.adapterId !== identity.adapterId) {
       throw jobDomainError("Current Job caller Session is unavailable.");
     }
     return createHash("sha256").update(JSON.stringify([
@@ -521,48 +524,24 @@ function assertCallerAuthorized(
   // caller: a long-lived Session process cannot hold a current Turn in its
   // frozen environment, and its own claim would add nothing the store does
   // not already own.
-  const run = caller.role === undefined ? null : store.getActiveTurn(taskId, caller.role);
-  const currentRole = caller.role === undefined ? null : store.getRole(taskId, caller.role);
-  if (run === null || run.status !== "active" || currentRole === null
-    || currentRole.activeAgentId !== run.effective.agentId) {
-    throw jobControlError(
-      "UNAUTHORIZED",
-      "A managed Task Session's Role is not bound to an active Turn."
-    );
+  const current = (() => {
+    try {
+      return requireManagedTaskCaller(store, {
+        YUI_SESSION_SCOPE: "task", YUI_TASK_ID: taskId, YUI_ROLE: caller.role,
+        YUI_JOB_CALLER_KEY: caller.callerKey
+      });
+    } catch (error) {
+      throw jobControlError("UNAUTHORIZED", error instanceof Error ? error.message : String(error));
+    }
+  })();
+  if (current.currentTurnId === undefined) {
+    throw jobControlError("UNAUTHORIZED", "A managed Task Session's Role is not bound to an active Turn.");
   }
-  const sessions = store.getTaskRoleSessionSet(taskId, currentRole.name);
+  const sessions = store.getTaskRoleSessionSet(taskId, current.roleName);
   const session = activeLiveRoleAgentSession(sessions);
-  if (sessions?.activeAgentId !== currentRole.activeAgentId || session === null
-    || session.agentId !== run.effective.agentId || session.adapterId !== run.effective.adapterId) {
+  if (sessions?.activeAgentId !== current.agentId || session === null
+    || session.agentId !== current.agentId || session.adapterId !== current.adapterId) {
     throw jobControlError("UNAUTHORIZED", "DurableJob control requires the current live Task Session.");
-  }
-  // rr13: Verify the non-replayable per-Session caller key. The key is injected
-  // at native Session launch and never persisted in plaintext; only its SHA-256
-  // hash is durable. A client with database read access can see the hash but cannot
-  // recover the key.
-  if (caller.callerKey === undefined) {
-    throw jobControlError(
-      "UNAUTHORIZED",
-      "job.start/job.cancel requires a managed Session caller key."
-    );
-  }
-  const expectedHash = store.getJobCallerKeyHash(
-    taskId,
-    caller.role ?? "",
-    currentRole.activeAgentId
-  );
-  if (expectedHash === null) {
-    throw jobControlError(
-      "UNAUTHORIZED",
-      "The managed Session has no durable caller key; it must be relaunched."
-    );
-  }
-  const presentedHash = createHash("sha256").update(caller.callerKey).digest("hex");
-  if (presentedHash !== expectedHash) {
-    throw jobControlError(
-      "UNAUTHORIZED",
-      "The managed Session caller key does not match the durable hash."
-    );
   }
 }
 
@@ -613,7 +592,7 @@ function readGitHead(path: string): string | null {
 }
 
 function isTerminalWorkItemStatus(status: string): boolean {
-  return status === "completed" || status === "failed" || status === "retired";
+  return status === "accepted" || status === "retired";
 }
 
 /**

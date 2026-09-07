@@ -390,8 +390,8 @@ const taskChildren: readonly NodeInput[] = [
   {
     name: "complete",
     summary: "Complete an active Task and stop automatic wakeups.",
-    usage: "yui task complete <id> (--summary <text>|--summary-file <path|->) [--refresh-remote] [--accept-published-tree <publication-id>]",
-    options: ["--summary", "--summary-file", "--refresh-remote", "--accept-published-tree"],
+    usage: "yui task complete <id> (--summary <text>|--summary-file <path|->) [--artifact-ref <turn:id|url> ...] [--refresh-remote] [--accept-published-tree <publication-id>]",
+    options: ["--summary", "--summary-file", "--artifact-ref", "--refresh-remote", "--accept-published-tree"],
     fileOptions: ["--summary-file"]
   },
   {
@@ -407,7 +407,14 @@ const taskChildren: readonly NodeInput[] = [
       }
     ]
   },
-  { name: "reopen", summary: "Reopen a completed Task.", usage: "yui task reopen <id>" },
+  { name: "reopen", summary: "Explicitly reopen completed or cancelled intent without replaying historical inputs.", usage: "yui task reopen <id>" },
+  {
+    name: "cancel",
+    summary: "Stop pursuing a Task without claiming its processes stopped.",
+    usage: "yui task cancel <task> (--summary <text>|--summary-file <path|->)",
+    options: ["--summary", "--summary-file"],
+    fileOptions: ["--summary-file"]
+  },
   {
     name: "retire",
     summary: "Retire a stale Task while preserving its historical evidence.",
@@ -424,8 +431,9 @@ const taskChildren: readonly NodeInput[] = [
   { name: "show", summary: "Show a Task.", usage: "yui task show <id>" },
   {
     name: "context",
-    summary: "Show consolidated working context for a Task.",
-    usage: "yui task context <task>"
+    summary: "Read compact authorized facts, fixed-bound delta, or inspect a Context reference.",
+    usage: "yui task context [read|delta|inspect] <task> [--after <cursor>] [--continuation <cursor>] [--limit <n>] [--store <store> --ref <id>] [--digest <digest>]",
+    options: ["--after", "--continuation", "--limit", "--store", "--ref", "--digest"]
   },
   {
     name: "next-action",
@@ -729,7 +737,7 @@ const taskChildren: readonly NodeInput[] = [
       { name: "show", summary: "Show one Work Item.", usage: "yui task work show <work>" },
       {
         name: "edit",
-        summary: "Replace mutable definition fields on an execution-free Draft WorkItem.",
+        summary: "Edit current requirements without changing frozen Assignments or acceptance.",
         usage: "yui task work edit <task>/<work> [--title <text>] [--objective <text>] [--accept <criterion> ...|--clear-acceptance] [--after <work> ...|--clear-dependencies] [--project <project> ...|--clear-projects] [--base-ref <project>=<ref> ...|--clear-base-refs] [--role <name>|--clear-role]",
         options: [
           "--title", "--objective", "--accept", "--clear-acceptance",
@@ -739,7 +747,7 @@ const taskChildren: readonly NodeInput[] = [
       },
       {
         name: "update",
-        summary: "Update a work item's state.",
+        summary: "Record progress or submit a Candidate; acceptance remains explicit.",
         usage: "yui task work update <task>/<work> <todo|running|done|failed> [--summary <text>]",
         options: ["--summary"],
         argumentValues: {
@@ -805,12 +813,12 @@ const taskChildren: readonly NodeInput[] = [
       {
         name: "accept",
         summary: "Accept a successful, validated, integrated Work Item.",
-        usage: "yui task work accept <task>/<work> --summary <text>",
-        options: ["--summary"]
+        usage: "yui task work accept <task>/<work> --summary <text> [--candidate <id>]",
+        options: ["--summary", "--candidate"]
       },
       {
         name: "reject",
-        summary: "Reject an awaiting Work Item so it can be retried.",
+        summary: "Decline a result or withdraw acceptance while preserving its history.",
         usage: "yui task work reject <task>/<work> --summary <text>",
         options: ["--summary"]
       },
@@ -963,8 +971,8 @@ const taskChildren: readonly NodeInput[] = [
       {
         name: "update",
         summary: "Create or update the Task Brief.",
-        usage: "yui task brief update <task> [--objective <text>] [--boundary <text> ...] [--approach <text>] [--focus <text>] [--leader-summary <text>]",
-        options: ["--objective", "--boundary", "--approach", "--focus", "--leader-summary"]
+        usage: "yui task brief update <task> --expected-revision <n> [--objective <text>] [--boundary <text> ...] [--approach <text>] [--focus <text>] [--leader-summary <text>]",
+        options: ["--expected-revision", "--objective", "--boundary", "--approach", "--focus", "--leader-summary"]
       }
     ]
   },
@@ -1468,7 +1476,7 @@ export const ROOT_COMMAND = buildNode({
       name: "task",
       summary: "Manage Tasks, WorkItems, Turns, and integration.",
       sections: [
-        { id: "lifecycle", title: "Lifecycle", entries: ["create", "project", "base", "update", "activate", "execution", "complete", "reopen", "retire", "list", "show", "context", "next-action", "remote-delivery", "archive", "replace", "reconcile", "upstream"] },
+        { id: "lifecycle", title: "Lifecycle", entries: ["create", "project", "base", "update", "activate", "execution", "complete", "cancel", "reopen", "retire", "list", "show", "context", "next-action", "remote-delivery", "archive", "replace", "reconcile", "upstream"] },
         { id: "collaboration", title: "Collaboration", entries: ["message", "input", "grant", "workflow", "publication", "work", "turn", "review", "integration", "role", "overlap", "change-set"] },
         { id: "knowledge", title: "Task Knowledge", entries: ["brief", "decision", "milestone", "event", "continuation", "wake"] }
       ],

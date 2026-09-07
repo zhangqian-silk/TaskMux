@@ -4,6 +4,7 @@ import type { JobSupervisorProcessPort } from "../controller/jobSupervisor.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import { InstanceHost } from "./instanceHost.js";
 import { createBuiltinCapabilities } from "./builtinCapabilities.js";
+import type { ContextObservationProvider } from "../context/taskContext.js";
 
 /** Called once by the existing Controller root. Does not open a Store, start
  * another Controller, or provide arbitrary persistence to plugin code.
@@ -12,7 +13,8 @@ import { createBuiltinCapabilities } from "./builtinCapabilities.js";
 export function createKernelPorts(
   store: TaskStore,
   runner: JobSupervisorProcessPort,
-  signal: (taskId: string) => void = () => undefined
+  signal: (taskId: string) => void = () => undefined,
+  contextProviders: readonly ContextObservationProvider[] = []
 ) {
   const host = new InstanceHost();
   const runnerImplementation = host.attach(JOB_RUNNER_IMPLEMENTATION, runner);
@@ -23,7 +25,7 @@ export function createKernelPorts(
   );
   // The Controller is a long-lived consumer of this exact implementation.
   const jobHandle = host.acquire<DurableJobControlPort>(jobImplementation);
-  const capabilities = createBuiltinCapabilities(host, store, jobHandle.value, signal);
+  const capabilities = createBuiltinCapabilities(host, store, jobHandle.value, signal, contextProviders);
   return {
     host,
     capabilities,

@@ -129,14 +129,12 @@ export function projectCompletionReadiness(
 
   // Every Work Item must be terminal (completed or retired).
   for (const item of facts.workItems) {
-    if (item.status === "completed" || item.status === "retired") continue;
+    if (item.status === "accepted" || item.status === "retired") continue;
     blockers.push({
       code: "incomplete-work-item",
       ref: ref("work-item", item.id),
       reason: `Work Item ${item.id} is ${item.status}.`,
-      fix: item.status === "failed"
-        ? `yui task work update ${task.id}/${item.id} running`
-        : `complete or retire Work Item ${item.id}`
+      fix: `accept or retire Work Item ${item.id}`
     });
   }
 
@@ -248,7 +246,7 @@ function workspaceCompletionDisposition(
         reason: `Work Item ${owner.workItemId} has an isolated workspace that is not disposed.`,
         fix: `yui task work cleanup ${taskId}/${owner.workItemId} --integrated|--abandon`
       } as const;
-      return item !== undefined && (item.status === "completed" || item.status === "retired")
+      return item !== undefined && (item.status === "accepted" || item.status === "retired")
         ? { kind: "advisory", value }
         : { kind: "blocker", value };
     }
