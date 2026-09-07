@@ -15,6 +15,11 @@ import {
   type ProviderRuntimeBinding
 } from "../runtime/providerRuntimeIdentity.js";
 import { builtinDriverIdForAdapter } from "../runtime/builtinAgentDrivers.js";
+import type { ImplementationRef } from "../kernel/instanceHost.js";
+import {
+  builtinAgentEndpointImplementation,
+  validateAgentEndpointImplementation
+} from "../runtime/agentEndpointIdentity.js";
 
 /** Session existence only. Readiness and activity belong to Host/Turn facts. */
 export type AgentSessionStatus = "active" | "ended";
@@ -35,7 +40,7 @@ export type RoleSessionOwner = GlobalRoleSessionOwner | TaskRoleSessionOwner;
 
 /** One independently resumable native session for one Agent binding on a Role. */
 export type RoleAgentSession = {
-  schemaVersion: 5;
+  schemaVersion: 6;
   agentId: string;
   adapterId: string;
   nativeSessionId: string;
@@ -44,6 +49,8 @@ export type RoleAgentSession = {
   policy: "fixed" | "leader-controlled";
   /** Immutable actual configuration for this native session. */
   effective: EffectiveLaunchSnapshot;
+  /** Fixed execution implementation; Host activations never silently upgrade it. */
+  endpointImplementation: ImplementationRef;
   status: AgentSessionStatus;
   endReason?: AgentSessionEndReason;
   recentCompletedTurnIds: readonly string[];
@@ -89,6 +96,7 @@ export type RecordRoleAgentSessionInput = {
   status: AgentSessionStatus;
   endReason?: AgentSessionEndReason;
   effective: EffectiveLaunchSnapshot;
+  endpointImplementation?: ImplementationRef;
 };
 
 export function createRoleSessionSet(
@@ -192,8 +200,13 @@ export function recordRoleAgentSession<TSet extends RoleSessionSet>(
   }
   const timestamp = now.toISOString();
   const continuing = existing?.nativeSessionId === nativeSessionId ? existing : undefined;
+  if (continuing !== undefined && input.endpointImplementation !== undefined
+    && (continuing.endpointImplementation.id !== input.endpointImplementation.id
+      || continuing.endpointImplementation.generation !== input.endpointImplementation.generation)) {
+    throw new Error("A native Session cannot change its Endpoint implementation in place.");
+  }
   const session: RoleAgentSession = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     agentId,
     adapterId,
     nativeSessionId,
@@ -201,6 +214,11 @@ export function recordRoleAgentSession<TSet extends RoleSessionSet>(
     ...optionalSessionText("preview", input.preview ?? continuing?.preview),
     policy: input.policy,
     effective: continuing?.effective ?? effective,
+    endpointImplementation: {
+      ...(continuing?.endpointImplementation
+        ?? input.endpointImplementation
+        ?? builtinAgentEndpointImplementation(adapterId))
+    },
     status: input.status,
     ...(input.status === "ended"
       ? { endReason: input.endReason ?? continuing?.endReason ?? "stopped" }
@@ -627,7 +645,7 @@ export function validateRoleAgentSession(
   session: RoleAgentSession,
   expectedAgentId = session.agentId
 ): RoleAgentSession {
-  if (session.schemaVersion !== 5) {
+  if (session.schemaVersion !== 6) {
     throw new Error(`Role Agent session schema version is invalid: ${expectedAgentId}.`);
   }
   const agentId = requireSafeIdentity(session.agentId, "Agent id");
@@ -635,6 +653,7 @@ export function validateRoleAgentSession(
     throw new Error(`Role Agent session identity is inconsistent: ${expectedAgentId}.`);
   }
   requireText(session.adapterId, "Agent adapter id");
+  validateAgentEndpointImplementation(session.endpointImplementation);
   validateEffectiveLaunchSnapshot(session.effective);
   if (session.effective.agentId !== agentId || session.effective.adapterId !== session.adapterId) {
     throw new Error(`Role Agent session effective identity is inconsistent: ${agentId}.`);

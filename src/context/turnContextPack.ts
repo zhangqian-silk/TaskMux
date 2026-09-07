@@ -15,7 +15,7 @@ import {
   type ContextSnapshotRef,
   type ContextSnapshotScope
 } from "./contextSnapshot.js";
-import { sourceTurnContextValue } from "./sourceTurnContext.js";
+import { MAX_SYNTHESIS_SOURCE_TURNS, sourceTurnContextValue } from "./sourceTurnContext.js";
 
 export const TURN_CONTEXT_PACK_SCHEMA_VERSION = 1 as const;
 export const TURN_CONTEXT_PACK_MAX_REFS = 256;
@@ -105,7 +105,8 @@ export function freezeTurnContextSnapshot(
   >>,
   now: Date,
   frozenBy: "leader" | "controller" = "controller",
-  baselineRef?: ContextSnapshotRef
+  baselineRef?: ContextSnapshotRef,
+  sourceTurnIds?: readonly string[]
 ): ContextSnapshot {
   if (baselineRef !== undefined) {
     const baseline = store.getContextSnapshot(run.taskId, baselineRef.id);
@@ -122,7 +123,7 @@ export function freezeTurnContextSnapshot(
     validateContextSnapshot(baseline);
     const overlays = [
       ...collectTurnContextOverlays(store, run),
-      ...collectSourceTurnContext(store, run)
+      ...collectSourceTurnContext(store, run, sourceTurnIds)
     ];
     const resources = [...new Map([...baseline.resources, ...overlays].map((entry) => [
       contextRefIdentity(entry.ref),
@@ -664,9 +665,15 @@ function collectSourceTurnContext(
   run: Readonly<Pick<
     Turn,
     "taskId" | "purpose" | "workItemId" | "reviewRoundId" | "sourceExecutionGroupId"
-  >>
+  >>,
+  sourceTurnIds?: readonly string[]
 ): MaterializedRef[] {
   if (run.sourceExecutionGroupId === undefined) return [];
+  if (sourceTurnIds === undefined || sourceTurnIds.length === 0
+    || sourceTurnIds.length > MAX_SYNTHESIS_SOURCE_TURNS
+    || new Set(sourceTurnIds).size !== sourceTurnIds.length) {
+    throw new Error("Synthesis requires explicit, distinct source Turn references.");
+  }
   const group = run.purpose === "execution"
     ? (() => {
         if (run.workItemId === undefined) {
@@ -689,26 +696,48 @@ function collectSourceTurnContext(
   if (group === undefined) {
     throw new Error(`Source ExecutionGroup not found: ${run.sourceExecutionGroupId}.`);
   }
-  return [...group.lanes]
-    .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
-    .flatMap((lane): MaterializedRef[] => {
-      if (lane.disposition !== "succeeded" || lane.successfulTurnId === undefined) return [];
-      const source = store.getTurn(run.taskId, lane.successfulTurnId);
+  return sourceTurnIds.map((turnId): MaterializedRef => {
+      const source = store.getTurn(run.taskId, turnId);
+      const lane = group.lanes.find(({ id }) => id === source?.executionLaneId);
       if (source === null
-        || source.status !== "completed"
+        || lane === undefined
+        || !["completed", "failed"].includes(source.status)
         || source.result === undefined
+        || source.purpose !== run.purpose
+        || source.workItemId !== run.workItemId
+        || source.reviewRoundId !== run.reviewRoundId
         || source.executionGroupId !== group.id
         || source.executionLaneId !== lane.id
         || source.roleName !== lane.roleName) {
-        throw new Error(`Successful source Turn is missing or drifted: ${group.id}/${lane.id}.`);
+        throw new Error(`Selected source Turn is missing or drifted: ${group.id}/${turnId}.`);
       }
-      return [materialize(
+      return materialize(
         "L4",
         "source-turn",
         source.id,
         sourceTurnContextValue(source)
-      )];
+      );
     });
+}
+
+/** The frozen refs, not the Group's changing lane state, define provenance. */
+export function synthesisSourceTurnIds(
+  store: Pick<TaskStore, "getContextSnapshot">,
+  turn: Turn
+): readonly string[] {
+  const ref = turn.inputs[0]!.input.contextSnapshotRef;
+  if (ref === undefined) throw new Error(`Synthesis Turn has no Context Snapshot: ${turn.id}.`);
+  const snapshot = store.getContextSnapshot(turn.taskId, ref.id);
+  if (snapshot === null || snapshot.digest !== ref.digest
+    || snapshot.sequence !== ref.sequence || snapshot.scope !== ref.scope
+    || snapshot.scopeRef !== ref.scopeRef || snapshot.taskId !== turn.taskId) {
+    throw new Error(`Synthesis Context Snapshot is missing or drifted: ${ref.id}.`);
+  }
+  validateContextSnapshot(snapshot);
+  return snapshot.resources.filter(({ ref: entry, value }) => (
+    entry.store === "source-turn"
+    && (value as { executionGroupId?: string }).executionGroupId === turn.sourceExecutionGroupId
+  )).map(({ ref: entry }) => entry.refId);
 }
 
 function materialize(layer: ContextRef["layer"], store: string, refId: string, value: unknown): MaterializedRef {

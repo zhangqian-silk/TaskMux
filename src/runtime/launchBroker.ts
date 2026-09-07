@@ -6,6 +6,8 @@ import {
 } from "./providerAuthorityFence.js";
 import { AGENT_HOST_LAUNCH_TICKET_TTL_MS } from "./runtimeDeadlines.js";
 import type { CodexThreadOptions } from "./codexAppServerRuntime.js";
+import type { ImplementationRef } from "../kernel/instanceHost.js";
+import { validateAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 
 export type AgentHostLaunchPayload = Readonly<{
   schemaVersion: 2;
@@ -30,6 +32,7 @@ type AgentHostProviderControlBase = Readonly<{
   sessionTitle?: string;
   authority: ProviderAuthorityFence;
   codexThread?: CodexThreadOptions;
+  endpointImplementation?: ImplementationRef;
 }>;
 
 /**
@@ -138,6 +141,7 @@ function validatePayload(payload: AgentHostLaunchPayload): AgentHostLaunchPayloa
 
 function validateProviderControl(control: AgentHostProviderControl): void {
   if (control.schemaVersion !== 1) throw new Error("Agent Host Provider control version is invalid.");
+  if (control.endpointImplementation !== undefined) validateAgentEndpointImplementation(control.endpointImplementation);
   if (control.adapterId !== "codex" && control.adapterId !== "claude") {
     throw new Error("Agent Host Provider control adapter is invalid.");
   }

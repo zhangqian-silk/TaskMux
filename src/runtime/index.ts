@@ -197,3 +197,13 @@ export {
   type SessionReconciliationMismatch,
   type SessionReconciliationReport
 } from "./sessionReconciliation.js";
+export {
+  createAgentEndpointFactory,
+  builtinAgentEndpointImplementation,
+  type AgentEndpoint,
+  type AgentEndpointInput,
+  type AgentEndpointSubmission,
+  type AgentEndpointConfiguration,
+  type AgentEndpointEvent,
+  type OpenedAgentEndpoint
+} from "./agentEndpoint.js";

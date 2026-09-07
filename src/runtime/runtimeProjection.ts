@@ -199,6 +199,7 @@ export function projectRuntimeObservation(
       });
     case "turn.accepted":
     case "input.accepted":
+      if (event.fence.receiptId?.startsWith("turn-input:") === true) return current;
       return withActivity(next(current, {
         session: "active",
         turn: "accepted",
@@ -376,6 +377,7 @@ export function projectRuntimeObservation(
       });
     }
     case "input.delivery-unknown":
+      if (event.fence.receiptId?.startsWith("turn-input:") === true) return current;
       return next(current, { turn: "delivery-unknown", stateSince: at });
     case "native-work.snapshot":
       return next(current, {});

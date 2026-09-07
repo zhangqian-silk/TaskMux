@@ -374,7 +374,7 @@ export function runTaskContextCommand(
               : [renderWorkItemObservability(
                   observability.workItems.find(({ workItemId }) => workItemId === item.id)!
                 )]),
-            ...renderWorkItemExecution(projectWorkItemExecution(item, turns, roleSessionSets)),
+            ...renderWorkItemExecution(projectWorkItemExecution(item, turns, roleSessionSets, store)),
             ...(item.acceptance.length === 0
               ? []
               : [`    Acceptance: ${item.acceptance.map(compactText).join("; ")}`]),
@@ -712,7 +712,7 @@ function renderWorkItemExecution(projection: WorkItemExecutionProjection): strin
       + `turn=${lane.currentTurnId ?? "unknown"}; session=${lane.session}; `
       + `retry=${lane.retryTurnId ?? "none"}; settle=${lane.settleTurnId ?? "none"}`
     )),
-    `      Synthesis: ${projection.synthesis.status} (${projection.synthesis.successfulLaneCount}/${projection.synthesis.requiredSuccessfulLaneCount} successful)`,
+    `      Synthesis: ${projection.synthesis.status} (${projection.synthesis.successfulLaneCount} successful; Leader selects sources)`,
     `      Main Turn: ${projection.mainTurn.turnId ?? "unobserved"} [${projection.mainTurn.status}]; session=${projection.mainTurn.session}`,
     `      Candidate source: ${projection.candidate.candidateId ?? "none"} [${projection.candidate.status}]; main=${projection.candidate.mainTurnId ?? "unobserved"}`,
     ...(projection.candidate.sourceExecutionGroupId === undefined

@@ -724,7 +724,7 @@ const taskChildren: readonly NodeInput[] = [
       id: "manage",
       title: "Commands",
       entries: [
-        "create", "list", "show", "edit", "update", "scope", "dispatch", "isolate", "capture", "cleanup",
+        "create", "list", "show", "edit", "update", "scope", "dispatch", "synthesize", "isolate", "capture", "cleanup",
         "review", "accept", "reject", "retire"
       ]
     }],
@@ -767,6 +767,12 @@ const taskChildren: readonly NodeInput[] = [
         summary: "Dispatch a work item to its Role.",
         usage: "yui task work dispatch <task>/<work> [--input <text>] [--lane-role <role> ...]",
         options: ["--input", "--lane-role"]
+      },
+      {
+        name: "synthesize",
+        summary: "Dispatch synthesis over explicitly selected original Producer Turns.",
+        usage: "yui task work synthesize <task>/<work> --source-turn <task>/<turn> ...",
+        options: ["--source-turn"]
       },
       {
         name: "isolate",
@@ -894,8 +900,14 @@ const taskChildren: readonly NodeInput[] = [
   {
     name: "review",
     summary: "Control Task-final ReviewRounds.",
-    sections: [{ id: "manage", title: "Commands", entries: ["request", "retry"] }],
+    sections: [{ id: "manage", title: "Commands", entries: ["request", "synthesize", "retry"] }],
     children: [
+      {
+        name: "synthesize",
+        summary: "Dispatch main Review over selected Producer Turns and the frozen candidate.",
+        usage: "yui task review synthesize <task>/<review-round> --source-turn <task>/<turn> ...",
+        options: ["--source-turn"]
+      },
       {
         name: "request",
         summary: "Request a direct or replicated Task-local final ReviewRound.",

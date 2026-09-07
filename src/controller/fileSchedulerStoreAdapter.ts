@@ -256,6 +256,11 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
     if (adapterId === null) {
       return this.recordObsoleteCanonicalObservation(input, "driver-or-turn-mismatch", now);
     }
+    if ((input.kind === "input.accepted" || input.kind === "input.rejected" || input.kind === "input.delivery-unknown")
+      && input.payload.input !== undefined
+      && input.fence.receiptId?.startsWith("turn-input:") === true) {
+      return this.observeLeaderSteerReceipt(input, now);
+    }
     // Receipt dedupe is not business-result dedupe. Terminal folds revalidate
     // their exact binding and commit result + notification + observation
     // together, including a retry after a previously interrupted fold.
@@ -335,6 +340,73 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       this.persistRuntimeObservation(input, now);
     }
     return outcome;
+  }
+
+  /** A delayed steer receipt settles only its original claimed mailbox batch. */
+  private observeLeaderSteerReceipt(
+    input: RuntimeObservation,
+    now: Date
+  ): ProviderLifecycleObservation {
+    return this.store.transaction((store) => {
+      const taskId = input.fence.taskId!;
+      const run = input.fence.turnId === undefined ? null : store.getTurn(taskId, input.fence.turnId);
+      const sessions = store.getTaskRoleSessionSet(taskId, input.fence.roleName);
+      const session = sessions?.sessions[input.fence.agentId];
+      const binding = sessions?.providerBinding;
+      if (run === null || run.roleName !== "leader" || input.fence.roleName !== "leader"
+        || run.effective.agentId !== input.fence.agentId
+        || session === undefined
+        || session.nativeSessionId !== input.fence.nativeSessionId
+        || binding?.turn?.turnId !== run.id
+        || binding.turn.nativeTurnId !== input.fence.nativeTurnId) {
+        recordCanonicalObservationObsolete(store, input, "steer-receipt-fence-mismatch", now);
+        return "obsolete";
+      }
+      if (hasPersistedRuntimeObservation(store.listEvents(taskId), input)) return "applied";
+      const target = { kind: "role", taskId, roleName: "leader" } as const;
+      const mailbox = store.getWorkMailbox(target);
+      const processing = mailbox?.processing;
+      const exactBatch = processing?.owner === `leader-steer:${run.id}`
+        && input.fence.receiptId === `turn-input:${taskId}/${run.id}/${processing.batchId}`;
+      if (exactBatch && mailbox !== null && processing !== null && processing !== undefined) {
+        if (input.kind === "input.accepted") {
+          // Terminal Turns remain immutable: the canonical receipt still
+          // retains their late input, without touching a successor pointer.
+          if (run.status === "active" && store.getActiveTurn(taskId, "leader")?.id === run.id) {
+            const updated = appendTurnInput(run, createTurnInput({
+              source: { type: "yui", channel: "leader-forced-wakeup" },
+              directive: input.payload.input!,
+              deltaRefIds: []
+            }), now);
+            store.saveTurn(updated);
+            store.saveActiveTurn(updated);
+          }
+          store.saveWorkMailbox(completeProcessing(mailbox, processing.batchId));
+          store.saveEvent(taskId, createTaskEvent(store.nextEventId(taskId), taskId, "turn.input-submitted", {
+            turnId: run.id,
+            batchId: processing.batchId,
+            attemptId: input.fence.receiptId!,
+            source: "yui/leader-forced-wakeup",
+            reasons: processing.batch.reasons.join(",")
+          }, now));
+        } else if (input.payload.failure?.error.inputDisposition === "not-accepted") {
+          store.saveWorkMailbox(releaseProcessing(mailbox, processing.batchId));
+        }
+      }
+      if (input.kind !== "input.accepted" && input.payload.failure !== undefined) {
+        const error = input.payload.failure.error;
+        this.recordAgentError({
+          taskId, roleName: run.roleName, turnId: run.id,
+          source: error.source, phase: error.phase,
+          message: error.message, raw: error.raw,
+          inputDisposition: error.inputDisposition,
+          sessionDisposition: error.sessionDisposition,
+          attemptId: input.fence.receiptId
+        }, now);
+      }
+      this.persistRuntimeObservation(input, now);
+      return "applied";
+    });
   }
 
   private adapterForRuntimeObservation(
@@ -1844,6 +1916,10 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
 
   saveLeaderSteer(input: LeaderSteerPersistence): LeaderDispatchClaimResult {
     return this.store.transaction((store) => {
+      if (store.listEvents(input.taskId).some((event) => event.type === "turn.input-submitted"
+        && event.payload.turnId === input.turnId && event.payload.batchId === input.batchId)) {
+        return "claimed";
+      }
       const task = store.getTask(input.taskId);
       const active = store.getActiveTurn(input.taskId, "leader");
       if (task === null || task.status !== "active" || task.executionGate.state !== "enabled") {
@@ -1866,6 +1942,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         "turn.input-submitted",
         {
           turnId: active.id,
+          batchId: input.batchId,
           sequence: String(updated.inputs.length),
           source: `${input.input.source.type}/${input.input.source.channel}`,
           reasons: processing.batch.reasons.join(",")

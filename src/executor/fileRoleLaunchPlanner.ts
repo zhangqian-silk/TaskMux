@@ -64,6 +64,10 @@ import {
   builtinDriverIdForAdapter
 } from "../runtime/builtinAgentDrivers.js";
 import { managedRuntimeAdmission } from "../runtime/agentDriver.js";
+import {
+  builtinAgentEndpointImplementation,
+  requireBuiltinAgentEndpointImplementation
+} from "../runtime/agentEndpointIdentity.js";
 import type {
   AgentHostProviderControl,
   ProviderOwnedTurn
@@ -343,6 +347,12 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     if (binding.agentId !== input.agentId || binding.adapterId !== input.adapterId) {
       throw new Error(`Role runtime identity changed: ${role.name}.`);
     }
+    const existingSession = owner.scope === "task"
+      ? this.store.getTaskRoleSessionSet(owner.taskId, role.name)?.sessions[input.agentId]
+      : this.store.getGlobalRoleSessionSet(role.name)?.sessions[input.agentId];
+    const endpointImplementation = input.mode === "resume"
+      ? requireBuiltinAgentEndpointImplementation(binding.adapterId, existingSession!.endpointImplementation)
+      : builtinAgentEndpointImplementation(binding.adapterId);
     const configured = this.store.getConfiguredAgent(input.agentId);
     if (configured === null) throw new Error(`Configured Agent not found: ${input.agentId}.`);
     if (configured.adapterId !== binding.adapterId) {
@@ -471,14 +481,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ? "new"
       : "resume";
     const managedControl = owner.scope === "task" && input.turnId !== undefined;
-    const managedProviderEnvironment: Readonly<Record<string, string>> = managedControl
-      && configured.adapterId === "codex"
-      ? {
-          // Managed Codex Turns are non-interactive. Use the Codex execution
-          // identity for provider requests while clientInfo still identifies Yui.
-          CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "codex_exec"
-        }
-      : {};
     const preallocatedNativeSessionId = binding.adapterId === "claude"
       && resumeNativeSessionId === undefined
       ? requireText(
@@ -588,6 +590,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             schemaVersion: 1,
             adapterId: binding.adapterId,
             transport: managedCompiled!.transport,
+            endpointImplementation,
             kind: "restore",
             mode: "resume",
             nativeSessionId: requireText(
@@ -605,6 +608,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             schemaVersion: 1,
             adapterId: binding.adapterId,
             transport: managedCompiled!.transport,
+            endpointImplementation,
             kind: "start",
             mode: "new",
             ...(providerNativeSessionId === undefined
@@ -622,7 +626,6 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ...(providerControl === undefined ? {} : { providerControl }),
       env: {
         ...launchEnvironment,
-        ...managedProviderEnvironment,
         YUI_HOME: resolve(this.home),
         YUI_SESSION_SCOPE: owner.scope,
         ...(owner.scope === "task" ? { YUI_TASK_ID: owner.taskId } : {}),

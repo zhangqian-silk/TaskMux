@@ -763,6 +763,40 @@ UPDATE projects SET payload = json_set(payload,
   '$.schemaVersion', 6, '$.resourceRefs', json('[]'),
   '$.defaultCapabilityProviders', json('{}'));
 `
+  },
+  {
+    version: 6,
+    name: "session-endpoint-implementation",
+    introducedIn: "0.15.8",
+    // Valid earlier Sessions used these two built-in protocols. Generation 1
+    // retains those codecs and identities behind the new execution boundary.
+    // Preserve native IDs, effective snapshots and all historical results.
+    sql: `
+UPDATE role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.sessions')
+)));
+UPDATE role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_array(json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'array';
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.sessions')
+)));
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_object(key, json_set(value, '$.schemaVersion', 6,
+    '$.endpointImplementation', json_object(
+      'id', 'yui.agent-endpoint.' || json_extract(value, '$.adapterId'), 'generation', '1')))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'object';
+`
   }
 ]);
 

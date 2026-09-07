@@ -229,7 +229,7 @@ export function buildWebTaskDetail(
       workItems: workItems.map((item) => ({
         ...item,
         observability: workItemObservability.get(item.id),
-        execution: projectWorkItemExecution(item, turns, roleSessionSets)
+        execution: projectWorkItemExecution(item, turns, roleSessionSets, reader)
       })),
       turns,
       runtimeHealth: { needsAttentionTurns, activeTurns: activeTurnHealth },

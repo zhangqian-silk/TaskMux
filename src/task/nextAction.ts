@@ -270,6 +270,10 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
         }
         const reviewRun = activeReviewRoundRun(activeReview, facts.activeTurns);
         if (reviewRun === undefined) {
+          if (activeReview.executionGroup !== undefined && activeReview.reviewerTurnId === undefined
+            && !reviewGroupNeedsDispatch(activeReview, facts.activeTurns)) {
+            return synthesisSelectionAction(facts, "review", activeReview.id);
+          }
           if (reviewGroupNeedsDispatch(activeReview, facts.activeTurns)) {
             return buildAction(facts, {
               kind: "resume-review",
@@ -446,6 +450,11 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
   }
   if (openWork?.kind === "ready") {
     const item = openWork.item;
+    const group = currentWorkItemExecutionGroup(item);
+    if (item.status === "running" && group !== undefined
+      && !facts.activeTurns.some((turn) => turn.sourceExecutionGroupId === group.id)) {
+      return synthesisSelectionAction(facts, "work", item.id);
+    }
     const refs = [ref("work-item", item.id)];
     return buildAction(facts, {
       kind: "implement-current-work-item",
@@ -607,6 +616,10 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
       }
       const reviewRun = activeReviewRoundRun(activeFinal, facts.activeTurns);
       if (reviewRun === undefined) {
+        if (activeFinal.executionGroup !== undefined && activeFinal.reviewerTurnId === undefined
+          && !reviewGroupNeedsDispatch(activeFinal, facts.activeTurns)) {
+          return synthesisSelectionAction(facts, "review", activeFinal.id);
+        }
         if (reviewGroupNeedsDispatch(activeFinal, facts.activeTurns)) {
           return buildAction(facts, {
             kind: "resume-review",
@@ -749,6 +762,23 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
             "Leader must decide whether the frozen Task result is safe to complete or needs one optional Task-final Review."
         }),
     recommendedCommand: `yui task complete ${task.id} --summary-file -`
+  });
+}
+
+function synthesisSelectionAction(
+  facts: NextActionFacts,
+  subject: "work" | "review",
+  id: string
+): NextAction {
+  return buildAction(facts, {
+    kind: "resolve-execution-stage",
+    reason: `Replicated ${subject} ${id} needs Leader judgment over original results and synthesis.`,
+    refs: [ref(subject === "work" ? "work-item" : "review-round", id)],
+    preconditions: [],
+    recommendedCommand: subject === "work"
+      ? `yui task work show ${facts.task.id}/${id}`
+      : `yui task review synthesize ${facts.task.id}/${id} --source-turn <task>/<turn>`,
+    judgmentRequired: "Inspect original results and any existing main Turn. Retry a failed main Turn or explicitly select synthesis sources; Core does not enforce a success count or voting rule."
   });
 }
 
