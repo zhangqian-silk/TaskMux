@@ -128,17 +128,10 @@ function groupDetachedContinuations(
     const key = [
       continuation.identity.providerNamespace,
       continuation.identity.accountScope,
-      continuation.identity.conversationId,
-      continuation.identity.activationId
+      continuation.identity.conversationId
     ].join("\u0000");
     const source = [...observations].reverse().find((observation) => (
-      observation.kind.startsWith("continuation.")
-      && observation.fence.driverId === continuation.identity.providerNamespace
-      && observation.fence.agentId === continuation.identity.accountScope
-      && observation.fence.conversationId === continuation.identity.conversationId
-      && observation.fence.activationId === continuation.identity.activationId
-      && observation.fence.continuationId === continuation.identity.continuationId
-      && observation.fence.continuationGeneration === continuation.identity.generation
+      observation.kind.startsWith("continuation.") && observation.fence.driverId === continuation.identity.providerNamespace && observation.fence.agentId === continuation.identity.accountScope && observation.fence.conversationId === continuation.identity.conversationId && observation.fence.continuationId === continuation.identity.continuationId
     ));
     // A projected continuation without its original durable fence cannot be
     // safely attached to a live Turn. Keep ownership conservative and let the
@@ -202,10 +195,8 @@ function reconciliationObservation(
       agentId: continuation.identity.accountScope,
       driverId: continuation.identity.providerNamespace,
       conversationId: continuation.identity.conversationId,
-      activationId: continuation.identity.activationId,
       nativeSessionId: continuation.identity.conversationId,
       continuationId: continuation.identity.continuationId,
-      continuationGeneration: continuation.identity.generation,
       ...(continuation.parentContinuationId === undefined
         ? {}
         : { parentContinuationId: continuation.parentContinuationId })

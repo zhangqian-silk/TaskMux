@@ -30,7 +30,6 @@ import { validateDurableJob } from "../../job/durableJob.js";
 import { validateWorkItem } from "../../workItem/workItem.js";
 import { SqliteTaskStore } from "../sqliteStore.js";
 import {
-  inspectSqliteSchemaMigrations,
   migrateSqliteSchema,
   storageMigrationPlan,
   type StorageMigrationStep
@@ -331,10 +330,8 @@ function validateCurrentStore(home: string): void {
       validateRoleSessionSet(sessions);
     }
     for (const owner of store.listSessionOwners()) {
-      if (owner.schemaVersion !== 2
-        || typeof owner.runtimeGenerationId !== "string"
-        || Object.hasOwn(owner, "launchId")) {
-        throw new Error("Session owner runtime generation identity is invalid.");
+      if (owner.schemaVersion !== 2 || Object.hasOwn(owner, "launchId")) {
+        throw new Error("Session owner runtime identity is invalid.");
       }
     }
     for (const taskId of store.listTasks().map(({ id }) => id)) {

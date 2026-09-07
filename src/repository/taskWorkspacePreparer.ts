@@ -8,17 +8,18 @@ import {
   symlink,
   unlink
 } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import {
+  isAbsolute,
+  join,
+  relative,
+  resolve
+} from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { retireTaskRoleSessionsForWorkspace } from "../executor/agentExecutor.js";
 import { formatWorkspacePreflightError } from "../executor/workspacePreflightClassification.js";
 import { updateRole, type TaskRole } from "../role/role.js";
-import {
-  hasRuntimeCleanupObligation,
-  isRuntimeLaunchReservation,
-  runtimeLifecycleTarget
-} from "../runtime/lifecycleReservation.js";
+import { hasRuntimeCleanupObligation, runtimeLifecycleTarget } from "../runtime/lifecycleReservation.js";
 import {
   attachReviewRoundWorkspace,
   recordReviewWorkspaceDisposition,
@@ -38,8 +39,8 @@ import { enqueueWork } from "../coordination/workMailboxQueue.js";
 import {
   createCandidateGitSnapshot,
   createDirectTaskMainSnapshot,
-  workItemExecutionGroupById,
   currentWorkItemExecutionGroup,
+  workItemExecutionGroupById,
   recordWorkItemWorkspaceDisposition,
   type CandidateGitSnapshot,
   type DirectTaskMainSnapshot,
@@ -57,7 +58,6 @@ import {
 } from "../worktree/managedWorkspace.js";
 import type { ExecutionLaneGitSnapshot } from "./executionLaneGitSnapshot.js";
 import type { Turn } from "../turn/turn.js";
-import { formatTurnReceiptId } from "../task/taskRecordReference.js";
 import {
   NodeGitWorkspace,
   worktreeIdentity,
@@ -2694,19 +2694,7 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
   const sessions = store.getTaskRoleSessionSet(taskId, role.name);
   const session = sessions?.sessions[sessions.activeAgentId];
   if (
-    sessions === null
-    || sessions.owner.scope !== "task"
-    || sessions.owner.taskId !== taskId
-    || sessions.owner.roleName !== role.name
-    || sessions.activeAgentId !== role.activeAgentId
-    || session === undefined
-    || session.agentId !== role.activeAgentId
-    || session.adapterId !== run.effective.adapterId
-    || session.runtimeGenerationId === undefined
-    || session.nativeSessionId === undefined
-    || !["ready", "running"].includes(session.status)
-    || !isDeepStrictEqual(session.effective, run.effective)
-    || !sameEffectiveWorkspace(session.effective.workspace, workspace)
+    sessions === null || sessions.owner.scope !== "task" || sessions.owner.taskId !== taskId || sessions.owner.roleName !== role.name || sessions.activeAgentId !== role.activeAgentId || session === undefined || session.agentId !== role.activeAgentId || session.adapterId !== run.effective.adapterId || session.nativeSessionId === undefined || !["ready", "running"].includes(session.status) || !isDeepStrictEqual(session.effective, run.effective) || !sameEffectiveWorkspace(session.effective.workspace, workspace)
   ) return false;
 
   const lifecycleMailbox = store.getWorkMailbox(runtimeLifecycleTarget({
@@ -2715,18 +2703,6 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
     roleName: role.name
   }));
   if (hasRuntimeCleanupObligation(lifecycleMailbox)) return false;
-  const lifecycle = lifecycleMailbox?.processing;
-  if (lifecycle !== null
-    && lifecycle !== undefined
-    && isRuntimeLaunchReservation(lifecycle)) {
-    const executionRef = lifecycle.executionRef;
-    if (
-      !isRuntimeLaunchReservation(lifecycle, session.runtimeGenerationId)
-      || executionRef?.type !== "turn"
-      || executionRef.taskId !== taskId
-      || executionRef.id !== run.id
-    ) return false;
-  }
   return true;
 }
 

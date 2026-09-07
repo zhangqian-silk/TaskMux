@@ -287,3 +287,21 @@ Controller／Store 归档、resume、取消或 Claude；这些证据仍按上文
 自有 Endpoint 与 daemon 均退出码 0。未重启或改变共享 daemon；
 若共享实例已被旧身份初始化，部署代码本身不会清除其进程内身份，
 需由 Operator 在安全维护窗口处理，不能宣称现存共享实例已修复。
+
+### 主线集成（2026-09-07）
+
+同步 `origin/master` 至 `c655cc6`，保留主线以 Session／Process 身份
+替代启动 generation 的设计。Endpoint cancel、迟到 steer 结算及 pending
+投递路径改用当前身份合同；未恢复已移除的 activation／generation 状态，
+也未重新引入自动 synthesis。
+
+主线迁移 4 `session-and-process-identity` 原样保留；本任务尚未发布的
+Endpoint 迁移顺延为 5，`introducedIn=0.15.8`。因此上文的 3→4 是
+独立分支验证时的编号，最终集成合同为 3→4→5。内存 SQLite 验证
+3→5 与 4→5 均保留原生身份、模型快照及当前／历史 Session，
+正确移除旧运行身份并写入 Endpoint 实现引用。
+
+集成后的独立只读审查未发现阻断问题；不以合并或发布授权代替真实模型
+验证授权，未重复调用 Provider，也未操作共享 Controller／App Server。
+build、lint 与集成后核心测试 81/81 通过（测试阶段 4.37 秒）；
+数量变化来自主线移除旧 generation 回归，并非跳过失败测试。

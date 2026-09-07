@@ -2,7 +2,7 @@
  * Read-only execution audit aggregator (Issue 11 §3).
  *
  * The audit answers "what happened in this Home" from durable records alone:
- * Turns/failures/durations, wake reasons, Runtime generations, Review execution
+ * Turns/failures/durations, wake reasons, Runtime count, Review execution
  * vs semantic failures, Integration failure classes and gate reuse, telemetry
  * volume, and the longest/stale executions. It never writes Task state, never
  * wakes a Leader, and never takes the storage write lock — it only calls the
@@ -87,7 +87,7 @@ export type WakesAudit = Readonly<{
 }>;
 
 export type SessionsAudit = Readonly<{
-  generations: number;
+  count: number;
   broken: number;
   stopped: number;
   other: number;
@@ -176,8 +176,6 @@ export type AgentErrorAuditEntry = Readonly<{
   registrationDisposition?: string;
   errorName?: string;
   causeName?: string;
-  expectedRuntimeGenerationId?: string;
-  observedRuntimeGenerationId?: string;
   attemptId?: string;
   createdAt: string;
 }>;
@@ -597,7 +595,7 @@ export function runExecutionAudit(
 
   const sessions = ((): AuditSection<SessionsAudit> => {
     try {
-      let generations = 0;
+      let count = 0;
       let broken = 0;
       let stopped = 0;
       let other = 0;
@@ -616,7 +614,7 @@ export function runExecutionAudit(
         for (const set of store.listRoleSessionSets(taskId)) {
           const history = Array.isArray(set.history) ? set.history : [];
           for (const session of [...history, ...Object.values(set.sessions)]) {
-            generations += 1;
+            count += 1;
             if (session.status === "ended" && session.endReason === "failed") broken += 1;
             else if (session.status === "ended") stopped += 1;
             else other += 1;
@@ -641,7 +639,7 @@ export function runExecutionAudit(
         }
       }
       return ok({
-        generations,
+        count,
         broken,
         stopped,
         other,
@@ -832,8 +830,6 @@ export function runExecutionAudit(
               registrationDisposition: event.payload.registrationDisposition,
               errorName: event.payload.errorName,
               causeName: event.payload.causeName,
-              expectedRuntimeGenerationId: event.payload.expectedRuntimeGenerationId,
-              observedRuntimeGenerationId: event.payload.observedRuntimeGenerationId,
               attemptId: event.payload.attemptId
             }),
             createdAt: event.createdAt

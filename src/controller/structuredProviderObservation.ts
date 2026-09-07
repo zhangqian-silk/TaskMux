@@ -30,7 +30,6 @@ let structuredSequence = 0;
 export async function publishStructuredProviderStarted(input: Readonly<{
   home: string;
   environment: NodeJS.ProcessEnv;
-  activationId: string;
   started: StructuredProviderTurnStarted;
 }>): Promise<void> {
   if (input.started.clientOwned) return;
@@ -56,9 +55,7 @@ export async function publishStructuredProviderStarted(input: Readonly<{
       roleName: fence.roleName,
       agentId: fence.agentId,
       driverId: driver.id,
-      runtimeGenerationId: fence.runtimeGenerationId,
       conversationId: input.started.conversationId,
-      activationId: requireIdentity(input.activationId, "Provider Activation id"),
       nativeSessionId: input.started.nativeSessionId,
       nativeTurnId: input.started.nativeTurnId,
       receiptId
@@ -76,7 +73,6 @@ export async function publishStructuredProviderStarted(input: Readonly<{
 export async function publishStructuredProviderAccepted(input: Readonly<{
   home: string;
   environment: NodeJS.ProcessEnv;
-  activationId: string;
   receipt: StructuredProviderTurnReceipt;
 }>): Promise<void> {
   const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
@@ -99,9 +95,7 @@ export async function publishStructuredProviderAccepted(input: Readonly<{
     ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
     agentId: fence.agentId,
     driverId: driver.id,
-    runtimeGenerationId: fence.runtimeGenerationId,
     conversationId: input.receipt.conversationId,
-    activationId: executionActivationId(input.home, fence, input.activationId, input.receipt.nativeSessionId),
     nativeSessionId: input.receipt.nativeSessionId,
     ...(input.receipt.nativeTurnId === undefined ? {} : {
       nativeTurnId: input.receipt.nativeTurnId
@@ -112,7 +106,7 @@ export async function publishStructuredProviderAccepted(input: Readonly<{
     receiptId: input.receipt.attemptId
   };
   const baseSequence = nextStructuredSequence();
-  // Opening owns the Session/Activation lifecycle. A receipt arriving after
+  // Opening owns the Session lifecycle. A receipt arriving after
   // its terminal must not reopen either lifecycle as an acceptance side effect.
   const observations = [observation({
     kind: "turn.accepted",
@@ -129,7 +123,6 @@ export async function publishStructuredProviderAccepted(input: Readonly<{
 export async function publishStructuredProviderInputSettlement(input: Readonly<{
   home: string;
   environment: NodeJS.ProcessEnv;
-  activationId: string;
   nativeSessionId: string;
   nativeTurnId: string;
   attemptId: string;
@@ -156,9 +149,7 @@ export async function publishStructuredProviderInputSettlement(input: Readonly<{
       turnId: fence.turnId,
       agentId: fence.agentId,
       driverId: driver.id,
-      runtimeGenerationId: fence.runtimeGenerationId,
       conversationId: input.nativeSessionId,
-      activationId: executionActivationId(input.home, fence, input.activationId, input.nativeSessionId),
       nativeSessionId: input.nativeSessionId,
       nativeTurnId: input.nativeTurnId,
       receiptId: input.attemptId
@@ -186,7 +177,6 @@ export async function publishStructuredProviderOpened(input: Readonly<{
   environment: NodeJS.ProcessEnv;
   conversationId: string;
   nativeSessionId: string;
-  activationId: string;
   recoverability: "unknown" | "recoverable";
   observedAt: string;
 }>): Promise<void> {
@@ -205,9 +195,7 @@ export async function publishStructuredProviderOpened(input: Readonly<{
     ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
     agentId: fence.agentId,
     driverId: driver.id,
-    runtimeGenerationId: fence.runtimeGenerationId,
     conversationId: input.conversationId,
-    activationId: requireIdentity(input.activationId, "Provider Activation id"),
     nativeSessionId: input.nativeSessionId,
     ...(fence.receiptId === undefined ? {} : { receiptId: fence.receiptId })
   };
@@ -225,12 +213,6 @@ export async function publishStructuredProviderOpened(input: Readonly<{
     ordinal: 1,
     fence: commonFence,
     payload: { recoverability: input.recoverability }
-  }), observation({
-    kind: "activation.started",
-    observedAt: input.observedAt,
-    sequence,
-    ordinal: 2,
-    fence: commonFence
   })];
   await persistAndApply(input.home, observations, fence.taskId, fence.roleName);
 }
@@ -238,7 +220,6 @@ export async function publishStructuredProviderOpened(input: Readonly<{
 export async function publishStructuredProviderGoal(input: Readonly<{
   home: string;
   environment: NodeJS.ProcessEnv;
-  activationId: string;
   conversationId: string;
   goal: StructuredProviderGoal | null;
   observedAt?: string;
@@ -263,9 +244,7 @@ export async function publishStructuredProviderGoal(input: Readonly<{
       roleName: fence.roleName,
       agentId: fence.agentId,
       driverId: driver.id,
-      runtimeGenerationId: fence.runtimeGenerationId,
       conversationId: input.conversationId,
-      activationId: requireIdentity(input.activationId, "Provider Activation id"),
       nativeSessionId: input.conversationId
     },
     payload: goal === null ? {} : {
@@ -283,7 +262,6 @@ export async function publishStructuredConversationRecoverability(input: Readonl
   home: string;
   environment: NodeJS.ProcessEnv;
   conversationId: string;
-  activationId: string;
   recoverability: "recoverable" | "unrecoverable";
   observedAt: string;
 }>): Promise<void> {
@@ -301,19 +279,11 @@ export async function publishStructuredConversationRecoverability(input: Readonl
     ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
     agentId: fence.agentId,
     driverId: driver.id,
-    runtimeGenerationId: fence.runtimeGenerationId,
     conversationId: input.conversationId,
-    activationId: requireIdentity(input.activationId, "Provider Activation id"),
     nativeSessionId: input.conversationId,
     ...(fence.receiptId === undefined ? {} : { receiptId: fence.receiptId })
   };
   const observations: RuntimeObservation[] = [observation({
-    kind: "activation.started",
-    observedAt: input.observedAt,
-    sequence,
-    ordinal: 0,
-    fence: observationFence
-  }), observation({
     kind: "conversation.observed",
     observedAt: input.observedAt,
     sequence,
@@ -321,23 +291,12 @@ export async function publishStructuredConversationRecoverability(input: Readonl
     fence: observationFence,
     payload: { recoverability: input.recoverability }
   })];
-  if (input.recoverability === "unrecoverable") {
-    observations.push(observation({
-      kind: "activation.failed",
-      observedAt: input.observedAt,
-      sequence,
-      ordinal: 2,
-      fence: observationFence,
-      payload: {}
-    }));
-  }
   await persistAndApply(input.home, observations, fence.taskId, fence.roleName);
 }
 
 export async function publishStructuredProviderTerminal(input: Readonly<{
   home: string;
   environment: NodeJS.ProcessEnv;
-  activationId: string;
   terminal: StructuredProviderTurnTerminal;
 }>): Promise<void> {
   const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
@@ -400,9 +359,7 @@ export async function publishStructuredProviderTerminal(input: Readonly<{
       ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
       agentId: fence.agentId,
       driverId: driver.id,
-      runtimeGenerationId: fence.runtimeGenerationId,
       conversationId: input.terminal.conversationId,
-      activationId: executionActivationId(input.home, fence, input.activationId, input.terminal.nativeSessionId),
       nativeSessionId: input.terminal.nativeSessionId,
       ...(input.terminal.nativeTurnId === undefined ? {} : {
         nativeTurnId: input.terminal.nativeTurnId
@@ -419,45 +376,6 @@ export async function publishStructuredProviderTerminal(input: Readonly<{
     fence.taskId,
     fence.roleName
   );
-}
-
-export async function publishStructuredProviderActivationTerminal(input: Readonly<{
-  home: string;
-  environment: NodeJS.ProcessEnv;
-  conversationId: string;
-  nativeSessionId: string;
-  activationId: string;
-  status: "ended" | "failed";
-  observedAt: string;
-}>): Promise<void> {
-  const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
-  const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
-  const fence = resolveRuntimeHookTurnFence(
-    input.environment,
-    adapterId,
-    input.nativeSessionId,
-    { sessionOnly: true }
-  );
-  const terminal = observation({
-    kind: input.status === "failed" ? "activation.failed" : "activation.ended",
-    observedAt: input.observedAt,
-    sequence: nextStructuredSequence(),
-    ordinal: 0,
-    fence: {
-      taskId: fence.taskId,
-      roleName: fence.roleName,
-      ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
-      agentId: fence.agentId,
-      driverId: driver.id,
-      runtimeGenerationId: fence.runtimeGenerationId,
-      conversationId: requireIdentity(input.conversationId, "Provider Conversation id"),
-      activationId: requireIdentity(input.activationId, "Provider Activation id"),
-      nativeSessionId: requireIdentity(input.nativeSessionId, "native Session id"),
-      ...(fence.receiptId === undefined ? {} : { receiptId: fence.receiptId })
-    },
-    payload: {}
-  });
-  await persistAndApply(input.home, [terminal], fence.taskId, fence.roleName);
 }
 
 function observation(input: Readonly<{
@@ -508,29 +426,6 @@ function requireIdentity(value: unknown, label: string): string {
     throw new Error(`${label} is invalid.`);
   }
   return value.trim();
-}
-
-function executionActivationId(
-  home: string,
-  fence: RuntimeHookTurnFence,
-  sourceActivationId: string,
-  nativeSessionId: string
-): string {
-  const sourceId = requireIdentity(sourceActivationId, "Provider Activation id");
-  const store = openCurrentTaskStore(home);
-  try {
-    const binding = store.getTaskRoleSessionSet(fence.taskId, fence.roleName)?.providerBinding;
-    const source = binding?.activations.find(entry => entry.activationId === sourceId);
-    const original = binding?.activations.find(entry => entry.activationId === fence.runtimeGenerationId);
-    if (source?.conversationId !== nativeSessionId || original?.conversationId !== nativeSessionId) {
-      throw new Error("Structured execution observation source does not belong to its native Conversation.");
-    }
-    // A reattached collector can observe the old execution, but its current
-    // attachment must not replace that execution's durable Activation identity.
-    return original.activationId;
-  } finally {
-    store.close();
-  }
 }
 
 async function persistAndApply(

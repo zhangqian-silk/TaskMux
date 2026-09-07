@@ -70,8 +70,6 @@ export type SchedulerRoleSession = Readonly<{
   agentId: string;
   adapterId: string;
   nativeSessionId?: string;
-  /** Exact external-process generation, when runtime coordination recorded it. */
-  runtimeGenerationId?: string;
   title?: string;
   status: AgentSessionStatus;
   endReason?: "stopped" | "failed";
@@ -91,7 +89,6 @@ export type RoleTurnStallPersistence = Readonly<{
     agentId: string;
     adapterId: string;
     nativeSessionId?: string;
-    runtimeGenerationId?: string;
     status: SchedulerRoleSession["status"];
   }> | null;
   kind: "delivery-stalled" | "workflow-not-progressing";
@@ -115,12 +112,11 @@ export type SchedulerRoleResourceIdentity = Readonly<{
   agentId: string;
   adapterId: string;
   nativeSessionId?: string;
-  runtimeGenerationId?: string;
 }>;
 
 export type SchedulerRoleResourceEvidence = Readonly<{
   observedAt: string;
-  /** Exact producer generation; missing identity is never consumable progress evidence. */
+  /** Exact producer Session; missing identity is never consumable progress evidence. */
   identity?: SchedulerRoleResourceIdentity;
   /** Durable progress fence observed/requested for this sample. */
   progressAt?: string;
@@ -140,7 +136,7 @@ export type SchedulerRoleResourceEntry = Readonly<{
   resource: SchedulerRoleResourceEvidence;
 }>;
 
-/** Exact Role generation identity requested for one advisory resource sample. */
+/** Exact Role Session identity requested for one advisory resource sample. */
 export type SchedulerRoleResourceInput = Readonly<{
   taskId: string;
   roleName: string;
@@ -148,7 +144,6 @@ export type SchedulerRoleResourceInput = Readonly<{
   agentId: string;
   adapterId: string;
   nativeSessionId?: string;
-  runtimeGenerationId?: string;
   progressAt?: string;
 }>;
 
@@ -179,7 +174,6 @@ export type DormantRuntimeOwnerCandidate = Readonly<{
   agentId: string;
   adapterId: string;
   nativeSessionId: string;
-  runtimeGenerationId?: string;
   sessionUpdatedAt: string;
 }>;
 
@@ -245,8 +239,6 @@ export type RoleTurnDeliveryPersistence = Readonly<{
   role: SchedulerRole;
   turn: SchedulerTurn;
   session: SchedulerRoleSession | null;
-  /** Matching external-process generation, when lifecycle coordination is enabled. */
-  runtimeGenerationId?: string;
   now: Date;
 }>;
 
@@ -257,8 +249,6 @@ export type RoleTurnDeliveryFailurePersistence = Readonly<{
   adapterId: AgentAdapterId;
   turnId: string;
   nativeSessionId?: string;
-  /** Exact external-process generation prepared for this undelivered Turn. */
-  runtimeGenerationId?: string;
   /** Exact terminal explanation for this conclusively unaccepted delivery. */
   summary?: string;
   failureReason: TurnFailureReason;
@@ -309,7 +299,6 @@ export interface SchedulerStorePort {
     taskId: string;
     roleName: string;
     turnId: string;
-    runtimeGenerationId?: string;
     nativeSessionId?: string;
     deadStatus?: number;
     observedAt: Date;
@@ -319,7 +308,7 @@ export interface SchedulerStorePort {
     roleName: string,
     agentId?: string
   ): SchedulerRoleSession | null;
-  /** Read-only generation projection used by orchestration observability. */
+  /** Read-only Session projection used by orchestration observability. */
   getTaskRoleSessionSet?(
     taskId: string,
     roleName: string
@@ -357,11 +346,9 @@ export interface SchedulerStorePort {
     roleName: string;
     turnId: string;
     agentId: string;
-    runtimeGenerationId: string;
     nativeSessionId: string;
   }>): Readonly<{
     conversationId: string;
-    activationId: string;
     epoch: number;
     owner: "controller" | "human" | "none" | "unknown";
     holderId?: string;
@@ -418,15 +405,6 @@ export interface SchedulerStorePort {
     now?: Date,
     expectedDormantCandidate?: DormantRuntimeOwnerCandidate
   ): RuntimeLifecycleTarget | null;
-  /** Atomically clears one confirmed-absent reservation and stops its session fact. */
-  completeStoppedRuntimeReservation?(
-    target: Extract<
-      MailboxTarget,
-      { kind: "role-runtime" | "global-role-runtime" }
-    >,
-    batchId: string,
-    now: Date
-  ): boolean;
   /** Non-stopped native sessions with no active Task Turn or lifecycle work. */
   listDormantRuntimeOwners?(): readonly DormantRuntimeOwnerCandidate[];
   /**
@@ -457,8 +435,6 @@ export interface SchedulerStorePort {
     errorName?: string;
     causeName?: string;
     hostState?: string;
-    expectedRuntimeGenerationId?: string;
-    observedRuntimeGenerationId?: string;
     attemptId?: string;
     registrationDisposition?: AgentErrorRegistrationDisposition;
   }>, now: Date): string;
@@ -602,8 +578,6 @@ export type RoleSessionLaunchMode = "new" | "resume";
 
 export type PreparedRoleDelivery = Readonly<{
   deliveryId: string;
-  /** External process generation; distinct from the per-Turn delivery id. */
-  runtimeGenerationId?: string;
   /** Durable Turn identity whose transient preparation this entry serves. */
   turnId?: string;
   taskId: string;
@@ -667,8 +641,6 @@ export interface TmuxDeliveryPort {
     mode: RoleSessionLaunchMode;
     turnId?: string;
     nativeSessionId?: string;
-    /** Current Host activation that may be reused for this exact Session. */
-    hostActivationId?: string;
     beforeHostStart?: RuntimeLaunchPreStart;
   }>): Promise<PreparedRoleDelivery>;
   waitUntilReady(delivery: PreparedRoleDelivery): Promise<ReadyRoleDelivery>;
@@ -683,7 +655,6 @@ export interface TmuxDeliveryPort {
     roleName: string;
     agentId: string;
     adapterId: string;
-    runtimeGenerationId: string;
     nativeSessionId: string;
     nativeTurnId: string;
     authority: import("../runtime/providerAuthorityFence.js").ProviderAuthorityFence;
@@ -692,13 +663,12 @@ export interface TmuxDeliveryPort {
   }>): Promise<RoleDeliveryReport>;
   /**
    * Drops transient prepared bindings after authoritative terminal/absence
-   * state. Omitting turnId clears every prepared generation for the Role.
+   * state. Omitting turnId clears every prepared Session for the Role.
    */
   forgetPrepared?(input: Readonly<{
     taskId: string;
     roleName: string;
     turnId?: string;
-    runtimeGenerationId?: string;
   }>): void;
   /** Best-effort nudge to an already-running global Operator process. */
   notifyOperatorInputOnce?(input: Readonly<{
@@ -729,7 +699,6 @@ export interface TmuxDeliveryPort {
     adapterId: string;
     nativeSessionId?: string;
     turnId?: string;
-    runtimeGenerationId?: string;
     progressAt?: string;
   }>[], resourceInputs?: readonly SchedulerRoleResourceInput[]):
     Promise<readonly Readonly<{

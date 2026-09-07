@@ -39,8 +39,7 @@ export async function runCodexInteractiveHost(
   }
   const expectedId = environment.YUI_NATIVE_SESSION_ID;
   let snapshot: AgentHostSnapshot = {
-    schemaVersion: 2, state: "starting", adapterId: "codex",
-    runtimeGenerationId: payload.runtimeGenerationId, updatedAt: new Date().toISOString()
+    schemaVersion: 2, state: "starting", adapterId: "codex", updatedAt: new Date().toISOString()
   };
   const control = await openAgentHostControl(home, payload, () => snapshot, async (request) => {
     if (request.type !== "status") {
@@ -157,7 +156,7 @@ export async function runCodexInteractiveHost(
     args.splice(remoteIndex + 2, 0, "--remote-auth-token-env", "YUI_CODEX_REMOTE_AUTH_TOKEN");
     child = spawn(payload.command, args, {
       cwd: payload.cwd,
-      env: { ...environment, YUI_CODEX_REMOTE_AUTH_TOKEN: token },
+      env: { ...localCodexTuiEnvironment(environment), YUI_CODEX_REMOTE_AUTH_TOKEN: token },
       stdio: "inherit"
     });
     for (const signal of signals) process.on(signal, stop);
@@ -175,6 +174,15 @@ export async function runCodexInteractiveHost(
     if (relay !== undefined) await new Promise<void>((done) => relay!.close(() => done()));
     await control.close();
   }
+}
+
+/** Our loopback relay must stay local, even when the TUI inherits HTTP proxies. */
+export function localCodexTuiEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const bypass = [
+    "127.0.0.1", "localhost", "::1",
+    environment.NO_PROXY, environment.no_proxy
+  ].filter(Boolean).join(",");
+  return { ...environment, NO_PROXY: bypass, no_proxy: bypass };
 }
 
 function jsonObject(value: unknown): Record<string, unknown> {

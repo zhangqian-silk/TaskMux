@@ -16,16 +16,14 @@ export type SessionRuntimeState = "starting" | "running" | "stopped" | "unavaila
 export type RuntimeLaunchRetryReason =
   | "previous-process"
   | "writable-client"
-  | "provider-child-active"
-  | "generation-mismatch";
+  | "provider-child-active";
 
-/** A persisted launch is either temporarily unavailable or permanently lost. */
+/** A Session launch may be temporarily unavailable or fail with a diagnosis. */
 export class RuntimeLaunchError extends Error {
-  readonly name = "RuntimeLaunchError";
+  readonly name: string = "RuntimeLaunchError";
 
   constructor(
     readonly retryable: boolean,
-    readonly runtimeGenerationId: string,
     message: string,
     readonly reason?: RuntimeLaunchRetryReason,
     options?: ErrorOptions
@@ -35,7 +33,7 @@ export class RuntimeLaunchError extends Error {
 }
 
 /** A host-side contention check that occurs before planning or process start. */
-export class RuntimeHostContentionError extends Error {
+export class RuntimeHostContentionError extends RuntimeLaunchError {
   readonly name = "RuntimeHostContentionError";
 
   constructor(
@@ -45,33 +43,18 @@ export class RuntimeHostContentionError extends Error {
     >,
     message: string
   ) {
-    super(message);
-  }
-}
-
-/** A reused Agent Host acknowledged a different runtime generation. */
-export class RuntimeGenerationMismatchError extends Error {
-  readonly name = "RuntimeGenerationMismatchError";
-
-  constructor(
-    readonly expectedRuntimeGenerationId: string,
-    readonly observedRuntimeGenerationId: string | undefined,
-    readonly hostState: SessionRuntimeState | string,
-    message: string
-  ) {
-    super(message);
+    super(true, message, reason);
   }
 }
 
 /** A reused Host reported an unusable state; this operation did not create it. */
 export class RuntimeHostUnavailableError extends RuntimeLaunchError {
   constructor(
-    runtimeGenerationId: string,
     readonly hostState: string,
     message: string,
     options?: ErrorOptions
   ) {
-    super(false, runtimeGenerationId, message, undefined, options);
+    super(false, message, undefined, options);
   }
 }
 
@@ -92,20 +75,15 @@ export type RuntimeLaunchPreparationRequest = Readonly<{
   environment?: Readonly<Record<string, string>>;
   mode: "new" | "resume";
   nativeSessionId?: string;
-  /** Current Host activation for exact same-Session restore, when known. */
-  hostActivationId?: string;
   turnId?: string;
 }>;
 
-export type RuntimeLaunchPersistence = "deferred" | "immediate";
-
 /**
- * Exact launch facts available after reservation/planning but before the
+ * Exact launch facts available after planning but before the
  * session host is allowed to create the external Provider process.
  */
 export type RuntimeLaunchPreflight = Readonly<{
   owner: RuntimeOwner;
-  runtimeGenerationId: string;
   turnId?: string;
   agentId: string;
   adapterId: string;
@@ -116,7 +94,7 @@ export type RuntimeLaunchPreflight = Readonly<{
 
 export type RuntimeLaunchPreStart = (preflight: RuntimeLaunchPreflight) => void;
 
-/** Runtime-side seam implemented by reservation, Hook, or hybrid launch policy. */
+/** Prepare a Session and record its native identity before Turn delivery. */
 export interface RuntimeLaunchPreparationPort {
   /**
    * When supplied, the host must invoke `beforeHostStart` before creating any
@@ -124,7 +102,6 @@ export interface RuntimeLaunchPreparationPort {
    */
   prepare(
     request: RuntimeLaunchPreparationRequest,
-    persistence: RuntimeLaunchPersistence,
     assertCurrent?: () => void,
     beforeHostStart?: RuntimeLaunchPreStart
   ): Promise<RuntimeBinding>;
@@ -211,7 +188,6 @@ export type ActivePromptPushRequest = Readonly<{
 
 export type ActivePromptSteerRequest = Readonly<{
   owner: Extract<RuntimeOwner, { scope: "task" }>;
-  runtimeGenerationId: string;
   agentId: string;
   adapterId: string;
   nativeSessionId: string;

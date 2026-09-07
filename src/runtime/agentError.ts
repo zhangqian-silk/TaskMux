@@ -152,8 +152,6 @@ export type ProviderDeliveryFailure = Readonly<{
   phase: AgentErrorPhase;
   /** Observed Agent Host provider state at the failure. */
   hostState?: string;
-  expectedRuntimeGenerationId?: string;
-  observedRuntimeGenerationId?: string;
   attemptId?: string;
   inputDisposition: AgentErrorInputDisposition;
   /** Durable registration outcome, when the failure happened around it. */
@@ -181,8 +179,7 @@ export function providerDeliveryFailure(
 /** Forward facts owned by the failing operation without parsing its prose. */
 export function providerDeliveryFailureFacts(failure: ProviderDeliveryFailure | undefined): Readonly<
   Pick<ProviderDeliveryFailure, "sessionDisposition" | "registrationDisposition"
-    | "errorName" | "causeName" | "expectedRuntimeGenerationId"
-    | "observedRuntimeGenerationId" | "attemptId" | "hostState">
+    | "errorName" | "causeName" | "attemptId" | "hostState">
 > {
   if (failure === undefined) return {};
   return {
@@ -191,8 +188,6 @@ export function providerDeliveryFailureFacts(failure: ProviderDeliveryFailure | 
     ...(failure.errorName === undefined ? {} : { errorName: failure.errorName }),
     ...(failure.causeName === undefined ? {} : { causeName: failure.causeName }),
     ...(failure.hostState === undefined ? {} : { hostState: failure.hostState }),
-    ...(failure.expectedRuntimeGenerationId === undefined ? {} : { expectedRuntimeGenerationId: failure.expectedRuntimeGenerationId }),
-    ...(failure.observedRuntimeGenerationId === undefined ? {} : { observedRuntimeGenerationId: failure.observedRuntimeGenerationId }),
     ...(failure.attemptId === undefined ? {} : { attemptId: failure.attemptId })
   };
 }
@@ -255,12 +250,6 @@ export function formatProviderDeliveryFailure(
   if (failure.hostState !== undefined) fields.push(`hostState=${failure.hostState}`);
   if (failure.errorName !== undefined) fields.push(`error=${failure.errorName}`);
   if (failure.causeName !== undefined) fields.push(`cause=${failure.causeName}`);
-  if (failure.expectedRuntimeGenerationId !== undefined) {
-    fields.push(`expectedGeneration=${failure.expectedRuntimeGenerationId}`);
-  }
-  if (failure.observedRuntimeGenerationId !== undefined) {
-    fields.push(`observedGeneration=${failure.observedRuntimeGenerationId}`);
-  }
   if (failure.attemptId !== undefined) fields.push(`attemptId=${failure.attemptId}`);
   if (failure.registrationDisposition !== undefined) {
     fields.push(`registration=${failure.registrationDisposition}`);

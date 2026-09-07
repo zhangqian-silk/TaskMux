@@ -11,7 +11,6 @@ import { validateAgentEndpointImplementation } from "./agentEndpointIdentity.js"
 
 export type AgentHostLaunchPayload = Readonly<{
   schemaVersion: 2;
-  runtimeGenerationId: string;
   command: string;
   args: readonly string[];
   environment: Readonly<Record<string, string>>;
@@ -76,34 +75,31 @@ export function launchBrokerForHome(home: string): LaunchBroker {
 export class LaunchBroker {
   readonly #reservations = new Map<string, Reservation>();
 
-  reserve(payload: AgentHostLaunchPayload): Readonly<{ runtimeGenerationId: string; ticket: string }> {
+  reserve(payload: AgentHostLaunchPayload): Readonly<{ ticket: string }> {
     validatePayload(payload);
-    if (this.#reservations.has(payload.runtimeGenerationId)) {
-      throw new Error(`Launch payload is already reserved: ${payload.runtimeGenerationId}.`);
-    }
     const ticket = randomBytes(32).toString("hex");
-    this.#reservations.set(payload.runtimeGenerationId, Object.freeze({
+    this.#reservations.set(ticket, Object.freeze({
       ticket,
       payload,
       createdAt: Date.now()
     }));
-    return Object.freeze({ runtimeGenerationId: payload.runtimeGenerationId, ticket });
+    return Object.freeze({ ticket });
   }
 
-  redeem(runtimeGenerationId: string, ticket: string): AgentHostLaunchPayload {
-    const reservation = this.#reservations.get(runtimeGenerationId);
+  redeem(ticket: string): AgentHostLaunchPayload {
+    const reservation = this.#reservations.get(ticket);
     if (reservation === undefined || reservation.ticket !== ticket) {
       throw new Error("Launch ticket is invalid or already consumed.");
     }
-    this.#reservations.delete(runtimeGenerationId);
+    this.#reservations.delete(ticket);
     if (Date.now() - reservation.createdAt > AGENT_HOST_LAUNCH_TICKET_TTL_MS) {
       throw new Error("Launch ticket expired before redemption.");
     }
     return reservation.payload;
   }
 
-  revoke(runtimeGenerationId: string): void {
-    this.#reservations.delete(runtimeGenerationId);
+  revoke(ticket: string): void {
+    this.#reservations.delete(ticket);
   }
 
   pendingCount(): number {
@@ -120,7 +116,6 @@ export function validateAgentHostLaunchPayload(value: unknown): AgentHostLaunchP
 
 function validatePayload(payload: AgentHostLaunchPayload): AgentHostLaunchPayload {
   if (payload.schemaVersion !== 2) throw new Error("Agent Host launch payload version is invalid.");
-  text(payload.runtimeGenerationId, "runtimeGenerationId");
   text(payload.command, "command");
   text(payload.cwd, "cwd");
   if (!Array.isArray(payload.args)) throw new Error("Agent Host launch args must be an array.");

@@ -11,8 +11,6 @@ import {
   type EffectiveLaunchSnapshot
 } from "./effectiveLaunch.js";
 import {
-  currentProviderActivation,
-  endProviderActivation,
   validateProviderRuntimeBinding,
   type ProviderRuntimeBinding
 } from "../runtime/providerRuntimeIdentity.js";
@@ -46,8 +44,6 @@ export type RoleAgentSession = {
   agentId: string;
   adapterId: string;
   nativeSessionId: string;
-  /** Durable exact generation identity for native lifecycle events. */
-  runtimeGenerationId?: string;
   title?: string;
   preview?: string;
   policy: "fixed" | "leader-controlled";
@@ -94,7 +90,6 @@ export type RecordRoleAgentSessionInput = {
   agentId: string;
   adapterId: string;
   nativeSessionId: string;
-  runtimeGenerationId?: string;
   title?: string;
   preview?: string;
   policy: RoleAgentSession["policy"];
@@ -173,7 +168,6 @@ export function recordRoleAgentSession<TSet extends RoleSessionSet>(
   if (set.owner.scope === "task") {
     const historical = ((set as TaskRoleSessionSet).history ?? []).find((entry) => (
       entry.nativeSessionId === nativeSessionId
-      || (input.runtimeGenerationId !== undefined && entry.runtimeGenerationId === input.runtimeGenerationId)
     ));
     if (historical !== undefined) {
       throw new Error("A new Task Role Session cannot reuse a historical native identity.");
@@ -216,9 +210,6 @@ export function recordRoleAgentSession<TSet extends RoleSessionSet>(
     agentId,
     adapterId,
     nativeSessionId,
-    ...(input.runtimeGenerationId === undefined
-      ? continuing?.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: continuing.runtimeGenerationId }
-      : { runtimeGenerationId: requireText(input.runtimeGenerationId, "Runtime generation id") }),
     ...optionalSessionText("title", input.title ?? continuing?.title),
     ...optionalSessionText("preview", input.preview ?? continuing?.preview),
     policy: input.policy,
@@ -368,42 +359,6 @@ export function retireTaskRoleSessionsForWorkspace(
   });
 }
 
-/**
- * Terminalizes only the aggregate-16 Claude placeholder shape after the
- * caller has fenced the Task store and proved that the exact Role has no live
- * native pane. All other nonterminal durable Sessions remain blockers for the
- * ordinary workspace-retirement path above.
- */
-export function retireConfirmedAbsentInactiveTaskRolePlaceholders(
-  set: TaskRoleSessionSet,
-  now: Date
-): TaskRoleSessionSet {
-  validateRoleSessionSet(set);
-  const timestamp = now.toISOString();
-  let changed = false;
-  const sessions = Object.fromEntries(Object.entries(set.sessions).map(([agentId, session]) => {
-    const isNeverStartedInactiveClaude = agentId !== set.activeAgentId
-      && session.adapterId === "claude"
-      && session.status === "active"
-      && session.runtimeGenerationId === undefined
-      && session.recentCompletedTurnIds.length === 0;
-    if (!isNeverStartedInactiveClaude) return [agentId, session];
-    changed = true;
-    return [agentId, {
-      ...session,
-      status: "ended" as const,
-      endReason: "failed" as const,
-      updatedAt: timestamp
-    }];
-  }));
-  if (!changed) return set;
-  return validateRoleSessionSet({
-    ...set,
-    sessions,
-    updatedAt: timestamp
-  });
-}
-
 export function rememberRoleAgentCompletedTurn<TSet extends RoleSessionSet>(
   set: TSet,
   agentId: string,
@@ -524,7 +479,7 @@ export function updateTaskRoleProviderRuntime(
 
 /**
  * Detaches a confirmed-dead local Host without ending its resumable native
- * Session. The Host launch and Provider Activation are disposable execution
+ * Session. Host connections are disposable execution
  * facts; the native Session remains the durable continuation identity.
  */
 export function detachRoleAgentSessionHost<TSet extends RoleSessionSet>(
@@ -535,7 +490,7 @@ export function detachRoleAgentSessionHost<TSet extends RoleSessionSet>(
   const active = set.sessions[set.activeAgentId];
   if (active === undefined || active.status === "ended") return set;
   const timestamp = requireDate(now, "Role Host detach timestamp");
-  const { runtimeGenerationId: _runtimeGenerationId, endReason: _endReason, ...session } = active;
+  const { endReason: _endReason, ...session } = active;
   const updated = validateRoleSessionSet({
     ...set,
     sessions: {
@@ -548,27 +503,10 @@ export function detachRoleAgentSessionHost<TSet extends RoleSessionSet>(
     },
     updatedAt: timestamp
   }) as TSet;
-  if (updated.owner.scope !== "task") return updated;
-  let taskSet = updated as TaskRoleSessionSet;
-  const binding = taskSet.providerBinding;
   // Losing the attachment proves neither cancellation nor non-submission.
   // Preserve the exact input and its acceptance/unknown facts. Only a native
   // terminal or an explicit submission resolution may settle that attempt.
-  const activation = binding === null
-    ? null
-    : currentProviderActivation(binding);
-  if (activation !== null) {
-    taskSet = updateTaskRoleProviderRuntime(
-      taskSet,
-      endProviderActivation(binding!, activation.activationId, {
-        status: "ended",
-        endedAt: now.toISOString(),
-        reason: "runtime-physical-exit"
-      }),
-      now
-    );
-  }
-  return taskSet as TSet;
+  return updated;
 }
 
 /**
@@ -720,16 +658,7 @@ export function validateRoleAgentSession(
   if (session.effective.agentId !== agentId || session.effective.adapterId !== session.adapterId) {
     throw new Error(`Role Agent session effective identity is inconsistent: ${agentId}.`);
   }
-  // A restored opaque host may have no provider-native identity; retain its
-  // launch fence so it can be inspected or stopped without inventing identity.
-  if (session.nativeSessionId === undefined) {
-    if (session.runtimeGenerationId === undefined) {
-      throw new Error("Role Agent session requires a native Session or runtime generation id.");
-    }
-  } else {
-    requireText(session.nativeSessionId, "Native session id");
-  }
-  if (session.runtimeGenerationId !== undefined) requireSafeIdentity(session.runtimeGenerationId, "Runtime generation id");
+  requireText(session.nativeSessionId, "Native session id");
   if (
     session.title !== undefined
     && optionalSessionText("title", session.title).title !== session.title
@@ -766,10 +695,7 @@ function taskRoleSessionIdentity(session: RoleAgentSession): string {
   if (session.nativeSessionId !== undefined) {
     return `${session.agentId}\0native\0${session.nativeSessionId}`;
   }
-  if (session.runtimeGenerationId === undefined) {
-    throw new Error("Opaque Task Role session requires a runtime generation identity.");
-  }
-  return `${session.agentId}\0runtime-generation\0${session.runtimeGenerationId}`;
+  throw new Error("Task Role session requires a native session identity.");
 }
 
 function optionalSessionText(

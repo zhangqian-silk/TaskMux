@@ -679,12 +679,12 @@ const taskChildren: readonly NodeInput[] = [
         children: [
           {
             name: "inspect",
-            summary: "Read the current Session, Host activation, and Turn facts.",
+            summary: "Read the current Session, Host process, and Turn facts.",
             usage: "yui task role session inspect <task> <role>"
           },
           {
             name: "stop",
-            summary: "Stop one idle Session and its exact Host activation.",
+            summary: "Stop one idle Session and its exact Host process.",
             usage: "yui task role session stop <task> <role> --reason <text>",
             options: ["--reason"]
           }
@@ -882,8 +882,8 @@ const taskChildren: readonly NodeInput[] = [
       {
         name: "retire",
         summary: "Retire an incorrect historical Turn without deleting its audit record.",
-        usage: "yui task turn retire <task>/<turn> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>] [--launch-id <id>]",
-        options: ["--reason", "--expected-progress-at", "--progress-at", "--agent-id", "--adapter-id", "--native-session-id", "--launch-id"]
+        usage: "yui task turn retire <task>/<turn> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>]",
+        options: ["--reason", "--expected-progress-at", "--progress-at", "--agent-id", "--adapter-id", "--native-session-id"]
       }
     ]
   },
@@ -1139,7 +1139,7 @@ export const ROOT_COMMAND = buildNode({
         },
         {
           name: "live-identity",
-          summary: "Read the authenticated live Controller runtime generation identity.",
+          summary: "Read the authenticated live Controller runtime identity.",
           hidden: true
         },
         { name: "stop", summary: "Stop the Controller." },
@@ -1252,7 +1252,7 @@ export const ROOT_COMMAND = buildNode({
         },
         {
           name: "role",
-          summary: "Manage reusable global Roles and desired Agent launch configuration for the next Host activation.",
+          summary: "Manage reusable global Roles and desired Agent launch configuration for the next Host process.",
           examples: ["yui config role list", "yui config role show operator"],
           sections: [
             { id: "inspect", title: "Inspect", entries: ["list", "show"] },
@@ -1539,7 +1539,7 @@ export const ROOT_COMMAND = buildNode({
         {
           name: "agent-host",
           summary: "Run the persistent structured Provider host.",
-          usage: "yui internal agent-host <launch-id> <ticket>"
+          usage: "yui internal agent-host <ticket>"
         },
         {
           name: "session-notify",

@@ -2785,6 +2785,10 @@ yui capability call task.update --task task-12 --request-id edit-1 --input '{"ta
 <li>原生 token_count：input <code>35320</code>（cached <code>3328</code>），output <code>28</code> （reasoning <code>13</code>），total <code>35348</code>；未报告费用，不推断账单。</li>
 </ul>
 <p>本次只复测改变的 Endpoint 初始化与真实推理路径，未重跑完整 Controller／Store 归档、resume、取消或 Claude；这些证据仍按上文分别界定。 自有 Endpoint 与 daemon 均退出码 0。未重启或改变共享 daemon； 若共享实例已被旧身份初始化，部署代码本身不会清除其进程内身份， 需由 Operator 在安全维护窗口处理，不能宣称现存共享实例已修复。</p>
+<h3 id="doc-implementation-designs-T04-evidence-md--主线集成2026-09-07">主线集成（2026-09-07）</h3>
+<p>同步 <code>origin/master</code> 至 <code>c655cc6</code>，保留主线以 Session／Process 身份 替代启动 generation 的设计。Endpoint cancel、迟到 steer 结算及 pending 投递路径改用当前身份合同；未恢复已移除的 activation／generation 状态， 也未重新引入自动 synthesis。</p>
+<p>主线迁移 4 <code>session-and-process-identity</code> 原样保留；本任务尚未发布的 Endpoint 迁移顺延为 5，<code>introducedIn=0.15.8</code>。因此上文的 3→4 是 独立分支验证时的编号，最终集成合同为 3→4→5。内存 SQLite 验证 3→5 与 4→5 均保留原生身份、模型快照及当前／历史 Session， 正确移除旧运行身份并写入 Endpoint 实现引用。</p>
+<p>集成后的独立只读审查未发现阻断问题；不以合并或发布授权代替真实模型 验证授权，未重复调用 Provider，也未操作共享 Controller／App Server。 build、lint 与集成后核心测试 81/81 通过（测试阶段 4.37 秒）； 数量变化来自主线移除旧 generation 回归，并非跳过失败测试。</p>
 </article><article id="doc-implementation-designs-T05-project-resource-md"><div class="source"><a href="implementation/designs/T05-project-resource.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T05-project-resource-md--t05-技术方案projectresource-与成果保存">T05 技术方案｜Project、Resource 与成果保存</h1>
 <p>硬依赖：T02。</p>
 <p>任务定义：<a href="#doc-implementation-tasks-T05-project-resource-md">交付范围与证据</a>。</p>

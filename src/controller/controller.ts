@@ -58,18 +58,8 @@ import {
   type ProcessingBatch,
   type WorkMailbox
 } from "../coordination/workMailbox.js";
-import {
-  hasRuntimeCleanupObligation,
-  isRuntimeLaunchReservation,
-  runtimeLifecycleTarget,
-  type RuntimeLifecycleTarget,
-  type RuntimeRoleOwner
-} from "../runtime/lifecycleReservation.js";
+import { hasRuntimeCleanupObligation, type RuntimeLifecycleTarget, type RuntimeRoleOwner } from "../runtime/lifecycleReservation.js";
 import type { SessionHostPort } from "../runtime/ports.js";
-import type {
-  TaskRuntimeCleanupReason,
-  TaskRuntimeLifecycleCleanupPort
-} from "../runtime/taskRuntimeIsolation.js";
 import { formatTaskRecordReference } from "../task/taskRecordReference.js";
 import type {
   AsyncRuntimeEventProcessorPort,
@@ -96,7 +86,6 @@ const DEFAULT_DELIVERY_TIMEOUT_MS = 120_000;
 const DEFAULT_TASK_ORCHESTRATION_RETRY_LIMIT = 2;
 const DEFAULT_TASK_CONCURRENCY = 4;
 const MAX_TASK_CONCURRENCY = 32;
-const RUNTIME_RESERVATION_RECOVERY_AGE_MS = 120_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const CONTROLLER_LATENCY_BUCKETS_MS = [10, 50, 100, 250, 500, 1_000, 3_000] as const;
 
@@ -105,7 +94,7 @@ class RuntimeEventApplyError extends AggregateError {}
 type RuntimeLifecycleHost = Pick<
   SessionHostPort,
   "inspectOwner" | "inspectOwners" | "stopOwner"
-> & Partial<TaskRuntimeLifecycleCleanupPort>;
+>;
 
 type RoleTurnDeliveryFailureIdentity = Omit<
   RoleTurnDeliveryFailurePersistence,
@@ -296,18 +285,6 @@ export async function runControllerSchedulerPass(
   // event-loop turn. Give already-written requests a poll boundary before the
   // next durable phase; later phases retain their existing CAS fences.
   await controlEventLoopTurn();
-  // A dormant Session may still name a Host that disappeared after its last
-  // Provider Turn. Detach that disposable Host before claiming the next Turn,
-  // so retained Agent intent restores the same Session instead of first
-  // connecting to a known-dead control socket.
-  await reconcileDormantRuntimeOwners(
-    store,
-    delivery,
-    lifecycleHost,
-    scope,
-    now,
-    blockedTaskIds
-  );
   const failedCleanupRoles = await processSelectedRoleRuntimeCleanups(
     store,
     delivery,
@@ -380,7 +357,7 @@ export async function runControllerSchedulerPass(
     )));
     // Phase-one Leader Turns did not exist at the pass's liveness boundary.
     // Keep every newly claimed Turn outside destructive absence decisions until
-    // a later pass can observe its stable provider/runtime generation.
+    // a later pass can observe its stable provider/runtime.
     for (const result of initialWakeupResults) {
       if (
         result.turnId !== undefined
@@ -418,14 +395,6 @@ export async function runControllerSchedulerPass(
       diagnosticAfterMs
     );
     await controlEventLoopTurn();
-    await reconcileDormantRuntimeOwners(
-      store,
-      delivery,
-      lifecycleHost,
-      scope,
-      now,
-      selection.blockedTaskIds
-    );
     const selectedInputTaskIds = selectedTaskIdsForBoundedPass(store, selection);
     const autoResolvedInputs = selectedInputTaskIds === undefined
       ? store.resolveExpiredInputRecommendations(now)
@@ -571,34 +540,6 @@ async function processSelectedRoleRuntimeCleanups(
             `Role runtime cleanup could not confirm the host stopped: ${runtimeOwnerLabel(owner)}.`
           );
         }
-        if (target.kind === "role-runtime") {
-          const session = store.getRoleSession(target.taskId, target.roleName);
-          const reservedRuntimeGenerationId = isRuntimeLaunchReservation(mailbox.processing)
-            ? mailbox.processing!.batchId
-            : undefined;
-          // A failed fresh-Conversation launch can leave two exact resource
-          // generations: the detached Session's last committed launch and the
-          // replacement reservation. They are not competing authorities. The
-          // owner-wide stop has already proven physical zero, so clean both
-          // exact launch roots idempotently before settling the mailbox.
-          const runtimeGenerationIds = new Set([
-            reservedRuntimeGenerationId,
-            session?.runtimeGenerationId
-          ].filter((runtimeGenerationId): runtimeGenerationId is string => runtimeGenerationId !== undefined));
-          if (lifecycleHost.cleanupTaskLaunch !== undefined) {
-            const task = store.getTask(target.taskId);
-            const reason: TaskRuntimeCleanupReason = task?.status === "completed"
-              ? "completion"
-              : "interruption";
-            for (const runtimeGenerationId of runtimeGenerationIds) {
-              lifecycleHost.cleanupTaskLaunch({
-                taskId: target.taskId,
-                runtimeGenerationId,
-                reason
-              });
-            }
-          }
-        }
         if (
           store.completeRuntimeCleanup === undefined
           || !store.completeRuntimeCleanup(target, now)
@@ -615,119 +556,8 @@ async function processSelectedRoleRuntimeCleanups(
       }
       continue;
     }
-    const reservation = mailbox.processing;
-    if (
-      reservation === null
-      || !isRuntimeLaunchReservation(reservation)
-      || now.getTime() - Date.parse(reservation.startedAt)
-        < RUNTIME_RESERVATION_RECOVERY_AGE_MS
-    ) {
-      continue;
-    }
-    try {
-      if (lifecycleHost === undefined) {
-        throw new Error("Role runtime reservation inspection is unavailable.");
-      }
-      const inspection = await lifecycleHost.inspectOwner(owner);
-      if (inspection.state === "running" || inspection.state === "starting") {
-        continue;
-      }
-      if (inspection.state === "unavailable") {
-        throw new Error(
-          `Role runtime reservation could not inspect the host: ${runtimeOwnerLabel(owner)}.`
-        );
-      }
-      const completed = store.completeStoppedRuntimeReservation === undefined
-        ? store.completeWorkMailbox(target, reservation.batchId)
-        : store.completeStoppedRuntimeReservation(
-            target,
-            reservation.batchId,
-            now
-          );
-      if (!completed) {
-        throw new Error(
-          `Role runtime reservation mailbox changed: ${runtimeOwnerLabel(owner)}.`
-        );
-      }
-      forgetPreparedRuntimeOwner(delivery, owner);
-      outcomes.push({ target, batchId, status: "completed" });
-    } catch (error) {
-      markFailedRuntimeTarget(failedRoles, target);
-      outcomes.push({ target, batchId, status: "failed", error });
-    }
   }
   return failedRoles;
-}
-
-async function reconcileDormantRuntimeOwners(
-  store: SchedulerStorePort,
-  delivery: TmuxDeliveryPort,
-  lifecycleHost: RuntimeLifecycleHost | undefined,
-  scope: ReconcileScope,
-  now: Date,
-  blockedTaskIds: ReadonlySet<string> = new Set()
-): Promise<void> {
-  if (
-    lifecycleHost === undefined
-    || store.listDormantRuntimeOwners === undefined
-  ) {
-    return;
-  }
-  const selectedOwners = scope.kind === "full"
-    ? undefined
-    : new Set(selectedRuntimeLifecycleTargets(store, scope, blockedTaskIds)
-      .map((target) => runtimeOwnerIdentity(runtimeOwner(target))));
-  const candidates = store.listDormantRuntimeOwners().filter((candidate) => (
-    (candidate.owner.scope !== "task"
-      || !blockedTaskIds.has(candidate.owner.taskId))
-    && (selectedOwners === undefined
-      || selectedOwners.has(runtimeOwnerIdentity(candidate.owner)))
-  ));
-  if (candidates.length === 0) return;
-  const owners = candidates.map((candidate) => candidate.owner);
-  let inspections: readonly Readonly<{
-    owner: RuntimeRoleOwner;
-    inspection: Awaited<ReturnType<SessionHostPort["inspectOwner"]>>;
-  }>[];
-  try {
-    inspections = lifecycleHost.inspectOwners === undefined
-      ? await Promise.all(owners.map(async (owner) => ({
-          owner,
-          inspection: await lifecycleHost.inspectOwner(owner)
-        })))
-      : await lifecycleHost.inspectOwners(owners);
-  } catch {
-    // Host inventory is an advisory safety scan. Unknown state must never
-    // mutate persisted session facts; the next full pass will retry.
-    return;
-  }
-  const requested = new Set(owners.map(runtimeOwnerIdentity));
-  const byOwner = new Map<string, (typeof inspections)[number]["inspection"]>();
-  for (const result of inspections) {
-    const identity = runtimeOwnerIdentity(result.owner);
-    if (
-      !requested.has(identity)
-      || byOwner.has(identity)
-    ) {
-      return;
-    }
-    byOwner.set(identity, result.inspection);
-  }
-  if (byOwner.size !== requested.size) return;
-  for (const candidate of candidates) {
-    if (
-      byOwner.get(runtimeOwnerIdentity(candidate.owner))?.state
-      === "stopped"
-    ) {
-      if (candidate.runtimeGenerationId !== undefined) {
-        // The exact launch-owned resources must settle through the durable
-        // cleanup lane before its Host fact is detached. The resumable Session
-        // remains active; the candidate is the CAS fence against a concurrent
-        // Hook or replacement launch.
-        store.enqueueRuntimeHostDetach?.(candidate.owner, now, candidate);
-      }
-    }
-  }
 }
 
 function forgetPreparedRuntimeOwner(
@@ -739,12 +569,6 @@ function forgetPreparedRuntimeOwner(
     taskId: owner.taskId,
     roleName: owner.roleName
   });
-}
-
-function runtimeOwnerIdentity(owner: RuntimeRoleOwner): string {
-  return owner.scope === "task"
-    ? `task\0${owner.taskId}\0${owner.roleName}`
-    : `global\0${owner.roleName}`;
 }
 
 function selectedTaskIdsForBoundedPass(
@@ -2236,9 +2060,6 @@ export class FileTaskController {
       taskId: failure.taskId,
       roleName: failure.roleName,
       turnId: failure.turnId,
-      ...(failure.runtimeGenerationId === undefined
-        ? {}
-        : { runtimeGenerationId: failure.runtimeGenerationId })
     });
     if (!this.#stopped) this.signal(key);
   }

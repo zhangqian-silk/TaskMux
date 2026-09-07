@@ -154,11 +154,7 @@ function sameStopCandidate(
   ) {
     return false;
   }
-  return session.agentId === candidate.agentId
-    && session.adapterId === candidate.adapterId
-    && session.nativeSessionId === candidate.nativeSessionId
-    && session.runtimeGenerationId === candidate.runtimeGenerationId
-    && session.sessionUpdatedAt === candidate.sessionUpdatedAt;
+  return session.agentId === candidate.agentId && session.adapterId === candidate.adapterId && session.nativeSessionId === candidate.nativeSessionId && session.sessionUpdatedAt === candidate.sessionUpdatedAt;
 }
 
 function renderSessionOwner(session: RuntimeSessionCandidate): string {

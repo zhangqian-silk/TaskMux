@@ -22,7 +22,6 @@ export type TaskRuntimeTurnTerminal = Readonly<{
   roleName: string;
   agentId: string;
   adapterId: string;
-  runtimeGenerationId?: string;
   nativeSessionId: string;
   nativeTurnId: string;
   turnId?: string;
@@ -36,7 +35,6 @@ export type GlobalRuntimeTurnTerminal = Readonly<{
   roleName: string;
   agentId: string;
   adapterId: string;
-  runtimeGenerationId?: string;
   nativeSessionId: string;
   nativeTurnId: string;
   title?: string;
@@ -75,7 +73,6 @@ export type RuntimeTurnEventObserver = Readonly<{
       roleName: string;
       agentId: string;
       turnId?: string;
-      runtimeGenerationId?: string;
       nativeSessionId: string;
       reason: string;
     }>,
@@ -367,7 +364,6 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
         roleName: event.roleName,
         agentId: event.agentId,
         adapterId: event.adapterId,
-        ...(event.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: event.runtimeGenerationId }),
         nativeSessionId: event.nativeSessionId,
         nativeTurnId: event.nativeTurnId,
         ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
@@ -401,7 +397,6 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
       roleName: event.roleName,
       agentId: event.agentId,
       adapterId: event.adapterId,
-      ...(event.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: event.runtimeGenerationId }),
       nativeSessionId: event.nativeSessionId,
       nativeTurnId: event.nativeTurnId,
       ...(event.title === undefined ? {} : { title: event.title }),
@@ -427,7 +422,6 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
         roleName: fence.roleName,
         agentId: fence.agentId,
         ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
-        runtimeGenerationId: fence.runtimeGenerationId,
         nativeSessionId: fence.nativeSessionId,
         reason
       }, now);
@@ -443,7 +437,6 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
       roleName: event.roleName,
       agentId: event.agentId,
       ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
-      ...(event.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: event.runtimeGenerationId }),
       nativeSessionId: event.nativeSessionId,
       reason
     }, now);
@@ -586,7 +579,6 @@ function progressStreamKey(event: RuntimeObservationInboxEvent): string {
     fence.roleName,
     fence.agentId,
     fence.driverId,
-    fence.runtimeGenerationId,
     fence.nativeSessionId ?? null,
     fence.turnId ?? null,
     payload.activity,
@@ -755,7 +747,6 @@ export type AsyncRuntimeTurnEventObserver = Readonly<{
       roleName: string;
       agentId: string;
       turnId?: string;
-      runtimeGenerationId?: string;
       nativeSessionId: string;
       reason: string;
     }>,
@@ -917,7 +908,6 @@ export class AsyncRuntimeEventProcessor {
         roleName: event.roleName,
         agentId: event.agentId,
         adapterId: event.adapterId,
-        ...(event.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: event.runtimeGenerationId }),
         nativeSessionId: event.nativeSessionId,
         nativeTurnId: event.nativeTurnId,
         ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
@@ -951,7 +941,6 @@ export class AsyncRuntimeEventProcessor {
       roleName: event.roleName,
       agentId: event.agentId,
       adapterId: event.adapterId,
-      ...(event.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: event.runtimeGenerationId }),
       nativeSessionId: event.nativeSessionId,
       nativeTurnId: event.nativeTurnId,
       ...(event.title === undefined ? {} : { title: event.title }),
@@ -977,7 +966,6 @@ export class AsyncRuntimeEventProcessor {
         roleName: fence.roleName,
         agentId: fence.agentId,
         ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
-        runtimeGenerationId: fence.runtimeGenerationId,
         nativeSessionId: fence.nativeSessionId,
         reason
       }, now);
@@ -990,7 +978,6 @@ export class AsyncRuntimeEventProcessor {
       roleName: event.roleName,
       agentId: event.agentId,
       ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
-      ...(event.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: event.runtimeGenerationId }),
       nativeSessionId: event.nativeSessionId,
       reason
     }, now);

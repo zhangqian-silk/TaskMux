@@ -1,12 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 
-import { completeProcessing } from "../coordination/workMailbox.js";
 import {
   captureRoleTurnDispatch,
   settleRoleTurnDispatch
 } from "../coordination/workMailboxQueue.js";
-import type { TaskRoleSessionSet } from "../executor/agentExecutor.js";
-import { createTaskEvent } from "../event/taskEvent.js";
 import {
   finishReviewRound,
   updateReviewExecutionGroup,
@@ -24,10 +21,6 @@ import {
   updateExecutionLane,
   updateWorkItemExecutionLane
 } from "../execution/workItemExecution.js";
-import {
-  isRuntimeLaunchReservation,
-  runtimeLifecycleTarget
-} from "../runtime/lifecycleReservation.js";
 import { managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
 import {
   latestTurnDurableProgressAt
@@ -227,7 +220,6 @@ export type ExactTurnTerminalizationInput = Readonly<{
   agentId: string;
   turnId: string;
   nativeSessionId?: string;
-  runtimeGenerationId?: string;
   /** Aggregate retirement owns every queued Role signal, not only this Turn. */
   mailboxDisposition?: "exact" | "discard";
   outcome: Readonly<{
@@ -264,7 +256,6 @@ export type ExactTurnRetirementInput = Readonly<{
   agentId: string;
   adapterId: string;
   nativeSessionId?: string;
-  runtimeGenerationId?: string;
   /** Exact semantic progress fence observed before the retirement request. */
   expectedProgressAt: string;
   reason: string;
@@ -337,7 +328,6 @@ export function retireExactActiveTurn(
     agentId: input.agentId,
     turnId: input.turnId,
     ...(input.nativeSessionId === undefined ? {} : { nativeSessionId: input.nativeSessionId }),
-    ...(input.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: input.runtimeGenerationId }),
     outcome: { status: "failed", diagnostic: input.reason, failureReason: "missing-result" }
   };
   const session = sessions?.sessions[input.agentId];
@@ -397,7 +387,6 @@ export function terminalizeExactTaskTurn(
     : store.getActiveTurn(input.taskId, input.roleName);
   if (active?.id !== turn.id) return obsolete(turn, "active-turn-mismatch");
 
-  const sessions = store.getTaskRoleSessionSet(input.taskId, input.roleName);
   // Validate the exact ReviewRound, Candidate, stored workspace, and frozen
   // Project heads before any mailbox or Round write.
   const reviewValidation = validateExactTurnReviewRound(store, turn);
@@ -542,35 +531,7 @@ export function terminalizeExactTaskTurn(
   } else {
     store.clearActiveTurn(input.taskId, input.roleName);
   }
-  settleLaunchReservation(store, sessions, input);
   return { disposition: "applied", turn: terminal };
-}
-
-function settleLaunchReservation(
-  store: TaskStore,
-  sessions: TaskRoleSessionSet | null,
-  input: ExactTurnTerminalizationInput
-): void {
-  const target = runtimeLifecycleTarget({
-    scope: "task",
-    taskId: input.taskId,
-    roleName: input.roleName
-  });
-  const mailbox = store.getWorkMailbox(target);
-  const reservation = mailbox?.processing;
-  const session = sessions?.sessions[input.agentId] as
-    | (TaskRoleSessionSet["sessions"][string] & { runtimeGenerationId?: string })
-    | undefined;
-  // A late result releases only its original launch, never a successor's
-  // reservation merely because both Turns reused the same native Session.
-  const runtimeGenerationId = input.runtimeGenerationId ?? session?.runtimeGenerationId;
-  if (runtimeGenerationId === undefined || !isRuntimeLaunchReservation(reservation, runtimeGenerationId)) return;
-  const settled = completeProcessing(mailbox!, reservation!.batchId);
-  if (settled.processing === null && settled.pending === null) {
-    store.removeWorkMailbox(target);
-  } else {
-    store.saveWorkMailbox(settled);
-  }
 }
 
 function obsolete(

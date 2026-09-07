@@ -12,7 +12,6 @@ import {
   openSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   unlinkSync,
   writeFileSync
@@ -60,7 +59,6 @@ export type RuntimeTurnTerminalInput = Readonly<{
   roleName: string;
   agentId: string;
   adapterId: "codex" | "claude";
-  runtimeGenerationId?: string;
   nativeSessionId: string;
   nativeTurnId: string;
   turnId?: string;
@@ -408,7 +406,6 @@ function runtimeEventId(
     provider.roleName,
     provider.agentId,
     provider.adapterId,
-    provider.runtimeGenerationId ?? null,
     provider.nativeSessionId,
     provider.nativeTurnId,
     provider.turnId ?? null
@@ -431,9 +428,6 @@ function normalizeNativeTurnTerminalInput(
     roleName: requireIdentityText(input.roleName, "Role name"),
     agentId: requireIdentityText(input.agentId, "Agent id"),
     adapterId: input.adapterId,
-    ...(input.runtimeGenerationId === undefined
-      ? {}
-      : { runtimeGenerationId: requireIdentityText(input.runtimeGenerationId, "Runtime generation id") }),
     nativeSessionId: requireIdentityText(input.nativeSessionId, "Native session id"),
     nativeTurnId: requireIdentityText(input.nativeTurnId, "Provider native Turn id"),
     ...(input.turnId === undefined
@@ -561,7 +555,6 @@ function parseNativeTurnTerminalEvent(value: Record<string, any>): RuntimeTurnTe
         "schemaVersion", "id", "type", "receivedAt", "scope", "taskId",
         "roleName", "agentId", "adapterId", "nativeSessionId", "nativeTurnId",
         "providerStatus", "outcome",
-        ...(value.runtimeGenerationId === undefined ? [] : ["runtimeGenerationId"]),
         ...(value.turnId === undefined ? [] : ["turnId"]),
         ...(value.title === undefined ? [] : ["title"])
       ]
@@ -569,7 +562,6 @@ function parseNativeTurnTerminalEvent(value: Record<string, any>): RuntimeTurnTe
         "schemaVersion", "id", "type", "receivedAt", "scope",
         "roleName", "agentId", "adapterId", "nativeSessionId", "nativeTurnId",
         "providerStatus", "outcome",
-        ...(value.runtimeGenerationId === undefined ? [] : ["runtimeGenerationId"]),
         ...(value.turnId === undefined ? [] : ["turnId"]),
         ...(value.title === undefined ? [] : ["title"])
       ];
@@ -583,7 +575,6 @@ function parseNativeTurnTerminalEvent(value: Record<string, any>): RuntimeTurnTe
     roleName: value.roleName,
     agentId: value.agentId,
     adapterId: value.adapterId,
-    ...(value.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: value.runtimeGenerationId }),
     nativeSessionId: value.nativeSessionId,
     nativeTurnId: value.nativeTurnId,
     ...(value.turnId === undefined ? {} : { turnId: value.turnId }),
@@ -650,7 +641,6 @@ function hasSameIdentity(left: RuntimeLifecycleEvent, right: RuntimeLifecycleEve
     && (!("roleName" in left) || !("roleName" in right) || left.roleName === right.roleName)
     && (!("agentId" in left) || !("agentId" in right) || left.agentId === right.agentId)
     && (!("adapterId" in left) || !("adapterId" in right) || left.adapterId === right.adapterId)
-    && (!("runtimeGenerationId" in left) || !("runtimeGenerationId" in right) || left.runtimeGenerationId === right.runtimeGenerationId)
     && (!("nativeSessionId" in left)
       || !("nativeSessionId" in right)
       || left.nativeSessionId === right.nativeSessionId)

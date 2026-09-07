@@ -22,6 +22,10 @@
  */
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
+import {
+  REMOVE_RUNTIME_GENERATION_SQL,
+  removeRuntimeGenerationRecords
+} from "./migrations/removeRuntimeGeneration.js";
 
 import {
   CURRENT_STORAGE_VERSION,
@@ -29,7 +33,7 @@ import {
 } from "./storageVersions.js";
 
 /** Telemetry retention bounds (§4.4). Open question 3 in §11; defaults from the design. */
-export const TELEMETRY_KEEP_PER_GENERATION = 200;
+export const TELEMETRY_KEEP_PER_TURN = 200;
 export const TELEMETRY_TURN_CAP = 50_000;
 
 /**
@@ -677,6 +681,8 @@ export type StorageMigration = Readonly<{
   name: string;
   introducedIn: string;
   sql: string;
+  /** Version-owned payload migration, executed in the same transaction as SQL. */
+  migrateData?: (db: Database.Database) => void;
 }>;
 
 /** Released migrations are append-only and must never be rewritten. */
@@ -726,8 +732,15 @@ ON durable_jobs(task_id, json_extract(payload, '$.operation.actorId'),
   },
   {
     version: 4,
+    name: "session-and-process-identity",
+    introducedIn: "0.15.8",
+    sql: REMOVE_RUNTIME_GENERATION_SQL,
+    migrateData: removeRuntimeGenerationRecords
+  },
+  {
+    version: 5,
     name: "session-endpoint-implementation",
-    introducedIn: "0.15.7",
+    introducedIn: "0.15.8",
     // Valid earlier Sessions used these two built-in protocols. Generation 1
     // retains those codecs and identities behind the new execution boundary.
     // Preserve native IDs, effective snapshots and all historical results.
@@ -779,7 +792,6 @@ if (MIGRATIONS.at(-1)?.version !== CURRENT_STORAGE_VERSION) {
 /** Current hot-path indexes whose absence would invalidate a current Home. */
 const REQUIRED_SCHEMA_INDEXES = [
   "idx_mailboxes_ready",
-  "idx_runtime_session_cleanup_required",
   "idx_input_requests_open_hot"
 ] as const;
 
@@ -1142,6 +1154,7 @@ export function migrateSqliteSchema(
     const newlyApplied: number[] = [];
     for (const migration of pending) {
       db.exec(migration.sql);
+      migration.migrateData?.(db);
       const appliedAt = new Date().toISOString();
       db.prepare(
         `INSERT INTO schema_migrations (version, name, applied_at, checksum)
@@ -1180,7 +1193,6 @@ export const SQLITE_SCHEMA_TABLES: readonly string[] = [
   "coordination_locks",
   "integration_queue",
   "durable_jobs",
-  "job_caller_key_hashes",
   "outbox",
   "mailboxes",
   "task_records",

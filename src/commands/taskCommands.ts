@@ -41,14 +41,10 @@ import {
 import {
   createRoleSessionSet,
   roleAgentSessionResumeMode,
-  retireTaskRoleSessionsForWorkspace,
   updateTaskRoleProviderRuntime,
   type TaskRoleSessionSet
 } from "../executor/agentExecutor.js";
-import {
-  currentProviderActivation,
-  transferProviderAuthority
-} from "../runtime/providerRuntimeIdentity.js";
+import { transferProviderAuthority } from "../runtime/providerRuntimeIdentity.js";
 import type { ProviderAuthorityFence } from "../runtime/providerAuthorityFence.js";
 import {
   resolveEffectiveLaunch,
@@ -82,14 +78,12 @@ import {
   validateExactTurnReviewRound
 } from "../lifecycle/exactTurnTerminalization.js";
 import {
-  activeRoleAgentBinding,
   copyGlobalRoleToTaskRole,
   createRole,
   createRoleAgentBinding,
   switchActiveRoleAgent,
   unbindRoleAgent,
   updateRole,
-  type GlobalRole,
   type Role,
   type RoleAgentBinding
 } from "../role/role.js";
@@ -140,7 +134,6 @@ import {
 import {
   enqueueRoleTurnDispatch,
   enqueueWork,
-  requireCompleteWorkExecution,
   settleExactWorkExecution
 } from "../coordination/workMailboxQueue.js";
 import {
@@ -149,14 +142,11 @@ import {
   type MailboxTarget
 } from "../coordination/workMailbox.js";
 import {
-  RUNTIME_CLEANUP_REQUIRED_REASON,
-  runtimeLifecycleTarget,
-  type RuntimeLifecycleTarget
+  runtimeLifecycleTarget
 } from "../runtime/lifecycleReservation.js";
 import { projectProviderContinuations } from "../runtime/runtimeContinuationProjection.js";
 import { runtimeObservationFromTaskEvent } from "../runtime/runtimeObservation.js";
 import {
-  activateTask,
   addTaskProjectBinding,
   archiveTask,
   completeTask,
@@ -172,7 +162,6 @@ import {
   type TaskPriority
 } from "../task/task.js";
 import {
-  formatTurnReceiptId,
   resolveTaskRecordReference
 } from "../task/taskRecordReference.js";
 import {
@@ -191,7 +180,6 @@ import type { TaskWorkspaceActivation } from "../repository/taskWorkspacePrepare
 import type { TmuxRolePaneState } from "../tmux/tmuxManager.js";
 import {
   currentWorkItemCandidate,
-  governingWorkItemCandidate,
   currentWorkItemExecutionGroup,
   workItemExecutionGroupById,
   createWorkItem,
@@ -287,7 +275,6 @@ import {
 } from "./taskRoleRuntimeStatus.js";
 import {
   assertNoOpenInputRequests,
-  isCurrentGlobalOperator,
   openInputRequestCount,
   runTaskInputCommand
 } from "./taskInputCommands.js";
@@ -411,7 +398,6 @@ export type TaskCommandExecution =
       agentId: string;
       adapterId: string;
       nativeSessionId: string;
-      runtimeGenerationId?: string;
       sessionUpdatedAt: string;
       reason: string;
       output: string;
@@ -428,7 +414,6 @@ export type TaskCommandExecution =
       action: "takeover" | "release";
       taskId: string;
       roleName: string;
-      runtimeGenerationId: string;
       nativeSessionId: string;
       authority: ProviderAuthorityFence;
       output: string;
@@ -2191,7 +2176,6 @@ function taskRoleSessionCommand(
             `Session ${task.id}/${role.name}`,
             `Agent: ${active.agentId}/${active.adapterId}`,
             `Native id: ${active.nativeSessionId}`,
-            `Host activation: ${active.runtimeGenerationId ?? "none"}`,
             `Session: ${active.status}${active.endReason === undefined ? "" : `/${active.endReason}`}`,
             `Turn: ${binding?.turn?.status ?? "none"}`
           ].join("\n") + "\n",
@@ -2241,7 +2225,6 @@ function taskRoleSessionCommand(
         agentId: session.agentId,
         adapterId: session.adapterId,
         nativeSessionId: session.nativeSessionId,
-        runtimeGenerationId: session.runtimeGenerationId ?? "",
         reason,
         requestedBy: actor
       }, now);
@@ -2251,7 +2234,6 @@ function taskRoleSessionCommand(
         agentId: session.agentId,
         adapterId: session.adapterId,
         nativeSessionId: session.nativeSessionId,
-        ...(session.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId }),
         sessionUpdatedAt: session.updatedAt
       };
     });
@@ -2694,15 +2676,8 @@ function transferTaskRoleAuthority(
       const sessions = tx.getTaskRoleSessionSet(task.id, role.name);
       const session = sessions?.sessions[role.activeAgentId];
       const binding = sessions?.providerBinding;
-      if (sessions === null || sessions === undefined || session === undefined
-        || binding === null || binding === undefined
-        || session.runtimeGenerationId === undefined
-        || session.status === "ended") {
+      if (sessions === null || sessions === undefined || session === undefined || binding === null || binding === undefined || session.status === "ended") {
         throw new Error(`Task Role has no live managed Provider: ${task.id}/${role.name}.`);
-      }
-      const activation = currentProviderActivation(binding);
-      if (activation === null) {
-        throw new Error(`Provider Activation is not live: ${task.id}/${role.name}.`);
       }
       if (action === "takeover") {
         const activeTurn = tx.getActiveTurn(task.id, role.name);
@@ -2728,7 +2703,7 @@ function transferTaskRoleAuthority(
             expectedEpoch: binding.authority.epoch,
             expectedOwner: binding.authority.owner,
             owner: desiredOwner,
-            holderId: action === "takeover" ? `human:${randomUUID()}` : activation.activationId,
+            holderId: action === "takeover" ? `human:${randomUUID()}` : "controller",
             changedAt: now.toISOString()
           });
       const authority = updatedBinding.authority;
@@ -2749,7 +2724,6 @@ function transferTaskRoleAuthority(
         action,
         taskId: task.id,
         roleName: role.name,
-        runtimeGenerationId: session.runtimeGenerationId,
         nativeSessionId: session.nativeSessionId,
         authority: {
           epoch: authority.epoch,
@@ -4731,15 +4705,14 @@ function retireTurn(
   store: TaskWorkflowStore,
   options: TaskCommandOptions
 ): TaskCommandExecution {
-  const usage = "Task turn retire usage: yui task turn retire <task>/<turn> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>] [--launch-id <id>].";
+  const usage = "Task turn retire usage: yui task turn retire <task>/<turn> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>].";
   const parsed = parseTail(args, new Set([
     "--reason",
     "--expected-progress-at",
     "--progress-at",
     "--agent-id",
     "--adapter-id",
-    "--native-session-id",
-    "--launch-id"
+    "--native-session-id"
   ]), usage);
   exactPositionals(parsed.positionals, 1, usage);
   const reason = requiredOption(parsed.options, "--reason");
@@ -4780,14 +4753,10 @@ function retireTurn(
       const agentId = requiredOption(parsed.options, "--agent-id");
       const adapterId = requiredOption(parsed.options, "--adapter-id");
       const nativeSessionId = parsed.options.get("--native-session-id");
-      const runtimeGenerationId = parsed.options.get("--launch-id");
       const sessions = tx.getTaskRoleSessionSet(task.id, run.roleName);
       const session = sessions?.sessions[run.effective.agentId];
       if (session?.nativeSessionId !== undefined && nativeSessionId === undefined) {
         throw usageError("--native-session-id is required for this active Turn.", usage);
-      }
-      if (session?.nativeSessionId === undefined && runtimeGenerationId === undefined) {
-        throw usageError("--launch-id is required for an opaque active Turn.", usage);
       }
       const terminal = retireExactActiveTurn(tx, {
         taskId: task.id,
@@ -4796,7 +4765,6 @@ function retireTurn(
         agentId,
         adapterId,
         ...(nativeSessionId === undefined ? {} : { nativeSessionId }),
-        ...(runtimeGenerationId === undefined ? {} : { runtimeGenerationId }),
         expectedProgressAt,
         reason: `Turn retired: ${reason}`
       }, now);
@@ -4822,9 +4790,6 @@ function retireTurn(
       ...(parsed.options.get("--native-session-id") === undefined
         ? {}
         : { nativeSessionId: parsed.options.get("--native-session-id")! }),
-      ...(parsed.options.get("--launch-id") === undefined
-        ? {}
-        : { runtimeGenerationId: parsed.options.get("--launch-id")! }),
       ...(actor === "leader"
         ? leaderActionEventPayload(tx, task.id, options)
         : { retiredBy: actor })
@@ -7404,7 +7369,7 @@ function assertTaskExecutionEnabled(task: Task, action: string): void {
 function taskActor(
   store: Pick<
     TaskWorkflowStore,
-    "getRole" | "getActiveTurn" | "getJobCallerKeyHash"
+    "getRole" | "getActiveTurn" | "getTaskRoleSessionSet"
   >,
   options: TaskCommandOptions,
   taskId: string
@@ -7952,13 +7917,10 @@ function taskContinuationCommand(
     const reportEvent = report === undefined
       ? undefined
       : reportEvents.find((entry) => (
-        entry.continuationId === identity.continuationId
-        && entry.continuationGeneration === identity.generation
-        && entry.reportId === report.reportId
+        entry.continuationId === identity.continuationId && entry.reportId === report.reportId
       ));
     return Object.freeze({
       continuationId: identity.continuationId,
-      generation: identity.generation,
       driver: identity.providerNamespace,
       turnId: continuation.turnId,
       execution: continuation.execution,
@@ -8013,25 +7975,20 @@ function continuationReportEvents(
 ): readonly Readonly<{
   event: TaskEvent;
   continuationId: string;
-  continuationGeneration: number;
   reportId: string;
 }>[] {
   const result: {
     event: TaskEvent;
     continuationId: string;
-    continuationGeneration: number;
     reportId: string;
   }[] = [];
   for (const event of events) {
     const observation = runtimeObservationFromTaskEvent(event);
     if (observation !== null && observation.kind === "continuation.reported") {
       const continuationId = observation.fence.continuationId;
-      const continuationGeneration = observation.fence.continuationGeneration;
       const reportId = observation.payload?.reportId;
-      if (continuationId !== undefined
-        && continuationGeneration !== undefined
-        && reportId !== undefined) {
-        result.push({ event, continuationId, continuationGeneration, reportId });
+      if (continuationId !== undefined && reportId !== undefined) {
+        result.push({ event, continuationId, reportId });
       }
     }
   }

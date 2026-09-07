@@ -26,9 +26,23 @@
  */
 
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
-import { accessSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import {
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  resolve
+} from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runtimeError } from "../errors/cliError.js";
@@ -972,7 +986,7 @@ function assertActivatedControllerIdentity(
     || identity.args.length !== 1
     || identity.args[0] !== expectedEntrypoint) {
     throw new Error(
-      "Replacement Controller runtime generation identity does not match the activated global binary "
+      "Replacement Controller runtime identity does not match the activated global binary "
         + "runtime/entrypoint; refusing readiness."
     );
   }
@@ -1152,7 +1166,7 @@ function parseUpdateBlockers(value: unknown): readonly UpdateBlockerIdentity[] |
     if (!isRecord(item) || typeof item.reason !== "string" || item.reason.length === 0) {
       return undefined;
     }
-    const optional = ["taskId", "roleName", "turnId", "nativeSessionId", "runtimeGenerationId"] as const;
+    const optional = ["taskId", "roleName", "turnId", "nativeSessionId"] as const;
     if (optional.some((key) => item[key] !== undefined && typeof item[key] !== "string")) {
       return undefined;
     }
@@ -1163,7 +1177,6 @@ function parseUpdateBlockers(value: unknown): readonly UpdateBlockerIdentity[] |
       ...(typeof item.nativeSessionId === "string"
         ? { nativeSessionId: item.nativeSessionId }
         : {}),
-      ...(typeof item.runtimeGenerationId === "string" ? { runtimeGenerationId: item.runtimeGenerationId } : {}),
       reason: item.reason
     });
   }

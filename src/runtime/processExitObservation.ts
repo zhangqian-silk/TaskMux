@@ -10,13 +10,12 @@ export type RuntimeProcessExitObservation = Readonly<{
   taskId?: string;
   roleName: string;
   turnId?: string;
-  runtimeGenerationId: string;
   nativeSessionId?: string;
   processKind: "agent-host" | "provider-child";
   exitCode?: number;
   signal?: string;
   observedAt: string;
-  stopReceiptId?: string;
+  stopRequested?: boolean;
   lastProviderEventId?: string;
   diagnosticTailRef?: string;
 }>;
@@ -33,7 +32,6 @@ export function validateRuntimeProcessExitObservation(
   optionalIdentity(observation.taskId, "taskId");
   identity(observation.roleName, "roleName");
   optionalIdentity(observation.turnId, "turnId");
-  identity(observation.runtimeGenerationId, "runtimeGenerationId");
   optionalIdentity(observation.nativeSessionId, "nativeSessionId");
   if (observation.processKind !== "agent-host" && observation.processKind !== "provider-child") {
     throw new Error("Runtime process kind is invalid.");
@@ -49,7 +47,9 @@ export function validateRuntimeProcessExitObservation(
   if (!Number.isFinite(Date.parse(observation.observedAt))) {
     throw new Error("Runtime process observedAt is invalid.");
   }
-  optionalIdentity(observation.stopReceiptId, "stopReceiptId");
+  if (observation.stopRequested !== undefined && typeof observation.stopRequested !== "boolean") {
+    throw new Error("stopRequested must be boolean.");
+  }
   optionalIdentity(observation.lastProviderEventId, "lastProviderEventId");
   optionalIdentity(observation.diagnosticTailRef, "diagnosticTailRef");
   return Object.freeze({ ...observation });
@@ -62,9 +62,9 @@ export function classifyRuntimeProcessExit(
     turnTerminalObserved?: boolean;
     turnFailureObserved?: boolean;
   }>
-): "expected-per-turn-exit" | "provider-turn-failed" | "yui-requested-stop" | "host-abnormal" | "unknown" {
+): "expected-per-turn-exit" | "provider-turn-failed" | "stop-requested" | "host-abnormal" | "unknown" {
   validateRuntimeProcessExitObservation(observation);
-  if (observation.stopReceiptId !== undefined) return "yui-requested-stop";
+  if (observation.stopRequested === true) return "stop-requested";
   if (observation.processKind === "provider-child" && input.turnFailureObserved === true) {
     return "provider-turn-failed";
   }

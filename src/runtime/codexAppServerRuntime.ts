@@ -333,8 +333,7 @@ export class CodexAppServerRuntime implements
     providerNamespace: string;
     accountScope: string;
     conversationId: string;
-    activationId: string;
-    continuations: readonly Readonly<{ continuationId: string; generation: number }>[];
+    continuations: readonly Readonly<{ continuationId: string }>[];
   }>): Promise<ProviderContinuationQueryResult> {
     if (input.providerNamespace !== "openai/codex") {
       return { quality: "unavailable", continuations: [], detail: "provider mismatch" };
@@ -349,9 +348,7 @@ export class CodexAppServerRuntime implements
             input.providerNamespace,
             input.accountScope,
             input.conversationId,
-            input.activationId,
-            continuation.continuationId,
-            continuation.generation
+            continuation.continuationId
           ].join("\u0000"),
           ...state
         });
@@ -368,12 +365,12 @@ export class CodexAppServerRuntime implements
 
 }
 
-/** thread/closed means the loaded Activation ended; the durable thread remains resumable. */
+/** thread/closed unloads the client attachment; the durable thread remains resumable. */
 export function codexNotificationBoundary(input: Readonly<{
   method: string;
   params: JsonRpcObject;
 }>): Readonly<{
-  kind: "activation-ended" | "goal-updated" | "goal-cleared" | "turn-started" | "turn-completed" | "other";
+  kind: "attachment-closed" | "goal-updated" | "goal-cleared" | "turn-started" | "turn-completed" | "other";
   conversationId?: string;
   turnId?: string;
 }> {
@@ -381,7 +378,7 @@ export function codexNotificationBoundary(input: Readonly<{
     ?? optionalId(objectMember(input.params, "thread")?.id);
   const turnId = optionalId(input.params.turnId)
     ?? optionalId(objectMember(input.params, "turn")?.id);
-  if (input.method === "thread/closed") return { kind: "activation-ended", conversationId };
+  if (input.method === "thread/closed") return { kind: "attachment-closed", conversationId };
   if (input.method === "thread/goal/updated") return { kind: "goal-updated", conversationId, turnId };
   if (input.method === "thread/goal/cleared") return { kind: "goal-cleared", conversationId };
   if (input.method === "turn/started") return { kind: "turn-started", conversationId, turnId };
