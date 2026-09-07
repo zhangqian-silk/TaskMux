@@ -231,6 +231,18 @@ The tag-triggered `publish.yml` workflow is the only maintained release smoke.
 It reuses the exact commit that passed core CI and adds only artifact assembly,
 fresh installation, and provenance checks required to publish.
 
+That workflow authenticates through npm Trusted Publishing (OIDC), so the
+release identity lives in two places outside the tag: `repository`, `bugs`, and
+`homepage` are copied verbatim from the source `package.json` into the published
+manifest by `assemble-runtime-package.mjs`, and the package's npm Trusted
+Publisher entry names the GitHub owner, repository, workflow file, and
+environment. npm compares `repository.url` against the building repository
+case-sensitively before accepting provenance. Renaming or transferring the
+GitHub repository therefore has to update those URLs and the npm Trusted
+Publisher entry together with the rename; otherwise the next tag reaches
+`npm publish` and fails there, after the tag and the gated build already
+succeeded.
+
 ## Adapter security hardening
 
 The real adapter (`createReleaseWorkflowPorts`) applies additional safeguards

@@ -54,12 +54,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zhangqian-silk/Yui.git"
+    "url": "git+https://github.com/zhangqian-silk/yui.git"
   },
   "bugs": {
-    "url": "https://github.com/zhangqian-silk/Yui/issues"
+    "url": "https://github.com/zhangqian-silk/yui/issues"
   },
-  "homepage": "https://github.com/zhangqian-silk/Yui#readme",
+  "homepage": "https://github.com/zhangqian-silk/yui#readme",
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^25.9.3",
