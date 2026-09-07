@@ -110,7 +110,9 @@ yui task artifact show <task> <artifact-id>
 
 ## 3. 迁移与并行集成边界
 
-本分支追加中央 migration `project-resource-artifacts`：storage 3 → 4，
+本分支最初在 storage 3 上开发。同步远端 `c655cc6` 后，保留其
+`session-and-process-identity` migration 4，追加中央 migration
+`project-resource-artifacts`：storage 4 → 5（目标版本标记 0.15.8），
 最低支持仍为 1。Project payload 从 5 → 6，已有 Knowledge、路径、Git 配置、
 历史 Tasks/Turns/结果保留，新增资源引用为空、默认 Provider 映射为空。
 新表为空，不迁移或重写既有 Git 事实。普通读取严格要求当前 Project 格式，
