@@ -51,6 +51,13 @@ export class InstanceHost {
     return ref;
   }
 
+  /** Read-only availability for the rebuildable capability directory. This is
+   * not an acquisition or a grant; acquire still checks immediately before use. */
+  isAvailable(implementation: ImplementationRef): boolean {
+    const instance = this.#instances.get(implementationKey(implementation));
+    return !this.#closed && instance !== undefined && !instance.detached;
+  }
+
   acquire<T>(implementation: ImplementationRef): ImplementationHandle<T> {
     const instance = this.#instances.get(implementationKey(implementation));
     if (this.#closed || instance === undefined || instance.detached) {

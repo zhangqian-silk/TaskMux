@@ -167,6 +167,7 @@ import {
   type TaskCompletedBy,
   type Task,
   type TaskMetadata,
+  type TaskMetadataUpdate,
   type TaskProjectBinding,
   type TaskPriority
 } from "../task/task.js";
@@ -961,29 +962,42 @@ function updateTaskCommand(
   const tags = parsed.options.has("--tags")
     ? parseTaskTags(requiredOption(parsed.options, "--tags"))
     : undefined;
+  const result = updateTaskMetadataCommand(store, parsed.positionals[0], {
+    ...(parsed.options.has("--title") ? { title: requiredOption(parsed.options, "--title") } : {}),
+    ...(parsed.options.has("--type")
+      ? { type: requiredOption(parsed.options, "--type") }
+      : parsed.options.has("--clear-type") ? { type: null } : {}),
+    ...(parsed.options.has("--description")
+      ? { description: requiredOption(parsed.options, "--description") }
+      : parsed.options.has("--clear-description") ? { description: null } : {}),
+    ...(priority === undefined
+      ? parsed.options.has("--clear-priority") ? { priority: null } : {}
+      : { priority }),
+    ...(tags === undefined
+      ? parsed.options.has("--clear-tags") ? { tags: null } : {}
+      : { tags }),
+    ...(dueAt === undefined
+      ? parsed.options.has("--clear-due-at") ? { dueAt: null } : {}
+      : { dueAt })
+  }, options);
+  return `Updated task ${result.id}\n`;
+}
+
+/** Shared domain transaction for structured capabilities and the legacy CLI.
+ * Parsing text flags must not become an alternate business write path. */
+export function updateTaskMetadataCommand(
+  store: TaskWorkflowStore,
+  taskId: string,
+  patch: Pick<TaskMetadataUpdate, "title" | "type" | "description" | "priority" | "tags" | "dueAt">,
+  options: TaskCommandOptions = {}
+): Task {
+  if (Object.keys(patch).length === 0) throw usageError("At least one Task metadata field is required.");
   const now = clock(options);
   const result = store.transaction((tx) => {
-    const current = requireTask(tx, parsed.positionals[0]);
+    const current = requireTask(tx, taskId);
     if (current.status === "archived") throw usageError(`Task is archived: ${current.id}.`);
     taskActor(tx, options, current.id);
-    const updated = updateTaskMetadata(current, {
-      ...(parsed.options.has("--title") ? { title: requiredOption(parsed.options, "--title") } : {}),
-      ...(parsed.options.has("--type")
-        ? { type: requiredOption(parsed.options, "--type") }
-        : parsed.options.has("--clear-type") ? { type: null } : {}),
-      ...(parsed.options.has("--description")
-        ? { description: requiredOption(parsed.options, "--description") }
-        : parsed.options.has("--clear-description") ? { description: null } : {}),
-      ...(priority === undefined
-        ? parsed.options.has("--clear-priority") ? { priority: null } : {}
-        : { priority }),
-      ...(tags === undefined
-        ? parsed.options.has("--clear-tags") ? { tags: null } : {}
-        : { tags }),
-      ...(dueAt === undefined
-        ? parsed.options.has("--clear-due-at") ? { dueAt: null } : {}
-        : { dueAt })
-    }, now);
+    const updated = updateTaskMetadata(current, patch, now);
     tx.saveTask(updated);
     recordTaskEvent(tx, updated.id, "task.updated", {
       status: updated.status,
@@ -993,7 +1007,7 @@ function updateTaskCommand(
     return updated;
   });
   notifyMailbox(options.runtime, taskMailbox(result.id), result.id);
-  return `Updated task ${result.id}\n`;
+  return result;
 }
 
 export function submitOperatorMessage(

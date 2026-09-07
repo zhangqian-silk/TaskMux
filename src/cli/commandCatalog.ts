@@ -1073,7 +1073,7 @@ export const ROOT_COMMAND = buildNode({
     ] },
     { id: "workflow", title: "Workflow", entries: ["operator", "project", "task"] },
     { id: "configuration", title: "Configuration", entries: ["config"] },
-    { id: "operations", title: "Operations", entries: ["web", "controller", "session", "execution", "job", "jobs", "telemetry", "release"] },
+    { id: "operations", title: "Operations", entries: ["web", "controller", "session", "execution", "capability", "job", "jobs", "telemetry", "release"] },
     { id: "resources", title: "Resources", entries: ["resources"] },
     { id: "internal", title: "Internal", entries: ["internal"] }
   ],
@@ -1473,6 +1473,16 @@ export const ROOT_COMMAND = buildNode({
         { id: "knowledge", title: "Task Knowledge", entries: ["brief", "decision", "milestone", "event", "continuation", "wake"] }
       ],
       children: taskChildren
+    },
+    {
+      name: "capability",
+      summary: "Discover and call authorized capabilities through the Controller.",
+      sections: [{ id: "entry", title: "Commands", entries: ["search", "describe", "call"] }],
+      children: [
+        { name: "search", summary: "Search the current authorized directory.", usage: "yui capability search [query] --task <id>" },
+        { name: "describe", summary: "Describe one contract or report Provider ambiguity.", usage: "yui capability describe <name> --task <id> [--provider <id>] [--version <version>]" },
+        { name: "call", summary: "Invoke one implementation under the current managed identity.", usage: "yui capability call <name> --task <id> --input <json> [--provider <id>] [--version <version>] [--request-id <id>]" }
+      ]
     },
     {
       name: "job",
