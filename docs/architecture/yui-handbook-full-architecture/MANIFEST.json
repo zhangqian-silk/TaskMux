@@ -117,9 +117,14 @@
       "sha256": "fbefd578c7a5d3749d4fbad493dacb482b38ea9d1a96216f42966d4963f7332c"
     },
     {
+      "path": "implementation/designs/T05-evidence.md",
+      "bytes": 11182,
+      "sha256": "d3e50f2e7ecc46ee6c0f60dd3c541dd1a790a44056c87834edcaaa308d9f1e9d"
+    },
+    {
       "path": "implementation/designs/T05-project-resource.md",
-      "bytes": 3798,
-      "sha256": "5a2e21d5a088cac473d137f316259bb4ce2f83d85c490f74f8b48a791192c076"
+      "bytes": 3890,
+      "sha256": "a2732458af23de26fed7cc91492a2b6a2470ad36729b5f930066fee8ea7064d3"
     },
     {
       "path": "implementation/designs/T06-surface.md",
@@ -218,8 +223,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 464018,
-      "sha256": "6dd8450f05ae6f3598ca1fff708fbe5bd75870f08f06a6eb1e32d0e63ff91d96"
+      "bytes": 478166,
+      "sha256": "bdd979adc832350392535f2dd647efe08a8787ebfe073dbb0dca56594b7a2aaa"
     },
     {
       "path": "modules/01-kernel.md",

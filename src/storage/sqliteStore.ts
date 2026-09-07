@@ -38,6 +38,10 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import Database from "better-sqlite3";
+import {
+  validateArtifact, validateLocalResource, validateEnvironmentPreparation,
+  type Artifact, type LocalResource, type EnvironmentPreparation
+} from "../resources/projectResource.js";
 import type { ConfiguredAgent } from "../agent/agent.js";
 import type { TaskBrief } from "../brief/taskBrief.js";
 import type { MailboxTarget, WorkMailbox } from "../coordination/workMailbox.js";
@@ -67,7 +71,7 @@ import {
 import { sessionOwnerProcessKey, type SessionOwnerIdentity } from "../runtime/sessionOwnerIdentity.js";
 import type { ReviewConfig } from "../review/reviewConfig.js";
 import { validateReviewRound, type ReviewRound } from "../review/reviewRound.js";
-import type { Project, ProjectReferenceSummary } from "../repository/project.js";
+import { validateProject, type Project, type ProjectReferenceSummary } from "../repository/project.js";
 import {
   generateHomeIdentity,
   validateHomeIdentity,
@@ -802,9 +806,86 @@ export class SqliteTaskStore implements TaskStore {
 
   // -- projects ---------------------------------------------------------------
 
+  saveArtifact(artifact: Artifact): void {
+    validateArtifact(artifact);
+    this.#mutate(() => {
+      const previous = this.getArtifact(artifact.taskId, artifact.id);
+      if (previous !== null) {
+        if (!isDeepStrictEqual(previous, artifact)) throw new StorageRecordError("Artifacts are immutable.");
+        return;
+      }
+      this.#db.prepare("INSERT INTO artifacts (task_id, id, payload) VALUES (?, ?, ?)")
+        .run(artifact.taskId, artifact.id, this.#json(artifact));
+    });
+  }
+
+  getArtifact(taskId: string, artifactId: string): Artifact | null {
+    const artifact = this.#getPayload<Artifact>("artifacts", "task_id = ? AND id = ?", [taskId, artifactId]);
+    return artifact === null ? null : validateArtifact(artifact);
+  }
+
+  listArtifacts(taskId: string): Artifact[] {
+    return this.#listPayload<Artifact>("artifacts", "task_id = ?", [taskId]).map(validateArtifact);
+  }
+
+  saveLocalResource(resource: LocalResource): void {
+    validateLocalResource(resource);
+    this.#mutate(() => {
+      const previous = this.getLocalResource(resource.id);
+      if (previous !== null) {
+        if (!isDeepStrictEqual(previous, resource)) throw new StorageRecordError("Resource identity is immutable.");
+        return;
+      }
+      this.#db.prepare("INSERT INTO local_resources (id, canonical_identity, payload) VALUES (?, ?, ?)")
+        .run(resource.id, `${resource.device}:${resource.inode}`, this.#json(resource));
+    });
+  }
+
+  getLocalResource(resourceId: string): LocalResource | null {
+    const resource = this.#getPayload<LocalResource>("local_resources", "id = ?", [resourceId]);
+    return resource === null ? null : validateLocalResource(resource);
+  }
+
+  listLocalResources(): LocalResource[] {
+    return this.#listPayload<LocalResource>("local_resources", "1=1", []).map(validateLocalResource);
+  }
+
+  saveEnvironmentPreparation(preparation: EnvironmentPreparation): void {
+    validateEnvironmentPreparation(preparation);
+    this.#mutate(() => {
+      const previous = this.getEnvironmentPreparation(preparation.taskId, preparation.id);
+      if (previous) {
+        const { disposition: before, updatedAt: _beforeTime, releaseEvidence: _beforeEvidence, ...identity } = previous;
+        const { disposition: after, updatedAt: _afterTime, releaseEvidence: _afterEvidence, ...nextIdentity } = preparation;
+        if (!isDeepStrictEqual(identity, nextIdentity)
+          || (before === "released" && !isDeepStrictEqual(previous, preparation))
+          || (before === "adopted" && after === "prepared")) {
+          throw new StorageRecordError("Preparation ownership/identity cannot be rewritten.");
+        }
+      } else if (preparation.disposition !== "prepared") {
+        throw new StorageRecordError("Environment must be prepared before adoption.");
+      }
+      this.#db.prepare(`INSERT INTO environment_preparations (task_id, id, payload) VALUES (?, ?, ?)
+        ON CONFLICT(task_id, id) DO UPDATE SET payload = excluded.payload`)
+        .run(preparation.taskId, preparation.id, this.#json(preparation));
+    });
+  }
+
+  getEnvironmentPreparation(taskId: string, preparationId: string): EnvironmentPreparation | null {
+    const preparation = this.#getPayload<EnvironmentPreparation>("environment_preparations",
+      "task_id = ? AND id = ?", [taskId, preparationId]);
+    return preparation === null ? null : validateEnvironmentPreparation(preparation);
+  }
+
+  listEnvironmentPreparations(taskId: string): EnvironmentPreparation[] {
+    return this.#listPayload<EnvironmentPreparation>("environment_preparations", "task_id = ?", [taskId])
+      .map(validateEnvironmentPreparation);
+  }
+
   nextProjectId(): string { return this.#nextGlobalId("project"); }
 
   saveProject(project: Project): void {
+    validateProject(project);
     this.#mutate(() => {
       this.#db.prepare(
         `INSERT INTO projects (id, name, path, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -814,6 +895,7 @@ export class SqliteTaskStore implements TaskStore {
   }
 
   createProjectIfAbsent(project: Project): Project | null {
+    validateProject(project);
     return this.#mutate(() => {
       const result = this.#db.prepare(
         "INSERT OR IGNORE INTO projects (id, name, path, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
@@ -823,11 +905,12 @@ export class SqliteTaskStore implements TaskStore {
   }
 
   listProjects(): Project[] {
-    return this.#sortById(this.#listPayload<Project>("projects", "1=1", []), (project) => project.id);
+    return this.#sortById(this.#listPayload<Project>("projects", "1=1", []).map(validateProject), (project) => project.id);
   }
 
   getProject(id: string): Project | null {
-    return this.#getPayload<Project>("projects", "id = ?", [id]);
+    const project = this.#getPayload<Project>("projects", "id = ?", [id]);
+    return project === null ? null : validateProject(project);
   }
 
   removeProject(id: string): boolean {
