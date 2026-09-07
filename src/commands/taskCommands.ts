@@ -715,8 +715,11 @@ export function runTaskCommand(
         if (data === null) throw usageError("Artifact not found in this Task.");
       } else {
         taskActor(store, options, taskId);
+        let parsed: unknown;
+        try { parsed = JSON.parse(value); }
+        catch { throw usageError("Artifact input must be JSON."); }
         let input: ArtifactInput;
-        try { input = validateArtifactInput(JSON.parse(value)); }
+        try { input = validateArtifactInput(parsed); }
         catch (error) { throw usageError(`Artifact input is invalid: ${error instanceof Error ? error.message : String(error)}`); }
         data = createProjectResources(store).saveArtifact(taskId, input);
       }
