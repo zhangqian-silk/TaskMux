@@ -64,6 +64,9 @@ resume 保持原生 Conversation；Host ended 不是创建新 Conversation 的�
 不夺取旧执行。管理授权与旧结果采集不同，仍校验来源和工作区。
 unknown 保留占用与同一 attempt；busy 不抢占、不偷发。只释放本次确实拥有且
 已证明安全的附件，不停止共享 Provider 服务。
+Leader steer 的未结清 mailbox claim 不再次调用 Provider，重建 Host 也不能让
+同一输入重发。其错误复用 `runtime.agent-error`，以 attempt、诊断和处置事实
+幂等记录；已确认接受后的本地写入失败保留 accepted。
 新 Conversation 在启动规划和持久化替换两处校验旧承载已释放且输入已明确结清；
 不会把无 native ID 的 accepted/unknown 改成 rejected 来满足替换条件。
 
@@ -109,11 +112,28 @@ Task13 event-4725 是原 implementer 报告，不是最终 Review。保留 turn-
 - 临时 `node test/task13-hook-publisher-evidence.mjs`：20 断言通过；
   旧 managed Hook 不猜身份，全局 Hook 和工具权限保留，重建附件按原 Activation
   采集旧结果、错误来源拒绝，真实 publisher 区分报告缺失与 NUL 转换失败。
-- 临时 `node test/task13-error-evidence.mjs`：32 断言通过；Digest/GitHub token
+- 临时 `node test/task13-error-evidence.mjs`：46 断言通过；Digest/GitHub token
   脱敏、unknown steer 两次请求一次 Provider 调用、失败不串单、登记结清失败
   保留占用和 cause、UTF-8 大消息 raw 首尾及标记、公开 Controller 错误脱敏。
+  包括后续 Host status 的脱敏/字节上限、带转义引号的原因后缀保留及重复脱敏幂等。
+- 临时 `node --test test/task13-steer-audit-evidence.mjs`：4/4；
+  Leader unknown/rejected 的完整错误事实及 exact attempt 幂等、unknown 不重发、
+  transport 抛错保留 mailbox，已接受后本地写入失败仍记录 accepted。
 - 恢复子 Agent 另执行真实临时 SQLite＋Coordinator/Host port 证据：同 generation
   与 mismatch 不 cleanup、reservation 不被旧 Session 覆盖、resume 原会话、
   detach 保留 submitting/unknown/accepted、原 Activation 归属；不是完整 Provider 测试。
 
 这些临时脚本仅用于本次开发，handoff 前删除。最终精确提交和独立审查记录在交付说明补齐。
+
+## 独立审查过程
+
+2026-09-07，独立原生 Reviewer `final_independent_review` / Faraday 实际审查
+`80bae73b864c63dc3a5437f206fe06e4e6bf6c59` 相对完整 Task13 基线，
+结论为请求修改，并在隔离环境独立复跑四组专项检查：
+
+- R1/P1：首次失败响应脱敏，但后续 Host status 返回原始 detail，且正常响应绕过大小限制。
+- R2/P2：Leader 强制 steer 失败仅返回摘要，没有把完整 cause 与接受/登记事实写入现有错误事件。
+
+R1 修正快照产生及全部控制回复的统一边界。R2 复用原错误事实写入者，保留
+准确 attempt 和 mailbox；新增验证还检查已接受后本地写入失败不丢接受事实。
+复查结论以最终 Reviewer 原始结果为准，不把本段修正说明当成审查通过。

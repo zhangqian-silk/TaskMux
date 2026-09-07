@@ -178,6 +178,25 @@ export function providerDeliveryFailure(
   });
 }
 
+/** Forward facts owned by the failing operation without parsing its prose. */
+export function providerDeliveryFailureFacts(failure: ProviderDeliveryFailure | undefined): Readonly<
+  Pick<ProviderDeliveryFailure, "sessionDisposition" | "registrationDisposition"
+    | "errorName" | "causeName" | "expectedRuntimeGenerationId"
+    | "observedRuntimeGenerationId" | "attemptId" | "hostState">
+> {
+  if (failure === undefined) return {};
+  return {
+    ...(failure.sessionDisposition === undefined ? {} : { sessionDisposition: failure.sessionDisposition }),
+    ...(failure.registrationDisposition === undefined ? {} : { registrationDisposition: failure.registrationDisposition }),
+    ...(failure.errorName === undefined ? {} : { errorName: failure.errorName }),
+    ...(failure.causeName === undefined ? {} : { causeName: failure.causeName }),
+    ...(failure.hostState === undefined ? {} : { hostState: failure.hostState }),
+    ...(failure.expectedRuntimeGenerationId === undefined ? {} : { expectedRuntimeGenerationId: failure.expectedRuntimeGenerationId }),
+    ...(failure.observedRuntimeGenerationId === undefined ? {} : { observedRuntimeGenerationId: failure.observedRuntimeGenerationId }),
+    ...(failure.attemptId === undefined ? {} : { attemptId: failure.attemptId })
+  };
+}
+
 /**
  * Builds a delivery failure from a thrown error, keeping the structured cause.
  *
@@ -401,23 +420,8 @@ const PROVIDER_INPUT_KEYS = new Set([
 
 const SECRET_LABEL =
   "api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|passwd|cookie|authorization";
-/**
- * A quoted secret is redacted whole, including spaces. The unquoted form below
- * stops at whitespace, so without this case `password="hunter two three"` kept
- * everything after the first space in clear text.
- */
-const QUOTED_SECRET_PATTERN = new RegExp(
-  `(${SECRET_LABEL})(\\\\?["']?\\s*[=:]\\s*)(\\\\?["'])((?:[^"'\\\\]|\\\\.)*)(\\\\?["'])`,
-  "gi"
-);
-/**
- * An unquoted secret runs to the next delimiter or end of line, not to the
- * next space: stopping at whitespace left everything after the first space of
- * `password: hunter two three` in clear text. Over-redacting the rest of a
- * diagnostic line is the safe direction here.
- */
-const SECRET_ASSIGNMENT_PATTERN = new RegExp(
-  `(${SECRET_LABEL})(\\\\?["']?\\s*[=:]\\s*\\\\?["']?)([^,;"'\\\\\\n\\r]+)`,
+const SECRET_ASSIGNMENT_START = new RegExp(
+  `(${SECRET_LABEL})(\\\\*["']?\\s*[=:]\\s*)`,
   "gi"
 );
 /**
@@ -441,13 +445,56 @@ const BEARER_PATTERN = /\b(bearer\s+)[A-Za-z0-9._~+/-]{8,}=*/gi;
  * payloads are persisted and publicly readable through the Task event.
  */
 export function redactAgentErrorText(value: string): string {
-  return value
+  return redactSecretAssignments(value
     .replace(PROVIDER_KEY_PATTERN, "[REDACTED]")
     .replace(DIGEST_AUTH_PATTERN, "$1 [REDACTED]")
     .replace(AUTH_SCHEME_PATTERN, "$1$2$3[REDACTED]")
-    .replace(BEARER_PATTERN, "$1[REDACTED]")
-    .replace(QUOTED_SECRET_PATTERN, "$1$2$3[REDACTED]$5")
-    .replace(SECRET_ASSIGNMENT_PATTERN, "$1$2[REDACTED]");
+    .replace(BEARER_PATTERN, "$1[REDACTED]"));
+}
+
+/**
+ * A quoted diagnostic may itself be inside a JSON string. Its delimiter is
+ * then `\"`, not `"`, and a generic backslash escape regex can eat the closing
+ * delimiter and the rest of the cause. Match the opening escape depth, retain
+ * both delimiters, and replace only their secret value. This is also stable
+ * when already redacted raw crosses another error boundary.
+ */
+function redactSecretAssignments(value: string): string {
+  let cursor = 0;
+  let redacted = "";
+  for (const match of value.matchAll(SECRET_ASSIGNMENT_START)) {
+    if (match.index < cursor) continue;
+    const start = match.index + match[0].length;
+    if (value.startsWith("[REDACTED]", start)) continue;
+    const opening = /^(\\*)(["'])/u.exec(value.slice(start));
+    let end = start;
+    let replacement = "[REDACTED]";
+    if (opening !== null) {
+      const delimiter = opening[0];
+      const quote = opening[2]!;
+      const escapeDepth = opening[1]!.length;
+      let backslashes = 0;
+      end += delimiter.length;
+      for (; end < value.length; end += 1) {
+        const char = value[end];
+        if (char === "\\") {
+          backslashes += 1;
+          continue;
+        }
+        if (char === quote && backslashes % (2 * (escapeDepth + 1)) === escapeDepth) break;
+        backslashes = 0;
+      }
+      replacement = `${delimiter}[REDACTED]${end < value.length ? delimiter : ""}`;
+      if (end < value.length) end += 1;
+    } else {
+      // No explicit quote means spaces may be part of the credential.
+      while (end < value.length && !/[,;"'\\\n\r}\]]/u.test(value[end]!)) end += 1;
+    }
+    if (end === start) continue;
+    redacted += value.slice(cursor, start) + replacement;
+    cursor = end;
+  }
+  return redacted + value.slice(cursor);
 }
 
 /**

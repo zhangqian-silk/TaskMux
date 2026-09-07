@@ -456,6 +456,7 @@ export interface SchedulerStorePort {
      */
     errorName?: string;
     causeName?: string;
+    hostState?: string;
     expectedRuntimeGenerationId?: string;
     observedRuntimeGenerationId?: string;
     attemptId?: string;

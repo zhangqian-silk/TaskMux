@@ -15,7 +15,12 @@ import type {
   TmuxDeliveryPort
 } from "./ports.js";
 import { isSchedulerTaskWorkspaceReady } from "./ports.js";
-import { formatProviderDeliveryFailure } from "../runtime/agentError.js";
+import {
+  formatProviderDeliveryFailure,
+  providerDeliveryFailureFacts,
+  serializeAgentErrorRaw,
+  innermostCauseName
+} from "../runtime/agentError.js";
 
 export type LeaderWakeupProcessingResult = Readonly<{
   taskId: string;
@@ -189,6 +194,15 @@ async function forceLeaderSteer(
     }
   }
   const owner = `leader-steer:${active.id}`;
+  if (existing?.owner === owner) {
+    // A previous pass already claimed this input. If it could not settle the
+    // claim, delivery may have happened even when the Host has since restarted.
+    // Do not turn a mailbox read into an automatic Provider retry.
+    return {
+      taskId, turnId: active.id, status: "skipped", reason: "not-ready",
+      error: "The existing Leader steer attempt is unresolved; its mailbox claim and error evidence are preserved."
+    };
+  }
   const batchId = existing?.batchId
     ?? `leader-steer:${encodeURIComponent(taskId)}:${encodeURIComponent(active.id)}:${pending!.fromSequence}-${pending!.toSequence}`;
   const claim = store.claimWorkMailbox({ target, batchId, owner, now });
@@ -199,6 +213,11 @@ async function forceLeaderSteer(
   if (processing.batchId !== batchId || processing.owner !== owner) {
     return { taskId, turnId: active.id, status: "skipped", reason: "busy" };
   }
+  const receiptId = `turn-input:${taskId}/${active.id}/${batchId}`;
+  let inputMayBeAccepted = false;
+  let inputAccepted = false;
+  let deliveryReturned = false;
+  let runtimeGenerationId: string | undefined;
   try {
     const sessions = store.getTaskRoleSessionSet?.(taskId, roleName) ?? null;
     const session = sessions?.sessions[active.effective.agentId];
@@ -237,6 +256,8 @@ async function forceLeaderSteer(
       directive,
       deltaRefIds: []
     });
+    runtimeGenerationId = session.runtimeGenerationId;
+    inputMayBeAccepted = true;
     const outcome = await delivery.steerOnce({
       taskId,
       roleName,
@@ -250,11 +271,29 @@ async function forceLeaderSteer(
         owner: "controller",
         holderId: authority.holderId
       },
-      receiptId: `turn-input:${taskId}/${active.id}/${batchId}`,
+      receiptId,
       text: directive
     });
+    deliveryReturned = true;
+    inputAccepted = outcome.status === "sent" || outcome.status === "already-sent"
+      || outcome.failure?.inputDisposition === "accepted";
+    inputMayBeAccepted = outcome.status === "delivery-unknown" || inputAccepted;
     if (outcome.status !== "sent" && outcome.status !== "already-sent") {
-      if (outcome.status !== "delivery-unknown") store.releaseWorkMailbox(target, batchId);
+      if (!inputMayBeAccepted) store.releaseWorkMailbox(target, batchId);
+      const failure = outcome.failure;
+      if (failure !== undefined || outcome.status === "rejected" || outcome.status === "delivery-unknown") {
+        store.recordAgentError?.({
+          taskId, roleName, turnId: active.id,
+          source: "host",
+          phase: failure?.phase ?? "turn-submit",
+          message: failure === undefined ? `Leader steer ${outcome.status}.` : formatProviderDeliveryFailure(failure),
+          raw: failure?.raw ?? serializeAgentErrorRaw(failure ?? outcome.status),
+          inputDisposition: failure?.inputDisposition
+            ?? (outcome.status === "delivery-unknown" ? "unknown" : "not-accepted"),
+          ...providerDeliveryFailureFacts(failure),
+          attemptId: receiptId
+        }, now);
+      }
       return {
         taskId,
         turnId: active.id,
@@ -273,7 +312,21 @@ async function forceLeaderSteer(
       ? { taskId, turnId: active.id, status: "steered" }
       : { taskId, turnId: active.id, status: "skipped", reason: saved };
   } catch (error) {
-    store.releaseWorkMailbox(target, batchId);
+    // A transport exception (or failure after delivery) is not evidence that
+    // the input was unsubmitted. Preserve its exact mailbox attempt.
+    if (!inputMayBeAccepted) store.releaseWorkMailbox(target, batchId);
+    store.recordAgentError?.({
+      taskId, roleName, turnId: active.id,
+      source: inputMayBeAccepted && !deliveryReturned ? "host" : "yui",
+      phase: "turn-submit",
+      message: error instanceof Error ? error.message : String(error),
+      raw: serializeAgentErrorRaw(error),
+      inputDisposition: inputAccepted ? "accepted" : inputMayBeAccepted ? "unknown" : "not-accepted",
+      ...(error instanceof Error ? { errorName: error.name } : {}),
+      causeName: innermostCauseName(error),
+      expectedRuntimeGenerationId: runtimeGenerationId,
+      attemptId: receiptId
+    }, now);
     return {
       taskId,
       turnId: active.id,

@@ -7,11 +7,9 @@ import { RuntimeLifecycleBusyError } from "../runtime/lifecycleReservation.js";
 import { managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
 import {
   formatProviderDeliveryFailure,
+  providerDeliveryFailureFacts,
   innermostCauseName,
-  serializeAgentErrorRaw,
-  type AgentErrorRegistrationDisposition,
-  type AgentErrorSessionDisposition,
-  type ProviderDeliveryFailure
+  serializeAgentErrorRaw
 } from "../runtime/agentError.js";
 import { RuntimeLaunchFailure } from "../runtime/launchDiagnostics.js";
 import {
@@ -293,42 +291,6 @@ async function deliverActiveTurn(
       message
     );
   }
-}
-
-/**
- * Forwards the Host's structured facts to the durable record. Each is a fact
- * the Host observed and no layer above can re-derive: parsing them back out of
- * the formatted message would be guessing at the Host's own account.
- */
-function providerDeliveryFailureFacts(
-  failure: ProviderDeliveryFailure | undefined
-): Readonly<{
-  sessionDisposition?: AgentErrorSessionDisposition;
-  registrationDisposition?: AgentErrorRegistrationDisposition;
-  errorName?: string;
-  causeName?: string;
-  expectedRuntimeGenerationId?: string;
-  observedRuntimeGenerationId?: string;
-  attemptId?: string;
-}> {
-  if (failure === undefined) return {};
-  return {
-    ...(failure.sessionDisposition === undefined
-      ? {}
-      : { sessionDisposition: failure.sessionDisposition }),
-    ...(failure.registrationDisposition === undefined
-      ? {}
-      : { registrationDisposition: failure.registrationDisposition }),
-    ...(failure.errorName === undefined ? {} : { errorName: failure.errorName }),
-    ...(failure.causeName === undefined ? {} : { causeName: failure.causeName }),
-    ...(failure.expectedRuntimeGenerationId === undefined
-      ? {}
-      : { expectedRuntimeGenerationId: failure.expectedRuntimeGenerationId }),
-    ...(failure.observedRuntimeGenerationId === undefined
-      ? {}
-      : { observedRuntimeGenerationId: failure.observedRuntimeGenerationId }),
-    ...(failure.attemptId === undefined ? {} : { attemptId: failure.attemptId })
-  };
 }
 
 function failTurnDelivery(

@@ -1435,6 +1435,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
     sessionDisposition?: import("../runtime/agentError.js").AgentErrorSessionDisposition;
     errorName?: string;
     causeName?: string;
+    hostState?: string;
     expectedRuntimeGenerationId?: string;
     observedRuntimeGenerationId?: string;
     attemptId?: string;
@@ -1442,13 +1443,6 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       import("../runtime/agentError.js").AgentErrorRegistrationDisposition;
   }>, now: Date): string {
     return this.store.transaction((store) => {
-      const duplicate = [...store.listEvents(input.taskId)].reverse().find((event) => (
-        event.type === "runtime.agent-error"
-        && event.payload.turnId === input.turnId
-        && event.payload.phase === input.phase
-        && event.payload.raw === input.raw
-      ));
-      if (duplicate !== undefined) return duplicate.id;
       const run = store.getTurn(input.taskId, input.turnId);
       const sessionSet = store.getTaskRoleSessionSet(input.taskId, input.roleName);
       const sessionAgentId = run?.effective.agentId ?? sessionSet?.activeAgentId;
@@ -1474,12 +1468,35 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
           ? {}
           : { sessionDisposition: input.sessionDisposition })
       });
+      const duplicate = [...store.listEvents(input.taskId)].reverse().find((event) => (
+        event.type === "runtime.agent-error"
+        && event.payload.turnId === input.turnId
+        && event.payload.roleName === input.roleName
+        && event.payload.phase === input.phase
+        && event.payload.attemptId === input.attemptId
+        && event.payload.source === error.source
+        && event.payload.inputDisposition === error.inputDisposition
+        && event.payload.sessionDisposition === error.sessionDisposition
+        && event.payload.registrationDisposition === input.registrationDisposition
+        && event.payload.hostState === input.hostState
+        && event.payload.expectedRuntimeGenerationId === input.expectedRuntimeGenerationId
+        && event.payload.observedRuntimeGenerationId === input.observedRuntimeGenerationId
+        && (input.attemptId === undefined
+          ? event.payload.raw === error.raw
+          : event.payload.message === error.message
+            && event.payload.errorName === input.errorName
+            && event.payload.causeName === input.causeName)
+      ));
+      // Re-reading one failed attempt may add a different caller stack, not a
+      // new execution fact. Preserve its first full cause without multiplying
+      // notifications; changed disposition/identity/diagnostic remains visible.
+      if (duplicate !== undefined) return duplicate.id;
       const event = createTaskEvent(
         store.nextEventId(input.taskId),
         input.taskId,
         "runtime.agent-error",
         {
-          sourceEventId: `${input.turnId}:${input.phase}`,
+          sourceEventId: `${input.turnId}:${input.phase}${input.attemptId === undefined ? "" : `:${input.attemptId}`}`,
           turnId: input.turnId,
           roleName: input.roleName,
           agentId: run?.effective.agentId ?? session?.agentId ?? "unknown",
@@ -1504,6 +1521,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
             nativeSessionId: session?.nativeSessionId,
             errorName: input.errorName,
             causeName: input.causeName,
+            hostState: input.hostState,
             expectedRuntimeGenerationId: input.expectedRuntimeGenerationId,
             observedRuntimeGenerationId: input.observedRuntimeGenerationId,
             attemptId: input.attemptId,

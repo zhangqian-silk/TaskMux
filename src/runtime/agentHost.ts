@@ -1491,7 +1491,7 @@ export async function openAgentHostControl(
       void (async () => {
         try {
           const request = validateControl(JSON.parse(body.trim()) as AgentHostControl);
-          socket.end(`${JSON.stringify(await dispatch(request))}\n`);
+          socket.end(`${JSON.stringify(boundControlResponse(await dispatch(request)))}\n`);
         } catch (caught) {
           const error = caught instanceof AgentHostOperationError ? caught.cause : caught;
           const current = caught instanceof AgentHostOperationError ? caught.snapshot : snapshot();
@@ -1564,6 +1564,14 @@ export async function openAgentHostControl(
  * budget, retain its head and tail with an explicit truncation marker.
  */
 function boundControlResponse(result: AgentHostControlResult): AgentHostControlResult {
+  // Every public response, including status and successful controls, crosses
+  // the same redaction/size boundary. An earlier failed operation may remain
+  // visible through an otherwise successful status request.
+  result = controlResult(
+    result.outcome,
+    validateSnapshot(result.snapshot),
+    result.failure === undefined ? undefined : providerDeliveryFailure(result.failure)
+  );
   if (withinControlBound(result)) return result;
   const clip = (text: string, chars: number): string => {
     if (text.length <= chars) return text;
@@ -1722,7 +1730,13 @@ function validateSnapshot(snapshot: AgentHostSnapshot): AgentHostSnapshot {
       holderId: snapshot.authorityHolderId!
     });
   }
-  return Object.freeze({ ...snapshot });
+  // Store only the redacted diagnostic in the live snapshot. Sanitizing the
+  // immediate error response alone leaves status/launch acknowledgements able
+  // to expose the original exception on their normal success paths.
+  return Object.freeze({
+    ...snapshot,
+    ...(snapshot.detail === undefined ? {} : { detail: redactAgentErrorText(snapshot.detail) })
+  });
 }
 
 function hostSnapshot(
