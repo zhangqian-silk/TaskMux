@@ -133,7 +133,7 @@ export type RpcOptions = Readonly<{
  * else is routed to the writer connection.
  */
 const READ_ONLY_STORE_METHODS: ReadonlySet<string> = new Set([
-  "getArtifact", "listArtifacts", "getLocalResource", "listLocalResources",
+  "getPluginValidation", "getArtifact", "listArtifacts", "getLocalResource", "listLocalResources",
   "getEnvironmentPreparation", "listEnvironmentPreparations",
   "rootDirectory",
   "getConfig",

@@ -878,6 +878,19 @@ UPDATE task_records SET payload = json_remove(payload, '$.outcomeHistory'),
   brief = CASE WHEN brief IS NULL THEN NULL ELSE json_remove(brief, '$.revision') END;
 UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
 `
+  },
+  {
+    version: 9,
+    name: "plugin-validation-evidence",
+    introducedIn: "0.15.8",
+    sql: `
+CREATE TABLE plugin_validations (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
+`
   }
 ]);
 
@@ -1286,6 +1299,7 @@ export function migrateSqliteSchema(
 
 /** The names of every table the schema creates (for tests/introspection). */
 export const SQLITE_SCHEMA_TABLES: readonly string[] = [
+  "plugin_validations",
   "artifacts",
   "local_resources",
   "environment_preparations",

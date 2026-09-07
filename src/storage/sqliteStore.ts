@@ -38,6 +38,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import Database from "better-sqlite3";
+import { validatePluginValidation, type PluginValidation } from "../plugins/pluginPackage.js";
 import {
   validateArtifact, validateLocalResource, validateEnvironmentPreparation,
   type Artifact, type LocalResource, type EnvironmentPreparation
@@ -833,6 +834,24 @@ export class SqliteTaskStore implements TaskStore {
 
   listArtifacts(taskId: string): Artifact[] {
     return this.#listPayload<Artifact>("artifacts", "task_id = ?", [taskId]).map(validateArtifact);
+  }
+
+  savePluginValidation(validation: PluginValidation): void {
+    validatePluginValidation(validation);
+    this.#mutate(() => {
+      const previous = this.getPluginValidation(validation.taskId, validation.id);
+      if (previous !== null) {
+        if (!isDeepStrictEqual(previous, validation)) throw new StorageRecordError("Plugin validation is immutable.");
+        return;
+      }
+      this.#db.prepare("INSERT INTO plugin_validations (task_id, id, payload) VALUES (?, ?, ?)")
+        .run(validation.taskId, validation.id, this.#json(validation));
+    });
+  }
+
+  getPluginValidation(taskId: string, id: string): PluginValidation | null {
+    const value = this.#getPayload<PluginValidation>("plugin_validations", "task_id = ? AND id = ?", [taskId, id]);
+    return value === null ? null : validatePluginValidation(value);
   }
 
   saveLocalResource(resource: LocalResource): void {

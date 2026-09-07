@@ -21,6 +21,7 @@ import {
 import type { CapabilitySchema } from "./capabilitySchema.js";
 import { createProjectResources, type ArtifactInput, type EnvironmentPlan } from "../resources/projectResourceService.js";
 import { artifactSummary } from "../resources/projectResource.js";
+import { createPluginService } from "../plugins/pluginService.js";
 
 const text: CapabilitySchema = { type: "string", minLength: 1 };
 const strings: CapabilitySchema = { type: "object", additionalProperties: { type: "string" } };
@@ -183,12 +184,30 @@ const definitions: readonly Omit<CapabilityDescriptor, "contractVersion" | "prov
     }, ["taskId", "projectId", "head", "workspace", "owner", "env", "steps"]),
     outputSchema: { type: "object", required: ["job", "created", "operation"], properties: { created: { type: "boolean" } } }
   },
-  ...["create", "validate", "activate", "disable"].map((action) => ({
-    name: `plugin.${action}`, summary: "Plugin SDK management is not implemented.",
+  ...[
+    { action: "create", summary: "Create an independent data or trusted-local package in an adopted environment; executes no author code.",
+      inputSchema: object({ preparationId: text, id: text, kind: { enum: ["declarative", "trusted-local"] } }) },
+    { action: "validate", summary: "Validate captured package bytes in an explicit environment; author build/test code needs a separate execution grant.",
+      inputSchema: object({ preparationId: text, directory: text }) },
+    { action: "activate", summary: "Recheck validated bytes, current authority and dependencies; publish one complete Task-local provider.",
+      inputSchema: object({ validationId: text }) },
+    { action: "disable", summary: "Stop new plugin calls and drain the exact Host instance before disposal.",
+      inputSchema: object({ id: text }) }
+  ].map(({ action, summary, inputSchema }) => ({
+    name: `plugin.${action}`, summary, inputSchema,
     effect: "local-mutation" as const, requiredPermissions: ["plugin:manage"],
-    source: "T09 (not implemented)", inputSchema: object({}), outputSchema: object({}),
-    unavailable: "The executable plugin SDK is not implemented. Existing Agent Drivers and Project Skills retain their typed management interfaces."
-  }))
+    source: "PluginService", outputSchema: recordOutput
+  })),
+  {
+    name: "plugin.scan", summary: "Data-only package digest and manifest inspection; never executes author code.",
+    effect: "query", requiredPermissions: ["plugin:manage"], source: "PluginService.scan",
+    inputSchema: object({ preparationId: text, directory: text }), outputSchema: recordOutput
+  },
+  {
+    name: "plugin.validation", summary: "Read immutable validation evidence without starting the plugin.",
+    effect: "query", requiredPermissions: ["task:read"], source: "PluginService.inspect",
+    inputSchema: object({ validationId: text }), outputSchema: recordOutput
+  }
 ];
 export const BUILTIN_CAPABILITIES: readonly CapabilityDescriptor[] = definitions.map((entry) => ({
   ...entry, contractVersion: "1", provider, scope: { kind: "global" as const }
@@ -221,6 +240,13 @@ export function createBuiltinCapabilities(
         throw new Error("Capability target is outside the authenticated Task.");
       }
       const taskId = invocation.context.targetId;
+      if (name === "plugin.create") return plugins.create(taskId, params.preparationId as string,
+        params.id as string, params.kind as "declarative" | "trusted-local");
+      if (name === "plugin.scan") return plugins.scan(taskId, params.preparationId as string, params.directory as string);
+      if (name === "plugin.validate") return plugins.validate(invocation.context, params.preparationId as string, params.directory as string);
+      if (name === "plugin.validation") return plugins.inspect(taskId, params.validationId as string);
+      if (name === "plugin.activate") return plugins.activate(invocation.context, params.validationId as string);
+      if (name === "plugin.disable") return plugins.disable(taskId, params.id as string);
       if (name === "context.read") {
         const core = readTaskContext(store, taskId, callerEnvironment(caller));
         return withContextObservations(core, contextProviders);
@@ -241,8 +267,11 @@ export function createBuiltinCapabilities(
       if (name === "artifact.list") return store.listArtifacts(taskId).map(artifactSummary);
       if (name === "environment.prepare") return resources.prepare(taskId, params.plan as EnvironmentPlan);
       if (name === "environment.adopt") return resources.adopt(taskId, params.preparationId as string);
-      if (name === "environment.release") return resources.release(taskId, params.preparationId as string,
-        params.quiescence === undefined ? undefined : { quiescence: params.quiescence as string });
+      if (name === "environment.release") {
+        plugins.assertEnvironmentUnused(taskId, params.preparationId as string);
+        return resources.release(taskId, params.preparationId as string,
+          params.quiescence === undefined ? undefined : { quiescence: params.quiescence as string });
+      }
       if (name === "environment.list") return store.listEnvironmentPreparations(taskId);
       if (name === "resource.local.register") return resources.registerLocalDirectory(params.displayName as string, params.path as string);
       if (name === "resource.local.read") return resources.readLocalResource(taskId, params.resourceId as string);
@@ -303,6 +332,7 @@ export function createBuiltinCapabilities(
     }
     return { taskIds: [task.id], projectIds: task.projectBindings.map((binding) => binding.projectId) };
   }, BUILTIN_CAPABILITIES);
+  const plugins = createPluginService(store, host, registry);
   return {
     registry,
     authenticate(caller: DurableJobCaller, taskId: string): TrustedCallContext {

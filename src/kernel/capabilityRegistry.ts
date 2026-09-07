@@ -59,7 +59,7 @@ export type CapabilityImplementation = Readonly<{
 export type CapabilityVisibility = Readonly<{ taskIds: readonly string[]; projectIds: readonly string[] }>;
 type Authorize = (context: TrustedCallContext, descriptor?: CapabilityDescriptor, input?: unknown) => CapabilityVisibility;
 const effectRank = { query: 0, "local-mutation": 1, "external-operation": 2 };
-const reserved = new Set(["yui", "task", "config", "job", "resource", "plugin", "runtime", "grant", "capability", "artifact", "environment", "project"]);
+const reserved = new Set(["yui", "task", "context", "config", "job", "resource", "plugin", "runtime", "grant", "capability", "artifact", "environment", "project"]);
 
 /** One rebuildable descriptor view over the composition root's existing Host.
  * Only the trusted root owns this object. Extensions receive a bound invocation
@@ -82,6 +82,28 @@ export class CapabilityRegistry {
    * by the root: publish replacement, then detach old generation when appropriate. */
   register(descriptors: readonly CapabilityDescriptor[]): void {
     this.#publish(descriptors, false);
+  }
+
+  /** Data-only candidate check before author initialization; no acquisition or
+   * publication. Repeat immediately before publishing after any async work. */
+  checkRegistration(context: TrustedCallContext, descriptors: readonly CapabilityDescriptor[]): void {
+    const prepared = this.#prepare(descriptors, false);
+    if (!prepared.length) throw new Error("Plugin must contribute capabilities.");
+    const available = [
+      ...this.search(context).filter((entry) => entry.provider.id !== prepared[0].provider.id),
+      ...prepared
+    ];
+    const check = (entry: CapabilityDescriptor, path: ReadonlySet<CapabilityDescriptor>): void => {
+      this.authorize(context, entry);
+      if (path.has(entry)) throw new Error("Required capability dependency cycle.");
+      for (const dependency of entry.required ?? []) {
+        const matches = available.filter((candidate) => candidate.name === dependency.name
+          && candidate.contractVersion === dependency.contractVersion && candidate.unavailable === undefined);
+        if (matches.length !== 1) throw new Error(`Required capability is missing or ambiguous: ${dependency.name}.`);
+        check(matches[0], new Set([...path, entry]));
+      }
+    };
+    prepared.forEach((entry) => check(entry, new Set()));
   }
 
   disable(providerId: string): void {
@@ -127,7 +149,8 @@ export class CapabilityRegistry {
     return this.#call(context, request, "external-operation");
   }
 
-  async #call(context: TrustedCallContext, request: CapabilityCall, ceiling: CapabilityEffect): Promise<CapabilityResult> {
+  async #call(context: TrustedCallContext, request: CapabilityCall, ceiling: CapabilityEffect,
+    permissions?: readonly string[]): Promise<CapabilityResult> {
     // Freeze one input snapshot across validation/acquisition and async nesting.
     try { request = deepFreeze(structuredClone(request)); } catch {
       return result("invalid", "Capability request must be cloneable data.");
@@ -138,6 +161,9 @@ export class CapabilityRegistry {
     const origin = { provider: descriptor.provider, selection: resolved.selection };
     if (effectRank[descriptor.effect] > effectRank[ceiling]) {
       return { ...result("denied", "Nested call exceeds the parent's effect boundary."), ...origin };
+    }
+    if (permissions !== undefined && descriptor.requiredPermissions.some((permission) => !permissions.includes(permission))) {
+      return { ...result("denied", "Nested call exceeds the parent's declared permissions."), ...origin };
     }
     const inputError = capabilitySchemaError(descriptor.inputSchema, request.input);
     if (inputError) return { ...result("invalid", inputError), ...origin };
@@ -168,7 +194,7 @@ export class CapabilityRegistry {
             },
             call: (nested: CapabilityCall) => {
               if (!open) return Promise.resolve(result("denied", "Capability invocation has ended."));
-              const child = this.#call(context, nested, descriptor.effect).then((outcome) => {
+              const child = this.#call(context, nested, descriptor.effect, descriptor.requiredPermissions).then((outcome) => {
                 outcome.operations.forEach(observe);
                 effect = accumulatedEffect(effect, outcome.effect);
                 return outcome;
@@ -243,6 +269,23 @@ export class CapabilityRegistry {
 
   #publish(descriptors: readonly CapabilityDescriptor[], core: boolean): void {
     if (!descriptors.length) return;
+    const prepared = this.#prepare(descriptors, core);
+    const provider = prepared[0].provider;
+    // Validate acquisition before publishing; no implementation is invoked.
+    if (prepared.some((entry) => !entry.unavailable)) {
+      const handle = this.host.acquire<CapabilityImplementation>(provider);
+      try {
+        if (typeof handle.value?.invoke !== "function") throw new Error("Provider has no capability implementation.");
+      } finally { void handle.release(); }
+    }
+    this.#descriptors = [
+      ...this.#descriptors.filter((entry) => entry.provider.id !== provider.id),
+      ...prepared.map((entry) => deepFreeze(entry))
+    ];
+  }
+
+  #prepare(descriptors: readonly CapabilityDescriptor[], core: boolean): CapabilityDescriptor[] {
+    if (!descriptors.length) return [];
     const prepared = structuredClone(descriptors);
     const provider = prepared[0].provider;
     if (!core && this.#coreProviders.has(provider.id)) throw new Error("Core Provider identity is reserved.");
@@ -270,17 +313,7 @@ export class CapabilityRegistry {
         if (!dependency.name?.trim() || !dependency.contractVersion?.trim()) throw new Error("Invalid required capability.");
       }
     }
-    // Validate acquisition before publishing; no implementation is invoked.
-    if (prepared.some((entry) => !entry.unavailable)) {
-      const handle = this.host.acquire<CapabilityImplementation>(provider);
-      try {
-        if (typeof handle.value?.invoke !== "function") throw new Error("Provider has no capability implementation.");
-      } finally { void handle.release(); }
-    }
-    this.#descriptors = [
-      ...this.#descriptors.filter((entry) => entry.provider.id !== provider.id),
-      ...prepared.map((entry) => deepFreeze(entry))
-    ];
+    return [...prepared];
   }
 }
 

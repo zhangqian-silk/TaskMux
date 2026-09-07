@@ -77,6 +77,7 @@ import type { PendingWakeup } from "../scheduler/pendingWakeup.js";
 import type { TaskWake } from "../scheduler/taskWake.js";
 import type { Task } from "../task/task.js";
 import type { Artifact, LocalResource, EnvironmentPreparation } from "../resources/projectResource.js";
+import type { PluginValidation } from "../plugins/pluginPackage.js";
 import type { NextActionFacts } from "../task/nextAction.js";
 import type { CompletionReadinessFacts } from "../task/completionReadiness.js";
 import { validateTaskRecordReference } from "../task/taskRecordReference.js";
@@ -213,6 +214,8 @@ export const CURRENT_TASK_ROLE_SESSION_SET_SCHEMA_VERSION = 12 as const;
 export const CURRENT_TURN_SCHEMA_VERSION = 5 as const;
 export const CURRENT_INTEGRATION_QUEUE_SCHEMA_VERSION = 1 as const;
 export type TaskStore = {
+  savePluginValidation(validation: PluginValidation): void;
+  getPluginValidation(taskId: string, id: string): PluginValidation | null;
   saveArtifact(artifact: Artifact): void;
   getArtifact(taskId: string, artifactId: string): Artifact | null;
   listArtifacts(taskId: string): Artifact[];

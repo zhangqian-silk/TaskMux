@@ -29,6 +29,7 @@ const RUNTIME_DOCUMENTS = [
   "README.md",
   "ARCHITECTURE.md",
   "docs/task-local-identity.md",
+  "docs/plugin-sdk.md",
   "i18n/README.zh-CN.md",
   "LICENSE"
 ];
