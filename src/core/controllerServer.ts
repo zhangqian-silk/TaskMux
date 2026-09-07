@@ -1,8 +1,25 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile
+} from "node:fs/promises";
 import { readFileSync, realpathSync } from "node:fs";
-import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { basename, dirname, join, resolve } from "node:path";
+import {
+  createConnection,
+  createServer,
+  type Server,
+  type Socket
+} from "node:net";
+import {
+  basename,
+  dirname,
+  join,
+  resolve
+} from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -1110,10 +1127,9 @@ function safeDispatcherError(
         }
         return { code: "SERVICE_ERROR", message };
       }
-      case "RuntimeLaunchStateChangedError":
-        // The launch coordinator already stopped the exact host and bounded
-        // the detail to its currentness/reservation contract. Surface that
-        // actionable diagnosis instead of collapsing it to INTERNAL_ERROR.
+      case "RuntimeLaunchFailure":
+        // Launch errors already carry bounded diagnostics (including redacted
+        // provider output). Preserve them instead of collapsing to INTERNAL_ERROR.
         return { code: "SERVICE_ERROR", message };
       default:
         return undefined;

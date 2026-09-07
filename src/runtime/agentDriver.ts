@@ -168,7 +168,6 @@ export type AgentDriverMappedHook = Readonly<{
   payload: RuntimeObservationPayload;
   fence?: Readonly<{
     continuationId?: string;
-    continuationGeneration?: number;
     parentContinuationId?: string;
   }>;
 }>;
@@ -180,7 +179,6 @@ export type AgentDriverHookClassification = Readonly<{
   terminal?: boolean;
   /** Existing native child identity that can recover its original Turn fence. */
   continuationId?: string;
-  continuationGeneration?: number;
 }>;
 
 /**
@@ -543,7 +541,7 @@ export function normalizeAgentDriverHookClassification(
   input: AgentDriverHookClassification
 ): Required<Pick<AgentDriverHookClassification, "terminal">>
   & Pick<AgentDriverHookClassification,
-    "startupSession" | "continuationId" | "continuationGeneration"> {
+    "startupSession" | "continuationId"> {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("Agent Driver Hook classification must be an object.");
   }
@@ -557,18 +555,11 @@ export function normalizeAgentDriverHookClassification(
   }
   if (input.continuationId !== undefined) {
     requireText(input.continuationId, "Agent Driver Hook continuation id");
-    if (!Number.isSafeInteger(input.continuationGeneration)
-      || input.continuationGeneration! < 1) {
-      throw new Error("Agent Driver Hook continuation generation is invalid.");
-    }
-  } else if (input.continuationGeneration !== undefined) {
-    throw new Error("Agent Driver Hook continuation generation requires an id.");
   }
   return Object.freeze({
     ...(input.startupSession === undefined ? {} : { startupSession: input.startupSession }),
     ...(input.continuationId === undefined ? {} : {
       continuationId: input.continuationId,
-      continuationGeneration: input.continuationGeneration
     }),
     terminal: input.terminal ?? false
   });

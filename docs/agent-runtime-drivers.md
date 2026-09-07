@@ -23,7 +23,7 @@ core never invokes provider commands.
 
 Yui core owns shared semantics:
 
-- exact generation and Turn fences;
+- exact native Session and Turn fences;
 - durable admission, replay, and idempotency;
 - runtime state projection;
 - workflow progress and workflow-stall policy;
@@ -51,11 +51,9 @@ accepted observer source --> Controller sampler --> usage -+--> runtime-observat
                                                         runtime status projection
 ```
 
-Every Turn-scoped observation carries Task, Role, Turn, Agent, Driver, runtime
-generation, native Session, native Turn, and transport receipt identity.
-`runtimeGenerationId` identifies the exact reusable Agent Host activation
-boundary; it is not a Session or Turn id, and direct user Turns do not change
-it. `turn.accepted` durably binds the provider's native Turn to that exact Yui
+Every Turn-scoped observation carries Task, Role, Turn, Agent, Driver,
+native Session, native Turn, and transport receipt identity. Host attachment
+does not add another lifecycle identity. `turn.accepted` durably binds the provider's native Turn to that exact Yui
 Turn. Every later fact resolves through this binding, so a delayed terminal
 event cannot refresh, fail, or complete a successor Turn after a reused process
 has advanced.
@@ -136,10 +134,10 @@ Usage is a normalized, read-only Session projection:
 - `inputTokens` and `outputTokens` are totals;
 - cached input and reasoning tokens are breakdowns, not values to add again;
 - cumulative total consumption is `inputTokens + outputTokens` for one exact
-  Task/Role/native Session/runtime generation;
+  Task/Role/native Session;
 - maximum request input is the direct `request-context` input value, or the
   largest non-negative delta between consecutive `cumulative-session` input
-  snapshots in that same generation;
+  snapshots in that same Session;
 - every `request-context` snapshot carries a provider-stable `activityId`, so
   delivery replay replaces the same request while distinct requests remain
   independently countable;
@@ -161,7 +159,7 @@ Controller-owned sampler tails that source independently of Hooks, keeps an
 opaque per-source cursor, reads bounded increments, and emits each usage
 occurrence in source order with a stable occurrence identity. It never rescans
 a full transcript on the Hook path. Source and cursor continuity are scoped to
-the exact Runtime generation rather than one native Turn. After Controller
+the exact native Session rather than one native Turn. After Controller
 restart it restores the latest durable usage occurrence and activity identity
 before rereading a bounded tail, so replayed history remains idempotent and
 cannot become a fresh activity edge. A clipped initial tail marks its evidence
@@ -249,7 +247,7 @@ view. The Driver must:
 4. provide the full exact identity fence for every Turn-scoped fact;
 5. map every native failure to a standard Agent error code and preserve the
    complete native error, using `unknown` when no mapping is justified;
-6. prove stale-generation rejection, replay idempotency, out-of-order replay,
+6. prove wrong-Session rejection, replay idempotency, out-of-order replay,
    zero-token-delta behavior, operation/waiting projection, and terminal
    behavior with deterministic tests.
 

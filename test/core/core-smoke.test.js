@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -61,7 +60,6 @@ import {
 } from "../../dist/runtime/runtimeObservation.js";
 import { createSessionOwnerIdentity } from "../../dist/runtime/sessionOwnerIdentity.js";
 import {
-  RuntimeGenerationMismatchError,
   RuntimeLaunchError
 } from "../../dist/runtime/ports.js";
 import { RuntimeLaunchCoordinator } from "../../dist/controller/runtimeLaunchCoordinator.js";
@@ -77,7 +75,6 @@ import {
   acceptProviderTurn,
   beginProviderTurn,
   createProviderRuntimeBinding,
-  endProviderActivation,
   settleProviderTurn,
   updateProviderGoal
 } from "../../dist/runtime/providerRuntimeIdentity.js";
@@ -640,7 +637,6 @@ test("Global Codex Sessions use the shared daemon and retain a process-independe
     agentId: agent.id,
     adapterId: agent.adapterId,
     mode: "new",
-    runtimeGenerationId: "operator-launch-1"
   });
   assert.ok(planned.launch.args.includes("--remote"));
   assert.ok(planned.launch.args.includes("unix://"));
@@ -673,7 +669,6 @@ test("Managed Codex performs the App Server WebSocket handshake through its prox
   const attemptId = "fake-attempt-1";
   const started = await startStructuredProviderSession({
     schemaVersion: 1,
-    runtimeGenerationId: "fake-launch-1",
     command: process.execPath,
     args: [join(root, "test", "fixtures", "fake-codex-app-server-proxy.mjs")],
     environment: bareEnv,
@@ -719,7 +714,7 @@ test("Task execution can be fenced without changing semantic progress", () => {
   assert.equal(restarted.executionGate.state, "enabled");
 });
 
-test("SQLite projects an active native Session and its Host activation", (t) => {
+test("SQLite projects an active native Session", (t) => {
   const home = mkdtempSync(join(tmpdir(), "yui-active-session-smoke-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const store = new SqliteTaskStore(home);
@@ -746,7 +741,6 @@ test("SQLite projects an active native Session and its Host activation", (t) => 
     agentId: binding.agentId,
     adapterId: binding.adapterId,
     nativeSessionId: "native-session-1",
-    runtimeGenerationId: "launch-1",
     policy: "fixed",
     status: "active",
     effective: resolveEffectiveLaunch({ role: leader, purpose: "execution" })
@@ -758,85 +752,8 @@ test("SQLite projects an active native Session and its Host activation", (t) => 
     agentId: binding.agentId,
     adapterId: binding.adapterId,
     nativeSessionId: "native-session-1",
-    runtimeGenerationId: "launch-1",
     sessionUpdatedAt: now.toISOString(),
-    cleanupRequired: true
   }]);
-});
-
-test("a reused Host generation mismatch rejects without cleaning another activation", async () => {
-  const now = new Date("2026-09-03T09:00:00.000Z");
-  const binding = createRoleAgentBinding({ id: "codex", adapterId: "codex" });
-  const role = createGlobalRole(
-    "operator",
-    [binding],
-    binding.agentId,
-    "/tmp/yui-generation-mismatch",
-    now
-  );
-  const runtimeGenerationId = "runtime-existing";
-  let inspectCount = 0;
-  let settled = 0;
-  let cleanup = 0;
-  const coordinator = new RuntimeLaunchCoordinator({
-    reserveRuntimeLaunch: () => ({
-      status: "existing",
-      runtimeGenerationId
-    }),
-    confirmRuntimeLaunchReservation: () => "reserved",
-    recordReservedRuntimeNativeSession: () => {},
-    completeRuntimeLaunchReservation: () => true,
-    settleStoppedRuntimeLaunch: (input) => {
-      assert.equal(input.runtimeGenerationId, runtimeGenerationId);
-      settled += 1;
-      return true;
-    },
-    enqueueRuntimeCleanup: () => {
-      cleanup += 1;
-      return null;
-    }
-  }, {
-    start: async () => { throw new Error("unexpected new Session"); },
-    restore: async () => {
-      throw new RuntimeGenerationMismatchError(
-        runtimeGenerationId,
-        "runtime-other",
-        "ready",
-        "generation acknowledgement mismatch"
-      );
-    },
-    stop: async () => {},
-    inspect: async () => ({ state: "stopped" }),
-    inspectOwner: async () => {
-      inspectCount += 1;
-      return { state: inspectCount < 3 ? "running" : "stopped" };
-    },
-    stopOwner: async () => true
-  }, {
-    createGenerationId: () => "new",
-    now: () => now
-  });
-
-  await assert.rejects(
-    coordinator.prepare({
-      owner: { scope: "global", roleName: role.name },
-      agentId: binding.agentId,
-      adapterId: binding.adapterId,
-      effective: resolveEffectiveLaunch({ role, purpose: "execution" }),
-      workspace: role.workspace,
-      mode: "resume",
-      nativeSessionId: "native-session-1",
-      hostActivationId: runtimeGenerationId
-    }, "deferred"),
-    (error) => {
-      assert.ok(error instanceof RuntimeLaunchError);
-      assert.equal(error.retryable, false);
-      assert.equal(error.reason, "generation-mismatch");
-      return true;
-    }
-  );
-  assert.equal(settled, 0);
-  assert.equal(cleanup, 0);
 });
 
 test("native continuation results wake the supervisor only after the parent Turn is terminal", (t) => {
@@ -870,7 +787,6 @@ test("native continuation results wake the supervisor only after the parent Turn
     agentId: agent.agentId,
     adapterId: agent.adapterId,
     nativeSessionId: "thread-1",
-    runtimeGenerationId: "generation-1",
     policy: "fixed",
     status: "active",
     effective: turn.effective
@@ -882,14 +798,11 @@ test("native continuation results wake the supervisor only after the parent Turn
     turnId: turn.id,
     agentId: agent.agentId,
     driverId: "openai/codex",
-    runtimeGenerationId: "generation-1",
     nativeSessionId: "thread-1",
     nativeTurnId: "provider-turn-1",
     receiptId: `turn:${task.id}/${turn.id}`,
     conversationId: "thread-1",
-    activationId: "generation-1",
     continuationId: "child-1",
-    continuationGeneration: 1
   };
   const observation = (kind, payload, minute) => createRuntimeObservation({
     schemaVersion: 4,
@@ -981,7 +894,6 @@ test("runtime pre-start persists the empty Session binding before Provider disco
     role,
     turn: run,
     session: null,
-    runtimeGenerationId: "activation-1",
     now
   });
 
@@ -1278,7 +1190,6 @@ test("Yui and direct Turns share one Provider conversation", () => {
     providerNamespace: "openai/codex",
     accountScope: "default",
     conversationId: "thread-1",
-    activationId: "activation-1",
     startedAt: "2026-08-31T00:00:00.000Z"
   });
   binding = beginProviderTurn(binding, {
@@ -1305,7 +1216,7 @@ test("Yui and direct Turns share one Provider conversation", () => {
 
   assert.equal(binding.currentConversationEpoch, 1);
   assert.equal(binding.conversations[0].conversationId, "thread-1");
-  assert.equal(binding.activations.length, 1);
+  assert.equal(Object.hasOwn(binding, "activations"), false);
   assert.equal(binding.turn.turnId, "turn-1");
 });
 
@@ -1337,7 +1248,6 @@ test("a direct Provider Turn records visible input and output without workflow s
     agentId: agent.agentId,
     adapterId: agent.adapterId,
     nativeSessionId: "thread-1",
-    runtimeGenerationId: "activation-1",
     policy: "fixed",
     status: "active",
     effective
@@ -1346,7 +1256,6 @@ test("a direct Provider Turn records visible input and output without workflow s
     providerNamespace: "openai/codex",
     accountScope: agent.agentId,
     conversationId: "thread-1",
-    activationId: "activation-1",
     startedAt: startedAt.toISOString()
   });
   provider = updateProviderGoal(provider, {
@@ -1362,9 +1271,7 @@ test("a direct Provider Turn records visible input and output without workflow s
     roleName: role.name,
     agentId: agent.agentId,
     driverId: "openai/codex",
-    runtimeGenerationId: "activation-1",
     conversationId: "thread-1",
-    activationId: "activation-1",
     nativeSessionId: "thread-1"
   };
   const observation = (kind, ordinal, extra = {}) => ({
@@ -1384,7 +1291,6 @@ test("a direct Provider Turn records visible input and output without workflow s
   for (const event of [
     observation("session.ready", 2),
     observation("conversation.observed", 3, { payload: { recoverability: "recoverable" } }),
-    observation("activation.started", 4),
     observation("turn.accepted", 5, {
       fence: { nativeTurnId: "turn-ordinary-1", receiptId: "direct:turn-ordinary-1" },
       payload: { input: "Please inspect the current code." }
@@ -1403,7 +1309,6 @@ test("a direct Provider Turn records visible input and output without workflow s
     roleName: role.name,
     agentId: agent.agentId,
     adapterId: agent.adapterId,
-    runtimeGenerationId: "activation-1",
     nativeSessionId: "thread-1",
     nativeTurnId: "turn-ordinary-1",
     attemptId: "direct:turn-ordinary-1",
@@ -1439,7 +1344,6 @@ test("a direct Provider Turn records visible input and output without workflow s
     roleName: role.name,
     agentId: agent.agentId,
     adapterId: agent.adapterId,
-    runtimeGenerationId: "activation-1",
     nativeSessionId: "thread-1",
     nativeTurnId: "turn-goal-2",
     attemptId: "direct:turn-goal-2",
@@ -1609,7 +1513,6 @@ test("Leader wakeups aggregate for one minute and force-steer after ten", async 
     agentId: agent.agentId,
     adapterId: agent.adapterId,
     nativeSessionId: "thread-1",
-    runtimeGenerationId: "activation-1",
     policy: "fixed",
     status: "active",
     effective
@@ -1618,7 +1521,6 @@ test("Leader wakeups aggregate for one minute and force-steer after ten", async 
     providerNamespace: "openai/codex",
     accountScope: agent.agentId,
     conversationId: "thread-1",
-    activationId: "activation-1",
     startedAt: firstEventAt.toISOString()
   });
   provider = beginProviderTurn(provider, {
@@ -1816,7 +1718,6 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
     agentId: agent.agentId,
     adapterId: agent.adapterId,
     nativeSessionId: "thread-old",
-    runtimeGenerationId: "activation-old",
     policy: "fixed",
     status: "ended",
     endReason: "stopped",
@@ -1826,7 +1727,6 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
     providerNamespace: "openai/codex",
     accountScope: agent.agentId,
     conversationId: "thread-old",
-    activationId: "activation-old",
     startedAt: startedAt.toISOString()
   });
   provider = beginProviderTurn(provider, {
@@ -1847,11 +1747,6 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
     nativeTurnId: "native-turn-old",
     status: "completed",
     settledAt: new Date(startedAt.getTime() + 1_500).toISOString()
-  });
-  provider = endProviderActivation(provider, "activation-old", {
-    status: "ended",
-    endedAt: new Date(startedAt.getTime() + 2_000).toISOString(),
-    reason: "session-ended"
   });
   sessions = bindTaskRoleProviderRuntime(sessions, provider, startedAt);
   store.saveTaskRoleSessionSet(sessions);
@@ -1880,7 +1775,6 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
   let preparedCalls = 0;
   const prepared = {
     deliveryId: "delivery-1",
-    runtimeGenerationId: "activation-new",
     turnId: turn.id,
     taskId: task.id,
     roleName: role.name,
@@ -1892,7 +1786,6 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
       agentId: agent.agentId,
       adapterId: agent.adapterId,
       nativeSessionId: "thread-new",
-      runtimeGenerationId: "activation-new",
       status: "active",
       effective
     }
@@ -1903,7 +1796,6 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
       preparedCalls += 1;
       request.beforeHostStart({
         owner: { scope: "task", taskId: task.id, roleName: role.name },
-        runtimeGenerationId: "activation-new",
         turnId: turn.id,
         agentId: agent.agentId,
         adapterId: agent.adapterId,
@@ -1929,11 +1821,9 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
           turnId: turn.id,
           agentId: agent.agentId,
           driverId: "openai/codex",
-          runtimeGenerationId: "activation-new",
           nativeSessionId: "thread-new",
           receiptId: "turn:task-1/turn-1",
           conversationId: "thread-new",
-          activationId: "activation-new"
         },
         payload: {}
       }, nextAt), "applied");
@@ -2006,7 +1896,6 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
   }), null);
   const leaderPrepared = {
     deliveryId: "delivery-leader",
-    runtimeGenerationId: "activation-leader",
     turnId: leaderTurn.id,
     taskId: leaderTask.id,
     roleName: leader.name,
@@ -2018,7 +1907,6 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
       agentId: agent.agentId,
       adapterId: agent.adapterId,
       nativeSessionId: "thread-leader",
-      runtimeGenerationId: "activation-leader",
       status: "active",
       effective: leaderEffective
     }
@@ -2031,7 +1919,6 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
         leaderDeliveryCalls += 1;
         request.beforeHostStart({
           owner: { scope: "task", taskId: leaderTask.id, roleName: leader.name },
-          runtimeGenerationId: "activation-leader",
           turnId: leaderTurn.id,
           agentId: agent.agentId,
           adapterId: agent.adapterId,
@@ -2092,7 +1979,6 @@ test("Task completion leaves its reusable Provider Session running", async (t) =
     agentId: agent.agentId,
     adapterId: agent.adapterId,
     nativeSessionId: "session-1",
-    runtimeGenerationId: "activation-1",
     policy: "fixed",
     status: "active",
     effective
@@ -2165,7 +2051,6 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     agentId: agent.agentId,
     adapterId: agent.adapterId,
     nativeSessionId: "thread-1",
-    runtimeGenerationId: "activation-1",
     policy: "fixed",
     status: "active",
     effective: run.effective
@@ -2174,7 +2059,6 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     providerNamespace: "openai/codex",
     accountScope: agent.agentId,
     conversationId: "thread-1",
-    activationId: "activation-1",
     startedAt: startedAt.toISOString()
   });
   provider = beginProviderTurn(provider, {
@@ -2196,7 +2080,6 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     roleName: role.name,
     agentId: agent.agentId,
     adapterId: agent.adapterId,
-    runtimeGenerationId: "activation-1",
     nativeSessionId: "thread-1",
     nativeTurnId: "turn-1",
     attemptId: "run:task-1/turn-1",
@@ -2225,7 +2108,6 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     providerNamespace: "openai/codex",
     accountScope: agent.agentId,
     conversationId: "thread-1",
-    activationId: "activation-1",
     nativeTurnId: "turn-1",
     attemptId: "run:task-1/turn-1",
     status: "completed"
@@ -3525,7 +3407,6 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
     );
     store.saveActiveExecutionLaneTurn(turn);
 
-    const runtimeGenerationId = `activation-${ordinal}`;
     const nativeSessionId = `session-${ordinal}`;
     const nativeTurnId = `native-turn-${ordinal}`;
     const attemptId = `run:${task.id}/${turn.id}`;
@@ -3537,7 +3418,6 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
       agentId: agent.agentId,
       adapterId: agent.adapterId,
       nativeSessionId,
-      runtimeGenerationId,
       policy: "fixed",
       status: "active",
       effective
@@ -3546,7 +3426,6 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
       providerNamespace: "openai/codex",
       accountScope: agent.agentId,
       conversationId: nativeSessionId,
-      activationId: runtimeGenerationId,
       startedAt: startedAt.toISOString()
     });
     provider = beginProviderTurn(provider, {
@@ -3569,7 +3448,6 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
       roleName: role.name,
       agentId: agent.agentId,
       adapterId: agent.adapterId,
-      runtimeGenerationId,
       nativeSessionId,
       nativeTurnId,
       attemptId,
@@ -3658,7 +3536,7 @@ test("Controller begin-handover accepts a null fromReleaseId", async (t) => {
 
 test("production storage exposes one current version and one migration floor", () => {
   assert.equal(MIN_SUPPORTED_STORAGE_VERSION, 1);
-  assert.equal(CURRENT_STORAGE_VERSION, 3);
+  assert.equal(CURRENT_STORAGE_VERSION, 4);
   for (const retiredExport of [
     "FileTaskStore",
     "STORAGE_STATE_FILE",
@@ -3681,7 +3559,7 @@ test("a new current Home initializes its SQLite authority exactly once", (t) => 
   try {
     assert.deepEqual(
       database.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),
-      [{ version: 1 }, { version: 2 }, { version: 3 }]
+      [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]
     );
     assert.deepEqual(
       database.prepare("PRAGMA table_info(schema_migrations)").all().map(({ name }) => name),
@@ -4035,7 +3913,6 @@ test("fresh SQLite telemetry persists and aggregates by Turn", async (t) => {
     taskId: "task-1",
     roleName: "worker",
     turnId: "turn-1",
-    generation: "activation-1",
     progressId: "progress-1",
     sequence: 1,
     payload: { kind: "activity" },
@@ -4045,7 +3922,6 @@ test("fresh SQLite telemetry persists and aggregates by Turn", async (t) => {
     taskId: "task-1",
     roleName: "worker",
     turnId: "turn-1",
-    generation: "activation-1",
     progressId: "progress-2",
     sequence: 2,
     payload: { kind: "activity" },
@@ -4072,7 +3948,7 @@ test("the built-in Agent Drivers are available through the shared registry", () 
       occurrenceId: "hook-1"
     });
     const observations = Array.isArray(mapped) ? mapped : [mapped];
-    assert.deepEqual(observations.map(({ kind }) => kind), ["activation.ended"]);
+    assert.deepEqual(observations, []);
 
     const completed = drivers.requireByAdapterId(adapterId).runtime.mapHook({
       hookEventName: "Stop",
@@ -4250,7 +4126,6 @@ test("Claude global Stop hooks publish the native completion boundary", async (t
     YUI_ADAPTER_ID: "claude",
     YUI_ROLE: "operator",
     YUI_AGENT_ID: "claude",
-    YUI_RUNTIME_GENERATION_ID: "launch-1",
     YUI_NATIVE_SESSION_ID: "claude-session-1"
   }, async (_home, _method, params) => {
     signal = params;
@@ -4275,7 +4150,6 @@ test("native terminal ingress preserves valid output and durably fails missing o
     roleName: "worker",
     agentId: "codex",
     adapterId: "codex",
-    runtimeGenerationId: "generation-1",
     nativeSessionId: "session-1",
     providerStatus: "completed"
   };
@@ -4354,13 +4228,19 @@ test("managed Session authority follows durable state, not a frozen environment"
   const binding = createRoleAgentBinding({ id: "codex", adapterId: "codex" });
   const role = createRole(task.id, "leader", [binding], binding.agentId, workspace, now);
   store.saveRole(task.id, role);
-  const callerKey = "a".repeat(64);
-  store.setJobCallerKeyHash(
-    task.id,
-    role.name,
+  const sessions = recordRoleAgentSession(createRoleSessionSet(
+    { scope: "task", taskId: task.id, roleName: role.name },
     binding.agentId,
-    createHash("sha256").update(callerKey).digest("hex")
-  );
+    now
+  ), {
+    agentId: binding.agentId,
+    adapterId: binding.adapterId,
+    nativeSessionId: "native-session-1",
+    policy: "fixed",
+    status: "active",
+    effective: resolveEffectiveLaunch({ role, purpose: "execution" })
+  }, now);
+  store.saveTaskRoleSessionSet(sessions);
 
   // A native pane's environment is frozen at launch. It names only the
   // process's own immutable identity: no Turn, no runtime generation, and no
@@ -4371,7 +4251,7 @@ test("managed Session authority follows durable state, not a frozen environment"
     YUI_TASK_ID: task.id,
     YUI_ROLE: role.name,
     YUI_WORKSPACE: workspace,
-    YUI_JOB_CALLER_KEY: callerKey
+    CODEX_THREAD_ID: "native-session-1"
   };
 
   const betweenTurns = resolveManagedTaskCaller(store, environment);
@@ -4394,20 +4274,14 @@ test("managed Session authority follows durable state, not a frozen environment"
   assert.equal(resolveManagedTaskCaller(store, environment).currentTurnId, "turn-7");
   assert.equal(taskLeaderActionTurnId(store, task.id, environment), "turn-7");
 
-  // Replacing the native Session rotates the durable caller key. The
-  // superseded process loses authority with a bounded diagnosis instead of
-  // silently acting as the current runtime.
-  store.setJobCallerKeyHash(
-    task.id,
-    role.name,
-    binding.agentId,
-    createHash("sha256").update("b".repeat(64)).digest("hex")
-  );
+  // A caller naming another Session cannot act as this Role.
   assert.throws(
-    () => resolveManagedTaskCaller(store, environment),
+    () => resolveManagedTaskCaller(store, { ...environment, CODEX_THREAD_ID: "other-session" }),
     /no longer the current runtime of task-1\/leader/u
   );
-  assert.equal(taskLeaderActionTurnId(store, task.id, environment), undefined);
+  assert.equal(taskLeaderActionTurnId(store, task.id, {
+    ...environment, CODEX_THREAD_ID: "other-session"
+  }), undefined);
 });
 
 test("a Turn Context Pack reports which of the Task's records are in flight", (t) => {

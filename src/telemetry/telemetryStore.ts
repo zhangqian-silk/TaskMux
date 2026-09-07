@@ -2,14 +2,13 @@ import type { TelemetryMode } from "./telemetryConfig.js";
 
 /**
  * One high-volume Agent Driver observation routed to the telemetry sidecar.
- * `generation` is the launch/runtime generation the progress belongs to;
- * `sequence` is the provider's monotonic per-turn counter when known.
+ * Progress belongs to a Task/Role/Turn. `sequence` is the provider counter
+ * when known, not an identity for a Host attachment.
  */
 export type TelemetryProgressEntry = Readonly<{
   taskId: string;
   roleName: string;
   turnId: string;
-  generation: string;
   progressId: string;
   sequence?: number;
   payload: Readonly<Record<string, string>>;
@@ -25,7 +24,6 @@ export type TelemetryAggregate = Readonly<{
   taskId: string;
   roleName: string;
   turnId: string;
-  generation: string;
   firstAt: string;
   lastAt: string;
   count: number;
@@ -77,16 +75,15 @@ export interface TelemetryReader {
     turnId?: string,
     page?: Readonly<{ limit: number; offset: number }>
   ): TelemetryPage<TelemetryProgressEntry>;
-  /** Merged summary across all generations of one Turn, or null when unknown. */
+  /** Summary of one Turn, or null when unknown. */
   aggregate(taskId: string, turnId: string): TelemetryAggregate | null;
-  /** Exact summary for one Turn/generation, or null when unknown. */
-  aggregateGeneration(
+  /** Exact summary for one Role/Turn, or null when unknown. */
+  aggregateRoleTurn(
     taskId: string,
     roleName: string,
-    turnId: string,
-    generation: string
+    turnId: string
   ): TelemetryAggregate | null;
-  /** All per-generation aggregates for one Task (retention/status reads). */
+  /** All per-Turn aggregates for one Task (retention/status reads). */
   listTurnAggregates(taskId: string): TelemetryAggregate[];
   /**
    * Monotonic counter of applied writes. Consumers that cache projections
@@ -99,14 +96,13 @@ export interface TelemetryReader {
 export interface TelemetryStore extends TelemetrySink, TelemetryReader {
   /**
    * Terminal retention: keep the newest `keep` rows per
-   * (task, role, Turn, generation) and delete older ones. The aggregate is
+   * (task, role, Turn) and delete older ones. The aggregate is
    * preserved. Returns the number of rows deleted.
    */
-  pruneGeneration(
+  pruneTurn(
     taskId: string,
     roleName: string,
     turnId: string,
-    generation: string,
     keep?: number
   ): number;
   /**
@@ -115,11 +111,11 @@ export interface TelemetryStore extends TelemetrySink, TelemetryReader {
    */
   capTurn(taskId: string, turnId: string, cap?: number): number;
   /**
-   * Bulk-import one generation's retained window and authoritative aggregate
+   * Bulk-import one Turn's retained window and authoritative aggregate
    * (historical compaction). Synchronous and transactional; bypasses the
    * coalescing ingress queue because the caller already validated the data.
    */
-  importGeneration(
+  importTurn(
     entries: readonly TelemetryProgressEntry[],
     aggregate: TelemetryAggregate
   ): void;

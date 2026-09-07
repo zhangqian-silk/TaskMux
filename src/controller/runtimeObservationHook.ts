@@ -58,7 +58,7 @@ export type RuntimeObservationHookDependencies = Readonly<{
 /**
  * Single hidden ingress for every structured CLI Driver Hook. Native event
  * names and payload shapes terminate here; the durable inbox contains only a
- * provider-independent RuntimeObservation with an exact generation/Turn fence.
+ * provider-independent RuntimeObservation with an exact Session/Turn fence.
  */
 export async function runRuntimeObservationHookCommand(
   stdinJson: string | undefined,
@@ -126,7 +126,6 @@ async function runGlobalRuntimeTurnHook(
     roleName,
     agentId: requireIdentity(environment.YUI_AGENT_ID, "Agent id"),
     adapterId: "claude",
-    runtimeGenerationId: requireIdentity(environment.YUI_RUNTIME_GENERATION_ID, "Runtime generation id"),
     nativeSessionId,
     nativeTurnId: optionalIdentity(driver.runtime.nativeTurnId(nativeHook)) ?? occurrenceId,
     ...(environment.YUI_SESSION_TITLE === undefined
@@ -208,7 +207,6 @@ export function parseRuntimeObservationHook(
       terminal: classification.terminal,
       ...(classification.continuationId === undefined ? {} : {
         continuationId: classification.continuationId,
-        continuationGeneration: classification.continuationGeneration ?? 1
       }),
       ...(nativeTurnId === undefined ? {} : { nativeTurnId })
     }
@@ -231,9 +229,7 @@ export function parseRuntimeObservationHook(
       turnId: fence.turnId,
       agentId: fence.agentId,
       driverId,
-      runtimeGenerationId: fence.runtimeGenerationId,
       conversationId: fence.nativeSessionId,
-      activationId: fence.runtimeGenerationId,
       nativeSessionId: fence.nativeSessionId,
       ...(nativeTurnId === undefined ? {} : { nativeTurnId }),
       receiptId: fence.receiptId ?? formatTurnReceiptId(fence.taskId, fence.turnId)

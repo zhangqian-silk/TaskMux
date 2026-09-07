@@ -16,7 +16,7 @@ export type RoleRuntimeGuardStore = Readonly<{
 }>;
 
 /**
- * Runtime launch reservation and cleanup are ownership obligations for a Role
+ * Explicit runtime cleanup is an ownership obligation for a Role
  * identity. Mutating or recreating that identity while either obligation is
  * queued can make the controller act on a different launch configuration.
  */
@@ -57,10 +57,9 @@ export function assertLiveRoleSessionAcknowledged(input: Readonly<{
       ? `Role ${input.roleName} has a live native Session that cannot continue after this `
         + "change; its next Turn will need a new Session."
       : `Role ${input.roleName} has a live native Session, so this change applies to its `
-        + "next Host activation instead of the running one.",
+        + "next Host process instead of the running one.",
     `  Agent: ${session.agentId} (${session.adapterId})`,
     `  Native Session: ${session.nativeSessionId}`,
-    `  Host activation: ${session.runtimeGenerationId ?? "not recorded"}`,
     `  Session launched from desired revision r${session.effective.sourceDesiredRevision}; `
       + `current desired revision r${input.desiredRevision}`,
     `Re-run with ${LIVE_SESSION_ACKNOWLEDGEMENT_OPTION} to record the change and keep the Session.`,

@@ -19,8 +19,7 @@ import type { ExecutionLaneGitSnapshot } from "../repository/executionLaneGitSna
 import {
   boundedTurnFailureDiagnostic,
   MAX_TURN_FAILURE_DIAGNOSTIC_BYTES,
-  MAX_TURN_RESULT_OUTPUT_BYTES,
-  transportAgentResult
+  MAX_TURN_RESULT_OUTPUT_BYTES
 } from "../domain/agentResultTransport.js";
 export {
   boundedTurnFailureDiagnostic,
@@ -47,7 +46,6 @@ export type TurnProviderResult = Readonly<{
   providerNamespace: string;
   accountScope: string;
   conversationId: string;
-  activationId: string;
   nativeTurnId?: string;
   /** Exact local input identity; never masquerades as a Provider Turn id. */
   attemptId?: string;
@@ -519,7 +517,6 @@ function validateTurnProviderResult(
   requireText(provider.providerNamespace, "Provider namespace");
   requireText(provider.accountScope, "Provider account scope");
   requireText(provider.conversationId, "Provider Conversation id");
-  requireText(provider.activationId, "Provider Activation id");
   if (provider.nativeTurnId !== undefined) requireText(provider.nativeTurnId, "Provider native Turn id");
   if (provider.attemptId !== undefined) requireText(provider.attemptId, "Provider attempt id");
   if (provider.nativeTurnId === undefined && provider.attemptId === undefined) {

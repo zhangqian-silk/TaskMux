@@ -7,7 +7,6 @@ import {
 
 export type RuntimeBinding = Readonly<{
   id: string;
-  runtimeGenerationId: string;
   owner: RuntimeOwner;
   agentId: string;
   adapterId: string;
@@ -26,7 +25,6 @@ export function createRuntimeBinding(input: RuntimeBinding): RuntimeBinding {
     : requireBoolean(input.hostCreated, "Runtime host-created flag");
   return {
     id: requireSafeIdentity(input.id, "Runtime binding id"),
-    runtimeGenerationId: requireSafeIdentity(input.runtimeGenerationId, "Runtime generation id"),
     owner: normalizeRuntimeOwner(input.owner),
     agentId: requireSafeIdentity(input.agentId, "Agent id"),
     adapterId: requireSafeIdentity(input.adapterId, "Agent adapter id"),

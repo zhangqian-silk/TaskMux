@@ -4,9 +4,7 @@ import { join } from "node:path";
 import { createTaskEvent } from "../event/taskEvent.js";
 import {
   createSessionOwnerIdentity,
-  discoverProviderRootByLaunchEnv,
   isLinuxProcessLive,
-  listLaunchFencedProcesses,
   listOwnedProcessTree,
   readLinuxProcessIdentity,
   reconcileSessionOwners,
@@ -19,11 +17,7 @@ import {
   type SessionTerminationPorts,
   type SessionTerminationResult
 } from "../runtime/index.js";
-import {
-  removeRuntimeStopReceipt,
-  writeRuntimeStopReceipt
-} from "../runtime/runtimeStopReceipt.js";
-import type { SessionOwnerIdentity } from "../runtime/sessionOwnerIdentity.js";
+import { sessionOwnerProcessKey, type SessionOwnerIdentity } from "../runtime/sessionOwnerIdentity.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import { tmuxSocketDirectory } from "../tmux/tmuxSocketEndpoint.js";
 import {
@@ -70,30 +64,26 @@ export class SessionOwnerReconciliation {
   }
 
   /**
-   * Persists the exact physical owner identity after a host created a new
-   * Provider process. The Provider root is attributed by the exact
-   * YUI_RUNTIME_GENERATION_ID environment fence; the tmux pane PID is only a weaker
-   * fallback when the fence cannot be read.
+   * Capture the created pane's concrete process identity. No inherited
+   * environment marker is used to discover or claim other applications.
    */
   recordHostOwner(input: Readonly<{
     owner: RuntimeOwner;
     agentId: string;
     adapterId: string;
-    runtimeGenerationId: string;
     nativeSessionId?: string;
     panePid?: number;
     runtimeRoot?: string;
   }>): void {
-    const discovered = discoverProviderRootByLaunchEnv(input.runtimeGenerationId);
-    const fallback = discovered === undefined && input.panePid !== undefined
+    const observed = input.panePid !== undefined
       ? readLinuxProcessIdentity(input.panePid)
       : undefined;
-    const root = discovered ?? (fallback === undefined
+    const root = observed === undefined
       ? undefined
-      : { pid: fallback.pid, identity: fallback });
+      : { pid: observed.pid, identity: observed };
     if (root === undefined) {
       this.#onWarning(
-        `Session owner identity could not attribute a Provider root for launch ${input.runtimeGenerationId}; `
+        `Session owner identity could not read the Host process for ${input.owner.roleName}; `
           + "no owner record was written."
       );
       return;
@@ -108,7 +98,6 @@ export class SessionOwnerReconciliation {
       },
       agentId: input.agentId,
       adapterId: input.adapterId,
-      runtimeGenerationId: input.runtimeGenerationId,
       ...(input.nativeSessionId === undefined
         ? {}
         : { nativeSessionId: input.nativeSessionId }),
@@ -133,7 +122,7 @@ export class SessionOwnerReconciliation {
         ...(root.identity.processSessionId === undefined
           ? {}
           : { processSessionId: root.identity.processSessionId }),
-        attribution: discovered === undefined ? "pane-pid" : "launch-env"
+        attribution: "pane-pid"
       },
       ...(input.runtimeRoot === undefined ? {} : { runtimeRoot: input.runtimeRoot }),
       recordedAt: new Date()
@@ -156,8 +145,8 @@ export class SessionOwnerReconciliation {
           return undefined;
         }
       },
-      lastStopOutcome: (taskId, roleName, runtimeGenerationId) => (
-        lastSessionTerminationOutcome(this.#store, taskId, roleName, runtimeGenerationId)
+      lastStopOutcome: (taskId, roleName) => (
+        lastSessionTerminationOutcome(this.#store, taskId, roleName)
       ),
       now: new Date()
     });
@@ -191,15 +180,7 @@ export class SessionOwnerReconciliation {
           return false;
         }
       },
-      listLaunchFencedProcesses: (runtimeGenerationId) => listLaunchFencedProcesses(runtimeGenerationId),
       signalProcess: (pid, signal) => process.kill(pid, signal),
-      signalProcessGroup: (processGroupId, signal) => {
-        try {
-          process.kill(-processGroupId, signal);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
-      },
       sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
       emit: (event) => this.#recordTerminationEvent(event),
       now: () => new Date()
@@ -207,8 +188,7 @@ export class SessionOwnerReconciliation {
     const result = await terminateSessionOwners(owner, records, ports, options);
     if (result.outcome === "stop-confirmed") {
       for (const record of result.confirmed) {
-        this.#store.removeSessionOwner(record.runtimeGenerationId);
-        removeRuntimeStopReceipt(this.#home, record.runtimeGenerationId);
+        this.#store.removeSessionOwner(sessionOwnerProcessKey(record));
       }
     }
     return result;
@@ -216,9 +196,6 @@ export class SessionOwnerReconciliation {
 
   #recordTerminationEvent(event: SessionTerminationEvent): void {
     const owner = event.owner;
-    if (event.stage === "stop-requested" && event.runtimeGenerationId !== undefined) {
-      writeRuntimeStopReceipt(this.#home, event.runtimeGenerationId, event.at);
-    }
     if (owner.scope !== "task") return;
     try {
       this.#store.saveEvent(owner.taskId, createTaskEvent(
@@ -227,7 +204,6 @@ export class SessionOwnerReconciliation {
         "runtime.session-termination",
         {
           roleName: owner.roleName,
-          runtimeGenerationId: event.runtimeGenerationId ?? "",
           nativeSessionId: event.nativeSessionId ?? "",
           outcome: event.stage,
           ...(event.detail === undefined ? {} : { detail: event.detail })
@@ -244,7 +220,7 @@ export class SessionOwnerReconciliation {
   }
 }
 
-/** Projects every durable Role runtime generation for reconciliation. */
+/** Projects every durable Role runtime for reconciliation. */
 export function durableSessionFacts(store: TaskStore): DurableSessionFact[] {
   const facts: DurableSessionFact[] = [];
   for (const task of store.listTasks()) {
@@ -256,7 +232,6 @@ export function durableSessionFacts(store: TaskStore): DurableSessionFact[] {
           roleName: set.owner.roleName,
           agentId,
           adapterId: session.adapterId,
-          ...(session.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId }),
           ...(session.nativeSessionId === undefined
             ? {}
             : { nativeSessionId: session.nativeSessionId }),
@@ -271,7 +246,6 @@ export function durableSessionFacts(store: TaskStore): DurableSessionFact[] {
           roleName: set.owner.roleName,
           agentId: history.agentId,
           adapterId: history.adapterId,
-          ...(history.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: history.runtimeGenerationId }),
           ...(history.nativeSessionId === undefined
             ? {}
             : { nativeSessionId: history.nativeSessionId }),
@@ -288,7 +262,6 @@ export function durableSessionFacts(store: TaskStore): DurableSessionFact[] {
         roleName: set.owner.roleName,
         agentId,
         adapterId: session.adapterId,
-        ...(session.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId }),
         ...(session.nativeSessionId === undefined
           ? {}
           : { nativeSessionId: session.nativeSessionId }),
@@ -303,7 +276,6 @@ export function durableSessionFacts(store: TaskStore): DurableSessionFact[] {
         roleName: set.owner.roleName,
         agentId: session.agentId,
         adapterId: session.adapterId,
-        ...(session.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId }),
         ...(session.nativeSessionId === undefined
           ? {}
           : { nativeSessionId: session.nativeSessionId }),
@@ -369,26 +341,17 @@ export function observeSessionOwnerPhysical(
   };
 }
 
-/** Reads the latest termination outcome recorded for one generation. */
+/** Reads the latest termination outcome recorded for one Role. */
 export function lastSessionTerminationOutcome(
   store: Pick<TaskStore, "listEvents">,
   taskId: string | undefined,
-  roleName: string,
-  runtimeGenerationId: string
+  roleName: string
 ): string | undefined {
   if (taskId === undefined) return undefined;
   let latest: string | undefined;
   for (const event of store.listEvents(taskId)) {
     if (event.type !== "runtime.session-termination") continue;
     if (event.payload.roleName !== roleName) continue;
-    if (
-      runtimeGenerationId !== ""
-      && event.payload.runtimeGenerationId !== undefined
-      && event.payload.runtimeGenerationId !== ""
-      && event.payload.runtimeGenerationId !== runtimeGenerationId
-    ) {
-      continue;
-    }
     latest = event.payload.outcome;
   }
   return latest;

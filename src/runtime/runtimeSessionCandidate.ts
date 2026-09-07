@@ -17,14 +17,10 @@ export type RuntimeSessionCandidate = Readonly<{
   agentId: string;
   adapterId: string;
   nativeSessionId: string;
-  runtimeGenerationId?: string;
   sessionUpdatedAt: string;
-  cleanupRequired: boolean;
 }>;
 
 export type RuntimeSessionCandidateQuery = Readonly<{
-  /** Uses SQLite's cleanup-required partial index when true. */
-  cleanupRequiredOnly?: boolean;
   /** Restricts the projection to one runtime owner scope. */
   scope?: RuntimeOwner["scope"];
   /**
@@ -51,9 +47,7 @@ export function projectRuntimeSessionCandidate(
     agentId: active.agentId,
     adapterId: active.adapterId,
     nativeSessionId: active.nativeSessionId,
-    ...(active.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: active.runtimeGenerationId }),
-    sessionUpdatedAt: active.updatedAt,
-    cleanupRequired: active.runtimeGenerationId !== undefined
+    sessionUpdatedAt: active.updatedAt
   };
 }
 

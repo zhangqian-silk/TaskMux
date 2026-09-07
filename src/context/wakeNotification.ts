@@ -16,7 +16,7 @@ import { operationalTaskRecords } from "../task/taskRecordRetirement.js";
  * `yui task wake show <wake-id>` and the full projection with
  * `yui task context <task>`.
  *
- * The envelope is mode-agnostic: fresh generations and resumed generations
+ * The envelope is mode-agnostic: fresh Sessions and resumed Sessions
  * receive the same minimal text. The native Session is a disposable cache of
  * working context; Yui's durable Task records (including the wake ledger) are
  * the checkpoint.

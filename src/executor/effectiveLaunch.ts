@@ -203,7 +203,7 @@ export function sameEffectiveLaunch(
  * protocol, the provider identity that owns the conversation, and the physical
  * workspace the Session runs in. Launch configuration such as model, effort,
  * permission, Role context, declared write scope, and Turn-scoped facts like
- * ReviewRound identity or candidate commits shape the next Host activation
+ * ReviewRound identity or candidate commits shape the next Host process
  * instead of ending the Session; that divergence is acknowledged where the
  * configuration changes and stays visible as launch provenance.
  *

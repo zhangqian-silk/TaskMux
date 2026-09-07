@@ -47,7 +47,7 @@ export type TaskOrchestrationMetrics = Readonly<{
     repeatedIdentities: number;
     evidenceReuses: number;
   }>;
-  providerGenerationsBeforeFirstProgress: number;
+  providerSessionsBeforeFirstProgress: number;
   publicationToCompletionMs: number | null;
   terminalWorkspaceCount: number;
   advisories: readonly OrchestrationAdvisory[];
@@ -144,7 +144,7 @@ export function projectTaskOrchestration(
         (attempt.checks ?? []).some(({ details }) => details?.startsWith("Reused successful check evidence from "))
       )).length
     },
-    providerGenerationsBeforeFirstProgress: firstProgress.generationsBeforeFirstProgress,
+    providerSessionsBeforeFirstProgress: firstProgress.sessionsBeforeFirstProgress,
     publicationToCompletionMs: publicationAt === undefined || facts.task.completedAt === undefined
       ? null
       : Math.max(0, Date.parse(facts.task.completedAt) - Date.parse(publicationAt)),
@@ -198,7 +198,7 @@ function projectAdvisories(
   if (firstProgressAttention) {
     result.push({
       code: "provider-first-progress-advisory",
-      reason: "Two fresh Leader generations produced no first durable progress; consider Operator attention before another generation.",
+      reason: "Two fresh Leader Sessions produced no first durable progress; consider Operator attention before another Session.",
       refs: [facts.task.id]
     });
   }

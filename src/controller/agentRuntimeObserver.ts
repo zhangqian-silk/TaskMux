@@ -118,7 +118,7 @@ export class AgentRuntimeObserver implements AgentRuntimeObserverPort {
         let usages = sample.usages ?? [];
         if (state.usage === undefined) {
           // Cumulative counters need a lower bound. An exact initial sample
-          // proves the complete Session-generation history even when the
+          // proves the complete Session history even when the
           // current Turn resumed that Session, so preserve every occurrence and
           // anchor it at zero. A partial sample cannot prove the omitted request
           // boundaries; retain its latest total as a partial baseline, plus the
@@ -352,20 +352,20 @@ export class AgentRuntimeObserver implements AgentRuntimeObserverPort {
         }
         const fence = accepted.fence as RuntimeObservationFence
           & Required<Pick<RuntimeObservationFence, "taskId" | "turnId">>;
-        const generation = taskObservations.filter((observation) => (
-          sessionRuntimeGenerationFenceMatches(fence, observation.fence)
+        const sessionObservations = taskObservations.filter((observation) => (
+          sessionRuntimeFenceMatches(fence, observation.fence)
           && observation.payload.sourceId === source.sourceId
         ));
-        const persistedUsage = generation.filter((observation) => (
+        const persistedUsage = sessionObservations.filter((observation) => (
           observation.kind === "activity.observed"
           && observation.payload.usage !== undefined
         )).at(-1);
-        const persistedActivity = generation.filter((observation) => (
+        const persistedActivity = sessionObservations.filter((observation) => (
           observation.kind === "activity.observed"
           && observation.payload.activityId !== undefined
           && observation.payload.usage === undefined
         )).at(-1);
-        const persistedHealth = generation.filter((observation) => (
+        const persistedHealth = sessionObservations.filter((observation) => (
           observation.kind === "observer.health"
           && observation.payload.sourceId === source.sourceId
         )).at(-1);
@@ -379,7 +379,6 @@ export class AgentRuntimeObserver implements AgentRuntimeObserverPort {
             fence.turnId,
             fence.agentId,
             fence.driverId,
-            fence.runtimeGenerationId,
             fence.nativeSessionId,
             source.sourceId
           ]),
@@ -570,14 +569,13 @@ function tokenObservationId(
     fence.roleName,
     fence.agentId,
     fence.driverId,
-    fence.runtimeGenerationId,
     fence.nativeSessionId ?? null,
     sourceId,
     value
   ])).digest("hex")}`;
 }
 
-function sessionRuntimeGenerationFenceMatches(
+function sessionRuntimeFenceMatches(
   expected: RuntimeObservationFence,
   actual: RuntimeObservationFence
 ): boolean {
@@ -586,7 +584,6 @@ function sessionRuntimeGenerationFenceMatches(
     "roleName",
     "agentId",
     "driverId",
-    "runtimeGenerationId",
     "nativeSessionId"
   ] as const) {
     if (expected[field] !== actual[field]) return false;

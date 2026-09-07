@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -165,7 +165,12 @@ import { runSessionNotifyCommand } from "./controller/sessionNotify.js";
 import { openSchedulerTelemetry } from "./telemetry/telemetryWiring.js";
 import { runRuntimeObservationHookCommand } from "./controller/runtimeObservationHook.js";
 import { buildDoctorReport, renderDoctor, runDoctorCommand } from "./doctor/doctor.js";
-import { agentNotFound, CliError, runtimeError, usageError } from "./errors/cliError.js";
+import {
+  agentNotFound,
+  CliError,
+  runtimeError,
+  usageError
+} from "./errors/cliError.js";
 import { FileRoleLaunchPlanner } from "./executor/fileRoleLaunchPlanner.js";
 import {
   AGENT_HOST_CONTROL_PROTOCOL,
@@ -219,7 +224,7 @@ import {
 import { YUI_VERSION, yuiVersionIdentity } from "./version.js";
 import { SqliteSchemaMigrationError } from "./storage/sqliteSchema.js";
 import {
-  assertRuntimeCoherence,
+  assertRuntimeCoherence
 } from "./runtime/runtimeCoherence.js";
 import {
   requireManagedTaskCaller,
@@ -242,7 +247,6 @@ import { isCompletedTaskReviewEvidence } from "./review/reviewAcceptance.js";
 import { NodeGitWorkspace } from "./repository/gitWorkspace.js";
 import {
   currentWorkItemExecutionGroup,
-  workItemExecutionGroupById,
   type WorkItem
 } from "./workItem/workItem.js";
 
@@ -512,11 +516,10 @@ export async function main(): Promise<void> {
       );
       return;
     }
-    if (args[1] === "agent-host" && args.length === 4) {
+    if (args[1] === "agent-host" && args.length === 3) {
       process.exitCode = await runAgentHost({
         home,
-        runtimeGenerationId: args[2]!,
-        ticket: args[3]!
+        ticket: args[2]!
       });
       return;
     }
@@ -1829,7 +1832,6 @@ export async function main(): Promise<void> {
             agentId: result.agentId,
             adapterId: result.adapterId,
             nativeSessionId: result.nativeSessionId,
-            ...(result.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: result.runtimeGenerationId }),
             sessionUpdatedAt: result.sessionUpdatedAt
           });
         } catch (error) {

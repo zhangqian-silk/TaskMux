@@ -54,13 +54,6 @@ export interface RoleLaunchPlanner {
     nativeSessionId?: string;
     runtimeIsolation?: TaskRuntimeIsolationDescriptor;
   }>): PlannedRoleSession;
-  /** Persist a task caller key only after its Provider process was created. */
-  commitTaskCallerKey?(input: Readonly<{
-    taskId: string;
-    roleName: string;
-    agentId: string;
-    callerKey: string;
-  }>): void;
 }
 
 export type ExecutorTmuxPort = Readonly<{
@@ -164,7 +157,6 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     mode: RoleSessionLaunchMode;
     turnId?: string;
     nativeSessionId?: string;
-    hostActivationId?: string;
     beforeHostStart?: RuntimeLaunchPreStart;
   }>): Promise<PreparedRoleDelivery> {
     if (input.mode === "resume" && !hasText(input.nativeSessionId)) {
@@ -192,18 +184,6 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
         planned.role,
         planned.launch
       );
-      if (
-        sessionStarted
-        && planned.launch.env.YUI_JOB_CALLER_KEY !== undefined
-        && this.planner.commitTaskCallerKey !== undefined
-      ) {
-        this.planner.commitTaskCallerKey({
-          taskId: input.taskId,
-          roleName: input.roleName,
-          agentId: input.agentId,
-          callerKey: planned.launch.env.YUI_JOB_CALLER_KEY
-        });
-      }
       session = planned.session;
     } else {
       const common = {
@@ -228,11 +208,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
                 ...common,
                 mode: "resume",
                 nativeSessionId: input.nativeSessionId!,
-                ...(input.hostActivationId === undefined
-                  ? {}
-                  : { hostActivationId: input.hostActivationId })
               },
-          "deferred",
           undefined,
           input.beforeHostStart
         );
@@ -240,12 +216,10 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
         const request = input.mode === "new"
           ? createSessionLaunchRequest({
               ...common,
-              runtimeGenerationId: deliveryBase.deliveryId,
               mode: "new"
             })
           : createSessionLaunchRequest({
               ...common,
-              runtimeGenerationId: deliveryBase.deliveryId,
               mode: "resume",
               nativeSessionId: input.nativeSessionId!
             });
@@ -266,7 +240,6 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     }
     const delivery: PreparedRoleDelivery = {
       ...deliveryBase,
-      ...(binding === undefined ? {} : { runtimeGenerationId: binding.runtimeGenerationId }),
       sessionStarted,
       session,
     };
@@ -342,7 +315,6 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     roleName: string;
     agentId: string;
     adapterId: string;
-    runtimeGenerationId: string;
     nativeSessionId: string;
     nativeTurnId: string;
     authority: import("../runtime/providerAuthorityFence.js").ProviderAuthorityFence;
@@ -352,7 +324,6 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     if (this.runtimePorts === undefined) return { status: "unavailable" };
     const outcome = await this.runtimePorts.promptPush.trySteer({
       owner: { scope: "task", taskId: input.taskId, roleName: input.roleName },
-      runtimeGenerationId: input.runtimeGenerationId,
       agentId: input.agentId,
       adapterId: input.adapterId,
       nativeSessionId: input.nativeSessionId,
@@ -388,21 +359,11 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     taskId: string;
     roleName: string;
     turnId?: string;
-    runtimeGenerationId?: string;
   }>): void {
     for (const [deliveryId, prepared] of this.#prepared) {
       const delivery = prepared.delivery;
       if (
-        delivery.taskId !== input.taskId
-        || delivery.roleName !== input.roleName
-        || (
-          input.turnId !== undefined
-          && delivery.turnId !== input.turnId
-        )
-        || (
-          input.runtimeGenerationId !== undefined
-          && delivery.runtimeGenerationId !== input.runtimeGenerationId
-        )
+        delivery.taskId !== input.taskId || delivery.roleName !== input.roleName || (input.turnId !== undefined && delivery.turnId !== input.turnId)
       ) {
         continue;
       }
@@ -455,7 +416,6 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     adapterId: string;
     nativeSessionId?: string;
     turnId?: string;
-    runtimeGenerationId?: string;
     progressAt?: string;
   }>[], resourceInputs?: readonly SchedulerRoleResourceInput[]): Promise<readonly Readonly<{
     taskId: string;
@@ -494,7 +454,6 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
       ...(input.nativeSessionId === undefined
         ? {}
         : { nativeSessionId: input.nativeSessionId }),
-      ...(input.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: input.runtimeGenerationId }),
       ...(input.progressAt === undefined ? {} : { progressAt: input.progressAt })
     }));
     if (
@@ -605,7 +564,6 @@ function preparedDeliveryId(input: Readonly<{
     mode: RoleSessionLaunchMode;
   turnId?: string;
   nativeSessionId?: string;
-  hostActivationId?: string;
 }>): string {
   return createHash("sha256").update(JSON.stringify([
     input.taskId,
@@ -615,8 +573,7 @@ function preparedDeliveryId(input: Readonly<{
     input.effective,
     input.mode,
     input.turnId ?? null,
-    input.nativeSessionId ?? null,
-    input.hostActivationId ?? null
+    input.nativeSessionId ?? null
   ])).digest("hex");
 }
 

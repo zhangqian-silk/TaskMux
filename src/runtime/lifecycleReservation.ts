@@ -1,18 +1,16 @@
 import {
   mailboxHasWork,
   type MailboxTarget,
-  type ProcessingBatch,
   type WorkMailbox
 } from "../coordination/workMailbox.js";
 
 export const RUNTIME_LIFECYCLE_OWNER = "runtime-lifecycle";
-export const RUNTIME_LAUNCH_RESERVED_REASON = "runtime-launch-reserved";
 export const RUNTIME_CLEANUP_REQUIRED_REASON = "runtime-cleanup-required";
 export const RUNTIME_HOST_DETACH_REQUIRED_REASON = "runtime-host-detach-required";
 
 /**
- * A Role runtime lifecycle lane already holds an in-flight operation (a
- * launch reservation or a cleanup obligation). This is scheduler
+ * A Role runtime lifecycle lane already holds an explicit cleanup obligation.
+ * This is scheduler
  * backpressure: the equivalent wake/Turn must be retried after the lane
  * settles. It is never grounds to terminalize a Turn, because the contention
  * happens before (or outside) any semantic Turn launch.
@@ -62,22 +60,6 @@ export function runtimeLifecycleSignalKey(owner: RuntimeRoleOwner): string {
     : `global-role:${encodeURIComponent(owner.roleName)}`;
 }
 
-export function isRuntimeLaunchReservation(
-  processing: ProcessingBatch | null | undefined,
-  runtimeGenerationId?: string
-): boolean {
-  return processing?.owner === RUNTIME_LIFECYCLE_OWNER
-    && processing.batch.reasons.length === 1
-    && processing.batch.reasons[0] === RUNTIME_LAUNCH_RESERVED_REASON
-    && (runtimeGenerationId === undefined || processing.batchId === runtimeGenerationId);
-}
-
-export function hasRuntimeLaunchReservation(
-  mailbox: WorkMailbox | null
-): boolean {
-  return isRuntimeLaunchReservation(mailbox?.processing);
-}
-
 export function hasRuntimeCleanupObligation(
   mailbox: WorkMailbox | null
 ): boolean {
@@ -90,9 +72,7 @@ export function runtimeCleanupDisposition(
 ): "end-session" | "detach-host" | null {
   const reasons = [
     ...(mailbox?.pending?.reasons ?? []),
-    ...(!isRuntimeLaunchReservation(mailbox?.processing)
-      ? mailbox?.processing?.batch.reasons ?? []
-      : [])
+    ...(mailbox?.processing?.batch.reasons ?? [])
   ];
   if (reasons.includes(RUNTIME_CLEANUP_REQUIRED_REASON)) return "end-session";
   if (reasons.includes(RUNTIME_HOST_DETACH_REQUIRED_REASON)) return "detach-host";

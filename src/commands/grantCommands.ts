@@ -100,13 +100,13 @@ function issueGrant(
  * Grant issue and revoke carry irreversible authority: they mint or revoke
  * the capability that lets a managed Agent perform irreversible site changes.
  * The only accepted origin is the authenticated global Operator Session,
- * whose env claims are verified against the durable live session binding by
+ * whose native conversation ID is matched against the durable live binding by
  * isCurrentGlobalOperator.
  *
  * Absence of YUI identity vars is deliberately NOT treated as user authority:
  * a managed Agent can clear its child-process environment, so a "clean"
  * environment is indistinguishable from a scrubbed managed one. A Task-scoped
- * Session, a partial managed identity, and a stale/forged global binding are
+ * Session, an absent conversation identity, and a replaced global conversation are
  * all refused. Caller-supplied --granter/--by labels are not identity; the
  * recorded granter/revoker is bound to the Operator Session instead.
  */
@@ -123,8 +123,8 @@ function authorizeGrantOrigin(
       usage
     );
   }
-  // isCurrentGlobalOperator verified YUI_AGENT_ID against the durable binding.
-  return `operator:${env.YUI_AGENT_ID ?? "unknown"}`;
+  // Identity comes from the matched durable conversation, not an env label.
+  return `operator:${store.getGlobalRole("operator")!.activeAgentId}`;
 }
 
 function showGrant(args: string[], store: TaskWorkflowStore): TaskCommandExecution {

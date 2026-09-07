@@ -30,7 +30,7 @@ import { CURRENT_DATABASE_FILENAME as COMMITTED_DATABASE_FILENAME } from "../sto
  *
  * The telemetry tables are maintained by the centralized schema baseline:
  * `telemetry` holds the bounded latest-per-key window and
- * `telemetry_aggregate` holds the authoritative per-Turn/generation
+ * `telemetry_aggregate` holds the authoritative per-Turn
  * summary, maintained by triggers so it survives window pruning.
  */
 
@@ -138,10 +138,10 @@ export class SqliteTelemetryStore implements TelemetryStore {
     const offset = Math.max(0, Math.trunc(page.offset));
     const rows = turnId === undefined
       ? db.prepare(
-          "SELECT task_id, role_name, turn_id, generation, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? ORDER BY received_at, progress_id LIMIT ? OFFSET ?"
+          "SELECT task_id, role_name, turn_id, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? ORDER BY received_at, progress_id LIMIT ? OFFSET ?"
         ).all(taskId, limit, offset)
       : db.prepare(
-          "SELECT task_id, role_name, turn_id, generation, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? AND turn_id = ? ORDER BY received_at, progress_id LIMIT ? OFFSET ?"
+          "SELECT task_id, role_name, turn_id, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? AND turn_id = ? ORDER BY received_at, progress_id LIMIT ? OFFSET ?"
         ).all(taskId, turnId, limit, offset);
     const items = (rows as TelemetryRow[]).map(rowToEntry);
     const total = this.count(taskId, turnId);
@@ -153,29 +153,27 @@ export class SqliteTelemetryStore implements TelemetryStore {
     const db = this.#ensureDb();
     if (db === null) return null;
     const rows = db.prepare(
-      "SELECT task_id, role_name, turn_id, generation, first_at, last_at, count, max_sequence, error_count FROM telemetry_aggregate WHERE task_id = ? AND turn_id = ?"
+      "SELECT task_id, role_name, turn_id, first_at, last_at, count, max_sequence, error_count FROM telemetry_aggregate WHERE task_id = ? AND turn_id = ?"
     ).all(taskId, turnId) as AggregateRow[];
     if (rows.length === 0) return null;
     return mergeAggregates(rows);
   }
 
-  aggregateGeneration(
+  aggregateRoleTurn(
     taskId: string,
     roleName: string,
-    turnId: string,
-    generation: string
+    turnId: string
   ): TelemetryAggregate | null {
     const db = this.#ensureDb();
     if (db === null) return null;
     const row = db.prepare(
-      "SELECT task_id, role_name, turn_id, generation, first_at, last_at, count, max_sequence, error_count FROM telemetry_aggregate WHERE task_id = ? AND role_name = ? AND turn_id = ? AND generation = ?"
-    ).get(taskId, roleName, turnId, generation) as AggregateRow | undefined;
+      "SELECT task_id, role_name, turn_id, first_at, last_at, count, max_sequence, error_count FROM telemetry_aggregate WHERE task_id = ? AND role_name = ? AND turn_id = ?"
+    ).get(taskId, roleName, turnId) as AggregateRow | undefined;
     if (row === undefined) return null;
     return {
       taskId: row.task_id,
       roleName: row.role_name,
       turnId: row.turn_id,
-      generation: row.generation,
       firstAt: row.first_at,
       lastAt: row.last_at,
       count: row.count,
@@ -188,13 +186,12 @@ export class SqliteTelemetryStore implements TelemetryStore {
     const db = this.#ensureDb();
     if (db === null) return [];
     const rows = db.prepare(
-      "SELECT task_id, role_name, turn_id, generation, first_at, last_at, count, max_sequence, error_count FROM telemetry_aggregate WHERE task_id = ? ORDER BY turn_id, generation"
+      "SELECT task_id, role_name, turn_id, first_at, last_at, count, max_sequence, error_count FROM telemetry_aggregate WHERE task_id = ? ORDER BY turn_id"
     ).all(taskId) as AggregateRow[];
     return rows.map((row) => ({
       taskId: row.task_id,
       roleName: row.role_name,
       turnId: row.turn_id,
-      generation: row.generation,
       firstAt: row.first_at,
       lastAt: row.last_at,
       count: row.count,
@@ -209,25 +206,24 @@ export class SqliteTelemetryStore implements TelemetryStore {
 
   // -- retention -----------------------------------------------------------------
 
-  pruneGeneration(
+  pruneTurn(
     taskId: string,
     roleName: string,
     turnId: string,
-    generation: string,
     keep: number = this.#terminalKeep
   ): number {
     const db = this.#ensureDb();
     if (db === null) return 0;
     const result = db.prepare(
       `DELETE FROM telemetry
-       WHERE task_id = ? AND role_name = ? AND turn_id = ? AND generation = ?
-         AND (task_id, role_name, turn_id, generation, progress_id) NOT IN (
-           SELECT task_id, role_name, turn_id, generation, progress_id FROM telemetry
-           WHERE task_id = ? AND role_name = ? AND turn_id = ? AND generation = ?
-           ORDER BY COALESCE(sequence, -1) DESC, received_at DESC, progress_id ASC
+       WHERE task_id = ? AND role_name = ? AND turn_id = ?
+         AND (task_id, role_name, turn_id, progress_id) NOT IN (
+           SELECT task_id, role_name, turn_id, progress_id FROM telemetry
+           WHERE task_id = ? AND role_name = ? AND turn_id = ?
+           ORDER BY received_at DESC, COALESCE(sequence, -1) DESC, progress_id ASC
            LIMIT ?
          )`
-    ).run(taskId, roleName, turnId, generation, taskId, roleName, turnId, generation, keep);
+    ).run(taskId, roleName, turnId, taskId, roleName, turnId, keep);
     return result.changes;
   }
 
@@ -237,37 +233,36 @@ export class SqliteTelemetryStore implements TelemetryStore {
     const result = db.prepare(
       `DELETE FROM telemetry
        WHERE task_id = ? AND turn_id = ?
-         AND (task_id, role_name, turn_id, generation, progress_id) NOT IN (
-           SELECT task_id, role_name, turn_id, generation, progress_id FROM telemetry
+         AND (task_id, role_name, turn_id, progress_id) NOT IN (
+           SELECT task_id, role_name, turn_id, progress_id FROM telemetry
            WHERE task_id = ? AND turn_id = ?
-           ORDER BY COALESCE(sequence, -1) DESC, received_at DESC, progress_id ASC
+           ORDER BY received_at DESC, COALESCE(sequence, -1) DESC, progress_id ASC
            LIMIT ?
          )`
     ).run(taskId, turnId, taskId, turnId, cap);
     return result.changes;
   }
 
-  importGeneration(entries: readonly TelemetryProgressEntry[], aggregate: TelemetryAggregate): void {
+  importTurn(entries: readonly TelemetryProgressEntry[], aggregate: TelemetryAggregate): void {
     const db = this.#ensureDb();
     if (db === null) {
       this.#dropped += entries.length;
       return;
     }
     const upsert = db.prepare(
-      `INSERT INTO telemetry (task_id, role_name, turn_id, generation, progress_id, sequence, payload, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(task_id, role_name, turn_id, generation, progress_id) DO UPDATE SET
+      `INSERT INTO telemetry (task_id, role_name, turn_id, progress_id, sequence, payload, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(task_id, role_name, turn_id, progress_id) DO UPDATE SET
          sequence = excluded.sequence,
          payload = excluded.payload,
          received_at = excluded.received_at
-       WHERE COALESCE(excluded.sequence, -1) > COALESCE(telemetry.sequence, -1)
-          OR (excluded.sequence IS telemetry.sequence AND excluded.received_at >= telemetry.received_at)`
+       WHERE excluded.received_at >= telemetry.received_at`
     );
     const upsertAggregate = db.prepare(
       `INSERT INTO telemetry_aggregate
-         (task_id, role_name, turn_id, generation, first_at, last_at, count, max_sequence, error_count, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(task_id, role_name, turn_id, generation) DO UPDATE SET
+         (task_id, role_name, turn_id, first_at, last_at, count, max_sequence, error_count, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(task_id, role_name, turn_id) DO UPDATE SET
          first_at = excluded.first_at,
          last_at = excluded.last_at,
          count = excluded.count,
@@ -278,13 +273,12 @@ export class SqliteTelemetryStore implements TelemetryStore {
     db.transaction(() => {
       for (const entry of entries) {
         upsert.run(
-          entry.taskId, entry.roleName, entry.turnId, entry.generation, entry.progressId,
+          entry.taskId, entry.roleName, entry.turnId, entry.progressId,
           entry.sequence ?? null, JSON.stringify(entry.payload), entry.receivedAt
         );
       }
       upsertAggregate.run(
-        aggregate.taskId, aggregate.roleName, aggregate.turnId, aggregate.generation,
-        aggregate.firstAt, aggregate.lastAt, aggregate.count,
+        aggregate.taskId, aggregate.roleName, aggregate.turnId, aggregate.firstAt, aggregate.lastAt, aggregate.count,
         aggregate.maxSequence, aggregate.errorCount, aggregate.lastAt
       );
     })();
@@ -344,21 +338,20 @@ export class SqliteTelemetryStore implements TelemetryStore {
     const batch = new Map(this.#pending);
     this.#pending.clear();
     const upsert = db.prepare(
-      `INSERT INTO telemetry (task_id, role_name, turn_id, generation, progress_id, sequence, payload, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(task_id, role_name, turn_id, generation, progress_id) DO UPDATE SET
+      `INSERT INTO telemetry (task_id, role_name, turn_id, progress_id, sequence, payload, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(task_id, role_name, turn_id, progress_id) DO UPDATE SET
          sequence = excluded.sequence,
          payload = excluded.payload,
          received_at = excluded.received_at
-       WHERE COALESCE(excluded.sequence, -1) > COALESCE(telemetry.sequence, -1)
-          OR (excluded.sequence IS telemetry.sequence AND excluded.received_at >= telemetry.received_at)`
+       WHERE excluded.received_at >= telemetry.received_at`
     );
     try {
       const touchedTurns = new Map<string, Readonly<{ taskId: string; turnId: string }>>();
       db.transaction(() => {
         for (const entry of batch.values()) {
           upsert.run(
-            entry.taskId, entry.roleName, entry.turnId, entry.generation, entry.progressId,
+            entry.taskId, entry.roleName, entry.turnId, entry.progressId,
             entry.sequence ?? null, JSON.stringify(entry.payload), entry.receivedAt
           );
           touchedTurns.set(`${entry.taskId}\0${entry.turnId}`, {
@@ -382,7 +375,6 @@ type TelemetryRow = Readonly<{
   task_id: string;
   role_name: string;
   turn_id: string;
-  generation: string;
   progress_id: string;
   sequence: number | null;
   payload: string;
@@ -393,7 +385,6 @@ type AggregateRow = Readonly<{
   task_id: string;
   role_name: string;
   turn_id: string;
-  generation: string;
   first_at: string;
   last_at: string;
   count: number;
@@ -402,16 +393,11 @@ type AggregateRow = Readonly<{
 }>;
 
 function pendingKey(entry: TelemetryProgressEntry): string {
-  return `${entry.taskId}\u0000${entry.roleName}\u0000${entry.turnId}\u0000${entry.generation}\u0000${entry.progressId}`;
+  return `${entry.taskId}\u0000${entry.roleName}\u0000${entry.turnId}\u0000${entry.progressId}`;
 }
 
-/** True when `candidate` should replace `current` (sequence/receivedAt only move forward). */
+/** Transport counters may restart; the later recorded observation wins. */
 function isNewer(candidate: TelemetryProgressEntry, current: TelemetryProgressEntry): boolean {
-  if (candidate.sequence !== undefined && current.sequence !== undefined) {
-    return candidate.sequence > current.sequence;
-  }
-  if (candidate.sequence !== undefined) return true;
-  if (current.sequence !== undefined) return false;
   return Date.parse(candidate.receivedAt) >= Date.parse(current.receivedAt);
 }
 
@@ -420,7 +406,6 @@ function rowToEntry(row: TelemetryRow): TelemetryProgressEntry {
     taskId: row.task_id,
     roleName: row.role_name,
     turnId: row.turn_id,
-    generation: row.generation,
     progressId: row.progress_id,
     ...(row.sequence === null ? {} : { sequence: row.sequence }),
     payload: JSON.parse(row.payload) as Record<string, string>,
@@ -451,7 +436,6 @@ function mergeAggregates(rows: readonly AggregateRow[]): TelemetryAggregate {
     taskId: rows[0].task_id,
     roleName,
     turnId: rows[0].turn_id,
-    generation: "*",
     firstAt,
     lastAt,
     count,

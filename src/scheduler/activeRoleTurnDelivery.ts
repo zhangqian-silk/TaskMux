@@ -13,7 +13,6 @@ import {
 } from "../runtime/agentError.js";
 import { RuntimeLaunchFailure } from "../runtime/launchDiagnostics.js";
 import {
-  RuntimeGenerationMismatchError,
   RuntimeLaunchError,
   type RuntimeLaunchPreflight
 } from "../runtime/ports.js";
@@ -44,7 +43,7 @@ export type ActiveRoleTurnDeliveryResult = Readonly<{
   roleName: string;
   turnId: string;
   status: "delivered" | "already-delivered" | "skipped" | "failed";
-  reason?: "workspace-not-ready" | "launch-failed" | "generation-lost" | "provider-rejected" | "mailbox-empty" | "mailbox-busy" | "not-ready" | "runtime-unavailable" | "writer-attached" | "delivery-uncertain";
+  reason?: "workspace-not-ready" | "launch-failed" | "provider-rejected" | "mailbox-empty" | "mailbox-busy" | "not-ready" | "runtime-unavailable" | "writer-attached" | "delivery-uncertain";
   error?: string;
   terminalized?: boolean;
 }>;
@@ -145,9 +144,6 @@ async function deliverActiveTurn(
       mode,
       turnId: turn.id,
       ...(nativeSessionId === undefined ? {} : { nativeSessionId }),
-      ...(mode !== "resume" || existingSession?.runtimeGenerationId === undefined
-        ? {}
-        : { hostActivationId: existingSession.runtimeGenerationId }),
       beforeHostStart: (preflight) => persistPreStartSession(
         store,
         task,
@@ -167,7 +163,6 @@ async function deliverActiveTurn(
       role,
       turn,
       session: preparedSession,
-      ...(prepared.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: prepared.runtimeGenerationId }),
       now
     });
 
@@ -178,7 +173,6 @@ async function deliverActiveTurn(
       role,
       turn,
       session: readySession,
-      ...(ready.prepared.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: ready.prepared.runtimeGenerationId }),
       now
     });
     submitted = true;
@@ -189,7 +183,7 @@ async function deliverActiveTurn(
     });
 
     if (outcome.status === "busy" || outcome.status === "unavailable") {
-      forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
+      forget(delivery, task.id, role.name, turn.id);
       return {
         ...base,
         status: "skipped",
@@ -197,7 +191,7 @@ async function deliverActiveTurn(
       };
     }
     if (outcome.status === "rejected" || outcome.status === "delivery-unknown") {
-      forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
+      forget(delivery, task.id, role.name, turn.id);
       const unknown = outcome.status === "delivery-unknown";
       const failure = outcome.failure;
       // The Host's own account of the failure. Without it the only honest
@@ -232,7 +226,7 @@ async function deliverActiveTurn(
           : cause
       );
     }
-    forget(delivery, task.id, role.name, turn.id, ready.prepared.runtimeGenerationId);
+    forget(delivery, task.id, role.name, turn.id);
     settleAcceptedRoleTurnDispatch(store, turn, dispatchToken);
     return {
       ...base,
@@ -240,12 +234,8 @@ async function deliverActiveTurn(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // A launch failure carries its own structure — the class that threw, the
-    // innermost cause, and for a generation mismatch both generations. Recording
-    // only `message` flattened all of it into prose that no reader could
-    // reliably parse back.
+    // Preserve the structured cause alongside the readable diagnosis.
     const causeName = innermostCauseName(error);
-    const mismatch = error instanceof RuntimeGenerationMismatchError ? error : undefined;
     store.recordAgentError?.({
       taskId: task.id,
       roleName: role.name,
@@ -260,15 +250,6 @@ async function deliverActiveTurn(
       ...(submitted ? {} : { registrationDisposition: "not-committed" as const }),
       ...(error instanceof Error ? { errorName: error.name } : {}),
       ...(causeName === undefined ? {} : { causeName }),
-      ...(mismatch === undefined ? {} : {
-        expectedRuntimeGenerationId: mismatch.expectedRuntimeGenerationId,
-        ...(mismatch.observedRuntimeGenerationId === undefined
-          ? {}
-          : { observedRuntimeGenerationId: mismatch.observedRuntimeGenerationId })
-      }),
-      ...(error instanceof RuntimeLaunchError
-        ? { expectedRuntimeGenerationId: error.runtimeGenerationId }
-        : {}),
       attemptId
     }, now);
     if (error instanceof RuntimeLifecycleBusyError
@@ -282,7 +263,7 @@ async function deliverActiveTurn(
         error: message
       };
     }
-    forget(delivery, task.id, role.name, turn.id, prepared?.runtimeGenerationId);
+    forget(delivery, task.id, role.name, turn.id);
     return failTurnDelivery(
       store,
       turn,
@@ -344,18 +325,13 @@ function persistPreStartSession(
   preflight: RuntimeLaunchPreflight,
   now: Date
 ): void {
-  if (preflight.owner.scope !== "task"
-    || preflight.owner.taskId !== task.id
-    || preflight.owner.roleName !== role.name
-    || preflight.turnId !== turn.id
-    || preflight.runtimeGenerationId.trim().length === 0) {
+  if (preflight.owner.scope !== "task" || preflight.owner.taskId !== task.id || preflight.owner.roleName !== role.name || preflight.turnId !== turn.id) {
     throw new Error(`Pre-start launch fence changed the active Role Turn: ${task.id}/${role.name}.`);
   }
   const session = preflight.nativeSessionId === undefined ? null : {
     agentId: preflight.agentId,
     adapterId: preflight.adapterId,
     nativeSessionId: preflight.nativeSessionId,
-    runtimeGenerationId: preflight.runtimeGenerationId,
     ...(preflight.sessionTitle === undefined ? {} : { title: preflight.sessionTitle }),
     status: "active" as const,
     effective: preflight.effective
@@ -365,7 +341,6 @@ function persistPreStartSession(
     role,
     turn,
     session: validateRoleSession(role, turn, existing, mode, session),
-    runtimeGenerationId: preflight.runtimeGenerationId,
     now
   });
 }
@@ -419,14 +394,12 @@ function forget(
   delivery: TmuxDeliveryPort,
   taskId: string,
   roleName: string,
-  turnId: string,
-  runtimeGenerationId?: string
+  turnId: string
 ): void {
   delivery.forgetPrepared?.({
     taskId,
     roleName,
     turnId,
-    ...(runtimeGenerationId === undefined ? {} : { runtimeGenerationId })
   });
 }
 
