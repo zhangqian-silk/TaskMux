@@ -66,24 +66,67 @@ export function resolveRuntimeHookTurnFence(
 
   const store = openCurrentTaskStore(home);
   const task = store.getTask(taskId);
-  if (task === null
-    || (
-      !(task.status === "active" && task.executionGate.state === "enabled")
-      && !(task.status === "completed" && (options.terminal === true || options.sessionOnly === true))
-    )) {
+  if (task === null) {
     throw new Error("Runtime observation Hook Task does not accept this lifecycle boundary.");
   }
   const role = store.getRole(taskId, roleName);
-  if (role === null || role.activeAgentId !== agentId) {
-    throw new Error("Runtime observation Hook Role or Agent is not current.");
-  }
   const sessions = store.getTaskRoleSessionSet(taskId, roleName);
-  if (sessions !== null && sessions.activeAgentId !== agentId) {
-    throw new Error("Runtime observation Hook Session Agent is not current.");
-  }
   const session = sessions?.sessions[agentId];
+  const executionSession = session?.nativeSessionId === nativeSessionId
+    ? session
+    : sessions?.history?.find((entry) => (
+        entry.agentId === agentId && entry.nativeSessionId === nativeSessionId
+      ));
   const activeTurn = store.getActiveTurn(taskId, roleName);
   const providerTurn = sessions?.providerBinding?.turn;
+  // An input belongs to the Activation recorded at registration, even after
+  // detach or a successor Host launch. "Current activation" is not its owner.
+  const activation = providerTurn?.activationId === undefined
+    ? undefined
+    : sessions?.providerBinding?.activations.find(
+        (entry) => entry.activationId === providerTurn.activationId
+      );
+  const matchesProviderTurn = providerTurn !== null
+    && providerTurn !== undefined
+    && executionSession?.adapterId === adapterId
+    && executionSession.effective.workspace.root === workspace
+    && activation?.conversationId === nativeSessionId
+    && (
+      (options.attemptId !== undefined && providerTurn.attemptId === options.attemptId)
+      || (options.nativeTurnId !== undefined && providerTurn.nativeTurnId === options.nativeTurnId)
+    )
+    && (options.attemptId === undefined || providerTurn.attemptId === options.attemptId)
+    && (options.nativeTurnId === undefined || providerTurn.nativeTurnId === undefined
+      || providerTurn.nativeTurnId === options.nativeTurnId);
+  const acceptedTurn = acceptedTurnBinding(store.listEvents(taskId), {
+    taskId, roleName, agentId, nativeSessionId,
+    ...(options.nativeTurnId === undefined ? {} : { nativeTurnId: options.nativeTurnId }),
+    ...(options.attemptId === undefined ? {} : { attemptId: options.attemptId })
+  });
+  const acceptedBinding = acceptedTurn ?? (
+    options.continuationId === undefined ? null : knownContinuationBinding(
+      store.listEvents(taskId),
+      {
+        taskId, roleName, agentId, nativeSessionId,
+        continuationId: options.continuationId,
+        continuationGeneration: options.continuationGeneration ?? 1
+      }
+    )
+  );
+  // Collection of an exactly accepted terminal fact is not a new action by
+  // the Role. A successor's active Agent or revoked execution permission
+  // cannot erase the original Turn's evidence.
+  const existingExecutionObservation = (options.terminal === true || options.attemptId !== undefined)
+    && (acceptedBinding !== null || matchesProviderTurn);
+  if (!(task.status === "active" && task.executionGate.state === "enabled")
+    && !(task.status === "completed" && options.sessionOnly === true)
+    && !existingExecutionObservation) {
+    throw new Error("Runtime observation Hook Task does not accept this lifecycle boundary.");
+  }
+  if (!existingExecutionObservation && (role === null || role.activeAgentId !== agentId
+    || (sessions !== null && sessions.activeAgentId !== agentId))) {
+    throw new Error("Runtime observation Hook Role or Agent is not current.");
+  }
   // Launch generation and Turn are durable facts, never envelope facts. A
   // native pane outlives both, so anything it inherited at launch is stale for
   // every later generation; the Session's own record (or the in-flight launch
@@ -96,24 +139,28 @@ export function resolveRuntimeHookTurnFence(
   const reservedRuntimeGenerationId = isRuntimeLaunchReservation(lifecycleMailbox?.processing)
     ? lifecycleMailbox?.processing?.batchId
     : undefined;
-  const runtimeGenerationId = requireIdentity(session?.runtimeGenerationId ?? reservedRuntimeGenerationId, "Runtime generation id");
-  const durableTurnId = activeTurn?.id
-    ?? managedProviderTurnId(providerTurn)
-    ?? undefined;
-  const directProviderTurn = providerTurn !== null
-    && providerTurn !== undefined
-    && providerTurn.turnId === undefined
-    && (
-      (options.attemptId !== undefined && providerTurn.attemptId === options.attemptId)
-      || (options.nativeTurnId !== undefined && providerTurn.nativeTurnId === options.nativeTurnId)
-    );
+  // Startup has a fresh process envelope and must prove the exact persisted
+  // launch. Existing/late execution events instead retain their old binding.
+  const reservedStartup = options.startupSession !== undefined
+    && activeTurn !== null
+    && reservedRuntimeGenerationId !== undefined
+    && environment.YUI_RUNTIME_GENERATION_ID === reservedRuntimeGenerationId
+    && !hasRuntimeCleanupObligation(lifecycleMailbox);
+  const runtimeGenerationId = requireIdentity(
+    acceptedBinding?.fence.runtimeGenerationId
+      ?? (matchesProviderTurn ? activation!.activationId : undefined)
+      ?? (reservedStartup ? reservedRuntimeGenerationId : session?.runtimeGenerationId),
+    "Runtime generation id"
+  );
+  const directProviderTurn = matchesProviderTurn && providerTurn.turnId === undefined;
   const sessionOnlyObservation = options.sessionOnly === true && activeTurn === null;
-  if (directProviderTurn || sessionOnlyObservation) {
-    if (session === undefined
-      || session.adapterId !== adapterId
-      || session.runtimeGenerationId !== runtimeGenerationId
-      || session.nativeSessionId !== nativeSessionId
-      || session.effective.workspace.root !== workspace) {
+  if (acceptedBinding === null && (directProviderTurn || sessionOnlyObservation)) {
+    const observedSession = directProviderTurn ? executionSession : session;
+    if (observedSession === undefined
+      || observedSession.adapterId !== adapterId
+      || (!directProviderTurn && observedSession.runtimeGenerationId !== runtimeGenerationId)
+      || observedSession.nativeSessionId !== nativeSessionId
+      || observedSession.effective.workspace.root !== workspace) {
       throw new Error("Runtime observation Hook Session does not match durable state.");
     }
     return {
@@ -126,40 +173,19 @@ export function resolveRuntimeHookTurnFence(
       workspace
     };
   }
-  const activationReceiptId = providerTurn !== null
+  const activationReceiptId = matchesProviderTurn
+    ? providerTurn.attemptId
+    : providerTurn !== null
     && providerTurn !== undefined
     && managedProviderTurnId(providerTurn) === activeTurn?.id
     ? providerTurn.attemptId
     : activeTurn === null ? undefined : formatTurnReceiptId(taskId, activeTurn.id);
-  const acceptedTurn = options.nativeTurnId === undefined
-    ? null
-    : acceptedTurnBinding(store.listEvents(taskId), {
-        taskId,
-        roleName,
-        agentId,
-        nativeSessionId,
-        nativeTurnId: options.nativeTurnId
-      });
-  const acceptedBinding = acceptedTurn ?? (
-    options.continuationId === undefined ? null : knownContinuationBinding(
-      store.listEvents(taskId),
-      {
-        taskId,
-        roleName,
-        agentId,
-        nativeSessionId,
-        continuationId: options.continuationId,
-        continuationGeneration: options.continuationGeneration ?? 1
-      }
-    )
-  );
   const mailbox = lifecycleMailbox;
   const exactReservation = isRuntimeLaunchReservation(mailbox?.processing, runtimeGenerationId)
     && !hasRuntimeCleanupObligation(mailbox);
-  const startupTurnId = options.startupSession === undefined
-    ? undefined
-    : requireIdentity(durableTurnId, "Turn id");
+  const startupTurnId = reservedStartup ? activeTurn!.id : undefined;
   const startupReservation = startupTurnId !== undefined
+    && reservedStartup
     && exactReservation
     && !hasRuntimeCleanupObligation(mailbox);
   const startupTurn = startupTurnId === undefined
@@ -171,6 +197,12 @@ export function resolveRuntimeHookTurnFence(
     && startupReservation
     && startupTurn?.mode === "new"
     && session.status === "ended";
+  const resumedStartup = startupReservation
+    && startupTurn?.mode === "resume"
+    && session !== undefined
+    && session.adapterId === adapterId
+    && session.nativeSessionId === nativeSessionId
+    && session.effective.workspace.root === workspace;
   // The startup mode itself says whether Yui preallocated the native Session
   // id or the Provider reports it. A preallocated startup is proven against
   // Yui's deterministic runtime generation identity, which is stronger than comparing a
@@ -187,14 +219,17 @@ export function resolveRuntimeHookTurnFence(
   const discoveredStartup = options.startupSession === "discovered"
     && (session === undefined || replacementStartup)
     && startupReservation;
-  const terminalTurnId = options.terminal === true && acceptedBinding === null
-    ? requireIdentity(durableTurnId, "Turn id")
+  const registeredTurnId = acceptedBinding === null && matchesProviderTurn
+    ? managedProviderTurnId(providerTurn) ?? undefined
     : undefined;
+  if (options.terminal === true && acceptedBinding === null && registeredTurnId === undefined) {
+    throw new Error("Runtime observation Hook terminal has no exact accepted execution binding.");
+  }
   const terminalTurn = acceptedBinding !== null
     ? store.getTurn(taskId, acceptedBinding.fence.turnId!)
-    : terminalTurnId === undefined
+    : registeredTurnId === undefined
     ? null
-    : store.getTurn(taskId, terminalTurnId);
+    : store.getTurn(taskId, registeredTurnId);
   const exactTerminal = terminalTurn !== null
     && terminalTurn.status !== "active"
     && terminalTurn.roleName === roleName
@@ -204,21 +239,24 @@ export function resolveRuntimeHookTurnFence(
   if (activeTurn === null
     && !preallocatedStartup
     && !discoveredStartup
+    && !resumedStartup
     && !exactTerminal
+    && registeredTurnId === undefined
     && acceptedBinding === null) {
     throw new Error("Runtime observation Hook has no matching durable in-flight Turn.");
   }
   const turnId = acceptedBinding?.fence.turnId
+    ?? registeredTurnId
     ?? activeTurn?.id
-    ?? startupTurnId
-    ?? terminalTurnId!;
+    ?? startupTurnId;
   const effectiveRuntimeGenerationId = acceptedBinding?.fence.runtimeGenerationId ?? runtimeGenerationId;
-  const turn = acceptedBinding !== null || exactTerminal
+  const turn = acceptedBinding !== null || registeredTurnId !== undefined
     ? terminalTurn
     : store.getActiveTurn(taskId, roleName);
   if (turn === null
     || turn.id !== turnId
-    || (acceptedBinding === null && !exactTerminal && turn.status !== "active")
+    || (acceptedBinding === null && registeredTurnId === undefined && !exactTerminal && turn.status !== "active")
+    || turn.roleName !== roleName
     || turn.effective.agentId !== agentId
     || turn.effective.adapterId !== adapterId) {
     throw new Error("Runtime observation Hook Turn does not match durable active state.");
@@ -226,14 +264,14 @@ export function resolveRuntimeHookTurnFence(
   if (turn.effective.workspace.root !== workspace) {
     throw new Error("Runtime observation Hook workspace does not match the durable Turn snapshot.");
   }
-  if (session !== undefined && acceptedBinding === null && !replacementStartup) {
+  if (session !== undefined && acceptedBinding === null && !matchesProviderTurn && !replacementStartup && !resumedStartup) {
     if (session.adapterId !== adapterId
       || session.runtimeGenerationId !== effectiveRuntimeGenerationId
       || session.nativeSessionId !== nativeSessionId
       || session.effective.workspace.root !== workspace) {
       throw new Error("Runtime observation Hook Session does not match its durable generation.");
     }
-  } else if (acceptedBinding === null && (session === undefined || replacementStartup)) {
+  } else if (acceptedBinding === null && !matchesProviderTurn && (session === undefined || replacementStartup)) {
     if (!discoveredStartup && !preallocatedStartup) {
       throw new Error("Runtime observation Hook launch is not durably reserved.");
     }
@@ -297,18 +335,23 @@ function acceptedTurnBinding(
     roleName: string;
     agentId: string;
     nativeSessionId: string;
-    nativeTurnId: string;
+    nativeTurnId?: string;
+    attemptId?: string;
   }>
 ): RuntimeObservation | null {
+  if (expected.nativeTurnId === undefined && expected.attemptId === undefined) return null;
   const matches = events
     .map(runtimeObservationFromTaskEvent)
     .filter((observation): observation is RuntimeObservation => observation !== null
-      && observation.kind === "turn.accepted"
+      && ["turn.accepted", "turn.completed", "turn.failed", "turn.cancelled"].includes(observation.kind)
       && observation.fence.taskId === expected.taskId
       && observation.fence.roleName === expected.roleName
       && observation.fence.agentId === expected.agentId
       && observation.fence.nativeSessionId === expected.nativeSessionId
-      && observation.fence.nativeTurnId === expected.nativeTurnId
+      && (
+        (expected.attemptId !== undefined && observation.fence.receiptId === expected.attemptId)
+        || (expected.nativeTurnId !== undefined && observation.fence.nativeTurnId === expected.nativeTurnId)
+      )
       && observation.fence.turnId !== undefined)
     .sort((left, right) => (
       left.receivedAt.localeCompare(right.receivedAt)
@@ -318,9 +361,13 @@ function acceptedTurnBinding(
     ));
   const binding = matches.at(-1) ?? null;
   if (binding === null) return null;
-  if (matches.some((candidate) => candidate.fence.turnId !== binding.fence.turnId
+  if (matches.some((candidate) => (
+    (expected.attemptId !== undefined && candidate.fence.receiptId !== expected.attemptId)
+    || (expected.nativeTurnId !== undefined && candidate.fence.nativeTurnId !== undefined
+      && candidate.fence.nativeTurnId !== expected.nativeTurnId)
+    || candidate.fence.turnId !== binding.fence.turnId
     || candidate.fence.runtimeGenerationId !== binding.fence.runtimeGenerationId
-    || candidate.fence.receiptId !== binding.fence.receiptId)) {
+    || candidate.fence.receiptId !== binding.fence.receiptId))) {
     throw new Error("Runtime observation Hook native Turn has conflicting durable Turn bindings.");
   }
   return binding;

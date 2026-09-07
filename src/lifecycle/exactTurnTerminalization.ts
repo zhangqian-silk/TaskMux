@@ -565,9 +565,9 @@ function settleLaunchReservation(
   const session = sessions?.sessions[input.agentId] as
     | (TaskRoleSessionSet["sessions"][string] & { runtimeGenerationId?: string })
     | undefined;
-  const runtimeGenerationId = input.nativeSessionId === undefined
-    ? input.runtimeGenerationId ?? session?.runtimeGenerationId
-    : session?.runtimeGenerationId;
+  // A late result releases only its original launch, never a successor's
+  // reservation merely because both Turns reused the same native Session.
+  const runtimeGenerationId = input.runtimeGenerationId ?? session?.runtimeGenerationId;
   if (runtimeGenerationId === undefined || !isRuntimeLaunchReservation(reservation, runtimeGenerationId)) return;
   const settled = completeProcessing(mailbox!, reservation!.batchId);
   if (settled.processing === null && settled.pending === null) {

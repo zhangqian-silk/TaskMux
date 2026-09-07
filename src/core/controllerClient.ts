@@ -34,6 +34,11 @@ export function controllerCallMayHaveApplied(error: unknown): boolean {
     && [
       "CONTROLLER_TIMEOUT",
       "CONTROLLER_UNAVAILABLE",
+      // Raised only after the request write began, so the Controller may well
+      // have committed it. Omitting it reported a genuinely unknown outcome as
+      // a definite failure, which is the one classification callers must not
+      // make: it invites treating possibly-applied work as never applied.
+      "CONTROLLER_DELIVERY_UNKNOWN",
       "INVALID_RESPONSE"
     ].includes(error.code);
 }

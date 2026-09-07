@@ -31,8 +31,9 @@ export type StructuredProviderTurnReceipt = Readonly<{
   attemptId: string;
   conversationId: string;
   nativeSessionId: string;
-  nativeTurnId: string;
+  nativeTurnId?: string;
   acceptedAt: string;
+  acceptance: "provider" | "transport";
 }>;
 
 export type StructuredProviderTurnInput = Readonly<{
@@ -53,8 +54,10 @@ export type StructuredProviderTurnStarted = Readonly<{
 export type StructuredProviderTurnTerminal = Readonly<{
   conversationId: string;
   nativeSessionId: string;
-  nativeTurnId: string;
-  /** True only when this client received the exact acceptance for the Turn. */
+  nativeTurnId?: string;
+  /** Exact local request on this owned transport, not a Provider Turn id. */
+  attemptId?: string;
+  /** True only when the protocol binds this terminal to this client's exact request. */
   clientOwned: boolean;
   status: "completed" | "failed" | "cancelled";
   observedAt: string;
@@ -99,9 +102,12 @@ export class ProviderDeliveryUnknownError extends Error {
 
   constructor(
     message: string,
-    readonly attemptId: string
+    readonly attemptId: string,
+    // Wrapping must not become the end of the causal chain: the original
+    // transport or Controller failure is the reason a reader needs.
+    options?: Readonly<{ cause?: unknown }>
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
@@ -110,9 +116,10 @@ export class ProviderTurnRejectedError extends Error {
 
   constructor(
     message: string,
-    readonly attemptId: string
+    readonly attemptId: string,
+    options?: Readonly<{ cause?: unknown }>
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
@@ -518,6 +525,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
   readonly adapterId = "codex" as const;
   #activeTurnId: string | undefined;
   #clientOwnedTurnId: string | undefined;
+  #clientOwnedAttemptId: string | undefined;
   #submissionPending = false;
   readonly #bufferedStarts: Array<Omit<StructuredProviderTurnStarted, "clientOwned">> = [];
   readonly #bufferedTerminals: Array<Omit<StructuredProviderTurnTerminal, "clientOwned">> = [];
@@ -610,6 +618,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     session.#activeTurnId = resumedActiveTurnId;
     const ownedTurn = control.kind === "restore" ? control.ownedTurn : undefined;
     session.#clientOwnedTurnId = ownedTurn?.turnId;
+    session.#clientOwnedAttemptId = ownedTurn?.attemptId;
     stopOpeningBuffer();
     let recoveredTerminal: StructuredProviderTurnTerminal | undefined;
     for (const message of openingMessages) {
@@ -629,6 +638,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
           conversationId,
           nativeSessionId: conversationId,
           nativeTurnId: ownedTurn.turnId,
+          attemptId: ownedTurn.attemptId,
           clientOwned: true,
           status: recovered.status === "failed"
             ? "failed"
@@ -643,6 +653,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
               })
         };
         session.#clientOwnedTurnId = undefined;
+        session.#clientOwnedAttemptId = undefined;
       } else {
         throw new ProviderDeliveryUnknownError(
           `Codex resume could not recover the persisted Yui Turn ${ownedTurn.turnId}.`,
@@ -758,12 +769,14 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
       }
       this.#activeTurnId = acceptance.turnId;
       this.#clientOwnedTurnId = acceptance.turnId;
+      this.#clientOwnedAttemptId = turn.attemptId;
       return Object.freeze({
         attemptId: turn.attemptId,
         conversationId: this.conversationId,
         nativeSessionId: this.conversationId,
         nativeTurnId: acceptance.turnId,
-        acceptedAt: new Date().toISOString()
+        acceptedAt: new Date().toISOString(),
+        acceptance: "provider"
       });
     } finally {
       this.#submissionPending = false;
@@ -796,7 +809,8 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
       conversationId: this.conversationId,
       nativeSessionId: this.conversationId,
       nativeTurnId,
-      acceptedAt: new Date().toISOString()
+      acceptedAt: new Date().toISOString(),
+      acceptance: "provider"
     });
   }
 
@@ -815,10 +829,19 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     terminal: Omit<StructuredProviderTurnTerminal, "clientOwned">,
     emit: boolean
   ): StructuredProviderTurnTerminal {
-    const clientOwned = terminal.nativeTurnId === this.#clientOwnedTurnId;
+    const clientOwned = terminal.nativeTurnId !== undefined
+      && terminal.nativeTurnId === this.#clientOwnedTurnId;
+    const attemptId = clientOwned ? this.#clientOwnedAttemptId : undefined;
     if (terminal.nativeTurnId === this.#activeTurnId) this.#activeTurnId = undefined;
-    if (clientOwned) this.#clientOwnedTurnId = undefined;
-    const completed = { ...terminal, clientOwned };
+    if (clientOwned) {
+      this.#clientOwnedTurnId = undefined;
+      this.#clientOwnedAttemptId = undefined;
+    }
+    const completed = {
+      ...terminal,
+      clientOwned,
+      ...(attemptId === undefined ? {} : { attemptId })
+    };
     if (emit) this.onTerminal?.(completed);
     return completed;
   }
@@ -834,7 +857,8 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
 
 class ClaudeStructuredProviderSession implements StructuredProviderSession {
   readonly adapterId = "claude" as const;
-  #activeTurnId: string | undefined;
+  #activeAttemptId: string | undefined;
+  readonly #resultAttempts = new Map<string, string>();
   #lastGoalKey: string | undefined;
 
   private constructor(
@@ -877,18 +901,22 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
   }
 
   get activeTurnId(): string | undefined {
-    return this.#activeTurnId;
+    // stream-json result.uuid is a message identity, not an execution identity.
+    return undefined;
   }
 
   async submitTurn(
     turn: StructuredProviderTurnInput
   ): Promise<StructuredProviderTurnReceipt> {
-    if (this.#activeTurnId !== undefined) {
+    if (this.#activeAttemptId !== undefined) {
       throw new ProviderTurnRejectedError(
         "Provider Conversation already has an unsettled Turn.",
         turn.attemptId
       );
     }
+    // Reserve before the pipe write: a fast result can precede its callback.
+    // A failed write is ambiguous and must retain the same occupancy.
+    this.#activeAttemptId = turn.attemptId;
     try {
       await this.channel.send({
         type: "user",
@@ -902,7 +930,8 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
         `Claude input write did not complete: ${
           error instanceof Error ? error.message : String(error)
         }`,
-        turn.attemptId
+        turn.attemptId,
+        { cause: error }
       );
     }
     // AgentHost is the sole writer to this dedicated stream-json process.
@@ -910,43 +939,20 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
     // Claude's later `result` is the matching terminal for this serialized
     // Turn. Requiring an echoed user-message creates a second, brittle
     // protocol without improving delivery safety.
-    const nativeTurnId = `claude-stream:${turn.attemptId}`;
-    this.#activeTurnId = nativeTurnId;
     return Object.freeze({
       attemptId: turn.attemptId,
       conversationId: this.conversationId,
       nativeSessionId: this.conversationId,
-      nativeTurnId,
-      acceptedAt: new Date().toISOString()
+      acceptedAt: new Date().toISOString(),
+      acceptance: "transport"
     });
   }
 
   async steerTurn(turn: StructuredProviderTurnInput): Promise<StructuredProviderTurnReceipt> {
-    const nativeTurnId = this.#activeTurnId;
-    if (nativeTurnId === undefined) {
-      throw new ProviderTurnRejectedError("Provider Conversation has no active Turn to steer.", turn.attemptId);
-    }
-    try {
-      await this.channel.send({
-        type: "user",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: turn.boundedText }]
-        }
-      });
-    } catch (error) {
-      throw new ProviderDeliveryUnknownError(
-        `Claude steer write did not complete: ${error instanceof Error ? error.message : String(error)}`,
-        turn.attemptId
-      );
-    }
-    return Object.freeze({
-      attemptId: turn.attemptId,
-      conversationId: this.conversationId,
-      nativeSessionId: this.conversationId,
-      nativeTurnId,
-      acceptedAt: new Date().toISOString()
-    });
+    throw new ProviderTurnRejectedError(
+      "Claude stream-json does not expose an exact native Turn identity for steering.",
+      turn.attemptId
+    );
   }
 
   waitForExit(): Promise<StructuredProviderProcessExit> {
@@ -974,10 +980,17 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
       }
     }
     if (message.type === "user") return;
-    if (message.type !== "result" || this.#activeTurnId === undefined
+    if (message.type !== "result"
       || optionalId(message.session_id) !== this.conversationId) return;
-    const nativeTurnId = this.#activeTurnId;
-    this.#activeTurnId = undefined;
+    // A result UUID identifies this message, not the Provider execution.
+    // Retain its local association so a delayed duplicate cannot be assigned
+    // to a successor request on the same long-lived process.
+    const resultId = optionalId(message.uuid);
+    const priorAttempt = resultId === undefined ? undefined : this.#resultAttempts.get(resultId);
+    const attemptId = priorAttempt ?? this.#activeAttemptId;
+    if (attemptId === undefined) return;
+    if (resultId !== undefined) this.#resultAttempts.set(resultId, attemptId);
+    if (attemptId === this.#activeAttemptId) this.#activeAttemptId = undefined;
     const failed = message.is_error === true || message.subtype === "error_during_execution";
     const result = typeof message.result === "string" && message.result.length > 0
       ? message.result
@@ -985,7 +998,7 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
     onTerminal?.({
       conversationId: this.conversationId,
       nativeSessionId: this.conversationId,
-      nativeTurnId,
+      attemptId,
       clientOwned: true,
       status: failed ? "failed" : "completed",
       observedAt: new Date().toISOString(),

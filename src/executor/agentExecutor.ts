@@ -13,8 +13,6 @@ import {
 import {
   currentProviderActivation,
   endProviderActivation,
-  settleProviderTurn,
-  settleProviderTurnSubmission,
   validateProviderRuntimeBinding,
   type ProviderRuntimeBinding
 } from "../runtime/providerRuntimeIdentity.js";
@@ -436,30 +434,36 @@ export function roleAgentSessionResumeMode(
   validateRoleSessionSet(set);
   const session = set.sessions[requireSafeIdentity(agentId, "Agent id")];
   if (session === undefined) return "new";
-  // A restored opaque host can be inspected/recovered only through its exact
-  // launch fence. It cannot be resumed or silently rebound to a new launch
-  // without a provider-native identity; an explicit verified stop still
-  // permits the normal fresh-generation path.
+  // A Host status cannot supply a missing native Conversation identity.
+  // Replacement remains an explicit operation even after that Host ended.
   if (
     typeof session.nativeSessionId !== "string"
     || session.nativeSessionId.trim().length === 0
   ) {
-    if (session.status === "active") {
-      throw new Error(
-        `Role Agent session has no native Session identity: ${agentId}. `
-        + "Restore the exact native Session or explicitly stop it before starting a fresh Session."
-      );
-    }
-    return "new";
+    throw new Error(
+      `Role Agent session has no native Session identity: ${agentId}. `
+      + "Restore the exact native Session or explicitly select a new Session."
+    );
   }
-  if (session.status === "ended") {
-    return "new";
+  // An ended Host attachment is not evidence that the native Conversation
+  // vanished. Resume the exact identity; only an explicit new-Session action
+  // may replace it. A known unrecoverable Conversation needs that decision.
+  const conversation = set.owner.scope === "task"
+    ? (set as TaskRoleSessionSet).providerBinding?.conversations.find(
+        (entry) => entry.conversationId === session.nativeSessionId
+      )
+    : undefined;
+  if (conversation?.recoverability === "unrecoverable") {
+    throw new Error(
+      `Role Agent native Session is not recoverable: ${agentId}/${session.nativeSessionId}. `
+      + "Explicitly select a new Session to continue; existing input attempts are not replayed."
+    );
   }
   if (roleSessionMayContinue(session.effective, desired)) return "resume";
   throw new Error(
     `Role Agent session cannot continue under the next launch: ${agentId}. `
-    + "Its Agent, adapter or physical workspace changed; stop the existing native "
-    + "process before starting a fresh Session."
+    + "Its Agent, adapter or physical workspace changed. Explicitly select a new Session "
+    + "after resolving existing execution and resource ownership."
   );
 }
 
@@ -514,7 +518,7 @@ export function detachRoleAgentSessionHost<TSet extends RoleSessionSet>(
   if (active === undefined || active.status === "ended") return set;
   const timestamp = requireDate(now, "Role Host detach timestamp");
   const { runtimeGenerationId: _runtimeGenerationId, endReason: _endReason, ...session } = active;
-  let updated = validateRoleSessionSet({
+  const updated = validateRoleSessionSet({
     ...set,
     sessions: {
       ...set.sessions,
@@ -528,27 +532,10 @@ export function detachRoleAgentSessionHost<TSet extends RoleSessionSet>(
   }) as TSet;
   if (updated.owner.scope !== "task") return updated;
   let taskSet = updated as TaskRoleSessionSet;
-  let binding = taskSet.providerBinding;
-  const turn = binding?.turn;
-  if (binding !== null && binding !== undefined && turn !== null && turn !== undefined
-    && turn.status === "accepted") {
-    binding = settleProviderTurn(binding, {
-      nativeTurnId: turn.nativeTurnId!,
-      status: "cancelled",
-      settledAt: timestamp,
-      reason: "runtime-physical-exit"
-    });
-    taskSet = updateTaskRoleProviderRuntime(taskSet, binding, now);
-  } else if (binding !== null && binding !== undefined && turn !== null && turn !== undefined
-    && ["submitting", "delivery-unknown"].includes(turn.status)) {
-    binding = settleProviderTurnSubmission(binding, {
-      attemptId: turn.attemptId,
-      status: "rejected",
-      resolvedAt: timestamp,
-      reason: "runtime-physical-exit"
-    });
-    taskSet = updateTaskRoleProviderRuntime(taskSet, binding, now);
-  }
+  const binding = taskSet.providerBinding;
+  // Losing the attachment proves neither cancellation nor non-submission.
+  // Preserve the exact input and its acceptance/unknown facts. Only a native
+  // terminal or an explicit submission resolution may settle that attempt.
   const activation = binding === null
     ? null
     : currentProviderActivation(binding);

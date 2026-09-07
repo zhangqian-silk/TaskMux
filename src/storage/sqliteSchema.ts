@@ -714,6 +714,15 @@ CREATE UNIQUE INDEX idx_durable_jobs_request
 ON durable_jobs(task_id, json_extract(payload, '$.operation.actorId'),
   json_extract(payload, '$.operation.requestId'));
 `
+  },
+  {
+    version: 3,
+    name: "exact-attempt-result-identity",
+    introducedIn: "0.15.5",
+    // Append after the released T01 migration without changing its checksum.
+    // Accepted inputs/results can use an exact attempt without a native Turn id.
+    // Preserve all valid historical records; never repair failed Turns or logs.
+    sql: "SELECT 1; -- exact attempt identity without a fabricated native Turn id"
   }
 ]);
 

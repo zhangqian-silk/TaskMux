@@ -30,8 +30,10 @@ import type { RuntimeLaunchPreStart } from "../runtime/ports.js";
 import type {
   AgentErrorInputDisposition,
   AgentErrorPhase,
+  AgentErrorRegistrationDisposition,
   AgentErrorSessionDisposition,
-  AgentErrorSource
+  AgentErrorSource,
+  ProviderDeliveryFailure
 } from "../runtime/agentError.js";
 import {
   isTaskOwnedWorkspace,
@@ -445,6 +447,20 @@ export interface SchedulerStorePort {
     raw: string;
     inputDisposition?: AgentErrorInputDisposition;
     sessionDisposition?: AgentErrorSessionDisposition;
+    /**
+     * Structured facts the failing operation knew and a message cannot carry:
+     * the failure class, the innermost cause, the generation the caller
+     * expected against the one the Host reported, and whether the durable
+     * registration committed. Persisted alongside the record so a reader does
+     * not have to parse them back out of prose.
+     */
+    errorName?: string;
+    causeName?: string;
+    hostState?: string;
+    expectedRuntimeGenerationId?: string;
+    observedRuntimeGenerationId?: string;
+    attemptId?: string;
+    registrationDisposition?: AgentErrorRegistrationDisposition;
   }>, now: Date): string;
   queueTaskProgress(taskId: string, reason: string, now: Date): void;
 
@@ -612,6 +628,26 @@ export type ReadyRoleDelivery = Readonly<{
   session: SchedulerRoleSession | null;
 }>;
 
+export type RoleDeliveryStatus =
+  | "sent"
+  | "already-sent"
+  | "busy"
+  | "rejected"
+  | "delivery-unknown"
+  | "unavailable";
+
+/**
+ * A delivery status plus the Host's original cause when it did not send.
+ *
+ * A bare status cannot say why a Provider write failed, so a caller holding
+ * only the status was forced to substitute a guess. This is the single
+ * delivery contract; there is no bare-status form.
+ */
+export type RoleDeliveryReport = Readonly<{
+  status: RoleDeliveryStatus;
+  failure?: ProviderDeliveryFailure;
+}>;
+
 /**
  * The Scheduler never reads stdin and never writes terminal bytes itself.
  * A tmux-owned Host implementation launches/resumes the role, establishes the
@@ -640,9 +676,7 @@ export interface TmuxDeliveryPort {
     /** Stable Provider request id. Repeating it must not create another Turn. */
     receiptId: string;
     text: string;
-  }>): Promise<
-    "sent" | "already-sent" | "busy" | "rejected" | "delivery-unknown" | "unavailable"
-  >;
+  }>): Promise<RoleDeliveryReport>;
   steerOnce(input: Readonly<{
     taskId: string;
     roleName: string;
@@ -654,9 +688,7 @@ export interface TmuxDeliveryPort {
     authority: import("../runtime/providerAuthorityFence.js").ProviderAuthorityFence;
     receiptId: string;
     text: string;
-  }>): Promise<
-    "sent" | "already-sent" | "busy" | "rejected" | "delivery-unknown" | "unavailable"
-  >;
+  }>): Promise<RoleDeliveryReport>;
   /**
    * Drops transient prepared bindings after authoritative terminal/absence
    * state. Omitting turnId clears every prepared generation for the Role.

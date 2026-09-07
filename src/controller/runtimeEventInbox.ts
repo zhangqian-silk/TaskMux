@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   closeSync,
   constants,
@@ -635,6 +636,13 @@ function assertEventId(id: string): void {
 }
 
 function hasSameIdentity(left: RuntimeLifecycleEvent, right: RuntimeLifecycleEvent): boolean {
+  if (left.type === "runtime-observation" && right.type === "runtime-observation"
+    && ["turn.completed", "turn.failed", "turn.cancelled"].includes(left.observation.kind)) {
+    return left.id === right.id
+      && left.observation.kind === right.observation.kind
+      && isDeepStrictEqual(left.observation.fence, right.observation.fence)
+      && isDeepStrictEqual(left.observation.payload, right.observation.payload);
+  }
   return left.id === right.id
     && left.type === right.type
     && left.scope === right.scope

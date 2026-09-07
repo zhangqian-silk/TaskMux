@@ -63,6 +63,8 @@ export type ProviderTurn = Readonly<{
   /** Optional correlation for the durable Yui Turn record. */
   turnId?: string;
   attemptId: string;
+  /** Original owned Activation; Host detach never rebinds this attempt. */
+  activationId?: string;
   authorityEpoch: number;
   status: ProviderTurnStatus;
   submittedAt: string;
@@ -321,6 +323,7 @@ export function beginProviderTurn(
     turn: {
       ...(turnId === undefined ? {} : { turnId }),
       attemptId,
+      activationId: currentProviderActivation(binding)!.activationId,
       authorityEpoch: input.authorityEpoch,
       status: "submitting",
       submittedAt,
@@ -331,7 +334,7 @@ export function beginProviderTurn(
 
 export function acceptProviderTurn(
   raw: ProviderRuntimeBinding,
-  input: Readonly<{ attemptId: string; nativeTurnId: string; acceptedAt: string }>
+  input: Readonly<{ attemptId: string; nativeTurnId?: string; acceptedAt: string }>
 ): ProviderRuntimeBinding {
   const binding = validateProviderRuntimeBinding(raw);
   const attemptId = identity(input.attemptId, "Provider input attempt id");
@@ -346,7 +349,9 @@ export function acceptProviderTurn(
     turn: {
       ...turn,
       status: "accepted",
-      nativeTurnId: identity(input.nativeTurnId, "Provider native Turn id"),
+      ...(input.nativeTurnId === undefined
+        ? {}
+        : { nativeTurnId: identity(input.nativeTurnId, "Provider native Turn id") }),
       updatedAt: acceptedAt
     }
   });
@@ -431,7 +436,8 @@ export function settleProviderTurnSubmission(
 export function settleProviderTurn(
   raw: ProviderRuntimeBinding,
   input: Readonly<{
-    nativeTurnId: string;
+    nativeTurnId?: string;
+    attemptId?: string;
     status: "completed" | "failed" | "cancelled";
     settledAt: string;
     reason?: string;
@@ -439,8 +445,14 @@ export function settleProviderTurn(
 ): ProviderRuntimeBinding {
   const binding = validateProviderRuntimeBinding(raw);
   const turn = binding.turn;
-  const nativeTurnId = identity(input.nativeTurnId, "Provider native Turn id");
-  if (turn === null || turn.nativeTurnId !== nativeTurnId
+  const nativeTurnId = input.nativeTurnId === undefined
+    ? undefined : identity(input.nativeTurnId, "Provider native Turn id");
+  if (turn === null
+    || (input.attemptId === undefined
+      ? nativeTurnId === undefined || turn.nativeTurnId !== nativeTurnId
+      : turn.attemptId !== input.attemptId)
+    || (turn.nativeTurnId !== undefined && nativeTurnId !== undefined
+      && turn.nativeTurnId !== nativeTurnId)
     || turn.status !== "accepted") {
     throw new Error("Provider Turn settlement does not match the current Turn.");
   }
@@ -449,6 +461,7 @@ export function settleProviderTurn(
     ...binding,
     turn: {
       ...turn,
+      ...(nativeTurnId === undefined ? {} : { nativeTurnId }),
       status: input.status,
       updatedAt: settledAt,
       ...(input.reason === undefined
@@ -472,6 +485,21 @@ export function updateProviderConversationRecoverability(
   });
 }
 
+/** Shared pre-start and commit guard for explicit native Conversation replacement. */
+export function assertProviderConversationReplaceable(raw: ProviderRuntimeBinding): void {
+  const binding = validateProviderRuntimeBinding(raw);
+  if (currentProviderActivation(binding) !== null || binding.authority.owner !== "none") {
+    throw new Error("Provider Conversation replacement requires its prior Activation to be ended and unowned.");
+  }
+  if (providerTurnIsActive(binding.turn)) {
+    throw new Error(
+      `Provider Conversation replacement cannot discard unsettled input attempt ${
+        binding.turn!.attemptId
+      } (${binding.turn!.status}). Resolve its actual outcome before selecting a new Conversation.`
+    );
+  }
+}
+
 export function supersedeProviderConversation(
   raw: ProviderRuntimeBinding,
   input: Readonly<{
@@ -483,30 +511,12 @@ export function supersedeProviderConversation(
 ): ProviderRuntimeBinding {
   const binding = validateProviderRuntimeBinding(raw);
   const current = currentProviderConversation(binding);
-  const basis = input.basis;
-  if (basis !== "terminal-session") {
+  if (input.basis !== "terminal-session") {
     throw new Error("Provider Conversation replacement basis is invalid.");
   }
+  assertProviderConversationReplaceable(binding);
   const switchedAt = timestamp(input.switchedAt, "Provider Conversation replacement timestamp");
   const epoch = current.epoch + 1;
-  const terminalReason = "terminal-session-replaced";
-  const activations = binding.activations.map((entry) => entry.status === "active"
-      ? {
-          ...entry,
-          status: "failed" as const,
-          endedAt: switchedAt,
-          terminalReason
-        }
-      : entry);
-  const turn = binding.turn !== null
-    && ["submitting", "accepted", "delivery-unknown"].includes(binding.turn.status)
-    ? {
-        ...binding.turn,
-        status: binding.turn.nativeTurnId === undefined ? "rejected" as const : "failed" as const,
-        updatedAt: switchedAt,
-        terminalReason
-      }
-    : binding.turn;
   return validateProviderRuntimeBinding({
     ...binding,
     currentConversationEpoch: epoch,
@@ -522,7 +532,7 @@ export function supersedeProviderConversation(
         createdAt: switchedAt
       }
     ],
-    activations: [...activations, {
+    activations: [...binding.activations, {
       activationId: identity(input.activationId, "Provider Activation id"),
       conversationId: input.conversationId,
       generation: 1,
@@ -535,7 +545,6 @@ export function supersedeProviderConversation(
       holderId: input.activationId,
       changedAt: switchedAt
     },
-    turn,
     goal: null
   });
 }
@@ -635,7 +644,12 @@ export function validateProviderRuntimeBinding(value: ProviderRuntimeBinding): P
     throw new Error("A live Provider Activation requires an exact writer authority.");
   }
   if (!Object.hasOwn(value, "turn")) throw new Error("Provider Runtime Binding requires Turn state.");
-  if (value.turn !== null) validateProviderTurn(value.turn, value.authority.epoch);
+  if (value.turn !== null) {
+    validateProviderTurn(value.turn, value.authority.epoch);
+    if (value.turn.activationId !== undefined && !activationIds.has(value.turn.activationId)) {
+      throw new Error("Provider Turn references an unknown original Activation.");
+    }
+  }
   if (!Object.hasOwn(value, "goal")) throw new Error("Provider Runtime Binding requires Goal state.");
   if (value.goal !== null) validateProviderGoal(value.goal);
   return value;
@@ -684,8 +698,9 @@ function validateProviderTurn(turn: ProviderTurn, currentAuthorityEpoch: number)
   }
   const hasAcceptedIdentity = turn.status === "accepted"
     || turn.status === "completed" || turn.status === "failed" || turn.status === "cancelled";
-  if (hasAcceptedIdentity) identity(turn.nativeTurnId!, "Provider native Turn id");
-  else if (turn.nativeTurnId !== undefined) {
+  if (hasAcceptedIdentity && turn.nativeTurnId !== undefined) {
+    identity(turn.nativeTurnId, "Provider native Turn id");
+  } else if (!hasAcceptedIdentity && turn.nativeTurnId !== undefined) {
     throw new Error("Unaccepted Provider Turn cannot have a native Turn id.");
   }
 }

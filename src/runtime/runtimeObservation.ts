@@ -239,15 +239,18 @@ export function createRuntimeObservation(input: RuntimeObservation): RuntimeObse
   }
   if (PROVIDER_STATE.has(input.kind)
     && input.authority !== "provider-structured"
-    && input.authority !== "controller") {
+    && input.authority !== "controller"
+    && !(input.kind === "turn.accepted" && input.authority === "transport"
+      && input.fence.receiptId !== undefined)) {
     throw new Error(`${input.kind} requires provider-structured or controller authority.`);
   }
   const fence = normalizeFence(input.fence);
   if (TURN_SCOPED.has(input.kind) && fence.nativeSessionId === undefined) {
     throw new Error(`${input.kind} requires nativeSessionId.`);
   }
-  if (TURN_SCOPED.has(input.kind) && fence.nativeTurnId === undefined) {
-    throw new Error(`${input.kind} requires nativeTurnId.`);
+  if (TURN_SCOPED.has(input.kind) && fence.nativeTurnId === undefined
+    && fence.receiptId === undefined) {
+    throw new Error(`${input.kind} requires a native Turn or exact receipt identity.`);
   }
   if ((input.kind.startsWith("activation.") || CONTINUATION_SCOPED.has(input.kind)
       || input.kind === "native-work.snapshot")
@@ -659,7 +662,7 @@ export function runtimeObservationSemanticKey(input: Readonly<{
     return [
       "terminal",
       ...continuationIdentity,
-      fence.continuationId ?? fence.nativeTurnId ?? "none",
+      fence.continuationId ?? fence.receiptId ?? fence.nativeTurnId ?? "none",
       input.kind,
       input.payload?.outcome ?? input.payload?.failure?.error.code ?? "terminal",
       input.kind === "continuation.settled" ? input.payload?.resultRef ?? "none" : "none",
@@ -703,7 +706,7 @@ export function runtimeObservationSemanticKey(input: Readonly<{
       fence.driverId,
       fence.conversationId ?? fence.nativeSessionId ?? fence.runtimeGenerationId,
       fence.activationId ?? fence.runtimeGenerationId,
-      fence.continuationId ?? fence.nativeTurnId ?? "none",
+      fence.continuationId ?? fence.receiptId ?? fence.nativeTurnId ?? "none",
       fence.continuationGeneration ?? "none",
       input.sequence,
       input.kind

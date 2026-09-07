@@ -18,15 +18,21 @@ import type {
 import {
   RuntimeGenerationMismatchError,
   RuntimeHostContentionError,
-  RuntimeLaunchError,
+  RuntimeHostUnavailableError,
+  promptPushOutcome,
   type ActivePromptPushPort,
   type ActivePromptPushRequest,
   type ActivePromptSteerRequest,
-  type PromptPushResult,
+  type PromptPushOutcome,
   type RuntimeLaunchPreStart,
   type SessionHostPort,
   type SessionInspection
 } from "./ports.js";
+import {
+  providerDeliveryFailureFrom,
+  type AgentErrorPhase,
+  type ProviderDeliveryFailure
+} from "./agentError.js";
 import {
   toRuntimeLaunchFailure,
   hasFatalLaunchOutput,
@@ -43,6 +49,7 @@ import {
   sendAgentHostTurnControl,
   sendAgentHostSteerControl,
   waitForAgentHostLaunchAck,
+  type AgentHostControlResult,
   type AgentHostSnapshot
 } from "./agentHost.js";
 
@@ -687,25 +694,50 @@ export class TmuxSessionHost implements SessionHostPort {
         if (controlResult.outcome === "active-same-generation") {
           broker.revoke(request.runtimeGenerationId);
         }
-        const acceptableState = ["idle", "ready", "busy"].includes(
-          controlResult.snapshot.state
-        );
-        if (!acceptableState
-          || controlResult.snapshot.runtimeGenerationId !== reservation.runtimeGenerationId) {
+        // Identity and readiness are separate facts. Only a genuinely
+        // different generation is a conflict that must fail closed, not
+        // permission to stop the Host; a matching unsettled generation is this
+        // exact activation still coming up, and stopping it would destroy a
+        // healthy Session (and any Turn it is carrying).
+        const observedGeneration = controlResult.snapshot.runtimeGenerationId;
+        if (observedGeneration !== reservation.runtimeGenerationId) {
           broker.revoke(request.runtimeGenerationId);
-          try {
-            await stopExactRole(this.tmux, hostId, request.owner.roleName);
-          } catch {
-            // The coordinator will enqueue durable owner cleanup.
-          }
           throw new RuntimeGenerationMismatchError(
             reservation.runtimeGenerationId,
-            controlResult.snapshot.runtimeGenerationId,
+            observedGeneration,
             controlResult.snapshot.state,
             `Agent Host acknowledgement generation mismatch for ${
               reservation.runtimeGenerationId
-            }; observed=${controlResult.snapshot.runtimeGenerationId ?? "none"}; `
-              + `state=${controlResult.snapshot.state}.`
+            }; observed=${observedGeneration ?? "none"}; `
+              + `state=${controlResult.snapshot.state}${
+                describeHostFailure(controlResult)
+              }.`
+          );
+        }
+        if (!["idle", "ready", "busy"].includes(controlResult.snapshot.state)) {
+          broker.revoke(request.runtimeGenerationId);
+          if (["starting", "settling", "delivery-unknown"].includes(
+            controlResult.snapshot.state
+          )) {
+            // The right generation is present but not yet deliverable. This
+            // is transient backpressure, so leave the Host running and let
+            // the caller retry rather than terminalizing the Turn.
+            throw new RuntimeHostContentionError(
+              "provider-child-active",
+              `The Agent Host for ${request.owner.roleName} is still ${
+                controlResult.snapshot.state
+              } on this exact generation${describeHostFailure(controlResult)}.`
+            );
+          }
+          // This launch is unusable. It did not create this Host, so failure
+          // is not authority to clean its resources or unknown execution.
+          throw new RuntimeHostUnavailableError(
+            reservation.runtimeGenerationId,
+            controlResult.snapshot.state,
+            `Agent Host reached ${controlResult.snapshot.state} for ${
+              reservation.runtimeGenerationId
+            }${describeHostFailure(controlResult)}.`,
+            { cause: controlResult.failure ?? controlResult.snapshot }
           );
         }
         providerSnapshot = controlResult.snapshot;
@@ -863,16 +895,26 @@ async function deadHostLaunchFailure(
   );
 }
 
+/**
+ * Appends the Host's own cause to a launch diagnostic. Without this the
+ * caller only learns the state name and the real reason stays trapped in the
+ * Host process.
+ */
+function describeHostFailure(result: AgentHostControlResult): string {
+  const detail = result.failure?.detail ?? result.snapshot.detail;
+  return detail === undefined ? "" : `; detail=${detail}`;
+}
+
 /** Structured managed-Turn input; tmux remains presentation/liveness only. */
 export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
   constructor(private readonly home: string) {}
 
-  async tryPush(request: ActivePromptPushRequest): Promise<PromptPushResult> {
+  async tryPush(request: ActivePromptPushRequest): Promise<PromptPushOutcome> {
     const ref = requireMatchingHostRef(request.binding);
     if (ref.scope !== "task" || request.binding.nativeSessionId === undefined
       || request.binding.providerAuthority === undefined
       || request.binding.providerAuthority.owner !== "controller") {
-      return "unavailable";
+      return promptPushOutcome("unavailable");
     }
     try {
       const result = await sendAgentHostTurnControl({
@@ -893,27 +935,28 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
           }
         }
       });
-      if (result.snapshot.state === "delivery-unknown") return "delivery-unknown";
-      if (result.snapshot.state === "busy") return "busy";
-      if (result.outcome === "rejected") return "rejected";
+      // The Host attaches its own structured cause to every non-delivery.
+      const failure = result.failure;
+      if (result.snapshot.state === "delivery-unknown") {
+        return promptPushOutcome("delivery-unknown", failure);
+      }
+      if (result.snapshot.state === "busy") return promptPushOutcome("busy", failure);
+      if (result.outcome === "rejected") return promptPushOutcome("rejected", failure);
       if (result.snapshot.attemptId !== request.envelope.id) {
         return result.snapshot.state === "starting" || result.snapshot.state === "settling"
-          ? "busy"
-          : "unavailable";
+          ? promptPushOutcome("busy", failure)
+          : promptPushOutcome("unavailable", failure);
       }
-      if (result.snapshot.state === "ready") return "delivered";
+      if (result.snapshot.state === "ready") return promptPushOutcome("delivered");
       return result.snapshot.state === "starting" || result.snapshot.state === "settling"
-        ? "busy"
-        : "unavailable";
+        ? promptPushOutcome("busy", failure)
+        : promptPushOutcome("unavailable", failure);
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      return code === "ENOENT" || code === "ECONNREFUSED"
-        ? "unavailable"
-        : "delivery-unknown";
+      return transportFailureOutcome(error, "turn-submit", request.envelope.id);
     }
   }
 
-  async trySteer(request: ActivePromptSteerRequest): Promise<PromptPushResult> {
+  async trySteer(request: ActivePromptSteerRequest): Promise<PromptPushOutcome> {
     try {
       const result = await sendAgentHostSteerControl({
         home: this.home,
@@ -933,17 +976,41 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
           }
         }
       });
-      if (result.outcome === "accepted") return "delivered";
-      if (result.snapshot.state === "delivery-unknown") return "delivery-unknown";
-      if (result.snapshot.state === "busy") return "busy";
-      return result.outcome === "rejected" ? "rejected" : "unavailable";
+      if (result.outcome === "accepted") return promptPushOutcome("delivered");
+      const failure = result.failure;
+      if (result.snapshot.state === "delivery-unknown") {
+        return promptPushOutcome("delivery-unknown", failure);
+      }
+      if (result.snapshot.state === "busy") return promptPushOutcome("busy", failure);
+      return result.outcome === "rejected"
+        ? promptPushOutcome("rejected", failure)
+        : promptPushOutcome("unavailable", failure);
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      return code === "ENOENT" || code === "ECONNREFUSED"
-        ? "unavailable"
-        : "delivery-unknown";
+      return transportFailureOutcome(error, "turn-submit", request.envelope.id);
     }
   }
+}
+
+/**
+ * A transport failure decides the input disposition. A refused or absent
+ * socket proves the Host never received the request; anything else leaves
+ * delivery genuinely ambiguous and must not be replayed automatically.
+ */
+function transportFailureOutcome(
+  error: unknown,
+  phase: AgentErrorPhase,
+  attemptId: string
+): PromptPushOutcome {
+  const code = (error as NodeJS.ErrnoException).code;
+  const unreachable = code === "ENOENT" || code === "ECONNREFUSED";
+  return promptPushOutcome(
+    unreachable ? "unavailable" : "delivery-unknown",
+    providerDeliveryFailureFrom(error, {
+      phase,
+      attemptId,
+      inputDisposition: unreachable ? "not-accepted" : "unknown"
+    })
+  );
 }
 
 async function ensureRoleWindow(

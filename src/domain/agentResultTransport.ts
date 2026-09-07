@@ -6,7 +6,7 @@ export type TransportedAgentResult =
   | Readonly<{
       status: "failed";
       diagnostic: string;
-      failureReason: "missing-result";
+      failureReason: "missing-result" | "runtime-failed";
     }>;
 
 /**
@@ -26,7 +26,7 @@ export function transportAgentResult(value: unknown): TransportedAgentResult {
     return {
       status: "failed",
       diagnostic: "Provider terminal event included an Agent result with an invalid NUL byte.",
-      failureReason: "missing-result"
+      failureReason: "runtime-failed"
     };
   }
   if (value.trim().length === 0) {
@@ -41,7 +41,7 @@ export function transportAgentResult(value: unknown): TransportedAgentResult {
     return {
       status: "failed",
       diagnostic: `Provider Agent result is ${bytes} bytes and exceeds the ${MAX_TURN_RESULT_OUTPUT_BYTES}-byte durable result limit; the result was not stored.`,
-      failureReason: "missing-result"
+      failureReason: "runtime-failed"
     };
   }
   return { status: "completed", output: value };

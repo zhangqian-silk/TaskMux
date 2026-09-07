@@ -764,7 +764,7 @@ test("SQLite projects an active native Session and its Host activation", (t) => 
   }]);
 });
 
-test("a reused Host generation mismatch is terminal and settles the stale reservation", async () => {
+test("a reused Host generation mismatch rejects without cleaning another activation", async () => {
   const now = new Date("2026-09-03T09:00:00.000Z");
   const binding = createRoleAgentBinding({ id: "codex", adapterId: "codex" });
   const role = createGlobalRole(
@@ -835,7 +835,7 @@ test("a reused Host generation mismatch is terminal and settles the stale reserv
       return true;
     }
   );
-  assert.equal(settled, 1);
+  assert.equal(settled, 0);
   assert.equal(cleanup, 0);
 });
 
@@ -1476,7 +1476,7 @@ test("a direct Provider Turn records visible input and output without workflow s
   assert.equal(failedResultTurn.status, "failed");
   assert.equal(failedResultTurn.result.output, undefined);
   assert.equal(failedResultTurn.result.diagnostic, preciseDiagnostic);
-  assert.equal(failedResultTurn.result.failureReason, "missing-result");
+  assert.equal(failedResultTurn.result.failureReason, "runtime-failed");
 
   assert.equal(adapter.observeRuntimeObservation(observation("goal.updated", 9, {
     payload: {
@@ -1659,7 +1659,7 @@ test("Leader wakeups aggregate for one minute and force-steer after ten", async 
           new Date(firstEventAt.getTime() + LEADER_WAKE_FORCE_MS)
         );
       }
-      return "sent";
+      return { status: "sent" };
     }
   };
   let results = await processLeaderWakeups(
@@ -1840,6 +1840,14 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
     nativeTurnId: "native-turn-old",
     acceptedAt: new Date(startedAt.getTime() + 1_000).toISOString()
   });
+  // The old input completed before this explicit Conversation replacement.
+  // Ending its Host alone must not manufacture that execution result.
+  provider = settleProviderTurn(provider, {
+    attemptId: "turn:task-1/turn-old",
+    nativeTurnId: "native-turn-old",
+    status: "completed",
+    settledAt: new Date(startedAt.getTime() + 1_500).toISOString()
+  });
   provider = endProviderActivation(provider, "activation-old", {
     status: "ended",
     endedAt: new Date(startedAt.getTime() + 2_000).toISOString(),
@@ -1931,7 +1939,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
       }, nextAt), "applied");
       return { prepared, session: prepared.session };
     },
-    sendOnce: async () => "sent",
+    sendOnce: async () => ({ status: "sent" }),
     inspectRole: async () => "present"
   };
 
@@ -2036,7 +2044,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
         prepared: leaderPrepared,
         session: leaderPrepared.session
       }),
-      sendOnce: async () => "sent",
+      sendOnce: async () => ({ status: "sent" }),
       inspectRole: async () => "present"
     },
     nextAt,
@@ -2219,6 +2227,7 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     conversationId: "thread-1",
     activationId: "activation-1",
     nativeTurnId: "turn-1",
+    attemptId: "run:task-1/turn-1",
     status: "completed"
   });
   assert.equal(store.getActiveTurn(task.id, role.name), null);
@@ -3649,7 +3658,7 @@ test("Controller begin-handover accepts a null fromReleaseId", async (t) => {
 
 test("production storage exposes one current version and one migration floor", () => {
   assert.equal(MIN_SUPPORTED_STORAGE_VERSION, 1);
-  assert.equal(CURRENT_STORAGE_VERSION, 2);
+  assert.equal(CURRENT_STORAGE_VERSION, 3);
   for (const retiredExport of [
     "FileTaskStore",
     "STORAGE_STATE_FILE",
@@ -3672,7 +3681,7 @@ test("a new current Home initializes its SQLite authority exactly once", (t) => 
   try {
     assert.deepEqual(
       database.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),
-      [{ version: 1 }, { version: 2 }]
+      [{ version: 1 }, { version: 2 }, { version: 3 }]
     );
     assert.deepEqual(
       database.prepare("PRAGMA table_info(schema_migrations)").all().map(({ name }) => name),
@@ -4290,7 +4299,7 @@ test("native terminal ingress preserves valid output and durably fails missing o
     }
   }).event;
   assert.equal(oversized.outcome.status, "failed");
-  assert.equal(oversized.outcome.failureReason, "missing-result");
+  assert.equal(oversized.outcome.failureReason, "runtime-failed");
   assert.equal(oversized.outcome.output, undefined);
   assert.match(oversized.outcome.diagnostic, /524289 bytes/u);
   assert.match(oversized.outcome.diagnostic, /524288-byte durable result limit/u);

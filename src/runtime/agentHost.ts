@@ -60,7 +60,14 @@ import {
   AGENT_HOST_CONTROL_TIMEOUT_MS,
   AGENT_HOST_READY_TIMEOUT_MS
 } from "./runtimeDeadlines.js";
-import { serializeAgentErrorRaw } from "./agentError.js";
+import {
+  providerDeliveryFailure,
+  providerDeliveryFailureFrom,
+  redactAgentErrorText,
+  serializeAgentErrorRaw,
+  type AgentErrorPhase,
+  type ProviderDeliveryFailure
+} from "./agentError.js";
 import { runCodexInteractiveHost } from "./codexInteractiveHost.js";
 
 export const AGENT_HOST_CONTROL_PROTOCOL = "yui-agent-host/v4" as const;
@@ -143,6 +150,12 @@ export type AgentHostSnapshot = Readonly<{
   updatedAt: string;
 }>;
 
+/**
+ * What the control request itself did. This is deliberately independent of
+ * `snapshot.state` (whether the Provider Conversation is usable) and of
+ * whether the Provider accepted managed input: a request can be received and
+ * answered while the Session is still starting and no input was ever written.
+ */
 export type AgentHostControlOutcome =
   | "status"
   | "accepted"
@@ -154,6 +167,13 @@ export type AgentHostControlResult = Readonly<{
   protocol: typeof AGENT_HOST_CONTROL_PROTOCOL;
   outcome: AgentHostControlOutcome;
   snapshot: AgentHostSnapshot;
+  /**
+   * Structured cause when the Host could not complete the request. Additive
+   * and optional: a Host from an older build omits it and every consumer
+   * falls back to `snapshot.detail`, so an in-flight Host survives an upgrade
+   * without a protocol break.
+   */
+  failure?: ProviderDeliveryFailure;
 }>;
 
 export function serializeAgentHostLaunchControl(control: AgentHostLaunchControl): string {
@@ -187,7 +207,7 @@ export async function runAgentHost(input: Readonly<{
   let snapshot = hostSnapshot("idle");
   let dispatchTail = Promise.resolve();
   let promptHuman = (): void => {};
-  const recentSteerAttempts = new Set<string>();
+  const recentSteerAttempts = new Map<string, ProviderDeliveryFailure | undefined>();
   await replayExitOutbox(input.home);
 
   const updateSnapshot = (next: AgentHostSnapshot): void => {
@@ -263,10 +283,33 @@ export async function runAgentHost(input: Readonly<{
       return;
     }
     const terminalPayload = activeTurnPayload;
-    if (terminalPayload === undefined) return;
+    if (terminal.attemptId !== undefined && terminal.attemptId !== activeTurnAttemptId
+      && sessionPayload !== undefined && terminal.nativeSessionId === session?.nativeSessionId) {
+      // A duplicate/late terminal retains the Driver's exact old attempt.
+      // The durable observer validates that binding; it must not alter the
+      // current Host occupancy or inherit the successor's managed Turn.
+      const observedPayload = sessionPayload;
+      void enqueueSerialized(async () => {
+        await publishStructuredProviderTerminal({
+          home: input.home,
+          environment: observedPayload.environment,
+          activationId: activationId ?? observedPayload.runtimeGenerationId,
+          terminal
+        });
+        signalRoleMailbox(input.home, observedPayload);
+      }).catch(() => {});
+      return;
+    }
+    if (terminalPayload === undefined
+      || terminal.attemptId !== activeTurnAttemptId
+      || terminal.nativeSessionId !== session?.nativeSessionId
+      || (terminal.nativeTurnId !== undefined && activeNativeTurnId !== undefined
+        && terminal.nativeTurnId !== activeNativeTurnId)) return;
+    const terminalAttemptId = terminal.attemptId;
     const terminalActivationId = activationId ?? terminalPayload.runtimeGenerationId;
     void enqueueSerialized(async () => {
-      if (activeTurnPayload !== terminalPayload) return;
+      if (activeTurnPayload !== terminalPayload
+        || activeTurnAttemptId !== terminalAttemptId) return;
       if (session !== undefined) {
         updateSnapshot(hostSnapshot("settling", {
           runtimeGenerationId: terminalPayload.runtimeGenerationId,
@@ -274,6 +317,7 @@ export async function runAgentHost(input: Readonly<{
           processInstanceId: session.processInstanceId,
           nativeSessionId: terminal.nativeSessionId,
           conversationId: terminal.conversationId,
+          attemptId: terminalAttemptId,
           nativeTurnId: terminal.nativeTurnId,
           ...authorityFields()
         }));
@@ -717,18 +761,58 @@ export async function runAgentHost(input: Readonly<{
     enqueueSerialized(() => dispatch(next))
   );
 
-  const submitTurn = async (request: AgentHostSubmitTurnControl): Promise<AgentHostSnapshot> => {
+  const submitTurn = async (
+    request: AgentHostSubmitTurnControl,
+    operation: { failure?: ProviderDeliveryFailure }
+  ): Promise<AgentHostSnapshot> => {
     if (session === undefined || sessionPayload === undefined) {
       throw new Error("Agent Host has no live Provider Conversation.");
     }
     if (request.nativeSessionId !== session.nativeSessionId) {
       throw new Error("Agent Host Turn targets a different Provider Conversation.");
     }
+    // A superseded generation is a real identity conflict, and the writer
+    // fence does not catch it: a Turn can carry an old generation under a
+    // fence that is still current. Without this the Host registered the stale
+    // Turn, wrote it to the Provider, and adopted the old generation into its
+    // own snapshot. Same generation is contention, which is decided below.
+    if (request.runtimeGenerationId !== sessionPayload.runtimeGenerationId) {
+      operation.failure = providerDeliveryFailure({
+        detail: "Agent Host Turn targets a superseded runtime generation.",
+        errorName: "ProviderGenerationConflictError",
+        phase: "turn-submit",
+        hostState: snapshot.state,
+        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
+        observedRuntimeGenerationId: request.runtimeGenerationId,
+        attemptId: request.turn.attemptId,
+        inputDisposition: "not-accepted",
+        registrationDisposition: "not-committed",
+        // A stale writer does not make the live Session unusable.
+        sessionDisposition: "recoverable"
+      });
+      throw new Error(
+        "Agent Host Turn targets a superseded runtime generation: expected "
+        + `${sessionPayload.runtimeGenerationId}, observed ${request.runtimeGenerationId}.`
+      );
+    }
     if (authority === undefined
       || !sameProviderAuthorityFence(authority, request.authority)) {
       throw new Error("Agent Host rejected a stale Provider writer fence.");
     }
     if (activeTurnPayload !== undefined || snapshot.state === "settling") {
+      operation.failure = providerDeliveryFailure({
+        detail: "Agent Host still owns an unsettled Provider Turn.",
+        errorName: "ProviderTurnBusyError",
+        phase: "turn-submit",
+        hostState: snapshot.state === "settling" ? "settling" : snapshot.state,
+        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
+        observedRuntimeGenerationId: request.runtimeGenerationId,
+        attemptId: request.turn.attemptId,
+        inputDisposition: "not-accepted",
+        registrationDisposition: "not-committed",
+        // Busy is a healthy Session doing work, never a reason to stop it.
+        sessionDisposition: "recoverable"
+      });
       throw new ProviderTurnBusyError(
         "Agent Host still owns an unsettled Provider Turn.",
         request.turn.attemptId,
@@ -736,6 +820,10 @@ export async function runAgentHost(input: Readonly<{
       );
     }
     const { YUI_TURN_ID: _launchTurnId, ...baseEnvironment } = sessionPayload.environment;
+    // Steer attempts belong to the active native Turn. Never evict an unknown
+    // attempt while that Turn remains active, but don't retain another Turn's
+    // completed steering history after a new exact submission begins.
+    recentSteerAttempts.clear();
     activeTurnPayload = {
       ...sessionPayload,
       environment: {
@@ -761,11 +849,71 @@ export async function runAgentHost(input: Readonly<{
       request.turn.attemptId,
       request.turnId
     );
-    await beginDurableProviderTurn(input.home, durableTurn);
+    // Registration precedes the Provider write, so its failure modes are not
+    // the Provider's. A definite failure means the Provider never saw this
+    // input and the occupancy must be released; anything unconfirmed leaves
+    // durable state ambiguous and keeps it held.
+    try {
+      await beginDurableProviderTurn(input.home, durableTurn);
+    } catch (error) {
+      // Registration ends in one of three states and they are not
+      // interchangeable. A definite refusal committed nothing. A lost
+      // acknowledgement whose compensating resolve also failed is genuinely
+      // unknown, and releasing that occupancy would discard a durable record
+      // that may exist. A lost acknowledgement whose resolve succeeded is
+      // neither: the resolve is fenced on this exact attempt id and could not
+      // have succeeded unless the registration committed, so that attempt is
+      // known committed and already settled.
+      const registrationSettled = error instanceof ProviderTurnRegistrationSettledError;
+      const registrationUnknown = !registrationSettled
+        && (error instanceof ControllerAcknowledgementUnknownError
+          || error instanceof ProviderDeliveryUnknownError);
+      updateSnapshot(hostSnapshot(registrationUnknown ? "delivery-unknown" : "failed", {
+        runtimeGenerationId: request.runtimeGenerationId,
+        adapterId: session.adapterId,
+        processInstanceId: session.processInstanceId,
+        nativeSessionId: session.nativeSessionId,
+        conversationId: session.conversationId,
+        attemptId: request.turn.attemptId,
+        ...authorityFields(),
+        detail: registrationUnknown
+          ? `Provider Turn registration acknowledgement is unconfirmed; the Provider was not sent this input: ${
+            errorText(error)
+          }`
+          : registrationSettled
+            ? `Provider Turn registration was settled before any Provider write: ${errorText(error)}`
+            : `Provider Turn registration failed before any Provider write: ${errorText(error)}`
+      }));
+      // The Provider never saw the input in any branch. Only the durable
+      // registration is in question, so that is the fact that differs.
+      operation.failure = providerDeliveryFailureFrom(error, {
+        phase: "turn-submit",
+        hostState: snapshot.state,
+        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
+        observedRuntimeGenerationId: request.runtimeGenerationId,
+        attemptId: request.turn.attemptId,
+        inputDisposition: "not-accepted",
+        registrationDisposition: registrationUnknown
+          ? "unknown"
+          : registrationSettled ? "committed" : "not-committed",
+        sessionDisposition: "recoverable"
+      });
+      if (!registrationUnknown) {
+        // The Provider provably holds nothing, and the durable record either
+        // never existed or is settled. Release the Session for the next
+        // attempt instead of stranding it in a false `starting`.
+        activeTurnPayload = undefined;
+        activeTurnAttemptId = undefined;
+        activeNativeTurnId = undefined;
+      }
+      throw error;
+    }
     let providerAccepted = false;
+    let transportAccepted = false;
     try {
       const receipt = await session.submitTurn(request.turn);
-      providerAccepted = true;
+      transportAccepted = true;
+      providerAccepted = receipt.acceptance === "provider";
       activeNativeTurnId = receipt.nativeTurnId;
       try {
         await publishStructuredProviderAccepted({
@@ -776,11 +924,13 @@ export async function runAgentHost(input: Readonly<{
         });
       } catch (error) {
         const unknown = new ProviderDeliveryUnknownError(
-          `Provider accepted input but its durable acknowledgement could not be confirmed: ${
-            errorText(error)
-          }`,
-          request.turn.attemptId
+          "Input submission returned a receipt but its durable acknowledgement could not be confirmed.",
+          request.turn.attemptId,
+          { cause: error }
         );
+        // A resolve failure here must not escape before the snapshot is
+        // written: the Provider has already accepted, and losing that fact
+        // would report a definite non-acceptance for a live Turn.
         await resolveProviderTurnSubmission(input.home, durableTurn, unknown);
         throw unknown;
       }
@@ -796,10 +946,18 @@ export async function runAgentHost(input: Readonly<{
       }));
       return snapshot;
     } catch (error) {
-      if (!providerAccepted) {
-        await resolveProviderTurnSubmission(input.home, durableTurn, error);
+      let failureError = error;
+      let settlementUnknown = false;
+      if (!transportAccepted) {
+        try {
+          await resolveProviderTurnSubmission(input.home, durableTurn, error);
+        } catch (resolutionError) {
+          settlementUnknown = true;
+          failureError = resolutionError;
+        }
       }
-      const deliveryUnknown = error instanceof ProviderDeliveryUnknownError || providerAccepted;
+      const inputUnknown = error instanceof ProviderDeliveryUnknownError;
+      const deliveryUnknown = inputUnknown || transportAccepted || settlementUnknown;
       const state = deliveryUnknown
         ? "delivery-unknown"
         : error instanceof ProviderTurnBusyError
@@ -813,34 +971,94 @@ export async function runAgentHost(input: Readonly<{
         conversationId: session.conversationId,
         attemptId: request.turn.attemptId,
         ...authorityFields(),
-        detail: errorText(error)
+        detail: errorText(failureError)
       }));
+      operation.failure = providerDeliveryFailureFrom(failureError, {
+        phase: "turn-submit",
+        hostState: state,
+        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
+        observedRuntimeGenerationId: request.runtimeGenerationId,
+        attemptId: request.turn.attemptId,
+        // Acceptance is observed, never inferred from the error class.
+        inputDisposition: providerAccepted
+          ? "accepted"
+          : inputUnknown || transportAccepted ? "unknown" : "not-accepted",
+        registrationDisposition: "committed",
+        sessionDisposition: state === "failed" ? "unknown" : "recoverable"
+      });
       if (state !== "delivery-unknown") {
         activeTurnPayload = undefined;
         activeTurnAttemptId = undefined;
         activeNativeTurnId = undefined;
       }
-      if (deliveryUnknown && !(error instanceof ProviderDeliveryUnknownError)) {
+      if (deliveryUnknown && !(failureError instanceof ProviderDeliveryUnknownError)) {
         throw new ProviderDeliveryUnknownError(
-          `Provider accepted input but its durable acknowledgement could not be confirmed: ${
-            errorText(error)
-          }`,
-          request.turn.attemptId
+          "Provider accepted input but its durable acknowledgement could not be confirmed.",
+          request.turn.attemptId,
+          { cause: failureError }
         );
       }
-      throw error;
+      throw failureError;
     }
   };
 
-  const steerTurn = async (request: AgentHostSteerTurnControl): Promise<AgentHostSnapshot> => {
+  const steerTurn = async (
+    request: AgentHostSteerTurnControl,
+    operation: { failure?: ProviderDeliveryFailure }
+  ): Promise<AgentHostSnapshot> => {
     if (session === undefined || sessionPayload === undefined || activeTurnPayload === undefined) {
+      operation.failure = providerDeliveryFailure({
+        detail: "Agent Host has no active Provider Turn to steer.",
+        errorName: "ProviderTurnRejectedError",
+        phase: "turn-submit",
+        hostState: snapshot.state,
+        expectedRuntimeGenerationId: sessionPayload?.runtimeGenerationId
+          ?? snapshot.runtimeGenerationId ?? "none",
+        observedRuntimeGenerationId: request.runtimeGenerationId,
+        attemptId: request.turn.attemptId,
+        inputDisposition: "not-accepted",
+        sessionDisposition: "recoverable"
+      });
       throw new ProviderTurnRejectedError(
         "Agent Host has no active Provider Turn to steer.",
         request.turn.attemptId
       );
     }
+    // Steer carried no generation check, so a steer issued against a
+    // superseded activation was written into the current Provider Turn. The
+    // native Turn id alone does not catch it: a late steer can arrive while
+    // the id it names is still the active one under a newer generation.
+    if (request.runtimeGenerationId !== sessionPayload.runtimeGenerationId) {
+      operation.failure = providerDeliveryFailure({
+        detail: "Agent Host steer targets a superseded runtime generation.",
+        errorName: "ProviderGenerationConflictError",
+        phase: "turn-submit",
+        hostState: snapshot.state,
+        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
+        observedRuntimeGenerationId: request.runtimeGenerationId,
+        attemptId: request.turn.attemptId,
+        inputDisposition: "not-accepted",
+        sessionDisposition: "recoverable"
+      });
+      throw new ProviderTurnRejectedError(
+        "Agent Host steer targets a superseded runtime generation: expected "
+        + `${sessionPayload.runtimeGenerationId}, observed ${request.runtimeGenerationId}.`,
+        request.turn.attemptId
+      );
+    }
     if (request.nativeSessionId !== session.nativeSessionId
       || request.nativeTurnId !== activeNativeTurnId) {
+      operation.failure = providerDeliveryFailure({
+        detail: "Agent Host steer targets a different Provider Turn.",
+        errorName: "ProviderTurnRejectedError",
+        phase: "turn-submit",
+        hostState: snapshot.state,
+        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
+        observedRuntimeGenerationId: request.runtimeGenerationId,
+        attemptId: request.turn.attemptId,
+        inputDisposition: "not-accepted",
+        sessionDisposition: "recoverable"
+      });
       throw new ProviderTurnRejectedError(
         "Agent Host steer targets a different Provider Turn.",
         request.turn.attemptId
@@ -849,17 +1067,37 @@ export async function runAgentHost(input: Readonly<{
     if (authority === undefined || !sameProviderAuthorityFence(authority, request.authority)) {
       throw new Error("Agent Host rejected a stale Provider writer fence.");
     }
-    if (recentSteerAttempts.has(request.turn.attemptId)) return snapshot;
-    const receipt = await session.steerTurn(request.turn);
-    if (receipt.nativeTurnId !== request.nativeTurnId) {
+    if (recentSteerAttempts.has(request.turn.attemptId)) {
+      const previous = recentSteerAttempts.get(request.turn.attemptId);
+      if (previous === undefined) return snapshot;
+      operation.failure = previous;
       throw new ProviderDeliveryUnknownError(
-        "Provider accepted steer against an unexpected native Turn.",
+        previous.detail,
         request.turn.attemptId
       );
     }
-    recentSteerAttempts.add(request.turn.attemptId);
-    if (recentSteerAttempts.size > 256) {
-      recentSteerAttempts.delete(recentSteerAttempts.values().next().value!);
+    try {
+      const receipt = await session.steerTurn(request.turn);
+      if (receipt.nativeTurnId !== request.nativeTurnId) {
+        throw new ProviderDeliveryUnknownError(
+          "Provider accepted steer against an unexpected native Turn.",
+          request.turn.attemptId
+        );
+      }
+      recentSteerAttempts.set(request.turn.attemptId, undefined);
+    } catch (error) {
+      const unknown = error instanceof ProviderDeliveryUnknownError;
+      operation.failure = providerDeliveryFailureFrom(error, {
+        phase: "turn-submit",
+        hostState: snapshot.state,
+        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
+        observedRuntimeGenerationId: request.runtimeGenerationId,
+        attemptId: request.turn.attemptId,
+        inputDisposition: unknown ? "unknown" : "not-accepted",
+        sessionDisposition: "unknown"
+      });
+      if (unknown) recentSteerAttempts.set(request.turn.attemptId, operation.failure);
+      throw error;
     }
     return snapshot;
   };
@@ -897,17 +1135,35 @@ export async function runAgentHost(input: Readonly<{
       return controlResult("status", snapshot);
     }
     if (request.type === "submit-turn") {
-      const accepted = await enqueueSerialized(() => submitTurn(request));
+      const accepted = await enqueueSerialized(async () => {
+        const operation: { failure?: ProviderDeliveryFailure } = {};
+        try {
+          return await submitTurn(request, operation);
+        } catch (error) {
+          throw new AgentHostOperationError(error, snapshot, operation.failure);
+        }
+      });
       return controlResult("accepted", accepted);
     }
     if (request.type === "steer-turn") {
-      const accepted = await enqueueSerialized(() => steerTurn(request));
+      const accepted = await enqueueSerialized(async () => {
+        const operation: { failure?: ProviderDeliveryFailure } = {};
+        try {
+          return await steerTurn(request, operation);
+        } catch (error) {
+          throw new AgentHostOperationError(error, snapshot, operation.failure);
+        }
+      });
       return controlResult("accepted", accepted);
     }
     if (request.type === "set-authority") {
       const accepted = await enqueueSerialized(async () => setAuthority(request));
       return controlResult("accepted", accepted);
     }
+    // Same generation means this exact activation is already live here: the
+    // control request was received and the identity matches. Whether the
+    // Conversation is usable yet is a separate fact the caller reads from
+    // `snapshot.state`; it is never an identity conflict.
     if (snapshot.runtimeGenerationId === request.runtimeGenerationId
       && ["starting", "ready", "settling", "delivery-unknown"].includes(snapshot.state)) {
       return controlResult("active-same-generation", snapshot);
@@ -957,7 +1213,7 @@ export async function runAgentHost(input: Readonly<{
           boundedText
         }
       };
-      await submitTurn(turnControl);
+      await submitTurn(turnControl, {});
       process.stdout.write("Provider accepted the human Turn; waiting for its terminal boundary.\n");
     }).catch((error) => {
       process.stderr.write(`Provider input failed: ${errorText(error)}\n`);
@@ -1198,6 +1454,16 @@ async function replayExitOutbox(home: string): Promise<void> {
 }
 
 /** Internal socket boundary exported for transport-level verification. */
+class AgentHostOperationError extends Error {
+  constructor(
+    cause: unknown,
+    readonly snapshot: AgentHostSnapshot,
+    readonly failure?: ProviderDeliveryFailure
+  ) {
+    super(errorText(cause), { cause });
+  }
+}
+
 export async function openAgentHostControl(
   home: string,
   payload: AgentHostLaunchPayload,
@@ -1234,16 +1500,52 @@ export async function openAgentHostControl(
       void (async () => {
         try {
           const request = validateControl(JSON.parse(body.trim()) as AgentHostControl);
-          socket.end(`${JSON.stringify(await dispatch(request))}\n`);
-        } catch (error) {
-          const current = snapshot();
+          socket.end(`${JSON.stringify(boundControlResponse(await dispatch(request)))}\n`);
+        } catch (caught) {
+          const error = caught instanceof AgentHostOperationError ? caught.cause : caught;
+          const current = caught instanceof AgentHostOperationError ? caught.snapshot : snapshot();
           const busy = error instanceof ProviderTurnBusyError;
-          socket.end(`${JSON.stringify(controlResult(busy ? "accepted" : "rejected", validateSnapshot({
-            ...current,
-            ...(busy ? { state: "busy" as const } : {}),
-            detail: errorText(error),
-            updatedAt: new Date().toISOString()
-          })))}\n`);
+          // Two different facts can be unknown: whether the Provider accepted
+          // the input, and whether its durable registration was committed.
+          // Both leave the outcome ambiguous, so neither may be reported as a
+          // definite non-acceptance.
+          const unknown = error instanceof ProviderDeliveryUnknownError
+            || error instanceof ControllerAcknowledgementUnknownError;
+          // The failing operation already recorded the exact facts. Prefer its
+          // record; only synthesize one when the failure came from outside a
+          // Turn operation (a malformed control, say), where those facts do
+          // not exist.
+          const recorded = caught instanceof AgentHostOperationError ? caught.failure : undefined;
+          const failure = recorded ?? providerDeliveryFailureFrom(error, {
+            phase: controlRequestPhase(body),
+            hostState: busy ? "busy" : unknown ? "delivery-unknown" : current.state,
+            ...(current.runtimeGenerationId === undefined
+              ? {}
+              : { observedRuntimeGenerationId: current.runtimeGenerationId }),
+            ...(current.attemptId === undefined
+              ? {}
+              : { attemptId: current.attemptId }),
+            // The Host rejected this request before writing to the
+            // Provider, except when it explicitly reported an ambiguous
+            // delivery. Never silently upgrade that to not-accepted.
+            inputDisposition: unknown ? "unknown" : "not-accepted"
+          });
+          // A bare `rejected` here is indistinguishable from the Provider
+          // refusing the input. Carry the real cause and an explicit input
+          // disposition so no consumer has to guess from the message text.
+          socket.end(`${JSON.stringify(boundControlResponse(controlResult(
+            busy ? "accepted" : "rejected",
+            validateSnapshot({
+              ...current,
+              ...(busy ? { state: "busy" as const } : {}),
+              ...(unknown ? { state: "delivery-unknown" as const } : {}),
+              // snapshot.detail reaches the same public read chain as the
+              // failure record, so it passes the same redaction boundary.
+              detail: redactAgentErrorText(errorText(error)),
+              updatedAt: new Date().toISOString()
+            }),
+            failure
+          )))}\n`);
         }
       })();
     });
@@ -1259,6 +1561,58 @@ export async function openAgentHostControl(
       rmSync(path, { force: true });
     }
   });
+}
+
+/**
+ * Keeps a control response inside the socket bound the client enforces.
+ *
+ * A large `raw` chain could push the response past `HOST_CONTROL_MAX_BYTES`,
+ * and the client destroys anything over it — turning a precise structured
+ * failure into a bare transport error and losing the cause entirely. Bound
+ * display projections first; if the raw payload still exceeds the UTF-8 byte
+ * budget, retain its head and tail with an explicit truncation marker.
+ */
+function boundControlResponse(result: AgentHostControlResult): AgentHostControlResult {
+  // Every public response, including status and successful controls, crosses
+  // the same redaction/size boundary. An earlier failed operation may remain
+  // visible through an otherwise successful status request.
+  result = controlResult(
+    result.outcome,
+    validateSnapshot(result.snapshot),
+    result.failure === undefined ? undefined : providerDeliveryFailure(result.failure)
+  );
+  if (withinControlBound(result)) return result;
+  const clip = (text: string, chars: number): string => {
+    if (text.length <= chars) return text;
+    const head = Math.floor(chars * 0.75);
+    return `${text.slice(0, head)}…[truncated ${text.length - chars} chars: control byte bound]${
+      text.slice(text.length - (chars - head))
+    }`;
+  };
+  let bounded = controlResult(
+    result.outcome,
+    {
+      ...result.snapshot,
+      ...(result.snapshot.detail === undefined ? {} : { detail: clip(result.snapshot.detail, 1200) })
+    },
+    result.failure === undefined ? undefined : { ...result.failure, detail: clip(result.failure.detail, 1200) }
+  );
+  const raw = bounded.failure?.raw;
+  if (withinControlBound(bounded) || raw === undefined) return bounded;
+  let chars = raw.length;
+  while (!withinControlBound(bounded) && chars > 0) {
+    chars = Math.floor(chars / 2);
+    bounded = controlResult(bounded.outcome, bounded.snapshot, {
+      ...bounded.failure!,
+      raw: clip(raw, chars)
+    });
+  }
+  return bounded;
+}
+
+function withinControlBound(result: AgentHostControlResult): boolean {
+  // The newline the socket appends counts against the same bound.
+  return Buffer.byteLength(`${JSON.stringify(result)}\n`, "utf8") <= HOST_CONTROL_MAX_BYTES;
 }
 
 async function hostControlSocketIsLive(path: string): Promise<boolean> {
@@ -1338,7 +1692,27 @@ function validateControlResult(result: AgentHostControlResult): AgentHostControl
     )) {
     throw new Error("Agent Host control response is invalid.");
   }
-  return Object.freeze({ ...result, snapshot: validateSnapshot(result.snapshot) });
+  return Object.freeze({
+    ...result,
+    snapshot: validateSnapshot(result.snapshot),
+    // A malformed failure record must never mask the outcome it describes.
+    // Drop it and let the consumer fall back to snapshot.detail.
+    ...(isProviderDeliveryFailure(result.failure)
+      ? { failure: Object.freeze({ ...result.failure }) }
+      : {})
+  });
+}
+
+function isProviderDeliveryFailure(value: unknown): value is ProviderDeliveryFailure {
+  if (value === null || typeof value !== "object") return false;
+  const failure = value as Partial<ProviderDeliveryFailure>;
+  return typeof failure.detail === "string"
+    && failure.detail.trim().length > 0
+    && typeof failure.phase === "string"
+    && (failure.raw === undefined || typeof failure.raw === "string")
+    && (failure.registrationDisposition === undefined
+      || ["committed", "not-committed", "unknown"].includes(failure.registrationDisposition))
+    && ["accepted", "not-accepted", "unknown"].includes(failure.inputDisposition ?? "");
 }
 
 function validateSnapshot(snapshot: AgentHostSnapshot): AgentHostSnapshot {
@@ -1365,7 +1739,13 @@ function validateSnapshot(snapshot: AgentHostSnapshot): AgentHostSnapshot {
       holderId: snapshot.authorityHolderId!
     });
   }
-  return Object.freeze({ ...snapshot });
+  // Store only the redacted diagnostic in the live snapshot. Sanitizing the
+  // immediate error response alone leaves status/launch acknowledgements able
+  // to expose the original exception on their normal success paths.
+  return Object.freeze({
+    ...snapshot,
+    ...(snapshot.detail === undefined ? {} : { detail: redactAgentErrorText(snapshot.detail) })
+  });
 }
 
 function hostSnapshot(
@@ -1382,9 +1762,31 @@ function hostSnapshot(
 
 function controlResult(
   outcome: AgentHostControlOutcome,
-  snapshot: AgentHostSnapshot
+  snapshot: AgentHostSnapshot,
+  failure?: ProviderDeliveryFailure
 ): AgentHostControlResult {
-  return Object.freeze({ protocol: AGENT_HOST_CONTROL_PROTOCOL, outcome, snapshot });
+  return Object.freeze({
+    protocol: AGENT_HOST_CONTROL_PROTOCOL,
+    outcome,
+    snapshot,
+    ...(failure === undefined ? {} : { failure })
+  });
+}
+
+/**
+ * Best-effort failure phase for a request that failed before or during
+ * parsing. An unparsable body cannot be attributed to a specific control, so
+ * it stays `turn-submit` only when the body actually claims that type.
+ */
+function controlRequestPhase(body: string): AgentErrorPhase {
+  try {
+    const type = (JSON.parse(body.trim()) as Partial<AgentHostControl>).type;
+    if (type === "submit-turn" || type === "steer-turn") return "turn-submit";
+    if (type === "launch") return "session-restore";
+  } catch {
+    // An unparsable control never reached the Provider.
+  }
+  return "host-start";
 }
 
 function definedFields<T extends object>(value: T): Partial<T> {
@@ -1449,9 +1851,20 @@ async function beginDurableProviderTurn(
     await resolveProviderTurnSubmission(
       home,
       durableTurn,
-      new Error(`Provider Turn intent acknowledgement failed before Provider write: ${errorText(error)}`)
+      new Error(
+        `Provider Turn intent acknowledgement failed before Provider write: ${errorText(error)}`,
+        { cause: error }
+      )
     );
-    throw error;
+    // The resolve is fenced on this exact attempt id, so its success proves
+    // the registration did commit and is now settled with nothing written to
+    // the Provider. That is a known outcome; reporting it as unknown would
+    // strand a Session whose durable record is in fact resolved.
+    throw new ProviderTurnRegistrationSettledError(
+      "Provider Turn registration acknowledgement was lost and its durable record has been "
+      + `settled before any Provider write: ${errorText(error)}`,
+      { cause: error }
+    );
   }
 }
 
@@ -1477,7 +1890,12 @@ async function callControllerIdempotently(
         throw new ControllerAcknowledgementUnknownError(
           `${method} may have been committed, but its acknowledgement could not be confirmed: ${
             errorText(replayError)
-          }`
+          }`,
+          { cause: new AggregateError(
+            [error, replayError],
+            "Controller acknowledgement could not be confirmed by its exact idempotent replay.",
+            { cause: replayError }
+          ) }
         );
       }
       throw replayError;
@@ -1487,6 +1905,15 @@ async function callControllerIdempotently(
 
 class ControllerAcknowledgementUnknownError extends Error {
   readonly name = "ControllerAcknowledgementUnknownError";
+}
+
+/**
+ * The registration acknowledgement was lost, but the compensating resolve
+ * then succeeded against the same attempt fence. Both facts are therefore
+ * known: the durable record is settled and the Provider was never written to.
+ */
+class ProviderTurnRegistrationSettledError extends Error {
+  readonly name = "ProviderTurnRegistrationSettledError";
 }
 
 async function resolveProviderTurnSubmission(
@@ -1518,7 +1945,15 @@ async function resolveProviderTurnSubmission(
       `Provider submission outcome could not be durably resolved: ${
         errorText(resolutionError)
       }. Original outcome: ${errorText(error)}`,
-      attemptId
+      attemptId,
+      // Without this the causal chain ends at the wrapper, and the reason the
+      // resolution failed — the fact that decides whether a retry is safe —
+      // survives only as prose inside the message.
+      { cause: new AggregateError(
+        [error, resolutionError],
+        "Provider submission outcome and its failed durable settlement.",
+        { cause: resolutionError }
+      ) }
     );
   }
 }

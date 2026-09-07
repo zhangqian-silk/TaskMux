@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   PreparedRoleDelivery,
   ReadyRoleDelivery,
+  RoleDeliveryReport,
   RoleSessionLaunchMode,
   SchedulerRoleResourceInput,
   SchedulerRoleResourceEntry,
@@ -20,6 +21,7 @@ import {
   createPromptEnvelope,
   createSessionLaunchRequest,
   type ActivePromptPushPort,
+  type PromptPushOutcome,
   type RuntimeBinding,
   type RuntimeLaunchPreStart,
   type RuntimeLaunchPreparationPort,
@@ -294,9 +296,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     delivery: ReadyRoleDelivery;
     receiptId: string;
     text: string;
-  }>): Promise<
-    "sent" | "already-sent" | "busy" | "rejected" | "delivery-unknown" | "unavailable"
-  > {
+  }>): Promise<RoleDeliveryReport> {
     const prepared = this.requirePrepared(input.delivery.prepared);
     if (prepared.binding !== undefined && this.runtimePorts !== undefined) {
       const turnId = input.delivery.prepared.turnId;
@@ -319,10 +319,10 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
           createdAt: new Date()
         })
       });
-      if (outcome === "delivered") {
+      if (outcome.result === "delivered") {
         this.#prepared.delete(input.delivery.prepared.deliveryId);
       }
-      return outcome === "delivered" ? "sent" : outcome;
+      return deliveryReport(outcome);
     }
     const outcome = this.tmux.sendRoleInputOnce(
       input.delivery.prepared.taskId,
@@ -334,7 +334,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     if (outcome === "sent" || outcome === "already-sent") {
       this.#prepared.delete(input.delivery.prepared.deliveryId);
     }
-    return outcome;
+    return { status: outcome };
   }
 
   async steerOnce(input: Readonly<{
@@ -348,10 +348,8 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     authority: import("../runtime/providerAuthorityFence.js").ProviderAuthorityFence;
     receiptId: string;
     text: string;
-  }>): Promise<
-    "sent" | "already-sent" | "busy" | "rejected" | "delivery-unknown" | "unavailable"
-  > {
-    if (this.runtimePorts === undefined) return "unavailable";
+  }>): Promise<RoleDeliveryReport> {
+    if (this.runtimePorts === undefined) return { status: "unavailable" };
     const outcome = await this.runtimePorts.promptPush.trySteer({
       owner: { scope: "task", taskId: input.taskId, roleName: input.roleName },
       runtimeGenerationId: input.runtimeGenerationId,
@@ -367,7 +365,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
         createdAt: new Date()
       })
     });
-    return outcome === "delivered" ? "sent" : outcome;
+    return deliveryReport(outcome);
   }
 
   async notifyOperatorInputOnce(input: Readonly<{
@@ -568,6 +566,18 @@ function activeTurnId(receiptId: string): string {
   const match = /^turn-input:[^/]+\/([^/]+)\/[1-9]\d*$/u.exec(receiptId);
   if (match === null) throw new Error("Turn steer receipt is invalid.");
   return decodeURIComponent(match[1]!);
+}
+
+/**
+ * Maps a runtime push outcome onto the Scheduler's delivery vocabulary while
+ * keeping the Host's structured cause attached. Only the word for success
+ * differs between the two layers; the failure record is forwarded unchanged.
+ */
+function deliveryReport(outcome: PromptPushOutcome): RoleDeliveryReport {
+  return {
+    status: outcome.result === "delivered" ? "sent" : outcome.result,
+    ...(outcome.failure === undefined ? {} : { failure: outcome.failure })
+  };
 }
 
 export function agentProcessReadinessProbe(

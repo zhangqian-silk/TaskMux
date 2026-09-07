@@ -71,7 +71,10 @@ import type {
   ProviderOwnedTurn
 } from "../runtime/launchBroker.js";
 import type { ProviderAuthorityFence } from "../runtime/providerAuthorityFence.js";
-import { currentProviderActivation } from "../runtime/providerRuntimeIdentity.js";
+import {
+  assertProviderConversationReplaceable,
+  currentProviderActivation
+} from "../runtime/providerRuntimeIdentity.js";
 import {
   assertCodexLaunchOverridesAvailable,
   inspectCodexLaunchConfig
@@ -282,6 +285,13 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       throw new Error(
         `Task Role still has a live Session: ${task.id}/${role.name}.`
       );
+    }
+    if (input.mode === "new" && sessionSet?.providerBinding !== null
+      && sessionSet?.providerBinding !== undefined) {
+      // Planning precedes broker tickets, Provider processes and native
+      // Conversation creation. An ended Host is not proof that its input
+      // attempt was rejected, cancelled, or completed.
+      assertProviderConversationReplaceable(sessionSet.providerBinding);
     }
     return this.#compile(
       role,
@@ -543,7 +553,11 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     let args = [...compiled.argv];
     let command = configured.command;
     let session: SchedulerRoleSession | null;
-    if (binding.adapterId === "claude" && (managedControl || owner.scope === "global")) {
+    // Managed Claude owns a serialized stream with exact attempt correlation.
+    // Its native Hooks carry no such request fence and must not compete with
+    // the Host for acceptance, completion, or attachment lifecycle facts.
+    // Provider tool permissions remain in compiled config, not this observer.
+    if (binding.adapterId === "claude" && owner.scope === "global") {
       args.push("--plugin-dir", ensureClaudeLifecyclePlugin(this.home, this.#cliPath));
     }
     if (binding.adapterId === "codex") {

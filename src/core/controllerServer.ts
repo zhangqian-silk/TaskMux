@@ -27,6 +27,7 @@ import { YUI_VERSION, yuiVersionIdentity } from "../version.js";
 import { resolveStoreWorkerEnabledForHome } from "../storage/storeRpc.js";
 import { resolveTaskStoreBackendForHome } from "../storage/sqliteStore.js";
 import { CommandExecutionError } from "../tmux/commandExecutor.js";
+import { redactAgentErrorText } from "../runtime/agentError.js";
 import {
   detectRunningRelease,
   readActiveReleasePointer,
@@ -1136,11 +1137,12 @@ function safeApplicationErrorCode(code: string): string | undefined {
 }
 
 function safeErrorMessage(message: string): string | undefined {
-  const safe = message
+  const safe = redactAgentErrorText(message)
     .replace(/[\r\n\u2028\u2029]+/gu, " ")
-    .trim()
-    .slice(0, 512);
-  return safe.length === 0 ? undefined : safe;
+    .trim();
+  if (safe.length === 0) return undefined;
+  const marker = "…[truncated]";
+  return safe.length <= 512 ? safe : `${safe.slice(0, 512 - marker.length)}${marker}`;
 }
 
 type HomeLifecycleLockOwner = Readonly<{

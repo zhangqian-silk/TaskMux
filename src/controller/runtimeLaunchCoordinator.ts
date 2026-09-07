@@ -8,6 +8,7 @@ import {
   createRuntimeBinding,
   RuntimeGenerationMismatchError,
   RuntimeHostContentionError,
+  RuntimeHostUnavailableError,
   RuntimeLaunchError,
   type RuntimeBinding,
   type RuntimeLaunchPersistence as RuntimeLaunchPersistencePort,
@@ -342,19 +343,20 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
         throw new Error("Runtime session host did not expose a pre-host-start launch fence.");
       }
     } catch (error) {
+      if (error instanceof RuntimeHostUnavailableError) {
+        // A failed reused attachment provides no authority to detach its
+        // native Conversation or schedule owner-wide physical cleanup.
+        throw error;
+      }
       if (error instanceof RuntimeGenerationMismatchError) {
-        await this.#settleFailedStart(
-          request,
-          runtimeGenerationId,
-          reusedConfirmedRunningHost,
-          runtimeIsolation,
-          true
-        );
+        // The observed Host is not the requested activation. Neither killing
+        // it nor scheduling owner-wide cleanup is justified by that conflict.
         throw new RuntimeLaunchError(
           false,
           runtimeGenerationId,
           error.message,
-          "generation-mismatch"
+          "generation-mismatch",
+          { cause: error }
         );
       }
       if (error instanceof RuntimeHostContentionError && reusedConfirmedRunningHost) {
@@ -365,7 +367,8 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
           true,
           runtimeGenerationId,
           error.message,
-          error.reason
+          error.reason,
+          { cause: error }
         );
       }
       if (
@@ -399,7 +402,8 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
           error.message,
           error instanceof RuntimeHostContentionError
             ? error.reason
-            : "previous-process"
+            : "previous-process",
+          { cause: error }
         );
       }
       if (error instanceof RuntimeBindingContractError) {
@@ -470,8 +474,7 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
     request: CoordinatedRuntimeLaunchRequest,
     runtimeGenerationId: string,
     reusedConfirmedRunningHost: boolean,
-    runtimeIsolation: TaskRuntimeIsolationPreparation | undefined,
-    forceCleanup = false
+    runtimeIsolation: TaskRuntimeIsolationPreparation | undefined
   ): Promise<void> {
     let inspection;
     try {
@@ -479,7 +482,7 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
     } catch {
       // A rebind/preflight failure did not create the already-confirmed host.
       // Preserve its generation when the follow-up probe is merely unknown.
-      if (!reusedConfirmedRunningHost || forceCleanup) this.#requireCleanup(request.owner);
+      if (!reusedConfirmedRunningHost) this.#requireCleanup(request.owner);
       return;
     }
     if (inspection.state === "stopped") {
@@ -501,7 +504,7 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
       }
       return;
     }
-    if (reusedConfirmedRunningHost && !forceCleanup) return;
+    if (reusedConfirmedRunningHost) return;
     this.#requireCleanup(request.owner);
   }
 
