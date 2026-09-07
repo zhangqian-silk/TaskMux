@@ -65,7 +65,7 @@ planner 从 Task 的 Project 绑定自动填入，没有面向 ACP 的手工 CLI
 |---|---|---|---|
 | `interruptDelivery` | native | owned-process | native |
 | steer | fenced | unsupported | 拒绝（ACP v1 无 Turn 内追加输入）|
-| `nativeSessionDiscovery` | preallocated | runtime | runtime |
+| `nativeSessionDiscovery` | runtime | preallocated | runtime |
 | managed Session 原生 Turn ID | 有（`turn/started` 的 `turn.id`）| 无 | 无 |
 | Hook 路径原生 Turn ID | 有 | 有（`prompt_id`）| 不适用（ACP 无 Hook）|
 | Conversation 恢复 | 静态 exact | 静态 | 按连接协商 `loadSession` |
@@ -86,16 +86,15 @@ unsettled Turn"）；cancel 返回 `requested` 而不是停止证明；
 
 ## 4. 存储版本与并行集成边界
 
-ACP 绑定现在可以合法携带 `additionalDirectories`，而 Role 绑定与
-effective launch 快照在每次读取时都会重新校验，因此这次放宽了持久载荷
-可以合法持有的取值集合。按 AGENTS 的要求，这类配置 schema 转换必须有明确
-的中央版本转换声明，不能以“没有 storage diff”代替中央版本判断。
+本次新增可持久化的 `acp` adapter／配置合法值，包括可选的
+`additionalDirectories`。Role 绑定与 effective launch 快照读取时会重新
+校验，因此需要中央版本转换声明，不能以“没有 storage diff”代替版本判断。
 
 本分支基线为 storage 8，追加连续迁移 **8 → 9**
 `acp-session-workspace-configuration`（`introducedIn=0.15.8`，最低支持仍为 1）。
-迁移不改写任何载荷：全部历史 ACP 绑定都落在更窄的旧规则内，至今有效，
-既有条目的 checksum 不移动。是否真的送达某个 Agent 由 `initialize` 时的
-连接协商决定，因此交付事实不入库。
+迁移不改写任何载荷：storage 8 基线尚无 ACP 绑定，既有 Codex／Claude
+配置及 Session 历史无需转换，既有迁移的 checksum 不移动。额外目录是否
+真的送达某个 Agent 由连接协商决定，不增加第二份持久配置事实。
 
 **编号 9 供并行集成协调**：T06（task-18）、T09（task-20）与本 Task 并行，
 最终合并后的迁移链必须连续，编号由 Operator 统一协调；不得重写已发布迁移。
@@ -154,15 +153,42 @@ SQLite 原 Turn 结果。四个场景共 **31/31** 通过：
 
 ### 存储连续性
 
-在一个含真实内容的 Home 上，删除新初始化库的迁移行 9 后运行
+Worker 的模拟证据：在一个含内容的新 Home 上，删除迁移行 9 后运行
 `runStorageUpgrade({mode:"apply"})`，实际完成 8 → 9；升级后账本读作
 `1,2,3,4,5,6,7,8,9`，head 为 `acp-session-workspace-configuration`，
-既有 Task 原样保留。
+既有 Task 原样保留。这是模拟前版本账本，不是真实旧版生成的 Home。
+
+Leader 在 turn-5 补充了真实前版本证据：使用 Task main 的 storage 8
+代码（`eeea9e8`）创建一次性 Home，保存 Task 和 Codex／Claude 两个配置，
+关闭 Store 后由候选 `9fd17e2` 的升级入口执行 8 → 9。新 reader 在升级前
+拒读；升级后 Task 标题与两种 Agent 配置均原样保留；旧 reader 拒读升级后的
+Home。升级入口生成了备份。探针没有删除账本行，也没有操作共享 Home；
+探针专属 Home 与备份已清理。
 
 ### 常规验证
 
 最终候选上执行 `npm run build`、`npm run lint` 均通过；
-`npm run test:core` **81/81**（约 4.44 秒）。旧 Codex／Claude 路径无回归。
+`npm run test:core` **81/81**（约 4.44 秒）。这些检查未发现旧路径回归，
+不代表重新验证了全部 Codex／Claude 真实 Provider 场景。
+
+### turn-5 独立复审
+
+原独立审查者复核 `8c67b7c → 9fd17e2` 的修复及直接调用关系，关闭六项
+发现，未发现修复引入的重大运行缺陷。其临时内存协议探针确认两轮输出
+隔离、foreign／thought 排除、bootstrap、未声明目录不发送、live recovery
+unknown、响应前 pending、断连 unknown 和取消后保留真实 RPC 错误。
+Leader 独立管道探针交叉验证了相同关键语义。两者均无模型调用。
+
+受控集成 `integration-2` 经依赖准备、lint 和目标引用 CAS 成功，
+保留 Task main 的 CLI 探测文档。此前 `integration-1` 因新集成工作区
+没有依赖、`tsc` 不存在而以 127 退出，未推进目标；失败记录未删除。
+Leader 随后同步额外目录的 TypeScript 类型及规范化副本，补正文档矩阵。
+最终 `make install-local`（含 build）与 `npm run lint` 通过；
+清除继承 YUI 环境、使用临时 Home，分别运行
+`node --test test/core/core-smoke.test.js`（47/47）与
+`node --test test/core/checkoutSwap.test.js test/core/project-lifecycle.test.js`
+（34/34），覆盖全部 81 项而未重复已通过用例。额外目录规范化副本的
+临时探针也通过。所有永久测试保持原规模。
 
 ## 6. 验收对照与未验证项
 

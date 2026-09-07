@@ -63,22 +63,19 @@ export type ClaudeAgentConfig = Readonly<{
   advanced?: AdvancedAgentConfig;
 }>;
 /**
- * ACP carries no client-side launch configuration. Model, reasoning effort and
- * tool policy live inside the Agent's own configuration; the protocol neither
- * negotiates nor overrides them, so Yui does not pretend to offer those knobs.
+ * Yui's ACP adapter leaves model and reasoning settings to the Agent. Workspace
+ * roots travel through session setup rather than product-specific CLI flags.
  */
 export type AcpAgentConfig = Readonly<{
   adapterId: "acp";
   /**
-   * ACP negotiates no model or reasoning effort: both live in the Agent's own
-   * configuration, and it exposes no client-side workspace or settings inputs.
-   * These keys are declared as permanently absent so that code reading them
-   * across adapters keeps working without a branch, while the type system
-   * rejects any attempt to set one here.
+   * These settings are not exposed by Yui's current ACP implementation.
+   * Keeping them absent prevents callers from promising an override that this
+   * adapter does not send.
    */
   model?: undefined;
   effort?: undefined;
-  additionalDirectories?: undefined;
+  additionalDirectories?: readonly string[];
   settingsFile?: undefined;
   settingsSources?: undefined;
   /** Only "default" is valid: Yui declines every ACP permission request. */
@@ -969,9 +966,9 @@ function missingRequiredCapabilities(id: AgentAdapterId, help: string): string[]
 function cloneConfig(config: RoleAgentConfig, paths: readonly string[] | undefined): RoleAgentConfig {
   const advancedConfig = config.advanced?.rawArgs === undefined ? config.advanced : { rawArgs: [...config.advanced.rawArgs] };
   if (config.adapterId === "acp") {
-    // ACP config holds no lists and no workspace paths to canonicalize.
     return { ...config,
       permission: { ...config.permission },
+      ...(paths === undefined ? {} : { additionalDirectories: [...paths] }),
       ...(advancedConfig === undefined ? {} : { advanced: advancedConfig }) };
   }
   if (config.adapterId === "codex") return { ...config,
