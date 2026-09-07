@@ -12,6 +12,7 @@ const MAX_VALUE_BYTES = 4096;
 const MAX_PAGE_BYTES = 128 * 1024;
 const MAX_INSPECT_BYTES = 4 * 1024 * 1024;
 const MAX_EVENTS = 100;
+const MAX_ATTENTION_REFS = 8;
 type Ref = Readonly<{ store: string; refId: string; revision: string; digest: string }>;
 type Entry = Readonly<{ ref: Ref; value: unknown }>;
 type Cursor = Readonly<{ taskId: string; sequence: number; revision: number }>;
@@ -38,7 +39,10 @@ export function readTaskContext(
   return store.transaction((reader) => {
     const entries = authorizedEntries(reader, taskId, environment);
     const cursor = currentCursor(reader, taskId);
-    let bytes = 0;
+    // Reserve a small, classified view before ordinary history consumes the
+    // page. Counts and samples come from the exact same authorized read.
+    const attention = summarizeAttention(entries);
+    let bytes = Buffer.byteLength(JSON.stringify(attention));
     const records: Array<{ ref: Ref; summary?: string; value?: unknown; omitted: boolean }> = [];
     for (const entry of entries) {
       const valueBytes = Buffer.byteLength(JSON.stringify(entry.value));
@@ -52,12 +56,40 @@ export function readTaskContext(
     }
     return {
       taskId, coreCursor: encode(cursor), throughCursor: encode(cursor),
+      attention,
       records, count: entries.length,
       omitted: { records: entries.length - records.length, values: records.filter((r) => r.omitted).length },
       observations: [] as ContextObservation[],
-      limits: { records: MAX_RECORDS, valueBytes: MAX_VALUE_BYTES, pageBytes: MAX_PAGE_BYTES }
+      limits: { records: MAX_RECORDS, valueBytes: MAX_VALUE_BYTES, pageBytes: MAX_PAGE_BYTES,
+        attentionRefsPerCategory: MAX_ATTENTION_REFS, attentionRefBytesPerCategory: MAX_VALUE_BYTES }
     };
   });
+}
+
+function summarizeAttention(entries: readonly Entry[]) {
+  const group = () => ({ count: 0, refs: [] as Ref[], omittedRefs: 0 });
+  const attention = {
+    openInputs: group(), pendingOperations: group(), unknownOperations: group()
+  };
+  const bytes = { openInputs: 0, pendingOperations: 0, unknownOperations: 0 };
+  for (const entry of entries) {
+    const status = (entry.value as { status?: string }).status;
+    const category = entry.ref.store === "input-request" && status === "open" ? "openInputs"
+      : entry.ref.store === "job" && status === "unknown-needs-attention" ? "unknownOperations"
+      : entry.ref.store === "job" && (status === "queued" || status === "running") ? "pendingOperations"
+      : undefined;
+    if (category === undefined) continue;
+    const summary = attention[category];
+    summary.count++;
+    const size = Buffer.byteLength(JSON.stringify(entry.ref)) + 1;
+    if (summary.refs.length < MAX_ATTENTION_REFS && bytes[category] + size <= MAX_VALUE_BYTES) {
+      summary.refs.push(entry.ref);
+      bytes[category] += size;
+    } else {
+      summary.omittedRefs++;
+    }
+  }
+  return attention;
 }
 
 /** Delta is immutable Task event history, not latest mutable record contents

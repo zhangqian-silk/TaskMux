@@ -191,3 +191,21 @@ Skill 清理，最终核心仍为 81/81。
 环境选择；保留原 managed workspace 启动路径，不能宣称空环境／任意
 本地环境已端到端驱动原生 Agent。真实 Provider、付费／生产资源 E2E
 也未运行。这些边界不通过新增工作流或隐式切换 cwd 掩盖。
+
+## Task 21：有界工作集的未决提示
+
+在 `4a205d8` 基线上修复历史 Artifact 占满预算后隐藏 unknown Job 的问题。
+`context read` 增加只读 `attention`：`openInputs`、`pendingOperations`
+（queued/running Job）及 `unknownOperations`（包括已经 acknowledged 的
+unknown Job）。每类保留准确 `count`、最多 8 个完整 `refs` 和
+`omittedRefs`；引用样本另限 4 KiB，先从原 128 KiB 页预算预留，再装入
+普通 records。即使未决项本身超量，分类计数也不会消失。
+
+所有计数、样本、正文仍来自同一次 caller 授权读取。样本携带原
+store/refId/digest，可按现有 `context inspect` 展开；未采样条目通过原
+领域查询定位，普通历史未被删除。delta 固定 through 上界、read 不 ack
+及唯一事实所有者不变，没有持久结构或迁移变化。
+
+临时 SQLite 证据先复现原缺陷，再验证历史饱和、300 项未决输入与
+300 项 unknown 的分类预算、Worker 可见性、CLI/能力读取及 delta 上界。
+专项交付前清理，不增加永久异常回归测试；精确提交和最终接受以 Task 记录为准。

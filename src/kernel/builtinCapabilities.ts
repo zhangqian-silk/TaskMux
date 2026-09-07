@@ -247,8 +247,14 @@ export function createBuiltinCapabilities(
       if (name === "artifact.list") return store.listArtifacts(taskId).map(artifactSummary);
       if (name === "environment.prepare") return resources.prepare(taskId, params.plan as EnvironmentPlan);
       if (name === "environment.adopt") return resources.adopt(taskId, params.preparationId as string);
-      if (name === "environment.bind") return resources.bindEnvironment(taskId, params.roleName as string,
-        params.preparationId as string | null);
+      if (name === "environment.bind") {
+        const role = resources.bindEnvironment(taskId, params.roleName as string,
+          params.preparationId as string | null, {
+            source: name, actorId: invocation.context.actorId, requestId: invocation.requestId!
+          });
+        signal(taskId);
+        return role;
+      }
       if (name === "environment.release") return resources.release(taskId, params.preparationId as string,
         params.quiescence === undefined ? undefined : { quiescence: params.quiescence as string });
       if (name === "environment.list") return store.listEnvironmentPreparations(taskId);
