@@ -137,10 +137,108 @@ socket 返回 `ready + rejected + failure.inputDisposition=unknown`，经实际
 AgentHostPromptPushAdapter 和 Scheduler 后保留 claim、不重发。该证据使用
 Host 响应夹具，不是启动完整 AgentHost／Controller 或真实 Provider。
 
-## 未覆盖与交付停止线
+## turn-1 未覆盖与交付停止线
 
 未运行真实 Codex／Claude 模型、付费 API、生产账户或共享资源 E2E。
 协议 fixture、SQLite 和本地进程证据不等于真实模型验证；S18／S19／S41／S43
 涉及的 T03 生命周期整合及 T05 资源能力须在合法合并后补充验证。
 未接入第三 Agent／ACP、透明会话迁移或动态插件加载。
 未 push、创建 PR、merge、tag、release、archive 或启动后续 Task。
+
+## turn-2：已授权真实 Provider 补充验证
+
+2026-09-07，Operator 的 task-16 message-6 明确授权独立环境中的少量真实
+Provider 请求，覆盖先前“不运行真实 Provider”的限制，其余停止线保持。
+请求模型固定为 Codex `gpt-5.6-luna`、Claude `opus`；不修改开发 Agent、
+全局配置、认证或共享服务，不切换模型、Provider、路由或服务档位。
+
+### 隔离与验证范围
+
+源码初始为 `bec6ba81efa143d0f29bf2339c9f9306f725ad2c`；Codex 预检修复后
+使用 `3a2432ec19c27c6a748f3a0c4afde3d61762f928`。
+重新执行 `make install-local`，所有测试 CLI 均使用该 checkout 的绝对
+`output/dev/bin/yui` 路径、清除继承的 YUI 会话环境并显式指定独立 Home。
+临时根目录为 `/tmp/yui-t04-live-*`，workspace 与 Home 分离。
+
+使用实际 Adapter compiler、Endpoint、Codex App Server proxy／Claude
+stream-json codecs、structured publication、独立 Controller RPC、
+FileSchedulerStoreAdapter 与 SQLite。Controller 只处理回执及 inbox 排空，
+不启用 scheduler 自动调度；因此不宣称完整 AgentHost 启动／调度 E2E。
+setup 自动启动的测试 Controller 在接管前正常停止，无共享 Controller 操作。
+
+Codex 启动自有 App Server，proxy 通过 `--sock` 连接该测试 Unix socket，
+不连接或停止共享 daemon。Claude 使用 `--safe-mode`、空工具与 MCP 集合、
+短 system prompt，避免加载真实业务上下文。既有合法认证由原 CLI 使用，
+未打印或复制密钥。两个提示只要求输出 `T04-CEDAR-728` 及在后续 Turn
+回忆该标记，不授权工具、文件或业务外部操作。
+
+### 实际结果
+
+| 项目 | Claude | Codex |
+|---|---|---|
+| CLI 版本 | `2.1.258 (Claude Code)` | `codex-cli 0.153.4` |
+| 请求模型 | `opus` | `gpt-5.6-luna` |
+| 原生配置回报 | init：`model_hub/es1_orange_o50` | thread response：`gpt-5.6-luna`，Provider `metabridge` |
+| 实际结果模型标签 | assistant：`claude-opus-5`；usage：`model_hub/es1_orange_o50` | 无成功模型结果；路由返回 `404 Model not found` |
+| 接受与归档 | 两次 transport 接受，随后真实 completed 终态均精确归档 | provider 接受及 nativeTurnId 已取得，随后 failed 终态精确归档 |
+| 同 Session 恢复 | 自有进程退出后 resume 原 native Session，正确回忆标记 | 未运行：指定模型不可用后停止请求 |
+| Store 关闭后 CLI 读回 | 两个原 Turn 的输出与 attempt 均通过 | 原 failed Turn、nativeTurnId 和错误均通过 |
+
+上述模型字符串只是原始回报标签，不能据此推断官方产品版本或模型等价性。
+未设置 fallback，也未因错误换模型或路由。
+
+Claude native Session：`0ce6456f-62b7-4803-806a-7a06723711b4`。
+隔离 Turn 的原始回执（时间为 UTC）：
+
+- `turn:task-102/turn-1`：accepted `09:33:15.464Z`，
+  completed `09:33:20.104Z`，Store `09:33:20.112Z`。
+- `turn:task-102/turn-2`：resume 后 accepted `09:35:18.352Z`，
+  completed `09:35:21.344Z`，Store `09:35:21.351Z`。
+
+两个输出均为 `T04-CEDAR-728`。Claude 没有可靠 nativeTurnId，使用原
+attempt 与 client-owned transport 精确关联，未用 result UUID 虚构 Turn。
+第一次验证脚本同步 CLI 调用阻塞了自身 Controller；这不是 Provider 失败。
+修正夹具后直接恢复原 Session，未重发已完成输入；两条历史结果最终均读回。
+
+Codex native Session：`01a07b3a-6724-7363-a3cb-3f8b8476ec39`；
+native Turn：`01a07b3a-685c-7780-9d00-d9f55b8b1838`；
+attempt：`turn:task-101/turn-1`。provider accepted `09:37:00.515Z`，
+failed `09:37:09.308Z`，Store `09:37:09.316Z`。
+原始诊断：`unexpected status 404 Not Found: Model not found`；
+路由为本机 `localhost:8318/v1/responses`，
+request id：`20260907173709815550DC4814E15E758C`。
+模型目录可见或 thread/start 接受模型名不等于实际推理可用。
+
+### 发现、修复与审查
+
+两个新 Codex Session 在模型输入写入前收到
+`-32601: list_turns is not supported yet`，Endpoint 明确返回 not-submitted。
+根因是提交前忙闲检查不必要地请求全部历史 Turns。现在该检查仅请求
+`thread/read(includeTurns:false)`：active 即使无 Turn ID 仍阻止默认提交，
+unknown／notLoaded／systemError／读取异常均零写入。历史结果读取保持原合同；
+未把不支持历史读取的错误忽略为成功，也未添加重试或 fallback。
+
+临时 `t04-read-status.mjs` 先复现红灯、修复后通过；独立 Agent 复审未发现
+确认缺陷，Leader 接受该裁定。依赖历史读取的 steer／continuation／历史恢复
+在该路由上仍可能不可用，不能由本次修复推断通过。
+修复后 build、lint、核心测试 82/82 通过（测试阶段 4.24 秒），未增加永久测试。
+
+### 消耗、清理与未覆盖
+
+Claude 两个 result 的 CLI 报告费用合计 USD `0.009875`，不是账单确认：
+主请求 input/output tokens 分别为 `210/12` 与 `247/12`。
+首次 CLI 另报告 `model_api/experimental_0821` 的 `988/82` tokens、
+USD `0.00699` 辅助用量（包含在上述总额内，`costBasis=unknown`）。
+该辅助用量不算 Opus 主请求证据；后续启动明确指定测试名称，第二次只报告
+Opus 路由用量。Codex 未返回 token／费用用量，不能断言消耗为零。
+实际发送了两个 Claude 主输入与一个 Codex 主输入，没有循环重试。
+
+所有测试 Endpoint 自有进程均取得退出回执；Codex 自有 daemon 退出码 0。
+Claude 在 completed 后 detach，进程退出码 143；这是承载退出，不是取消
+真实 Turn 的验证。隔离 Controller 已关闭；核对无这些测试目录关联的进程。
+必要脱敏回执保留在本节，临时夹具与隔离 Home 清理不影响真实 Task。
+
+未真实验证取消、故意制造 unknown／迟到结果、原生多客户端竞态或长负载，
+这些仍仅有 turn-1 隔离夹具证据。Codex 成功输出、同 Session 后续请求及
+恢复因指定路由模型不可用而未覆盖，不宣称两 Provider 全场景真实 E2E 通过。
+T03/T05 合并集成和中央迁移编号协调仍由 Operator 后续处理。
