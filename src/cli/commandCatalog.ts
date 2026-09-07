@@ -1507,9 +1507,11 @@ export const ROOT_COMMAND = buildNode({
     {
       name: "capability",
       summary: "Discover and call authorized capabilities through the Controller.",
-      sections: [{ id: "entry", title: "Commands", entries: ["search", "describe", "call"] }],
+      sections: [{ id: "entry", title: "Commands", entries: ["search", "commands", "panels", "describe", "call"] }],
       children: [
         { name: "search", summary: "Search the current authorized directory.", usage: "yui capability search [query] --task <id>" },
+        { name: "commands", summary: "List current command names, help and capability mappings; invoke via capability call.", usage: "yui capability commands --task <id>" },
+        { name: "panels", summary: "List authorized text/link or query-only JSON panel descriptors.", usage: "yui capability panels --task <id>" },
         { name: "describe", summary: "Describe one contract or report Provider ambiguity.", usage: "yui capability describe <name> --task <id> [--provider <id>] [--version <version>]" },
         { name: "call", summary: "Invoke one implementation under the current managed identity.", usage: "yui capability call <name> --task <id> --input <json> [--provider <id>] [--version <version>] [--request-id <id>]" }
       ]

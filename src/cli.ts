@@ -207,6 +207,7 @@ import { TmuxManager } from "./tmux/tmuxManager.js";
 import { WorkItemChangeSetManager } from "./workspace/workItemChangeSetManager.js";
 import { workspaceProjectEntry } from "./worktree/managedWorkspace.js";
 import { parseWebCommandOptions, startYuiWebServer } from "./web/webServer.js";
+import { createWebTaskSurface } from "./web/webTaskSurface.js";
 import {
   AgentConfigurationCatalogService,
   validateAgentLaunchConfiguration
@@ -814,6 +815,9 @@ export async function main(): Promise<void> {
   const workspaceCoordinator = new TaskWorkspaceCoordinator(store, workspacePreparer, runtime);
 
   if (resolved[0] === "web") {
+    if (managedInvocation || process.env.YUI_ROLE || process.env.YUI_NATIVE_SESSION_ID) {
+      throw usageError("The Web user ingress must be started from a local user terminal, not a managed Session.");
+    }
     if (jsonOutput) throw usageError("Web does not support --json.");
     const options = parseWebCommandOptions(resolved.slice(1));
     const terminal = new TmuxWebTerminalService({
@@ -828,6 +832,7 @@ export async function main(): Promise<void> {
       }
     });
     await startYuiWebServer(store, options, {
+      surface: createWebTaskSurface(store, { runtime, yuiHome: home }),
       terminal,
       answerInput: async ({ taskId, inputId, answer }) => {
         const command = [

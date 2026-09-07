@@ -9,6 +9,7 @@ import { I18N_SCRIPT } from "./client/i18n.js";
 import { MARKDOWN_SCRIPT } from "./client/markdown.js";
 import { THEME_SCRIPT } from "./client/theme.js";
 import { VIEW_SCRIPT } from "./client/view.js";
+import { TASK_SURFACE_SCRIPT } from "./client/taskSurface.js";
 import { DASHBOARD_HTML } from "./shell.js";
 import { FONT_FACE_STYLES } from "./fonts.js";
 import { FONT_WOFF2_BASE64 } from "./fontData.js";
@@ -42,6 +43,7 @@ export const WEB_ASSETS: Readonly<Record<string, WebAsset>> = Object.freeze({
   "/assets/js/theme.js": { contentType: "text/javascript; charset=utf-8", body: THEME_SCRIPT },
   "/assets/js/components.js": { contentType: "text/javascript; charset=utf-8", body: COMPONENTS_SCRIPT },
   "/assets/js/view.js": { contentType: "text/javascript; charset=utf-8", body: VIEW_SCRIPT },
+  "/assets/js/task-surface.js": { contentType: "text/javascript; charset=utf-8", body: TASK_SURFACE_SCRIPT },
   "/assets/app.js": { contentType: "text/javascript; charset=utf-8", body: APP_SCRIPT },
   ...fontAssets(),
   "/assets/vendor/xterm.mjs": vendorAsset(

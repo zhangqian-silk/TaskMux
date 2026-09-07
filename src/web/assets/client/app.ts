@@ -50,6 +50,7 @@ const state = {
 const VALID_FILTERS = ["all", "active", "draft", "completed", "cancelled", "archived"];
 let terminalSession = null;
 let terminalStateKey = "terminal.closed";
+const submittedRequests = new Set();
 
 const i18n = createI18n(elements.locale);
 createThemeController(elements.theme);
@@ -125,7 +126,35 @@ function syncUrlFromState(options) {
 function detailActions() {
   return {
     answerInput: answerInput,
-    openTerminal: openTerminal
+    openTerminal: openTerminal,
+    inspect: inspectRecord,
+    sendMessage: async function (taskId, body, requestId) {
+      const key = taskId + "/messages";
+      if (submittedRequests.has(key)) throw new Error("An earlier submission is unresolved.");
+      submittedRequests.add(key);
+      const receipt = await requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/messages", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ body, requestId })
+      });
+      submittedRequests.delete(key);
+      return receipt;
+    },
+    panels: (taskId) => requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/panels"),
+    loadPanel: (taskId, selected, input) => requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/panels", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ selected, input })
+    }),
+    updateTask: async function (taskId, patch, requestId) {
+      const key = taskId + "/metadata";
+      if (submittedRequests.has(key)) throw new Error("Read current facts before another submission.");
+      submittedRequests.add(key);
+      const receipt = await requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/metadata", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ patch, requestId })
+        });
+      submittedRequests.delete(key);
+      return receipt;
+    }
   };
 }
 
@@ -173,6 +202,11 @@ function detailKeyOf(detail) {
 
 function renderCurrentDetail(force) {
   if (state.detail) {
+    // Polling must not replace an unsent draft or an in-flight form, including
+    // after the user has moved focus. This is view state, never Task state.
+    if (elements.detail.dataset.taskId === state.detail.task.id
+      && (elements.detail.querySelector('[data-unsent="true"]')
+        || elements.detail.contains(document.activeElement))) return;
     const key = i18n.getLocale() + "|" + state.detailKey;
     if (!force && key === renderedDetailKey) return;
     renderTaskDetail(
@@ -275,6 +309,7 @@ async function requestJson(path, options) {
     ...options,
     headers: {
       accept: "application/json",
+      "x-yui-web-token": token,
       ...(options && options.headers ? options.headers : {})
     }
   });
@@ -295,11 +330,54 @@ async function loadTaskDetail(taskId, showLoading) {
     elements.mainCol.scrollTop = 0;
   }
   const savedScrollTop = showLoading ? 0 : elements.mainCol.scrollTop;
-  const detail = await requestJson("/api/tasks/" + encodeURIComponent(taskId));
+  const base = "/api/tasks/" + encodeURIComponent(taskId);
+  // Delta pages keep the initial upper bound. Never fold current records into
+  // a historical page or acknowledge messages from a read. After draining,
+  // rebuild the current snapshot; invalid cursors use the same explicit read.
+  if (!showLoading && state.detail && state.detail.task.id === taskId) {
+    const after = state.detail.core.coreCursor;
+    try {
+      let continuation;
+      do {
+        const query = new URLSearchParams({ after });
+        if (continuation) query.set("continuation", continuation);
+        const page = await requestJson(base + "/delta?" + query);
+        if (state.selected !== taskId) return;
+        continuation = page.continuation;
+      } while (continuation);
+    } catch {
+      // No write/retry: rebuild from the current authoritative read below.
+    }
+  }
+  const core = await requestJson(base + "/context");
+  const taskEntry = core.records.find(function (entry) { return entry.ref.store === "task"; });
+  if (!taskEntry) throw new Error("Task reference unavailable.");
+  const task = taskEntry.omitted ? (await inspectRecord(taskId, taskEntry.ref)).value : taskEntry.value;
+  const previous = state.detail && state.detail.task.id === taskId ? state.detail : null;
+  const detail = {
+    task, core,
+    runtime: previous && previous.runtime,
+    runtimeStatus: previous ? previous.runtimeStatus : "waiting",
+    runtimeObservedAt: previous ? previous.runtimeObservedAt : new Date().toISOString()
+  };
   if (state.selected !== taskId) return;
   state.detail = detail;
-  state.detailKey = detailKeyOf(detail);
-  renderCurrentDetail(true);
+  state.detailKey = detailKeyOf(core);
+  renderCurrentDetail();
+  // Optional observation does not participate in core readiness or cursor.
+  void requestJson(base, { signal: AbortSignal.timeout(1000) }).then(function (runtime) {
+    if (state.detail !== detail) return;
+    detail.runtime = runtime;
+    detail.runtimeStatus = "available";
+    detail.runtimeObservedAt = new Date().toISOString();
+    updateRuntimePanel(detail);
+  }).catch(function () {
+    if (state.detail !== detail) return;
+    detail.runtime = null;
+    detail.runtimeStatus = "unavailable";
+    detail.runtimeObservedAt = new Date().toISOString();
+    updateRuntimePanel(detail);
+  });
   // Reveal the tab bar before measuring/scroll so anchors land correctly.
   setDetailActive(true);
   updateStickyOffsets();
@@ -312,6 +390,20 @@ async function loadTaskDetail(taskId, showLoading) {
     elements.mainCol.scrollTop = savedScrollTop;
   }
   syncTabHighlight();
+}
+
+function updateRuntimePanel(detail) {
+  const status = elements.detail.querySelector("[data-runtime-status]");
+  const value = elements.detail.querySelector("[data-runtime-value]");
+  if (status) status.textContent = detail.runtimeStatus + " · " + detail.runtimeObservedAt;
+  if (value) value.textContent = detail.runtime
+    ? JSON.stringify({ roles: detail.runtime.roles, runtimeHealth: detail.runtime.runtimeHealth }, null, 2)
+    : "";
+}
+
+async function inspectRecord(taskId, ref) {
+  const query = new URLSearchParams({ store: ref.store, ref: ref.refId, digest: ref.digest });
+  return requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/inspect?" + query);
 }
 
 async function selectTask(taskId) {
@@ -345,6 +437,9 @@ async function selectTask(taskId) {
 async function answerInput(input, answer) {
   if (!state.detail) return;
   const taskId = state.detail.task.id;
+  const key = taskId + "/input/" + input.id;
+  if (submittedRequests.has(key)) return;
+  submittedRequests.add(key);
   try {
     await requestJson(
       "/api/tasks/" + encodeURIComponent(taskId)
@@ -359,13 +454,19 @@ async function answerInput(input, answer) {
       }
     );
     showToast(i18n.t("input.answered"));
+    submittedRequests.delete(key);
     await refreshDashboard({ quiet: true });
   } catch {
-    showToast(i18n.t("errors.answer"));
+    showToast(i18n.getLocale().startsWith("zh")
+      ? "回答结果未知；请刷新检查原问题，不要盲目重发。"
+      : "Answer outcome unknown; refresh the original question before resubmitting.");
   }
 }
 
+let refreshing = false;
 async function refreshDashboard(options) {
+  if (refreshing) return;
+  refreshing = true;
   const quiet = options && options.quiet;
   if (!quiet) {
     elements.refresh.disabled = true;
@@ -386,8 +487,10 @@ async function refreshDashboard(options) {
     if (previousInputs !== null && dashboard.counts.openInputs > previousInputs) {
       showToast(i18n.t("input.new"));
     }
-    if (state.selected && !quiet) {
-      try { await loadTaskDetail(state.selected, false); } catch {}
+    if (state.selected) {
+      try { await loadTaskDetail(state.selected, false); } catch {
+        showToast(i18n.getLocale().startsWith("zh") ? "连接不可用；保留上次读取。" : "Disconnected; showing the last read.");
+      }
     }
   } catch {
     if (!quiet) {
@@ -395,6 +498,7 @@ async function refreshDashboard(options) {
       showToast(i18n.t("errors.dashboard"));
     }
   } finally {
+    refreshing = false;
     if (!quiet) elements.refresh.disabled = false;
   }
 }
