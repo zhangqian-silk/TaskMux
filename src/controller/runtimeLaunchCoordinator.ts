@@ -440,6 +440,7 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
         binding,
         runtimeGenerationId,
         runtimeIsolation,
+        reusedConfirmedRunningHost,
         new Error(
           `Runtime host was recreated while recovering an existing generation: ${
             request.owner.roleName
@@ -477,6 +478,7 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
         binding,
         runtimeGenerationId,
         runtimeIsolation,
+        reusedConfirmedRunningHost,
         error
       );
     }
@@ -526,12 +528,14 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
     binding: RuntimeBinding,
     runtimeGenerationId: string,
     runtimeIsolation: TaskRuntimeIsolationPreparation | undefined,
+    reusedConfirmedRunningHost: boolean,
     cause: unknown
   ): Promise<never> {
-    if (binding.hostCreated !== true) {
-      // Reusing a Host gives this launch no ownership of its process. A late
-      // state change must fail closed without stopping it or queuing cleanup
-      // against the Role, which may already belong to another activation.
+    if (reusedConfirmedRunningHost && binding.hostCreated !== true) {
+      // Reattaching an existing activation gives this launch no ownership of
+      // it. A fresh activation inside a persistent Host is different: this
+      // launch still owns its startup and isolation cleanup even when the
+      // physical Host did not need to be created.
       throw new RuntimeLaunchStateChangedError(
         `Runtime launch state changed while reusing a Host: ${
           cause instanceof Error ? cause.message : String(cause)
