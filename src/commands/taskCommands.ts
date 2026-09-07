@@ -256,7 +256,7 @@ import {
   LIVE_SESSION_ACKNOWLEDGEMENT_OPTION
 } from "./roleRuntimeGuard.js";
 import { runTaskContextCommand } from "./taskContextCommand.js";
-import { createProjectResources, type ArtifactInput } from "../resources/projectResourceService.js";
+import { createProjectResources, validateArtifactInput, type ArtifactInput } from "../resources/projectResourceService.js";
 import { artifactSummary } from "../resources/projectResource.js";
 import { runTaskNextActionCommand } from "./taskNextActionCommand.js";
 import {
@@ -716,8 +716,8 @@ export function runTaskCommand(
       } else {
         taskActor(store, options, taskId);
         let input: ArtifactInput;
-        try { input = JSON.parse(value) as ArtifactInput; }
-        catch { throw usageError("Artifact input must be JSON."); }
+        try { input = validateArtifactInput(JSON.parse(value)); }
+        catch (error) { throw usageError(`Artifact input is invalid: ${error instanceof Error ? error.message : String(error)}`); }
         data = createProjectResources(store).saveArtifact(taskId, input);
       }
       return output(JSON.stringify(data, null, 2), data);

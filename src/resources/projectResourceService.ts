@@ -3,7 +3,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSyn
 import { join, relative, resolve, isAbsolute } from "node:path";
 import type { TaskStore } from "../storage/taskStore.js";
 import { checkGrant, recordGrantUse } from "../grant/capabilityGrant.js";
-import { requireText } from "../domain/validation.js";
+import { requireIdentity, requireText, requireTimestamp } from "../domain/validation.js";
 import { validateProject } from "../repository/project.js";
 import {
   contentDigest, validateArtifact, stableArtifactRef,
@@ -24,6 +24,36 @@ export type EnvironmentPlan =
   | Readonly<{ kind: "scratch" }>
   | Readonly<{ kind: "local"; resourceId: string; access: "read" | "write" }>;
 
+export function validateArtifactInput(value: unknown): ArtifactInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Artifact input must be an object.");
+  const input = value as ArtifactInput;
+  requireText(input.displayName, "Artifact name");
+  requireText(input.provenance, "Artifact provenance");
+  if (input.mediaType !== undefined) requireText(input.mediaType, "Artifact media type");
+  switch (input.kind) {
+    case "content":
+      if (typeof input.content !== "string" || Buffer.byteLength(input.content) > 8 * 1024 * 1024) {
+        throw new Error("Artifact content must be UTF-8 text of at most 8 MiB.");
+      }
+      break;
+    case "receipt":
+      requireIdentity(input.jobId, "Artifact Job");
+      requireText(input.receiptRef, "Artifact receipt");
+      break;
+    case "external-version":
+      requireIdentity(input.resourceId, "Artifact resource");
+      requireText(input.version, "Artifact external version");
+      requireText(input.verification, "Artifact version verification");
+      break;
+    case "reference":
+      requireText(input.locator, "Reference locator");
+      requireTimestamp(input.observedAt, "Reference observation");
+      break;
+    default: throw new Error("Unknown Artifact kind.");
+  }
+  return input;
+}
+
 /** Trusted typed owner; the public caller is authenticated by the existing
  * capability boundary. No new Store, worker, scheduling or Git authority. */
 export function createProjectResources(store: TaskStore, now: () => Date = () => new Date()) {
@@ -35,7 +65,8 @@ export function createProjectResources(store: TaskStore, now: () => Date = () =>
   const intent = (taskId: string) => {
     const value = task(taskId);
     return contentDigest(JSON.stringify({
-      projectBindings: value.projectBindings,
+      // Git's moving delivery pointers do not change Resource intent.
+      projectBindings: value.projectBindings.map(({ projectId, directory, baseRef }) => ({ projectId, directory, baseRef })),
       projects: value.projectBindings.map(({ projectId }) => {
         const project = store.getProject(projectId);
         return { projectId, resources: project?.resourceRefs, providers: project?.defaultCapabilityProviders };
@@ -86,6 +117,7 @@ export function createProjectResources(store: TaskStore, now: () => Date = () =>
   return {
     saveArtifact(taskId: string, input: ArtifactInput): Artifact {
       task(taskId);
+      validateArtifactInput(input);
       const base = { schemaVersion: 1 as const, taskId, id: `artifact-${randomUUID()}`,
         displayName: input.displayName, mediaType: input.mediaType ?? "text/plain",
         provenance: input.provenance, createdAt: now().toISOString() };
