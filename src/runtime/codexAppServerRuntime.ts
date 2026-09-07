@@ -119,11 +119,14 @@ export class CodexAppServerRuntime implements
     });
   }
 
-  async readConversation(conversationId: string): Promise<CodexThreadSnapshot> {
+  async readConversation(
+    conversationId: string,
+    options: Readonly<{ includeTurns?: boolean }> = {}
+  ): Promise<CodexThreadSnapshot> {
     const id = text(conversationId, "Codex thread id");
     const result = await this.transport.request("thread/read", {
       threadId: id,
-      includeTurns: true
+      includeTurns: options.includeTurns ?? true
     });
     return parseThreadSnapshot(result, id, "unknown");
   }
@@ -175,22 +178,25 @@ export class CodexAppServerRuntime implements
     const requestedThreadId = text(input.conversationId, "Codex thread id");
     let threadId = requestedThreadId;
     try {
-      const snapshot = await this.readConversation(requestedThreadId);
+      // Submission needs current availability, not historical Turns. Some
+      // App Server transports expose status without supporting history reads.
+      const snapshot = await this.readConversation(requestedThreadId, { includeTurns: false });
       threadId = snapshot.threadId;
-      if (input.expectedNoActiveTurn && snapshot.activeTurnId !== undefined) {
+      if (input.expectedNoActiveTurn
+        && (snapshot.status === "active" || snapshot.activeTurnId !== undefined)) {
         return {
           status: "busy",
-          activeTurnId: snapshot.activeTurnId,
-          reason: `active-turn:${snapshot.activeTurnId}`
+          ...(snapshot.activeTurnId === undefined ? {} : { activeTurnId: snapshot.activeTurnId }),
+          reason: snapshot.activeTurnId === undefined
+            ? "Provider Conversation has an active Turn."
+            : `active-turn:${snapshot.activeTurnId}`
         };
       }
-    } catch (error) {
-      // A new App Server thread has no materialized Turn history yet. This
-      // exact response proves there cannot be an active Turn, so its first
-      // mutation can proceed without weakening unknown-delivery handling.
-      if (!codexAppServerErrorIsUnmaterialized(error)) {
-        throw new CodexPreSubmissionError("Codex Session inspection failed before input submission.", { cause: error });
+      if (snapshot.status !== "idle" && snapshot.status !== "active") {
+        throw new Error(`Codex Session availability is ${snapshot.status}; no input was submitted.`);
       }
+    } catch (error) {
+      throw new CodexPreSubmissionError("Codex Session inspection failed before input submission.", { cause: error });
     }
     try {
       const result = await this.transport.request("turn/start", {
@@ -626,15 +632,6 @@ function isNotLoaded(error: unknown): boolean {
   return error instanceof CodexAppServerRequestError
     && (String(error.code).toLowerCase().includes("not_loaded")
       || error.message.toLowerCase().includes("not loaded"));
-}
-
-function codexAppServerErrorIsUnmaterialized(error: unknown): boolean {
-  if (!(error instanceof CodexAppServerRequestError) || Number(error.code) !== -32600) {
-    return false;
-  }
-  return /\bthread\b.*\bnot materialized yet\b.*\bbefore first user message\b/iu.test(
-    error.message
-  );
 }
 
 export function codexAppServerErrorIsMissing(error: unknown): boolean {
