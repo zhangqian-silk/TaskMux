@@ -413,7 +413,6 @@ function validateCatalog(
     || value.agentId !== agent.id
     || value.adapterId !== agent.adapterId
     || !Array.isArray(value.models)
-    || value.models.length === 0
     || !Array.isArray(value.fields)
     || !Array.isArray(value.warnings)) {
     throw new Error("Agent configuration model catalog is incomplete.");
@@ -422,6 +421,14 @@ function validateCatalog(
   unique(models.map(({ value: model }) => model), "model");
   const fields = value.fields.map(validateField);
   unique(fields.map(({ key }) => key), "configuration field");
+  // An empty model list is only incomplete when the catalog still claims to
+  // offer models. An Agent whose protocol has no model catalog says so on the
+  // `model` field, and rejecting that answer discards the rest of the catalog
+  // — including the per-Agent warnings — as if discovery had failed outright.
+  if (models.length === 0
+    && fields.find(({ key }) => key === "model")?.available !== false) {
+    throw new Error("Agent configuration model catalog is incomplete.");
+  }
   const warnings = value.warnings.map((warning) => text(warning, "catalog warning"));
   return {
     schemaVersion: 1,
