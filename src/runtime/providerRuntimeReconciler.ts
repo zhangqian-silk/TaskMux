@@ -24,8 +24,7 @@ export interface ProviderContinuationMetadataPort {
     providerNamespace: string;
     accountScope: string;
     conversationId: string;
-    activationId: string;
-    continuations: readonly Readonly<{ continuationId: string; generation: number }>[];
+    continuations: readonly Readonly<{ continuationId: string }>[];
   }>): Promise<ProviderContinuationQueryResult>;
 }
 
@@ -50,8 +49,8 @@ const CIRCUIT_ERROR_LIMIT = 5;
 const QUERY_TIMEOUT_MS = 5_000;
 
 /**
- * Reconciles only already-known children, grouped under one Conversation and
- * Activation generation. Missing entries settle ownership only for an exact
+ * Reconciles only already-known children, grouped under one Conversation.
+ * Missing entries settle ownership only for an exact
  * snapshot; partial/unavailable absence is never terminal evidence.
  */
 export async function reconcileKnownDetachedContinuations(input: Readonly<{
@@ -70,16 +69,14 @@ export async function reconcileKnownDetachedContinuations(input: Readonly<{
   const groupKey = [
     first.identity.providerNamespace,
     first.identity.accountScope,
-    first.identity.conversationId,
-    first.identity.activationId
+    first.identity.conversationId
   ].join("\u0000");
   if (candidates.some((entry) => [
     entry.identity.providerNamespace,
     entry.identity.accountScope,
-    entry.identity.conversationId,
-    entry.identity.activationId
+    entry.identity.conversationId
   ].join("\u0000") !== groupKey)) {
-    throw new Error("Provider reconcile input must contain one Conversation/Activation group.");
+    throw new Error("Provider reconcile input must contain one Conversation group.");
   }
   const nowMs = input.now.getTime();
   if (input.previous?.circuitOpenUntil !== undefined
@@ -97,10 +94,8 @@ export async function reconcileKnownDetachedContinuations(input: Readonly<{
       providerNamespace: first.identity.providerNamespace,
       accountScope: first.identity.accountScope,
       conversationId: first.identity.conversationId,
-      activationId: first.identity.activationId,
       continuations: Object.freeze(candidates.map((entry) => Object.freeze({
         continuationId: entry.identity.continuationId,
-        generation: entry.identity.generation
       })))
     }), QUERY_TIMEOUT_MS);
     result = validateQueryResult(raw, new Set(candidates.map((entry) => (

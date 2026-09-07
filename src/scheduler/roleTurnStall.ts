@@ -78,7 +78,7 @@ export type RoleTurnHealthProjection = Readonly<{
 
 /**
  * One pure projection used by every Role. Resource activity is retained only
- * as exact-generation diagnostic evidence; it never changes the durable
+ * as exact-Session diagnostic evidence; it never changes the durable
  * progress clock, suppresses workflow attention, or authorizes recovery.
  */
 export function projectRoleTurnHealth(input: Readonly<{
@@ -92,7 +92,6 @@ export function projectRoleTurnHealth(input: Readonly<{
     status: string;
     endReason?: string;
     nativeSessionId?: string;
-    runtimeGenerationId?: string;
   }> | null;
   providerAcceptance?: RoleTurnProviderAcceptance;
   resource?: RoleTurnResourceEvidence;
@@ -124,7 +123,6 @@ export function projectRoleTurnHealth(input: Readonly<{
     : session.status === "ended"
       ? session.endReason === "failed" ? "broken" : "stopped"
       : !hasResourceIdentityText(session.nativeSessionId)
-            && !hasResourceIdentityText(session.runtimeGenerationId)
             ? "unknown"
             : "matching";
   const resourceActivity = hostLiveness === "present"
@@ -730,7 +728,6 @@ export async function reconcileStalledRoleTurns(
           progressAt: run.createdAt,
           agentId: session?.agentId ?? run.effective.agentId,
           adapterId: session?.adapterId ?? run.effective.adapterId,
-          ...(session?.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId }),
           ...(session?.nativeSessionId === undefined
               ? {}
               : { nativeSessionId: session.nativeSessionId })
@@ -746,7 +743,6 @@ export async function reconcileStalledRoleTurns(
                 ).progressAt,
                 agentId: session?.agentId ?? run.effective.agentId,
                 adapterId: session?.adapterId ?? run.effective.adapterId,
-                ...(session?.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId }),
                 ...(session?.nativeSessionId === undefined
                   ? {}
                   : { nativeSessionId: session.nativeSessionId })
@@ -857,9 +853,6 @@ export async function reconcileStalledRoleTurns(
           ...(candidate.session.nativeSessionId === undefined
             ? {}
             : { nativeSessionId: candidate.session.nativeSessionId }),
-          ...(candidate.session.runtimeGenerationId === undefined
-            ? {}
-            : { runtimeGenerationId: candidate.session.runtimeGenerationId })
         };
     const resourceSnapshot = resourceForRun(
       resourceEvidence,
@@ -1048,7 +1041,6 @@ type ObservedRun = Readonly<{
       agentId: string;
       adapterId: string;
       nativeSessionId?: string;
-      runtimeGenerationId?: string;
       status: SchedulerRoleSession["status"];
     } | null>;
   }>;
@@ -1295,25 +1287,15 @@ function resourceEvidenceMatchesCurrentRun(
     agentId: string;
     adapterId: string;
     nativeSessionId?: string;
-    runtimeGenerationId?: string;
   }> | undefined,
   progressAt: string
 ): boolean {
   if (resource === undefined || expected === undefined) return false;
   const identity = resource.identity;
   if (
-    identity === undefined
-    || resource.progressAt !== progressAt
-    || identity.taskId !== expected.taskId
-    || identity.roleName !== expected.roleName
-    || identity.turnId !== expected.turnId
-    || identity.agentId !== expected.agentId
-    || identity.adapterId !== expected.adapterId
-    || identity.nativeSessionId !== expected.nativeSessionId
-    || identity.runtimeGenerationId !== expected.runtimeGenerationId
+    identity === undefined || resource.progressAt !== progressAt || identity.taskId !== expected.taskId || identity.roleName !== expected.roleName || identity.turnId !== expected.turnId || identity.agentId !== expected.agentId || identity.adapterId !== expected.adapterId || identity.nativeSessionId !== expected.nativeSessionId
   ) return false;
-  return hasResourceIdentityText(identity.nativeSessionId)
-    || hasResourceIdentityText(identity.runtimeGenerationId);
+  return hasResourceIdentityText(identity.nativeSessionId);
 }
 
 function hasResourceIdentityText(value: string | undefined): value is string {

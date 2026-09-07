@@ -118,7 +118,6 @@ export type ExecutionHealthSession = Readonly<{
   adapterId: string;
   status?: string;
   nativeSessionId?: string;
-  runtimeGenerationId?: string;
 }>;
 
 export type ExecutionGroupHealthInput = Readonly<{
@@ -411,14 +410,7 @@ function exactTurnObservations(
 ): RuntimeObservation[] {
   return events.map(runtimeObservationFromTaskEvent)
     .filter((observation): observation is RuntimeObservation => (
-      observation !== null
-      && observation.fence.taskId === turn.taskId
-      && observation.fence.turnId === turn.id
-      && observation.fence.roleName === turn.roleName
-      && observation.fence.agentId === turn.effective.agentId
-      && (session?.runtimeGenerationId === undefined || observation.fence.runtimeGenerationId === session.runtimeGenerationId)
-      && (session?.nativeSessionId === undefined
-        || observation.fence.nativeSessionId === session.nativeSessionId)
+      observation !== null && observation.fence.taskId === turn.taskId && observation.fence.turnId === turn.id && observation.fence.roleName === turn.roleName && observation.fence.agentId === turn.effective.agentId && (session?.nativeSessionId === undefined || observation.fence.nativeSessionId === session.nativeSessionId)
     ));
 }
 
@@ -449,12 +441,7 @@ function latestExactProcessExit(
       const observation = validateRuntimeProcessExitObservation(
         JSON.parse(event.payload.observation ?? "") as RuntimeProcessExitObservation
       );
-      if (observation.taskId !== turn.taskId
-        || observation.turnId !== turn.id
-        || observation.roleName !== turn.roleName
-        || (session?.runtimeGenerationId !== undefined && observation.runtimeGenerationId !== session.runtimeGenerationId)
-        || (session?.nativeSessionId !== undefined
-          && observation.nativeSessionId !== session.nativeSessionId)) return [];
+      if (observation.taskId !== turn.taskId || observation.turnId !== turn.id || observation.roleName !== turn.roleName || (session?.nativeSessionId !== undefined && observation.nativeSessionId !== session.nativeSessionId)) return [];
       return [{
         observation,
         classification: event.payload.classification ?? "unknown"

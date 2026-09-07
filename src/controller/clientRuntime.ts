@@ -7,7 +7,6 @@ import {
   readControllerDiscovery,
   stopOrphanedFileTaskController
 } from "../core/controllerClient.js";
-import { controllerSocketPath } from "../core/controllerEndpoint.js";
 import {
   FILE_TASK_CONTROLLER_PROTOCOL_VERSION,
   type JsonValue
@@ -23,7 +22,7 @@ import {
 } from "../agent/launchEnvironment.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import { openCurrentTaskStore } from "../storage/currentTaskStore.js";
-import { yuiTmuxServerName, type TmuxManager } from "../tmux/tmuxManager.js";
+import { type TmuxManager } from "../tmux/tmuxManager.js";
 import type { FileSchedulerStoreAdapter } from "./fileSchedulerStoreAdapter.js";
 import type { DormantRuntimeOwnerCandidate } from "../scheduler/ports.js";
 import type { TaskWorkspacePreparer } from "../repository/taskWorkspacePreparer.js";
@@ -38,7 +37,6 @@ import {
   CONTROLLER_SHUTDOWN_TIMEOUT_MS,
   LIFECYCLE_REQUEST_TIMEOUT_MS
 } from "../runtime/runtimeDeadlines.js";
-import { FileTaskRuntimeIsolation } from "../runtime/taskRuntimeIsolation.js";
 import { isForeignHandoverLockHeld } from "../release/runtimeRelease.js";
 
 const STARTUP_TIMEOUT_MS = 5_000;
@@ -81,7 +79,7 @@ export type FileControllerClientOptions = Readonly<{
   onError?: (error: unknown) => void;
 }>;
 
-export type ControllerRuntimeGenerationIdentity = Readonly<{
+export type ControllerRuntimeProcessIdentity = Readonly<{
   executablePath: string;
   args: readonly string[];
   version: string;
@@ -153,10 +151,10 @@ export async function ensureFileTaskController(
 /** Start and await readiness for a captured Controller identity. */
 export async function ensureFileTaskControllerIdentity(
   home: string,
-  identity: ControllerRuntimeGenerationIdentity,
+  identity: ControllerRuntimeProcessIdentity,
   options: FileControllerClientOptions = {}
 ): Promise<JsonValue> {
-  assertExpectedControllerRuntimeGenerationIdentity(identity);
+  assertExpectedControllerRuntimeProcessIdentity(identity);
   const status = await ensureFileTaskController(home, {
     ...options,
     expectedVersion: identity.version
@@ -170,12 +168,12 @@ export async function ensureFileTaskControllerIdentity(
   const actual = await call(home, "controller.identity", {}, {
     timeoutMs: options.requestTimeoutMs
   });
-  assertControllerRuntimeGenerationIdentity(actual, identity);
+  assertControllerRuntimeProcessIdentity(actual, identity);
   return status;
 }
 
-function assertExpectedControllerRuntimeGenerationIdentity(
-  identity: ControllerRuntimeGenerationIdentity
+function assertExpectedControllerRuntimeProcessIdentity(
+  identity: ControllerRuntimeProcessIdentity
 ): void {
   if (
     typeof identity.executablePath !== "string"
@@ -186,18 +184,18 @@ function assertExpectedControllerRuntimeGenerationIdentity(
     || identity.version.length === 0
   ) {
     throw new Error(
-      "Expected Controller runtime generation identity is malformed; refusing to start or accept a Controller."
+      "Expected Controller runtime identity is malformed; refusing to start or accept a Controller."
     );
   }
 }
 
-function assertControllerRuntimeGenerationIdentity(
+function assertControllerRuntimeProcessIdentity(
   actual: JsonValue,
-  expected: ControllerRuntimeGenerationIdentity
+  expected: ControllerRuntimeProcessIdentity
 ): void {
   if (!isJsonRecord(actual)) {
     throw new Error(
-      "Authenticated Controller runtime generation identity is malformed; refusing to accept readiness."
+      "Authenticated Controller runtime identity is malformed; refusing to accept readiness."
     );
   }
   const actualArgs = actual.args;
@@ -208,7 +206,7 @@ function assertControllerRuntimeGenerationIdentity(
     || typeof actual.version !== "string"
   ) {
     throw new Error(
-      "Authenticated Controller runtime generation identity is malformed; refusing to accept readiness."
+      "Authenticated Controller runtime identity is malformed; refusing to accept readiness."
     );
   }
   const argsMatch = actualArgs.length === expected.args.length
@@ -219,7 +217,7 @@ function assertControllerRuntimeGenerationIdentity(
     || actual.version !== expected.version
   ) {
     throw new Error(
-      "Authenticated Controller runtime generation identity does not match the captured executable, argv, and version; refusing readiness."
+      "Authenticated Controller runtime identity does not match the captured executable, argv, and version; refusing readiness."
     );
   }
 }
@@ -652,7 +650,6 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
     agentId: string;
     adapterId: string;
     nativeSessionId: string;
-    runtimeGenerationId?: string;
     sessionUpdatedAt: string;
   }>): Promise<void> {
     if (this.store.getActiveTurn(input.taskId, input.roleName) !== null) {
@@ -671,7 +668,6 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
         agentId: input.agentId,
         adapterId: input.adapterId,
         nativeSessionId: input.nativeSessionId,
-        ...(input.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: input.runtimeGenerationId }),
         sessionUpdatedAt: input.sessionUpdatedAt
       }
     );
@@ -786,7 +782,7 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
       true,
       `Task archive blocked: ${blockers.length} owned physical resource(s) still live: `
         + blockers.map((entry) => (
-          `${entry.owner.roleName}/${entry.runtimeGenerationId}`
+          `${entry.owner.roleName}/${entry.nativeSessionId ?? "unknown-session"}`
             + ` (pid ${entry.physical?.alive === true ? entry.physical.pid : "?"})`
         )).join("; ")
     );
@@ -857,27 +853,9 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
       throw new Error(
         `Role runtime cleanup could not prove physical exit: ${runtimeOwnerLabel(candidate.owner)}; `
           + termination.remaining
-            .map(({ record, detail }) => `${record.runtimeGenerationId}: ${detail}`)
+            .map(({ record, detail }) => `PID ${record.providerRoot.pid}: ${detail}`)
             .join("; ")
       );
-    }
-    if (candidate.owner.scope === "task" && candidate.runtimeGenerationId !== undefined) {
-      const isolation = new FileTaskRuntimeIsolation({
-        runtimeRoot: `${this.home}.task-runtimes`,
-        controlPlane: {
-          yuiHome: this.home,
-          controllerSocketPath: controllerSocketPath(this.store.getHomeIdentity().homeId),
-          tmuxNamespace: yuiTmuxServerName(this.home),
-          globalInstallPaths: [process.execPath]
-        }
-      });
-      isolation.cleanupTaskLaunch({
-        taskId: candidate.owner.taskId,
-        runtimeGenerationId: candidate.runtimeGenerationId,
-        reason: this.store.getTask(candidate.owner.taskId)?.status === "completed"
-          ? "completion"
-          : "interruption"
-      });
     }
     if (!this.schedulerStore.completeRuntimeCleanup(target, new Date())) {
       throw new Error(

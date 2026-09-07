@@ -8,7 +8,6 @@ import {
 } from "../storage/taskStore.js";
 import { CURRENT_DATABASE_FILENAME as COMMITTED_DATABASE_FILENAME } from "../storage/currentTaskStore.js";
 import {
-  DEFAULT_TURN_CAP,
   DEFAULT_TERMINAL_KEEP,
   resolveTurnCap,
   resolveTerminalKeep
@@ -101,7 +100,7 @@ function telemetryStatus(args: string[], options: TelemetryCommandOptions): stri
       `Turn cap:        ${report.turnCap}`
     ];
     for (const task of perTask) {
-      lines.push(`  ${task.taskId}: ${task.rows} rows across ${task.turns} Turn generation(s)`);
+      lines.push(`  ${task.taskId}: ${task.rows} rows across ${task.turns} Turn turn(s)`);
     }
     return lines.join("\n");
   } finally {
@@ -132,7 +131,7 @@ function telemetryPrune(args: string[], options: TelemetryCommandOptions): strin
       taskId: string;
       terminalPruned: number;
       activeCapped: number;
-      generations: { turnId: string; generation: string; kept: number; deleted: number }[];
+      turns: { turnId: string; kept: number; deleted: number }[];
     }[] = [];
     for (const id of tasks) {
       const terminalTurns = new Set(
@@ -144,24 +143,22 @@ function telemetryPrune(args: string[], options: TelemetryCommandOptions): strin
         taskId: string;
         terminalPruned: number;
         activeCapped: number;
-        generations: { turnId: string; generation: string; kept: number; deleted: number }[];
-      } = { taskId: id, terminalPruned: 0, activeCapped: 0, generations: [] };
+        turns: { turnId: string; kept: number; deleted: number }[];
+      } = { taskId: id, terminalPruned: 0, activeCapped: 0, turns: [] };
       for (const aggregate of telemetry.listTurnAggregates(id)) {
         if (terminalTurns.has(aggregate.turnId)) {
           const before = telemetry.count(id, aggregate.turnId);
           const deleted = dryRun
             ? Math.max(0, before - keep)
-            : telemetry.pruneGeneration(
+            : telemetry.pruneTurn(
                 aggregate.taskId,
                 aggregate.roleName,
                 aggregate.turnId,
-                aggregate.generation,
                 keep
               );
           entry.terminalPruned += deleted;
-          entry.generations.push({
+          entry.turns.push({
             turnId: aggregate.turnId,
-            generation: aggregate.generation,
             kept: Math.min(before, keep),
             deleted
           });
@@ -173,9 +170,8 @@ function telemetryPrune(args: string[], options: TelemetryCommandOptions): strin
         if (before <= cap) continue;
         const deleted = dryRun ? before - cap : telemetry.capTurn(id, run.id, cap);
         entry.activeCapped += deleted;
-        entry.generations.push({
+        entry.turns.push({
           turnId: run.id,
-          generation: "*",
           kept: Math.min(before, cap),
           deleted
         });
@@ -193,15 +189,15 @@ function telemetryPrune(args: string[], options: TelemetryCommandOptions): strin
     if (options.json || flags.has("json")) return JSON.stringify(result, null, 2);
     const lines = [
       `Telemetry prune (${dryRun ? "dry-run" : "applied"}):`,
-      `  terminal generations pruned: ${totals.terminalPruned} row(s) (keep ${keep})`,
+      `  terminal turns pruned: ${totals.terminalPruned} row(s) (keep ${keep})`,
       `  active Turns capped:         ${totals.activeCapped} row(s) (cap ${cap})`
     ];
     for (const entry of report) {
-      if (entry.generations.length === 0) continue;
+      if (entry.turns.length === 0) continue;
       lines.push(`  ${entry.taskId}:`);
-      for (const generation of entry.generations) {
+      for (const turn of entry.turns) {
         lines.push(
-          `    ${generation.turnId}/${generation.generation}: kept ${generation.kept}, deleted ${generation.deleted}`
+          `    ${turn.turnId}: kept ${turn.kept}, deleted ${turn.deleted}`
         );
       }
     }
@@ -242,7 +238,7 @@ function telemetryRead(args: string[], options: TelemetryCommandOptions): string
     const page = telemetry.list(taskId, turnId, { limit, offset });
     if (options.json || flags.has("json")) return JSON.stringify(page, null, 2);
     const lines = page.items.map((entry) =>
-      `${entry.receivedAt} ${entry.turnId}/${entry.generation}/${entry.progressId}`
+      `${entry.receivedAt} ${entry.turnId}/${entry.progressId}`
       + `${entry.sequence === undefined ? "" : ` seq=${entry.sequence}`}`
     );
     if (page.nextOffset !== null) lines.push(`(next offset: ${page.nextOffset})`);
@@ -293,12 +289,11 @@ function integerOption(args: string[], name: string, fallback: number): number {
 
 function formatAggregate(aggregate: {
   turnId: string;
-  generation: string;
   firstAt: string;
   lastAt: string;
   count: number;
   maxSequence: number | null;
   errorCount: number;
 }): string {
-  return `${aggregate.turnId}/${aggregate.generation}: count=${aggregate.count} first=${aggregate.firstAt} last=${aggregate.lastAt} maxSequence=${aggregate.maxSequence === null ? "-" : aggregate.maxSequence} errors=${aggregate.errorCount}`;
+  return `${aggregate.turnId}/: count=${aggregate.count} first=${aggregate.firstAt} last=${aggregate.lastAt} maxSequence=${aggregate.maxSequence === null ? "-" : aggregate.maxSequence} errors=${aggregate.errorCount}`;
 }

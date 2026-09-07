@@ -34,7 +34,6 @@ export type UpdateBlockerIdentity = Readonly<{
   roleName?: string;
   turnId?: string;
   nativeSessionId?: string;
-  runtimeGenerationId?: string;
   reason: string;
 }>;
 
@@ -372,7 +371,7 @@ function captureControllerLifecycle(
   if (!isPositivePid(status.pid) || !isControllerIdentity(status.identity)) {
     return malformedControllerResult(
       version,
-      "The running Controller did not expose an exact PID and runtime generation identity."
+      "The running Controller did not expose an exact PID and runtime identity."
     );
   }
 

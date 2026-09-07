@@ -25,17 +25,14 @@ export function projectProviderContinuations(
   // Provider sequence and must not be moved before the Provider start fact.
   for (const observation of observations) {
     const fence = observation.fence;
-    if (fence.conversationId === undefined || fence.activationId === undefined
-      || fence.continuationId === undefined || fence.continuationGeneration === undefined) {
+    if (fence.conversationId === undefined || fence.continuationId === undefined) {
       continue;
     }
     const key = [
       fence.driverId,
       fence.agentId,
       fence.conversationId,
-      fence.activationId,
-      fence.continuationId,
-      fence.continuationGeneration
+      fence.continuationId
     ].join("\u0000");
     const result = foldContinuationObservation(projected.get(key) ?? null, observation);
     projected.set(providerContinuationKey(result.continuation.identity), result.continuation);

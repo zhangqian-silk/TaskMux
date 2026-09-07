@@ -204,7 +204,7 @@ export function renderExecutionAudit(
     const sessions = report.sessions.data;
     lines.push(
       "",
-      `Sessions: ${sessions.generations} generations · ${sessions.broken} broken · ${sessions.stopped} stopped · ${sessions.other} other`,
+      `Sessions: ${sessions.count} count · ${sessions.broken} broken · ${sessions.stopped} stopped · ${sessions.other} other`,
       `Resets: ${sessions.resets} · Historical conversation switches ${sessions.conversationSwitches}`
         + ` · lifecycle events ${sessions.lifecycleEvents} · stop failures ${sessions.stopFailures}`,
       `Terminal by Turn relation: ${sessions.terminalByTurnRelation.postTurnCompleted} post-turn-completed`
@@ -341,7 +341,7 @@ export function renderExecutionAudit(
           String(task.workItems),
           `${task.reviews.full}/${task.reviews.delta}/${task.reviews.failed}`,
           `${task.integrations.attempts}/${task.integrations.failed}/${task.integrations.repeatedIdentities}`,
-          String(task.providerGenerationsBeforeFirstProgress),
+          String(task.providerSessionsBeforeFirstProgress),
           String(task.terminalWorkspaceCount),
           String(task.advisories.length)
         ]),

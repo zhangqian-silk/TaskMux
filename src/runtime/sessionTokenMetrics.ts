@@ -7,13 +7,12 @@ import {
   type RuntimeUsageSnapshot
 } from "./runtimeObservation.js";
 
-/** Exact native Runtime generation whose token observations may be combined. */
+/** Exact native Runtime Session whose token observations may be combined. */
 export type SessionTokenIdentity = Readonly<{
   taskId: string;
   roleName: string;
   agentId: string;
   driverId: string;
-  runtimeGenerationId: string;
   nativeSessionId: string;
 }>;
 
@@ -48,7 +47,6 @@ export type SessionTokenIdentityInput = Readonly<{
   roleName?: string;
   agentId?: string;
   adapterId?: string;
-  runtimeGenerationId?: string;
   nativeSessionId?: string;
 }>;
 
@@ -57,12 +55,7 @@ const UNOBSERVED = Object.freeze({ status: "unobserved" as const });
 export function resolveSessionTokenIdentity(
   input: SessionTokenIdentityInput | null | undefined
 ): SessionTokenIdentity | null {
-  if (input?.taskId === undefined
-    || input.roleName === undefined
-    || input.agentId === undefined
-    || input.adapterId === undefined
-    || input.runtimeGenerationId === undefined
-    || input.nativeSessionId === undefined) return null;
+  if (input?.taskId === undefined || input.roleName === undefined || input.agentId === undefined || input.adapterId === undefined || input.nativeSessionId === undefined) return null;
   let driverId: string;
   try {
     driverId = builtinDriverIdForAdapter(input.adapterId);
@@ -74,7 +67,6 @@ export function resolveSessionTokenIdentity(
     roleName: input.roleName,
     agentId: input.agentId,
     driverId,
-    runtimeGenerationId: input.runtimeGenerationId,
     nativeSessionId: input.nativeSessionId
   });
 }
@@ -93,7 +85,7 @@ export function projectSessionTokenMetrics(
     .filter((observation): observation is RuntimeObservation => (
       observation !== null
       && isRuntimeTokenEvidence(observation)
-      && matchesSessionGeneration(observation, identity)
+      && matchesSessionIdentity(observation, identity)
     ))
     .sort(compareObservations);
   const incompleteBoundaries = observations.filter(({ payload }) => (
@@ -106,7 +98,7 @@ export function projectSessionTokenMetrics(
     payload.usage?.semantics === "cumulative-session"
   ));
 
-  // A generation cannot switch counter semantics without an explicit fact
+  // A Session cannot switch counter semantics without an explicit fact
   // explaining how the two streams overlap. Remaining-context is capacity,
   // not consumption, and is intentionally absent from both metrics.
   if (request.length > 0 && cumulative.length > 0) {
@@ -229,17 +221,12 @@ function projectCumulativeSnapshots(
   });
 }
 
-function matchesSessionGeneration(
+function matchesSessionIdentity(
   observation: RuntimeObservation,
   identity: SessionTokenIdentity
 ): boolean {
   const fence = observation.fence;
-  return fence.taskId === identity.taskId
-    && fence.roleName === identity.roleName
-    && fence.agentId === identity.agentId
-    && fence.driverId === identity.driverId
-    && fence.runtimeGenerationId === identity.runtimeGenerationId
-    && fence.nativeSessionId === identity.nativeSessionId;
+  return fence.taskId === identity.taskId && fence.roleName === identity.roleName && fence.agentId === identity.agentId && fence.driverId === identity.driverId && fence.nativeSessionId === identity.nativeSessionId;
 }
 
 function compareObservations(left: RuntimeObservation, right: RuntimeObservation): number {

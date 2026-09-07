@@ -17,8 +17,8 @@ Each question has one authority:
 - Session owns one stable provider-native conversation identity. Its only
   durable lifecycle is `active` or `ended`; `endReason` distinguishes an
   explicit stop from failure.
-- Host owns one disposable Yui attachment/process activation for a Role and
-  workspace. It is identified by `runtimeGenerationId`, not by Turn.
+- Host owns one disposable Yui attachment/process for a Role and workspace.
+  Its physical identity is PID plus process start identity, not a Turn id.
 - Provider Runtime Binding owns one immutable provider input attempt and its accepted, running,
   waiting, completed, failed, cancelled, or uncertain result.
 
@@ -104,23 +104,37 @@ No `yield` command participates in this contract. Agent-to-Agent delivery is
 the stored Turn result plus durable wake/event references; the absence of a
 special command cannot redefine whether the Provider Turn ended.
 
-A Host reservation protects only physical Host startup for a Role owner. It
-settles as soon as the Host and Session are known. It never belongs to a Turn and
-never remains held while a Turn executes. Therefore a later Turn may reuse the
-same live Host and Session. If that Host has stopped, restoring the same Session
-creates a new Host activation while retaining the native Session id.
+Native Session id is the continuity and caller identity. A later Turn can reuse
+the same Host and Session; a new Host or direct Desktop interaction can resume
+the same Session without changing its authority. Turn ids identify units of
+work, not launches. Yui has no Agent launch generation or durable launch
+reservation; the Controller serializes concurrent launches for one Role locally.
 
-`runtimeGenerationId` identifies that exact Host activation/rebind generation.
-It is neither a native Session/conversation id nor a Yui or provider Turn id.
-Several Turns—including Turns entered directly by the user in the provider
-UI—may run in the same runtime generation. A direct user message changes Turn
-history, not the runtime generation. Yui changes the generation only when it
-establishes a new Host activation boundary; restoring a still-running exact
-Host retains its current generation.
+This does not remove the implementation `generation` used by the Kernel
+InstanceHost and CapabilityRegistry. That identity selects code/configuration,
+not an Agent launch or caller credential. It follows the architecture handbook's
+call/Session implementation boundary.
 
-A Host activation id is therefore an opaque durable identity and never a digest
-of the launch configuration. Restoring a Session targets the activation recorded
-on the Role's Session; anything else would revive a historical activation. Only
+Execution evidence remains exact without a launch identity: a native Session
+and input `attemptId` identify a submission, with `nativeTurnId` only when the
+Provider supplies it. Late results belong to the original Turn, not the current
+active Turn. Detaching a Host does not settle accepted or unknown input. A busy
+Host preserves the pending request; it is not a failed execution or permission
+to resend an input whose outcome is unknown.
+
+The capability bridge, CLI, and Job entry points all use the current native
+Session binding. Reconnecting does not rotate a Host credential; replacing the
+Session or withdrawing actual authorization prevents new controlled actions.
+The handbook's T01/T02 evidence records describe their historical caller-key
+checks, not this development tree's current authentication contract.
+
+Concrete Host processes are recorded by PID plus process start identity, with
+Task/Role/Session attribution. A stop targets recorded Host roots, not all
+applications the Agent ever started. Historical directories and child processes
+are resource facts for the Agent to inspect and explicitly retain or remove.
+Host failure or missing launch acknowledgement preserves these resources.
+
+Only
 facts that make continuation impossible end a Session: no recoverable native
 Session, a different Agent or adapter, or a different physical workspace.
 Desired launch configuration such as model, effort, permission, Role context,
@@ -144,12 +158,12 @@ wrapper carries only the resolved entry point, never a package or build identity
 version identity changes on every release while a Session legitimately outlives
 it. A compatible update retargets those wrappers to the activated install, and an
 ordinary Agent command is authorized by the compatible continuity contract plus
-the Session's caller key.
+the native Session id bound to its current Role.
 
 No launch-time snapshot exists to gate a later command. One
 question has one authority: whether a command may run at all is proven against
 the current CLI, Home, and Controller; which Session and Role it speaks for is
-proven by the Session Manifest and the Session's caller key; what is currently
+proven by the Session Manifest and current native Session binding; what is currently
 true comes from durable Task, Role, and Turn records. Yui's own internal
 callbacks are trusted because they run inside the Host process Yui started. A
 Task's final-review contract likewise promises exactly what it says — this Task's
@@ -160,12 +174,11 @@ terminals — while a real disagreement between CLI and Home still fails closed.
 An Agent never needs to know which package version or storage version its Home
 is on.
 
-Before sending any input through a reused Agent Host, Yui requires the Host to
-acknowledge the requested `runtimeGenerationId` and an admissible Host state.
-An acknowledgement for another generation, or an otherwise invalid
-acknowledgement, is a poisoned activation boundary: Yui sends no input, stops
-the exact Role Host when possible, and otherwise leaves a durable owner-cleanup
-obligation. It never treats that Host as ready or reusable.
+Before sending input through a reused Agent Host, Yui checks the native Session
+and whether the Host can accept input. Busy or invalid acknowledgements return
+a diagnosis without destroying the Host. The Agent decides whether to inspect,
+retry or explicitly stop it. Session identity is a local authority contract,
+not an authentication secret against another process with the same Home access.
 
 The stable attempt id and Provider Turn fence prevent duplicate input. A
 `delivery-unknown` input is not replayed automatically because it may already
@@ -198,7 +211,7 @@ The ordinary choices are deliberately small:
 | Facts | Useful Agent action |
 | --- | --- |
 | An accepted Turn fails with availability, `429`, capacity, or a recoverable transport error; Session remains usable | Keep the Session, restore the same native id if necessary, and submit a new Turn |
-| A known Host process is gone; Session remains recoverable | Detach the dead Host before claiming pending work, start one new Host activation, and restore the same native Session id |
+| A known Host process is gone; Session remains recoverable | Start a Host and restore the same native Session id; no launch identity needs retirement |
 | Session preparation otherwise fails, or the Driver rejects input before acceptance | The exact Turn fails once; inspect the error, then explicitly retry the failed Turn if another attempt is useful |
 | Another native Turn is active | Observe or wait; retain pending delivery |
 | Input delivery is unknown | Inspect native history; do not blindly replay |
@@ -222,11 +235,11 @@ recovery a visible Agent action instead of an implicit launch loop, without a
 second writable recovery status. A `delivery-unknown` Turn remains fenced until
 native history resolves whether the provider accepted it.
 
-An idle `session stop` terminates only the exact Role Host activation and marks
+An idle `session stop` terminates the recorded Role Host processes and marks
 that Session ended. It requires the Agent to settle or retire an active Turn
 first. The next explicit Turn dispatch then starts a new Session. Its Context
 Pack includes the prior error event, so the receiving Agent can see the old
-Agent/adapter, Turn, Host activation, native Session and Provider Turn identities, and
+Agent/adapter, Turn, native Session and Provider Turn identities, and
 complete raw failure without transcript reconstruction.
 
 There is no fixed number of allowed replacements. Leader or Operator reads the

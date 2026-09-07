@@ -1,6 +1,11 @@
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import {
+  basename,
+  dirname,
+  join,
+  resolve
+} from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { ConfiguredAgent } from "../agent/agent.js";
 import type { TaskBrief } from "../brief/taskBrief.js";
@@ -155,7 +160,7 @@ export type YuiConfig = Readonly<{
   tmuxHistoryLimit?: number;
   /** Whether optional diagnostic telemetry is active. */
   telemetryEnabled?: boolean;
-  /** Terminal Turn/generation progress rows retained after prune. */
+  /** Terminal Turn progress rows retained after prune. */
   telemetryTerminalKeep?: number;
   /** Hard cap of progress rows per Turn while it is still active. */
   telemetryTurnCap?: number;
@@ -327,20 +332,16 @@ export type TaskStore = {
   saveRoleSessionSet(sessions: TaskRoleSessionSet): void;
   saveTaskRoleSessionSet(sessions: TaskRoleSessionSet): void;
   getRoleSession(taskId: string, roleName: string): RoleAgentSession | null;
-  /** rr13: Look up the durable hash for a Session's job caller key. */
-  getJobCallerKeyHash(taskId: string, roleName: string, agentId: string): string | null;
-  /** rr13: Persist the hash of a newly launched Session's job caller key. */
-  setJobCallerKeyHash(taskId: string, roleName: string, agentId: string, hash: string): void;
-  /** Issue 03: Persist one runtime generation's exact physical owner identity. */
+  /** Issue 03: Persist one runtime's exact physical owner identity. */
   saveSessionOwner(identity: SessionOwnerIdentity): void;
-  /** Issue 03: Look up one owner record by runtime generation id. */
-  getSessionOwner(runtimeGenerationId: string): SessionOwnerIdentity | null;
+  /** Issue 03: Look up one owner record by runtime id. */
+  getSessionOwner(processKey: string): SessionOwnerIdentity | null;
   /** Issue 03: Enumerate every persisted owner record. */
   listSessionOwners(): SessionOwnerIdentity[];
   /** Issue 03: Enumerate owner records for one Task/global Role. */
   listSessionOwnersForOwner(owner: RuntimeOwner): SessionOwnerIdentity[];
   /** Issue 03: Remove a record whose physical resources were proven absent. */
-  removeSessionOwner(runtimeGenerationId: string): void;
+  removeSessionOwner(processKey: string): void;
   nextWorkItemId(taskId: string): string;
   getWorkItem(taskId: string, workItemId: string): WorkItem | null;
   listWorkItems(taskId: string): WorkItem[];

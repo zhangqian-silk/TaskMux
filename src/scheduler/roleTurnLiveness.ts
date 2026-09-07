@@ -22,7 +22,7 @@ export type RoleLiveStatusSnapshot = ReadonlyMap<string, RoleLiveStatus>;
  * child work or another observer can still contribute facts, while the stall
  * path raises bounded attention independently.
  * Process liveness is only a recovery signal. An absent pane/Host never proves
- * that the native Session or Turn ended; recover the same generation and
+ * that the native Session or Turn ended; recover the same Session and
  * native identity when possible, otherwise preserve the active Turn.
  */
 export async function reconcileExitedRoleTurns(
@@ -56,7 +56,6 @@ export async function reconcileExitedRoleTurns(
           adapterId: run.effective.adapterId,
           turnId: run.id,
           progressAt: run.createdAt,
-          ...(session?.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId }),
           ...(session?.nativeSessionId === undefined
             ? {}
             : { nativeSessionId: session.nativeSessionId })
@@ -102,7 +101,6 @@ export async function reconcileExitedRoleTurns(
                     ...(session?.nativeSessionId === undefined
                       ? {}
                       : { nativeSessionId: session.nativeSessionId }),
-                    ...(session?.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId })
                   }]
                 : []
             ))
@@ -119,7 +117,7 @@ export async function reconcileExitedRoleTurns(
       ));
       if (candidate !== undefined) {
         // Keep only the exact Turn key. A task/role or bare-Turn fallback can
-        // bridge an asynchronous sample from a prior generation.
+        // bridge an asynchronous sample from a prior Session.
         resourceEvidence.set(`${key}\0${candidate.run.id}`, resource);
       }
     }
@@ -135,7 +133,6 @@ export async function reconcileExitedRoleTurns(
           taskId: task.id,
           roleName: role.name,
           turnId: run.id,
-          ...(session?.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: session.runtimeGenerationId }),
           ...(session?.nativeSessionId === undefined
             ? {}
             : { nativeSessionId: session.nativeSessionId }),
@@ -165,16 +162,12 @@ export async function reconcileExitedRoleTurns(
           mode: "resume",
           turnId: run.id,
           nativeSessionId: session.nativeSessionId,
-          ...(session.runtimeGenerationId === undefined
-            ? {}
-            : { hostActivationId: session.runtimeGenerationId })
         });
         store.saveRoleTurnPrepared({
           task,
           role,
           turn: run,
           session: recovered.session ?? session,
-          ...(recovered.runtimeGenerationId === undefined ? {} : { runtimeGenerationId: recovered.runtimeGenerationId }),
           now
         });
         liveStatuses?.set(`${task.id}\0${role.name}`, "present");
@@ -199,7 +192,6 @@ type RoleTurnCandidate = Readonly<{
     turnId: string;
     progressAt: string;
     nativeSessionId?: string;
-    runtimeGenerationId?: string;
   }>;
 }>;
 

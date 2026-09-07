@@ -196,6 +196,6 @@ function callerEnvironment(caller: DurableJobCaller): NodeJS.ProcessEnv {
   return {
     YUI_SESSION_SCOPE: caller.scope, YUI_TASK_ID: caller.taskId,
     YUI_ROLE: caller.role, YUI_AGENT_ID: caller.agentId,
-    YUI_ADAPTER_ID: caller.adapterId, YUI_JOB_CALLER_KEY: caller.callerKey
+    YUI_ADAPTER_ID: caller.adapterId, YUI_NATIVE_SESSION_ID: caller.nativeSessionId
   };
 }

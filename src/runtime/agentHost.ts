@@ -15,7 +15,6 @@ import { callFileTaskController } from "../controller/clientRuntime.js";
 import { isForeignHandoverLockHeld } from "../release/runtimeRelease.js";
 import {
   publishStructuredProviderAccepted,
-  publishStructuredProviderActivationTerminal,
   publishStructuredProviderGoal,
   publishStructuredConversationRecoverability,
   publishStructuredProviderOpened,
@@ -52,11 +51,6 @@ import {
   replayRuntimeProcessExitOutbox
 } from "./processExitOutbox.js";
 import {
-  readRuntimeStopReceipt,
-  removeRuntimeStopReceipt,
-  writeRuntimeStopReceipt
-} from "./runtimeStopReceipt.js";
-import {
   AGENT_HOST_CONTROL_TIMEOUT_MS,
   AGENT_HOST_READY_TIMEOUT_MS
 } from "./runtimeDeadlines.js";
@@ -78,7 +72,6 @@ const MAX_CONSECUTIVE_CODEX_DISCONNECTS = 3;
 export type AgentHostLaunchControl = Readonly<{
   protocol: typeof AGENT_HOST_CONTROL_PROTOCOL;
   type: "launch";
-  runtimeGenerationId: string;
   ticket: string;
 }>;
 
@@ -90,7 +83,6 @@ export type AgentHostStatusControl = Readonly<{
 export type AgentHostSubmitTurnControl = Readonly<{
   protocol: typeof AGENT_HOST_CONTROL_PROTOCOL;
   type: "submit-turn";
-  runtimeGenerationId: string;
   nativeSessionId: string;
   /** Current durable Turn; a reused Host must not inherit its launch-time Turn. */
   turnId?: string;
@@ -101,7 +93,6 @@ export type AgentHostSubmitTurnControl = Readonly<{
 export type AgentHostSteerTurnControl = Readonly<{
   protocol: typeof AGENT_HOST_CONTROL_PROTOCOL;
   type: "steer-turn";
-  runtimeGenerationId: string;
   nativeSessionId: string;
   nativeTurnId: string;
   authority: ProviderAuthorityFence;
@@ -136,7 +127,6 @@ export type AgentHostProviderState =
 export type AgentHostSnapshot = Readonly<{
   schemaVersion: 2;
   state: AgentHostProviderState;
-  runtimeGenerationId?: string;
   adapterId?: "codex" | "claude";
   processInstanceId?: string;
   nativeSessionId?: string;
@@ -160,8 +150,7 @@ export type AgentHostControlOutcome =
   | "status"
   | "accepted"
   | "rejected"
-  | "active-same-generation"
-  | "active-other-generation";
+  | "busy";
 
 export type AgentHostControlResult = Readonly<{
   protocol: typeof AGENT_HOST_CONTROL_PROTOCOL;
@@ -182,12 +171,11 @@ export function serializeAgentHostLaunchControl(control: AgentHostLaunchControl)
 
 export async function runAgentHost(input: Readonly<{
   home: string;
-  runtimeGenerationId: string;
   ticket: string;
 }>): Promise<number> {
   const hostInstanceId = randomUUID();
   let hostSequence = 0;
-  let payload = await redeem(input.home, input.runtimeGenerationId, input.ticket);
+  let payload = await redeem(input.home, input.ticket);
   if (payload.environment.YUI_SESSION_SCOPE === "global"
     && payload.environment.YUI_ADAPTER_ID === "codex"
     && payload.providerControl === undefined) {
@@ -200,7 +188,6 @@ export async function runAgentHost(input: Readonly<{
   let activeNativeTurnId: string | undefined;
   let codexClientAttachedAt: number | undefined;
   let consecutiveCodexDisconnects = 0;
-  let activationId: string | undefined;
   let conversationRecoverability: "unknown" | "recoverable" = "unknown";
   let authority: ProviderAuthorityFence | undefined;
   let hostStopRequested = false;
@@ -229,7 +216,6 @@ export async function runAgentHost(input: Readonly<{
   ): void => {
     if (started.clientOwned || observedPayload === undefined) return;
     updateSnapshot(hostSnapshot("busy", {
-      runtimeGenerationId: observedPayload.runtimeGenerationId,
       adapterId: observedPayload.providerControl?.adapterId,
       processInstanceId: session?.processInstanceId,
       nativeSessionId: started.nativeSessionId,
@@ -237,12 +223,10 @@ export async function runAgentHost(input: Readonly<{
       nativeTurnId: started.nativeTurnId,
       ...authorityFields()
     }));
-    const directActivationId = activationId ?? observedPayload.runtimeGenerationId;
     void enqueueSerialized(async () => {
       await publishStructuredProviderStarted({
         home: input.home,
         environment: observedPayload.environment,
-        activationId: directActivationId,
         started
       });
       signalRoleMailbox(input.home, observedPayload);
@@ -260,17 +244,14 @@ export async function runAgentHost(input: Readonly<{
       // A direct Provider client shares the Session but still produces a Yui
       // Turn audit record. It has no WorkItem ownership and no managed input
       // fence; the runtime observer records only visible input/output.
-      const directActivationId = activationId ?? busyPayload.runtimeGenerationId;
       void enqueueSerialized(async () => {
         await publishStructuredProviderTerminal({
           home: input.home,
           environment: busyPayload.environment,
-          activationId: directActivationId,
           terminal
         });
         if (session !== undefined && terminal.conversationId === session.conversationId) {
           updateSnapshot(hostSnapshot(session.activeTurnId === undefined ? "idle" : "busy", {
-            runtimeGenerationId: busyPayload.runtimeGenerationId,
             adapterId: session.adapterId,
             processInstanceId: session.processInstanceId,
             nativeSessionId: session.nativeSessionId,
@@ -293,7 +274,6 @@ export async function runAgentHost(input: Readonly<{
         await publishStructuredProviderTerminal({
           home: input.home,
           environment: observedPayload.environment,
-          activationId: activationId ?? observedPayload.runtimeGenerationId,
           terminal
         });
         signalRoleMailbox(input.home, observedPayload);
@@ -306,13 +286,11 @@ export async function runAgentHost(input: Readonly<{
       || (terminal.nativeTurnId !== undefined && activeNativeTurnId !== undefined
         && terminal.nativeTurnId !== activeNativeTurnId)) return;
     const terminalAttemptId = terminal.attemptId;
-    const terminalActivationId = activationId ?? terminalPayload.runtimeGenerationId;
     void enqueueSerialized(async () => {
       if (activeTurnPayload !== terminalPayload
         || activeTurnAttemptId !== terminalAttemptId) return;
       if (session !== undefined) {
         updateSnapshot(hostSnapshot("settling", {
-          runtimeGenerationId: terminalPayload.runtimeGenerationId,
           adapterId: terminalPayload.providerControl!.adapterId,
           processInstanceId: session.processInstanceId,
           nativeSessionId: terminal.nativeSessionId,
@@ -326,7 +304,6 @@ export async function runAgentHost(input: Readonly<{
         await publishStructuredProviderTerminal({
           home: input.home,
           environment: terminalPayload.environment,
-          activationId: terminalActivationId,
           terminal
         });
         if (activeTurnPayload !== terminalPayload) return;
@@ -336,7 +313,6 @@ export async function runAgentHost(input: Readonly<{
         if (session === undefined) return;
         const currentPayload = sessionPayload ?? terminalPayload;
         updateSnapshot(hostSnapshot(session.activeTurnId === undefined ? "idle" : "busy", {
-          runtimeGenerationId: currentPayload.runtimeGenerationId,
           adapterId: currentPayload.providerControl!.adapterId,
           processInstanceId: session.processInstanceId,
           nativeSessionId: terminal.nativeSessionId,
@@ -346,7 +322,6 @@ export async function runAgentHost(input: Readonly<{
         promptHuman();
       } catch (error) {
         updateSnapshot(hostSnapshot("failed", {
-          runtimeGenerationId: terminalPayload.runtimeGenerationId,
           adapterId: terminalPayload.providerControl!.adapterId,
           processInstanceId: session?.processInstanceId,
           nativeSessionId: terminal.nativeSessionId,
@@ -363,12 +338,10 @@ export async function runAgentHost(input: Readonly<{
     const currentPayload = activeTurnPayload ?? sessionPayload;
     const currentSession = session;
     if (currentPayload === undefined || currentSession === undefined) return;
-    const currentActivationId = activationId ?? currentPayload.runtimeGenerationId;
     void enqueueSerialized(async () => {
       await publishStructuredProviderGoal({
         home: input.home,
         environment: currentPayload.environment,
-        activationId: currentActivationId,
         conversationId: currentSession.conversationId,
         goal
       });
@@ -428,7 +401,6 @@ export async function runAgentHost(input: Readonly<{
           ? ownedTurn === undefined ? "delivery-unknown" : "ready"
           : started.session.activeTurnId === undefined ? "idle" : "busy";
         updateSnapshot(hostSnapshot(reconnectState, {
-          runtimeGenerationId: currentPayload.runtimeGenerationId,
           adapterId: "codex",
           processInstanceId: started.session.processInstanceId,
           nativeSessionId: started.session.nativeSessionId,
@@ -461,7 +433,6 @@ export async function runAgentHost(input: Readonly<{
       }
     }
     updateSnapshot(hostSnapshot("failed", {
-      runtimeGenerationId: currentPayload.runtimeGenerationId,
       adapterId: "codex",
       processInstanceId: disconnectedSession.processInstanceId,
       nativeSessionId: disconnectedSession.nativeSessionId,
@@ -480,15 +451,10 @@ export async function runAgentHost(input: Readonly<{
     void providerSession.waitForExit().then((result) => enqueueSerialized(async () => {
       const ownsCurrentSession = session === providerSession;
       const currentPayload = ownsCurrentSession ? sessionPayload ?? launched : launched;
-      const currentActivationId = ownsCurrentSession
-        ? activationId ?? launched.runtimeGenerationId
-        : launched.runtimeGenerationId;
       const exitAuthority = authorityFields();
-      const stopReceipt = readRuntimeStopReceipt(input.home, currentPayload.runtimeGenerationId);
       const reconnectableCodexClient = ownsCurrentSession
         && providerSession.adapterId === "codex"
-        && !hostStopRequested
-        && stopReceipt === null;
+        && !hostStopRequested;
       if (reconnectableCodexClient) {
         session = undefined;
         if (codexClientAttachedAt !== undefined
@@ -498,7 +464,6 @@ export async function runAgentHost(input: Readonly<{
         consecutiveCodexDisconnects += 1;
         if (consecutiveCodexDisconnects > MAX_CONSECUTIVE_CODEX_DISCONNECTS) {
           updateSnapshot(hostSnapshot("failed", {
-            runtimeGenerationId: currentPayload.runtimeGenerationId,
             adapterId: "codex",
             processInstanceId: result.processInstanceId,
             nativeSessionId: providerSession.nativeSessionId,
@@ -511,7 +476,6 @@ export async function runAgentHost(input: Readonly<{
           return;
         }
         updateSnapshot(hostSnapshot("starting", {
-          runtimeGenerationId: currentPayload.runtimeGenerationId,
           adapterId: "codex",
           processInstanceId: result.processInstanceId,
           nativeSessionId: providerSession.nativeSessionId,
@@ -526,27 +490,12 @@ export async function runAgentHost(input: Readonly<{
       }
       if (ownsCurrentSession) {
         session = undefined;
-        activationId = undefined;
         conversationRecoverability = "unknown";
         authority = undefined;
       }
       hostSequence += 1;
       const observedAt = new Date().toISOString();
       const failures: string[] = [];
-      try {
-        await publishStructuredProviderActivationTerminal({
-          home: input.home,
-          environment: currentPayload.environment,
-          conversationId: providerSession.conversationId,
-          nativeSessionId: providerSession.nativeSessionId,
-          activationId: currentActivationId,
-          status: stopReceipt !== null || hostStopRequested ? "ended" : "failed",
-          observedAt
-        });
-      } catch (error) {
-        failures.push(`activation terminal: ${errorText(error)}`);
-      }
-      let exitPersisted = false;
       try {
         await persistAndSubmitExit(input.home, validateRuntimeProcessExitObservation({
           schemaVersion: 2,
@@ -561,26 +510,20 @@ export async function runAgentHost(input: Readonly<{
           ...(currentPayload.environment.YUI_TURN_ID === undefined
             ? {}
             : { turnId: currentPayload.environment.YUI_TURN_ID }),
-          runtimeGenerationId: currentPayload.runtimeGenerationId,
           ...(providerSession.nativeSessionId.length === 0
             ? {}
             : { nativeSessionId: providerSession.nativeSessionId }),
           processKind: "provider-child",
           ...(result.code === null ? {} : { exitCode: result.code }),
           ...(result.signal === null ? {} : { signal: result.signal }),
-          ...(stopReceipt === null ? {} : { stopReceiptId: stopReceipt.receiptId }),
+          ...(hostStopRequested ? { stopRequested: true } : {}),
           observedAt
         }));
-        exitPersisted = true;
       } catch (error) {
         failures.push(`process exit: ${errorText(error)}`);
       }
-      if (stopReceipt !== null && exitPersisted) {
-        removeRuntimeStopReceipt(input.home, currentPayload.runtimeGenerationId);
-      }
       if (hostStopRequested || !ownsCurrentSession) return;
       updateSnapshot(hostSnapshot(failures.length === 0 ? "exited" : "failed", {
-        runtimeGenerationId: currentPayload.runtimeGenerationId,
         adapterId: currentPayload.providerControl?.adapterId,
         processInstanceId: result.processInstanceId,
         nativeSessionId: providerSession.nativeSessionId,
@@ -593,7 +536,6 @@ export async function runAgentHost(input: Readonly<{
             : { detail: "Provider process exited before the active Turn reached a terminal boundary." })
       }));
     })).catch((error) => updateSnapshot(hostSnapshot("failed", {
-      runtimeGenerationId: launched.runtimeGenerationId,
       adapterId: launched.providerControl?.adapterId,
       processInstanceId: providerSession.processInstanceId,
       ...authorityFields(),
@@ -623,7 +565,6 @@ export async function runAgentHost(input: Readonly<{
       throw new Error("Agent Host launch carries a stale Provider authority fence.");
     }
     updateSnapshot(hostSnapshot("starting", {
-      runtimeGenerationId: next.runtimeGenerationId,
       adapterId: providerControl.adapterId,
       ...(session === undefined ? {} : {
         processInstanceId: session.processInstanceId,
@@ -642,7 +583,6 @@ export async function runAgentHost(input: Readonly<{
         }
         sessionPayload = next;
       } else {
-        activationId = next.runtimeGenerationId;
         conversationRecoverability = providerControl.adapterId === "codex"
           ? "recoverable"
           : "unknown";
@@ -683,7 +623,6 @@ export async function runAgentHost(input: Readonly<{
         environment: next.environment,
         conversationId: session.conversationId,
         nativeSessionId: session.nativeSessionId,
-        activationId: activationId ?? next.runtimeGenerationId,
         recoverability: conversationRecoverability,
         observedAt: new Date().toISOString()
       });
@@ -691,7 +630,6 @@ export async function runAgentHost(input: Readonly<{
         await publishStructuredProviderGoal({
           home: input.home,
           environment: next.environment,
-          activationId: activationId ?? next.runtimeGenerationId,
           conversationId: session.conversationId,
           goal: recoveredGoal
         });
@@ -703,7 +641,6 @@ export async function runAgentHost(input: Readonly<{
         ? "ready"
         : session.activeTurnId === undefined ? "idle" : "busy";
       updateSnapshot(hostSnapshot(providerState, {
-        runtimeGenerationId: next.runtimeGenerationId,
         adapterId: providerControl.adapterId,
         processInstanceId: session.processInstanceId,
         nativeSessionId: session.nativeSessionId,
@@ -723,13 +660,11 @@ export async function runAgentHost(input: Readonly<{
           home: input.home,
           environment: next.environment,
           conversationId: error.conversationId,
-          activationId: activationId ?? next.runtimeGenerationId,
           recoverability: "unrecoverable",
           observedAt: new Date().toISOString()
         }).catch(() => {});
       }
       if (session === undefined) {
-        activationId = undefined;
         conversationRecoverability = "unknown";
         authority = undefined;
       }
@@ -737,7 +672,6 @@ export async function runAgentHost(input: Readonly<{
           ? "busy"
           : error instanceof ProviderTurnRejectedError ? "rejected" : "failed";
       updateSnapshot(hostSnapshot(state, {
-        runtimeGenerationId: next.runtimeGenerationId,
         adapterId: providerControl.adapterId,
         processInstanceId: session?.processInstanceId,
         nativeSessionId: session?.nativeSessionId ?? providerControl.nativeSessionId,
@@ -771,30 +705,6 @@ export async function runAgentHost(input: Readonly<{
     if (request.nativeSessionId !== session.nativeSessionId) {
       throw new Error("Agent Host Turn targets a different Provider Conversation.");
     }
-    // A superseded generation is a real identity conflict, and the writer
-    // fence does not catch it: a Turn can carry an old generation under a
-    // fence that is still current. Without this the Host registered the stale
-    // Turn, wrote it to the Provider, and adopted the old generation into its
-    // own snapshot. Same generation is contention, which is decided below.
-    if (request.runtimeGenerationId !== sessionPayload.runtimeGenerationId) {
-      operation.failure = providerDeliveryFailure({
-        detail: "Agent Host Turn targets a superseded runtime generation.",
-        errorName: "ProviderGenerationConflictError",
-        phase: "turn-submit",
-        hostState: snapshot.state,
-        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
-        observedRuntimeGenerationId: request.runtimeGenerationId,
-        attemptId: request.turn.attemptId,
-        inputDisposition: "not-accepted",
-        registrationDisposition: "not-committed",
-        // A stale writer does not make the live Session unusable.
-        sessionDisposition: "recoverable"
-      });
-      throw new Error(
-        "Agent Host Turn targets a superseded runtime generation: expected "
-        + `${sessionPayload.runtimeGenerationId}, observed ${request.runtimeGenerationId}.`
-      );
-    }
     if (authority === undefined
       || !sameProviderAuthorityFence(authority, request.authority)) {
       throw new Error("Agent Host rejected a stale Provider writer fence.");
@@ -805,8 +715,6 @@ export async function runAgentHost(input: Readonly<{
         errorName: "ProviderTurnBusyError",
         phase: "turn-submit",
         hostState: snapshot.state === "settling" ? "settling" : snapshot.state,
-        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
-        observedRuntimeGenerationId: request.runtimeGenerationId,
         attemptId: request.turn.attemptId,
         inputDisposition: "not-accepted",
         registrationDisposition: "not-committed",
@@ -834,7 +742,6 @@ export async function runAgentHost(input: Readonly<{
     activeTurnAttemptId = request.turn.attemptId;
     activeNativeTurnId = undefined;
     updateSnapshot(hostSnapshot("starting", {
-      runtimeGenerationId: request.runtimeGenerationId,
       adapterId: session.adapterId,
       processInstanceId: session.processInstanceId,
       nativeSessionId: session.nativeSessionId,
@@ -869,7 +776,6 @@ export async function runAgentHost(input: Readonly<{
         && (error instanceof ControllerAcknowledgementUnknownError
           || error instanceof ProviderDeliveryUnknownError);
       updateSnapshot(hostSnapshot(registrationUnknown ? "delivery-unknown" : "failed", {
-        runtimeGenerationId: request.runtimeGenerationId,
         adapterId: session.adapterId,
         processInstanceId: session.processInstanceId,
         nativeSessionId: session.nativeSessionId,
@@ -889,8 +795,6 @@ export async function runAgentHost(input: Readonly<{
       operation.failure = providerDeliveryFailureFrom(error, {
         phase: "turn-submit",
         hostState: snapshot.state,
-        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
-        observedRuntimeGenerationId: request.runtimeGenerationId,
         attemptId: request.turn.attemptId,
         inputDisposition: "not-accepted",
         registrationDisposition: registrationUnknown
@@ -919,7 +823,6 @@ export async function runAgentHost(input: Readonly<{
         await publishStructuredProviderAccepted({
           home: input.home,
           environment: activeTurnPayload.environment,
-          activationId: activationId ?? sessionPayload.runtimeGenerationId,
           receipt
         });
       } catch (error) {
@@ -935,7 +838,6 @@ export async function runAgentHost(input: Readonly<{
         throw unknown;
       }
       updateSnapshot(hostSnapshot("ready", {
-        runtimeGenerationId: request.runtimeGenerationId,
         adapterId: session.adapterId,
         processInstanceId: session.processInstanceId,
         nativeSessionId: receipt.nativeSessionId,
@@ -964,7 +866,6 @@ export async function runAgentHost(input: Readonly<{
           ? "busy"
           : error instanceof ProviderTurnRejectedError ? "rejected" : "failed";
       updateSnapshot(hostSnapshot(state, {
-        runtimeGenerationId: request.runtimeGenerationId,
         adapterId: session.adapterId,
         processInstanceId: session.processInstanceId,
         nativeSessionId: session.nativeSessionId,
@@ -976,8 +877,6 @@ export async function runAgentHost(input: Readonly<{
       operation.failure = providerDeliveryFailureFrom(failureError, {
         phase: "turn-submit",
         hostState: state,
-        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
-        observedRuntimeGenerationId: request.runtimeGenerationId,
         attemptId: request.turn.attemptId,
         // Acceptance is observed, never inferred from the error class.
         inputDisposition: providerAccepted
@@ -1012,37 +911,12 @@ export async function runAgentHost(input: Readonly<{
         errorName: "ProviderTurnRejectedError",
         phase: "turn-submit",
         hostState: snapshot.state,
-        expectedRuntimeGenerationId: sessionPayload?.runtimeGenerationId
-          ?? snapshot.runtimeGenerationId ?? "none",
-        observedRuntimeGenerationId: request.runtimeGenerationId,
         attemptId: request.turn.attemptId,
         inputDisposition: "not-accepted",
         sessionDisposition: "recoverable"
       });
       throw new ProviderTurnRejectedError(
         "Agent Host has no active Provider Turn to steer.",
-        request.turn.attemptId
-      );
-    }
-    // Steer carried no generation check, so a steer issued against a
-    // superseded activation was written into the current Provider Turn. The
-    // native Turn id alone does not catch it: a late steer can arrive while
-    // the id it names is still the active one under a newer generation.
-    if (request.runtimeGenerationId !== sessionPayload.runtimeGenerationId) {
-      operation.failure = providerDeliveryFailure({
-        detail: "Agent Host steer targets a superseded runtime generation.",
-        errorName: "ProviderGenerationConflictError",
-        phase: "turn-submit",
-        hostState: snapshot.state,
-        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
-        observedRuntimeGenerationId: request.runtimeGenerationId,
-        attemptId: request.turn.attemptId,
-        inputDisposition: "not-accepted",
-        sessionDisposition: "recoverable"
-      });
-      throw new ProviderTurnRejectedError(
-        "Agent Host steer targets a superseded runtime generation: expected "
-        + `${sessionPayload.runtimeGenerationId}, observed ${request.runtimeGenerationId}.`,
         request.turn.attemptId
       );
     }
@@ -1053,8 +927,6 @@ export async function runAgentHost(input: Readonly<{
         errorName: "ProviderTurnRejectedError",
         phase: "turn-submit",
         hostState: snapshot.state,
-        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
-        observedRuntimeGenerationId: request.runtimeGenerationId,
         attemptId: request.turn.attemptId,
         inputDisposition: "not-accepted",
         sessionDisposition: "recoverable"
@@ -1090,8 +962,6 @@ export async function runAgentHost(input: Readonly<{
       operation.failure = providerDeliveryFailureFrom(error, {
         phase: "turn-submit",
         hostState: snapshot.state,
-        expectedRuntimeGenerationId: sessionPayload.runtimeGenerationId,
-        observedRuntimeGenerationId: request.runtimeGenerationId,
         attemptId: request.turn.attemptId,
         inputDisposition: unknown ? "unknown" : "not-accepted",
         sessionDisposition: "unknown"
@@ -1119,7 +989,6 @@ export async function runAgentHost(input: Readonly<{
     }
     authority = next;
     updateSnapshot(hostSnapshot("idle", {
-      runtimeGenerationId: sessionPayload?.runtimeGenerationId ?? snapshot.runtimeGenerationId,
       adapterId: session.adapterId,
       processInstanceId: session.processInstanceId,
       nativeSessionId: session.nativeSessionId,
@@ -1160,18 +1029,14 @@ export async function runAgentHost(input: Readonly<{
       const accepted = await enqueueSerialized(async () => setAuthority(request));
       return controlResult("accepted", accepted);
     }
-    // Same generation means this exact activation is already live here: the
-    // control request was received and the identity matches. Whether the
-    // Conversation is usable yet is a separate fact the caller reads from
-    // `snapshot.state`; it is never an identity conflict.
-    if (snapshot.runtimeGenerationId === request.runtimeGenerationId
-      && ["starting", "ready", "settling", "delivery-unknown"].includes(snapshot.state)) {
-      return controlResult("active-same-generation", snapshot);
-    }
-    const redeemed = await redeem(input.home, request.runtimeGenerationId, request.ticket);
+    const redeemed = await redeem(input.home, request.ticket);
     if (activeTurnPayload !== undefined
       || ["starting", "ready", "settling", "delivery-unknown"].includes(snapshot.state)) {
-      return controlResult("active-other-generation", snapshot);
+      if (redeemed.providerControl?.mode === "resume"
+        && redeemed.providerControl.nativeSessionId === snapshot.nativeSessionId) {
+        return controlResult("accepted", snapshot);
+      }
+      return controlResult("busy", snapshot);
     }
     const accepted = await enqueueDispatch(redeemed);
     return controlResult("accepted", accepted);
@@ -1205,7 +1070,6 @@ export async function runAgentHost(input: Readonly<{
       const turnControl = {
         protocol: AGENT_HOST_CONTROL_PROTOCOL,
         type: "submit-turn" as const,
-        runtimeGenerationId: currentPayload.runtimeGenerationId,
         nativeSessionId: currentSession.nativeSessionId,
         authority: currentAuthority,
         turn: {
@@ -1339,7 +1203,6 @@ export async function waitForAgentHostLaunchAck(input: Readonly<{
   scope: string;
   taskId?: string;
   roleName: string;
-  runtimeGenerationId: string;
   requireTurnAck?: boolean;
   timeoutMs?: number;
   /** Exact process check while the existing startup acknowledgement is unavailable. */
@@ -1350,7 +1213,7 @@ export async function waitForAgentHostLaunchAck(input: Readonly<{
   while (Date.now() < deadline) {
     try {
       const snapshot = await inspectAgentHost(input);
-      if (snapshot.runtimeGenerationId === input.runtimeGenerationId) {
+      {
         if (snapshot.state === "ready"
           || (input.requireTurnAck !== true && snapshot.state === "idle")) return snapshot;
         if (snapshot.state === "delivery-unknown"
@@ -1373,7 +1236,7 @@ export async function waitForAgentHostLaunchAck(input: Readonly<{
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
   }
   throw new Error(
-    `Agent Host did not acknowledge Provider launch ${input.runtimeGenerationId}: ${errorText(lastError)}.`
+    `Agent Host did not acknowledge Provider launch: ${errorText(lastError)}.`
   );
 }
 
@@ -1418,9 +1281,8 @@ async function sendAgentHostControl(input: Readonly<{
   });
 }
 
-async function redeem(home: string, runtimeGenerationId: string, ticket: string): Promise<AgentHostLaunchPayload> {
+async function redeem(home: string, ticket: string): Promise<AgentHostLaunchPayload> {
   const result = await callController(home, "runtime.launch-redeem", {
-    runtimeGenerationId,
     ticket,
     hostPid: process.pid
   });
@@ -1519,9 +1381,6 @@ export async function openAgentHostControl(
           const failure = recorded ?? providerDeliveryFailureFrom(error, {
             phase: controlRequestPhase(body),
             hostState: busy ? "busy" : unknown ? "delivery-unknown" : current.state,
-            ...(current.runtimeGenerationId === undefined
-              ? {}
-              : { observedRuntimeGenerationId: current.runtimeGenerationId }),
             ...(current.attemptId === undefined
               ? {}
               : { attemptId: current.attemptId }),
@@ -1639,7 +1498,6 @@ function validateControl(control: AgentHostControl): AgentHostControl {
   }
   if (control.type === "status") return Object.freeze({ ...control });
   if (control.type === "submit-turn" || control.type === "steer-turn") {
-    validateRuntimeGenerationId(control.runtimeGenerationId);
     validateIdentity(control.nativeSessionId, "native Session id");
     if (control.type === "submit-turn" && control.turnId !== undefined) {
       validateIdentity(control.turnId, "Turn id");
@@ -1665,18 +1523,10 @@ function validateControl(control: AgentHostControl): AgentHostControl {
     });
   }
   if (control.type !== "launch") throw new Error("Agent Host control type is invalid.");
-  validateRuntimeGenerationId(control.runtimeGenerationId);
   if (typeof control.ticket !== "string" || !/^[a-f0-9]{64}$/u.test(control.ticket)) {
     throw new Error("Agent Host launch control ticket is invalid.");
   }
   return Object.freeze({ ...control });
-}
-
-function validateRuntimeGenerationId(value: string): void {
-  if (typeof value !== "string" || value.length === 0
-    || value.length > 256 || value.includes("\0")) {
-    throw new Error("Agent Host launch control identity is invalid.");
-  }
 }
 
 function validateIdentity(value: string, label: string): void {
@@ -1687,7 +1537,7 @@ function validateIdentity(value: string, label: string): void {
 
 function validateControlResult(result: AgentHostControlResult): AgentHostControlResult {
   if (result.protocol !== AGENT_HOST_CONTROL_PROTOCOL
-    || !["status", "accepted", "rejected", "active-same-generation", "active-other-generation"].includes(
+    || !["status", "accepted", "rejected", "busy"].includes(
       result.outcome
     )) {
     throw new Error("Agent Host control response is invalid.");
@@ -1830,7 +1680,6 @@ function hostTurnControlParams(
     roleName: requiredEnvironment(environment.YUI_ROLE, "Role name"),
     ...(turnId === undefined ? {} : { turnId: requiredEnvironment(turnId, "Turn id") }),
     agentId: requiredEnvironment(environment.YUI_AGENT_ID, "Agent id"),
-    runtimeGenerationId: payload.runtimeGenerationId,
     nativeSessionId: requiredEnvironment(nativeSessionId, "native Session id"),
     attemptId,
     authorityEpoch: authority.epoch,

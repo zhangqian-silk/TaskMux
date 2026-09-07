@@ -1,6 +1,5 @@
 export type ProviderConversationRecoverability = "unknown" | "recoverable" | "unrecoverable";
 export type ProviderConversationStatus = "current" | "superseded";
-export type ProviderActivationStatus = "active" | "ended" | "failed";
 export type ProviderAuthorityOwner = "controller" | "human" | "none" | "unknown";
 export type ProviderTurnStatus =
   | "submitting"
@@ -37,20 +36,10 @@ export type ProviderConversation = Readonly<{
   supersededAt?: string;
 }>;
 
-export type ProviderActivation = Readonly<{
-  activationId: string;
-  conversationId: string;
-  generation: number;
-  status: ProviderActivationStatus;
-  startedAt: string;
-  endedAt?: string;
-  terminalReason?: string;
-}>;
-
 /**
  * One monotonically fenced writer authority for the current Conversation.
  * It is deliberately independent from the Provider process: a human may take
- * over the same live Activation without creating or resuming a Conversation.
+ * over the same Conversation without replacing its identity.
  */
 export type ProviderAuthority = Readonly<{
   epoch: number;
@@ -63,8 +52,6 @@ export type ProviderTurn = Readonly<{
   /** Optional correlation for the durable Yui Turn record. */
   turnId?: string;
   attemptId: string;
-  /** Original owned Activation; Host detach never rebinds this attempt. */
-  activationId?: string;
   authorityEpoch: number;
   status: ProviderTurnStatus;
   submittedAt: string;
@@ -79,7 +66,6 @@ export type ProviderRuntimeBinding = Readonly<{
   accountScope: string;
   currentConversationEpoch: number;
   conversations: readonly ProviderConversation[];
-  activations: readonly ProviderActivation[];
   authority: ProviderAuthority;
   turn: ProviderTurn | null;
   goal: ProviderGoal | null;
@@ -89,10 +75,9 @@ export function createProviderRuntimeBinding(input: Readonly<{
   providerNamespace: string;
   accountScope: string;
   conversationId: string;
-  activationId: string;
   startedAt: string;
 }>): ProviderRuntimeBinding {
-  const startedAt = timestamp(input.startedAt, "Provider Activation startedAt");
+  const startedAt = timestamp(input.startedAt, "Provider Conversation startedAt");
   return validateProviderRuntimeBinding({
     schemaVersion: 5,
     providerNamespace: identity(input.providerNamespace, "Provider namespace"),
@@ -105,17 +90,10 @@ export function createProviderRuntimeBinding(input: Readonly<{
       recoverability: "unknown",
       createdAt: startedAt
     }],
-    activations: [{
-      activationId: identity(input.activationId, "Provider Activation id"),
-      conversationId: input.conversationId,
-      generation: 1,
-      status: "active",
-      startedAt
-    }],
     authority: {
       epoch: 1,
       owner: "controller",
-      holderId: input.activationId,
+      holderId: "controller",
       changedAt: startedAt
     },
     turn: null,
@@ -159,84 +137,6 @@ export function currentProviderConversation(
   ))!;
 }
 
-export function currentProviderActivation(
-  binding: ProviderRuntimeBinding
-): ProviderActivation | null {
-  const conversation = currentProviderConversation(binding);
-  return [...binding.activations].reverse().find((entry) => (
-    entry.conversationId === conversation.conversationId && entry.status === "active"
-  )) ?? null;
-}
-
-export function startProviderActivation(
-  raw: ProviderRuntimeBinding,
-  input: Readonly<{ activationId: string; startedAt: string }>
-): ProviderRuntimeBinding {
-  const binding = validateProviderRuntimeBinding(raw);
-  if (currentProviderActivation(binding) !== null) {
-    throw new Error("Provider Conversation already has a live writer Activation.");
-  }
-  if (binding.authority.owner !== "none") {
-    throw new Error("Provider Conversation authority must be unowned before a new Activation starts.");
-  }
-  const conversation = currentProviderConversation(binding);
-  const generation = binding.activations
-    .filter((entry) => entry.conversationId === conversation.conversationId)
-    .reduce((maximum, entry) => Math.max(maximum, entry.generation), 0) + 1;
-  const startedAt = timestamp(input.startedAt, "Provider Activation startedAt");
-  const activationId = identity(input.activationId, "Provider Activation id");
-  return validateProviderRuntimeBinding({
-    ...binding,
-    activations: [...binding.activations, {
-      activationId,
-      conversationId: conversation.conversationId,
-      generation,
-      status: "active",
-      startedAt
-    }],
-    authority: {
-      epoch: binding.authority.epoch + 1,
-      owner: "controller",
-      holderId: activationId,
-      changedAt: startedAt
-    }
-  });
-}
-
-export function endProviderActivation(
-  raw: ProviderRuntimeBinding,
-  activationId: string,
-  input: Readonly<{ status: "ended" | "failed"; endedAt: string; reason?: string }>
-): ProviderRuntimeBinding {
-  const binding = validateProviderRuntimeBinding(raw);
-  const id = identity(activationId, "Provider Activation id");
-  const target = binding.activations.find((entry) => entry.activationId === id);
-  if (target === undefined) throw new Error(`Provider Activation is not recorded: ${id}.`);
-  if (target.status !== "active") return binding;
-  const endedAt = timestamp(input.endedAt, "Provider Activation endedAt");
-  if (Date.parse(endedAt) < Date.parse(target.startedAt)) {
-    throw new Error("Provider Activation endedAt is earlier than startedAt.");
-  }
-  return validateProviderRuntimeBinding({
-    ...binding,
-    activations: binding.activations.map((entry) => entry.activationId === id
-      ? {
-          ...entry,
-          status: input.status,
-          endedAt,
-          ...(input.reason === undefined
-            ? {}
-            : { terminalReason: identity(input.reason, "Provider Activation terminal reason") })
-        }
-      : entry),
-    authority: {
-      epoch: binding.authority.epoch + 1,
-      owner: "none",
-      changedAt: endedAt
-    }
-  });
-}
-
 /**
  * Compare-and-swap the only Provider writer. A stale Controller or detached
  * terminal cannot regain authority with an older epoch.
@@ -259,7 +159,6 @@ export function transferProviderAuthority(
   if (providerTurnIsActive(binding.turn)) {
     throw new Error("Provider authority cannot transfer while a Turn is unsettled.");
   }
-  const active = currentProviderActivation(binding);
   const changedAt = timestamp(input.changedAt, "Provider authority changedAt");
   if (Date.parse(changedAt) < Date.parse(binding.authority.changedAt)) {
     throw new Error("Provider authority changedAt moved backwards.");
@@ -270,12 +169,9 @@ export function transferProviderAuthority(
       throw new Error("Unowned Provider authority cannot name a holder.");
     }
   } else {
-    if (active === null) {
-      throw new Error("Provider authority requires a live Activation.");
-    }
     holderId = identity(input.holderId!, "Provider authority holder id");
-    if (input.owner === "controller" && holderId !== active.activationId) {
-      throw new Error("Controller authority must be held by the live Activation.");
+    if (input.owner === "controller" && holderId !== "controller") {
+      throw new Error("Controller authority must name the Controller.");
     }
   }
   return validateProviderRuntimeBinding({
@@ -323,7 +219,6 @@ export function beginProviderTurn(
     turn: {
       ...(turnId === undefined ? {} : { turnId }),
       attemptId,
-      activationId: currentProviderActivation(binding)!.activationId,
       authorityEpoch: input.authorityEpoch,
       status: "submitting",
       submittedAt,
@@ -488,9 +383,6 @@ export function updateProviderConversationRecoverability(
 /** Shared pre-start and commit guard for explicit native Conversation replacement. */
 export function assertProviderConversationReplaceable(raw: ProviderRuntimeBinding): void {
   const binding = validateProviderRuntimeBinding(raw);
-  if (currentProviderActivation(binding) !== null || binding.authority.owner !== "none") {
-    throw new Error("Provider Conversation replacement requires its prior Activation to be ended and unowned.");
-  }
   if (providerTurnIsActive(binding.turn)) {
     throw new Error(
       `Provider Conversation replacement cannot discard unsettled input attempt ${
@@ -504,7 +396,6 @@ export function supersedeProviderConversation(
   raw: ProviderRuntimeBinding,
   input: Readonly<{
     conversationId: string;
-    activationId: string;
     switchedAt: string;
     basis: "terminal-session";
   }>
@@ -532,17 +423,10 @@ export function supersedeProviderConversation(
         createdAt: switchedAt
       }
     ],
-    activations: [...binding.activations, {
-      activationId: identity(input.activationId, "Provider Activation id"),
-      conversationId: input.conversationId,
-      generation: 1,
-      status: "active",
-      startedAt: switchedAt
-    }],
     authority: {
       epoch: binding.authority.epoch + 1,
       owner: "controller",
-      holderId: input.activationId,
+      holderId: "controller",
       changedAt: switchedAt
     },
     goal: null
@@ -590,65 +474,22 @@ export function validateProviderRuntimeBinding(value: ProviderRuntimeBinding): P
     }
   }
   if (currentCount !== 1) throw new Error("Provider Runtime Binding requires one current Conversation.");
-  const activationIds = new Set<string>();
-  const activeByConversation = new Set<string>();
-  const generations = new Set<string>();
-  for (const activation of value.activations) {
-    identity(activation.activationId, "Provider Activation id");
-    if (activationIds.has(activation.activationId)) {
-      throw new Error("Provider Runtime Binding contains duplicate Activation identity.");
-    }
-    activationIds.add(activation.activationId);
-    if (!conversationIds.has(activation.conversationId)) {
-      throw new Error("Provider Activation references an unknown Conversation.");
-    }
-    integer(activation.generation, 1, "Provider Activation generation");
-    const generationKey = `${activation.conversationId}\u0000${activation.generation}`;
-    if (generations.has(generationKey)) {
-      throw new Error("Provider Runtime Binding contains duplicate Activation generation.");
-    }
-    generations.add(generationKey);
-    if (!["active", "ended", "failed"].includes(activation.status)) {
-      throw new Error("Provider Activation status is invalid.");
-    }
-    timestamp(activation.startedAt, "Provider Activation startedAt");
-    if (activation.status === "active") {
-      if (activation.endedAt !== undefined) {
-        throw new Error("Active Provider Activation cannot have endedAt.");
-      }
-      if (activeByConversation.has(activation.conversationId)) {
-        throw new Error("Provider Conversation has multiple live writer Activations.");
-      }
-      activeByConversation.add(activation.conversationId);
-    } else {
-      if (activation.endedAt === undefined) throw new Error("Terminal Provider Activation requires endedAt.");
-      timestamp(activation.endedAt, "Provider Activation endedAt");
-    }
-  }
   integer(value.authority.epoch, 1, "Provider authority epoch");
   timestamp(value.authority.changedAt, "Provider authority changedAt");
   if (!["controller", "human", "none", "unknown"].includes(value.authority.owner)) {
     throw new Error("Provider authority owner is invalid.");
   }
-  const active = currentActivationUnchecked(value);
   if (value.authority.owner === "controller" || value.authority.owner === "human") {
     const holderId = identity(value.authority.holderId!, "Provider authority holder id");
-    if (active === null) throw new Error("Owned Provider authority requires a live Activation.");
-    if (value.authority.owner === "controller" && holderId !== active.activationId) {
-      throw new Error("Controller authority must be held by the live Activation.");
+    if (value.authority.owner === "controller" && holderId !== "controller") {
+      throw new Error("Controller authority must name the Controller.");
     }
   } else if (value.authority.holderId !== undefined) {
     throw new Error("Unowned or unknown Provider authority cannot name a holder.");
   }
-  if (active !== null && (value.authority.owner === "none" || value.authority.owner === "unknown")) {
-    throw new Error("A live Provider Activation requires an exact writer authority.");
-  }
   if (!Object.hasOwn(value, "turn")) throw new Error("Provider Runtime Binding requires Turn state.");
   if (value.turn !== null) {
     validateProviderTurn(value.turn, value.authority.epoch);
-    if (value.turn.activationId !== undefined && !activationIds.has(value.turn.activationId)) {
-      throw new Error("Provider Turn references an unknown original Activation.");
-    }
   }
   if (!Object.hasOwn(value, "goal")) throw new Error("Provider Runtime Binding requires Goal state.");
   if (value.goal !== null) validateProviderGoal(value.goal);
@@ -732,15 +573,6 @@ function orderedTurnTimestamp(turn: ProviderTurn, value: string, label: string):
 function providerTurnIsActive(turn: ProviderTurn | null): boolean {
   return turn !== null && ["submitting", "accepted", "delivery-unknown"]
     .includes(turn.status);
-}
-
-function currentActivationUnchecked(binding: ProviderRuntimeBinding): ProviderActivation | null {
-  const current = binding.conversations.find((entry) => (
-    entry.epoch === binding.currentConversationEpoch && entry.status === "current"
-  ));
-  return current === undefined ? null : [...binding.activations].reverse().find((entry) => (
-    entry.conversationId === current.conversationId && entry.status === "active"
-  )) ?? null;
 }
 
 function identity(value: string, label: string): string {

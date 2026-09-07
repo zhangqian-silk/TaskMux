@@ -1,8 +1,20 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, open, rm, stat } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import {
+  lstat,
+  mkdir,
+  open,
+  rm,
+  stat
+} from "node:fs/promises";
+import {
+  dirname,
+  join,
+  relative,
+  resolve,
+  sep
+} from "node:path";
 import { promisify } from "node:util";
 
 import { selectEnvironment } from "../agent/launchEnvironment.js";
@@ -803,8 +815,6 @@ export class GitIntegrationService {
   ): TaskRuntimeIsolationPreparation {
     return this.runtimeIsolation.preflight({
       workspace,
-      runtimeGenerationId: integrationRuntimeRuntimeGenerationId(this.home, attempt.id),
-      generationId: "integration-checks",
       allowExactActive: true
     });
   }
@@ -1457,7 +1467,7 @@ function defaultIntegrationRuntimeIsolation(
 ): TaskRuntimeIsolationPort {
   const controlHome = resolve(home);
   return new FileTaskRuntimeIsolation({
-    runtimeRoot: integrationRuntimeRoot(),
+    runtimeRoot: integrationRuntimeRoot(controlHome),
     pathLayout: "compact",
     controlPlane: {
       yuiHome: controlHome,
@@ -1468,16 +1478,10 @@ function defaultIntegrationRuntimeIsolation(
   });
 }
 
-function integrationRuntimeRoot(): string {
+function integrationRuntimeRoot(home: string): string {
   const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-  return join("/tmp", `yi-${uid.toString(36)}`);
-}
-
-function integrationRuntimeRuntimeGenerationId(home: string, integrationId: string): string {
-  const homeDigest = createHash("sha256")
-    .update(resolve(home))
-    .digest("hex");
-  return `${integrationId}-${homeDigest}`;
+  const homeDigest = createHash("sha256").update(resolve(home)).digest("hex").slice(0, 16);
+  return join("/tmp", `yi-${uid.toString(36)}-${homeDigest}`);
 }
 
 /**

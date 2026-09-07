@@ -234,8 +234,8 @@ function discoverRuntimeArtifacts(
         if (!ownerEntry.isDirectory()) continue;
         for (const launchEntry of safeReaddir(join(taskRoot, ownerEntry.name))) {
           if (!launchEntry.isDirectory()) continue;
-          const generationRoot = join(taskRoot, ownerEntry.name, launchEntry.name);
-          const marker = readTaskRuntimeMarker(generationRoot);
+          const runtimeRoot = join(taskRoot, ownerEntry.name, launchEntry.name);
+          const marker = readTaskRuntimeMarker(runtimeRoot);
           const owner: ResourceOwner = marker === undefined
             ? { home, taskId, basis: "naming-convention" }
             : {
@@ -248,9 +248,9 @@ function discoverRuntimeArtifacts(
           discovered.push({
             record: createResourceRecord({
               kind: "runtime-artifact",
-              path: resolve(generationRoot),
+              path: resolve(runtimeRoot),
               owner,
-              ...(sizeOf(generationRoot) === undefined ? {} : { sizeBytes: sizeOf(generationRoot) }),
+              ...(sizeOf(runtimeRoot) === undefined ? {} : { sizeBytes: sizeOf(runtimeRoot) }),
               cleanliness: "n/a",
               activeRefs: [],
               disposition: "active"
@@ -421,11 +421,11 @@ function readDeploymentGitMetadata(
 }
 
 function readTaskRuntimeMarker(
-  generationRoot: string
+  runtimeRoot: string
 ): { workItemId?: string; reviewRoundId?: string } | undefined {
   try {
     const marker = JSON.parse(
-      readFileSync(join(generationRoot, ".yui-task-runtime-owner.json"), "utf8")
+      readFileSync(join(runtimeRoot, ".yui-task-runtime-owner.json"), "utf8")
     ) as { descriptor?: { workspace?: { owner?: Record<string, unknown> } } };
     const owner = marker.descriptor?.workspace?.owner;
     if (owner === undefined || owner === null) return {};

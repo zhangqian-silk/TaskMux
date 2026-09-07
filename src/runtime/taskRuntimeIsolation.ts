@@ -3,13 +3,18 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   renameSync,
   rmdirSync,
   rmSync,
   writeFileSync
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve
+} from "node:path";
 
 import {
   validateManagedWorkspace,
@@ -47,7 +52,7 @@ export type TaskRuntimeIsolationDescriptor = Readonly<{
     root: string;
   }>;
   roots: Readonly<{
-    generation: string;
+    runtime: string;
     data: string;
     cache: string;
     temporary: string;
@@ -58,10 +63,6 @@ export type TaskRuntimeIsolationDescriptor = Readonly<{
   externalCapabilities: Readonly<{
     declared: readonly string[];
     requested: readonly string[];
-  }>;
-  generation: Readonly<{
-    runtimeGenerationId: string;
-    generationId: string;
   }>;
 }>;
 
@@ -95,8 +96,6 @@ export type TaskRuntimeIsolationPreparation = Readonly<{
 
 export type TaskRuntimeIsolationPreflightInput = Readonly<{
   workspace: ManagedWorkspace;
-  runtimeGenerationId: string;
-  generationId: string;
   policy?: TaskRuntimeLaunchPolicy;
   allowExactActive?: boolean;
 }>;
@@ -108,14 +107,6 @@ export interface TaskRuntimeIsolationPort {
     preparation: TaskRuntimeIsolationPreparation,
     reason: TaskRuntimeCleanupReason
   ): void;
-}
-
-export interface TaskRuntimeLifecycleCleanupPort {
-  cleanupTaskLaunch(input: Readonly<{
-    taskId: string;
-    runtimeGenerationId: string;
-    reason: TaskRuntimeCleanupReason;
-  }>): "absent" | "cleaned";
 }
 
 export type TaskRuntimePathLayout = "hierarchical" | "compact";
@@ -140,12 +131,10 @@ const MARKER_FILE = ".yui-task-runtime-owner.json";
 
 /**
  * One project-neutral implementation owns descriptor construction, preflight,
- * exact generation activation, and exact generation cleanup. It never scans by
+ * exact runtime activation, and exact runtime cleanup. It never scans by
  * process name, Role, PID, age, or an ambient Home.
  */
-export class FileTaskRuntimeIsolation implements
-  TaskRuntimeIsolationPort,
-  TaskRuntimeLifecycleCleanupPort {
+export class FileTaskRuntimeIsolation implements TaskRuntimeIsolationPort {
   readonly #runtimeRoot: string;
   readonly #controlPlane: TaskRuntimeControlBoundary;
   readonly #pathLayout: TaskRuntimePathLayout;
@@ -179,7 +168,7 @@ export class FileTaskRuntimeIsolation implements
       pathLayout: this.#pathLayout,
       controlPlane: this.#controlPlane,
       resources: [
-        ...inspectGenerationRoot(descriptor, fingerprint),
+        ...inspectRuntimeRoot(descriptor, fingerprint),
         ...(this.#inspectResources?.(descriptor) ?? [])
       ],
       allowExactActive: input.allowExactActive === true
@@ -193,15 +182,15 @@ export class FileTaskRuntimeIsolation implements
 
   activate(preparation: TaskRuntimeIsolationPreparation): void {
     const { descriptor, fingerprint } = validatePreparation(preparation);
-    const root = descriptor.roots.generation;
-    const existing = inspectGenerationRoot(descriptor, fingerprint);
+    const root = descriptor.roots.runtime;
+    const existing = inspectRuntimeRoot(descriptor, fingerprint);
     if (existing.length > 0) {
       const [resource] = existing;
       if (
         resource?.ownership !== "owned"
         || resource.descriptorFingerprint !== fingerprint
       ) {
-        throw new Error(`Task runtime generation is not exactly owned: ${root}.`);
+        throw new Error(`Task runtime workspace is not exactly owned: ${root}.`);
       }
       ensureOwnedDirectories(descriptor);
       this.#resourceRegistrar().registerTaskRuntimeIsolation(descriptor);
@@ -223,7 +212,7 @@ export class FileTaskRuntimeIsolation implements
       ensureOwnedDirectories(descriptor);
       this.#resourceRegistrar().registerTaskRuntimeIsolation(descriptor);
     } catch (error) {
-      const current = inspectGenerationRoot(descriptor, fingerprint);
+      const current = inspectRuntimeRoot(descriptor, fingerprint);
       if (current[0]?.ownership === "owned") throw error;
       // The directory was created by this exact activation but never acquired
       // its marker. Remove it only while it remains empty; concurrent unmarked
@@ -240,14 +229,14 @@ export class FileTaskRuntimeIsolation implements
     requireCleanupReason(reason);
     const { descriptor, fingerprint } = validatePreparation(preparation);
     const resources = [
-      ...inspectGenerationRoot(descriptor, fingerprint),
+      ...inspectRuntimeRoot(descriptor, fingerprint),
       ...(this.#inspectResources?.(descriptor) ?? [])
     ];
     if (resources.length === 0) return;
     planTaskRuntimeCleanup(descriptor, reason, resources);
     // Re-read the sole durable marker immediately before deletion. A missing,
-    // replaced, symlinked, or mismatched generation is never cleanup authority.
-    const current = inspectGenerationRoot(descriptor, fingerprint);
+    // replaced, symlinked, or mismatched runtime is never cleanup authority.
+    const current = inspectRuntimeRoot(descriptor, fingerprint);
     if (
       current.length !== 1
       || current[0]?.ownership !== "owned"
@@ -255,7 +244,7 @@ export class FileTaskRuntimeIsolation implements
     ) {
       throw new Error("Task runtime resources changed since cleanup preflight.");
     }
-    const root = descriptor.roots.generation;
+    const root = descriptor.roots.runtime;
     const claimed = `${root}.cleanup-${randomBytes(16).toString("hex")}`;
     renameSync(root, claimed);
     try {
@@ -268,14 +257,14 @@ export class FileTaskRuntimeIsolation implements
       }
       rmSync(claimed, { recursive: true });
       this.#resourceRegistrar().markPathsDeleted([
-        descriptor.roots.generation,
+        descriptor.roots.runtime,
         descriptor.roots.data,
         descriptor.roots.cache,
         descriptor.roots.temporary
       ]);
     } catch (error) {
       // Preserve a claimed-but-unverified resource. Restore its exact path only
-      // when no concurrent generation has appeared there; never delete it.
+      // when no concurrent runtime has appeared there; never delete it.
       try {
         renameSync(claimed, root);
       } catch (restoreError) {
@@ -287,85 +276,10 @@ export class FileTaskRuntimeIsolation implements
       throw error;
     }
   }
-
-  cleanupTaskLaunch(input: Readonly<{
-    taskId: string;
-    runtimeGenerationId: string;
-    reason: TaskRuntimeCleanupReason;
-  }>): "absent" | "cleaned" {
-    const taskId = requireIdentity(input.taskId, "Task id");
-    const runtimeGenerationId = requireIdentity(input.runtimeGenerationId, "Runtime generation id");
-    requireCleanupReason(input.reason);
-    const taskRoot = taskRuntimeInventoryRoot(
-      this.#runtimeRoot,
-      taskId,
-      this.#pathLayout
-    );
-    let entries;
-    try {
-      const metadata = lstatSync(taskRoot);
-      if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-        throw new Error("Task runtime Task root is ambiguous.");
-      }
-      entries = readdirSync(taskRoot, { withFileTypes: true });
-    } catch (error) {
-      if (isNodeCode(error, "ENOENT")) return "absent";
-      throw error;
-    }
-    const launchDigest = taskRuntimeLaunchDigest(taskId, runtimeGenerationId, this.#pathLayout);
-    const matches: TaskRuntimeIsolationPreparation[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.isSymbolicLink()) {
-        throw new Error("Task runtime owner inventory is ambiguous.");
-      }
-      const generationRoot = join(taskRoot, entry.name, launchDigest);
-      let metadata;
-      try {
-        metadata = lstatSync(generationRoot);
-      } catch (error) {
-        if (isNodeCode(error, "ENOENT")) continue;
-        throw new Error("Task runtime generation inventory is ambiguous.", { cause: error });
-      }
-      if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-        throw new Error("Task runtime generation inventory is ambiguous.");
-      }
-      let marker: TaskRuntimeResourceMarker;
-      try {
-        marker = parseMarker(readFileSync(join(generationRoot, MARKER_FILE), "utf8"));
-      } catch (error) {
-        throw new Error("Task runtime generation is unmarked or invalid.", {
-          cause: error
-        });
-      }
-      const descriptor = marker.descriptor;
-      const fingerprint = taskRuntimeIsolationFingerprint(descriptor);
-      if (
-        marker.fingerprint !== fingerprint
-        || descriptor.taskId !== taskId
-        || descriptor.generation.runtimeGenerationId !== runtimeGenerationId
-        || descriptor.roots.generation !== generationRoot
-      ) {
-        throw new Error("Task runtime generation ownership is mismatched.");
-      }
-      matches.push({
-        descriptor,
-        fingerprint,
-        environment: taskRuntimeIsolationEnvironment(descriptor)
-      });
-    }
-    if (matches.length === 0) return "absent";
-    if (matches.length !== 1) {
-      throw new Error("Task runtime generation ownership is ambiguous.");
-    }
-    this.cleanup(matches[0]!, input.reason);
-    return "cleaned";
-  }
 }
 
 export function createTaskRuntimeIsolationDescriptor(input: Readonly<{
   workspace: ManagedWorkspace;
-  runtimeGenerationId: string;
-  generationId: string;
   runtimeRoot: string;
   pathLayout?: TaskRuntimePathLayout;
   policy?: TaskRuntimeLaunchPolicy;
@@ -373,15 +287,12 @@ export function createTaskRuntimeIsolationDescriptor(input: Readonly<{
   const workspace = validateManagedWorkspace(input.workspace);
   const owner = taskRuntimeWorkspaceOwner(workspace.owner);
   const taskId = requireIdentity(owner.taskId, "Task id");
-  const runtimeGenerationId = requireIdentity(input.runtimeGenerationId, "Runtime generation id");
-  const generationId = requireIdentity(input.generationId, "Generation id");
   const runtimeRoot = canonicalPath(input.runtimeRoot, "Task runtime root");
   const pathLayout = taskRuntimePathLayout(input.pathLayout);
-  const generation = taskRuntimeGenerationRoot(
+  const runtime = taskRuntimeWorkspaceRoot(
     runtimeRoot,
     taskId,
     owner,
-    runtimeGenerationId,
     pathLayout
   );
   const declared = capabilities(
@@ -400,24 +311,19 @@ export function createTaskRuntimeIsolationDescriptor(input: Readonly<{
     taskId,
     workspace: Object.freeze({ owner, root: canonicalPath(workspace.root, "Workspace root") }),
     roots: Object.freeze({
-      generation,
-      data: join(generation, "data"),
-      cache: join(generation, "cache"),
-      temporary: join(generation, "tmp")
+      runtime,
+      data: join(runtime, "data"),
+      cache: join(runtime, "cache"),
+      temporary: join(runtime, "tmp")
     }),
     serviceNamespace: taskRuntimeServiceNamespace(
       taskId,
       owner,
-      runtimeGenerationId,
-      generationId
+      runtime
     ),
     portPreference,
     portAllocations,
     externalCapabilities: Object.freeze({ declared, requested }),
-    generation: Object.freeze({
-      runtimeGenerationId,
-      generationId
-    })
   });
 }
 
@@ -442,7 +348,6 @@ export function parseTaskRuntimeIsolationDescriptor(
   }
   const workspace = requireRecord(value.workspace, "Task runtime workspace");
   const roots = requireRecord(value.roots, "Task runtime roots");
-  const generation = requireRecord(value.generation, "Task runtime generation");
   const external = requireRecord(
     value.externalCapabilities,
     "Task runtime external capabilities"
@@ -459,7 +364,7 @@ export function parseTaskRuntimeIsolationDescriptor(
       root: canonicalPath(workspace.root, "Workspace root")
     },
     roots: {
-      generation: canonicalPath(roots.generation, "Task runtime generation root"),
+      runtime: canonicalPath(roots.runtime, "Task runtime workspace root"),
       data: canonicalPath(roots.data, "Task runtime data root"),
       cache: canonicalPath(roots.cache, "Task runtime cache root"),
       temporary: canonicalPath(roots.temporary, "Task runtime temporary root")
@@ -471,10 +376,6 @@ export function parseTaskRuntimeIsolationDescriptor(
       declared: capabilities(external.declared, "Declared external capability"),
       requested: capabilities(external.requested, "Requested external capability")
     },
-    generation: {
-      runtimeGenerationId: requireIdentity(generation.runtimeGenerationId, "Runtime generation id"),
-      generationId: requireIdentity(generation.generationId, "Generation id")
-    }
   };
   return Object.freeze(descriptor);
 }
@@ -523,39 +424,37 @@ export function assertTaskRuntimeIsolationPreflight(input: Readonly<{
   }
   const runtimeRoot = canonicalPath(input.runtimeRoot, "Task runtime root");
   const pathLayout = taskRuntimePathLayout(input.pathLayout);
-  const expectedGeneration = taskRuntimeGenerationRoot(
+  const expectedRuntimeRoot = taskRuntimeWorkspaceRoot(
     runtimeRoot,
     descriptor.taskId,
     expectedOwner,
-    descriptor.generation.runtimeGenerationId,
     pathLayout
   );
   if (
-    descriptor.roots.generation !== expectedGeneration
-    || descriptor.roots.data !== join(expectedGeneration, "data")
-    || descriptor.roots.cache !== join(expectedGeneration, "cache")
-    || descriptor.roots.temporary !== join(expectedGeneration, "tmp")
+    descriptor.roots.runtime !== expectedRuntimeRoot
+    || descriptor.roots.data !== join(expectedRuntimeRoot, "data")
+    || descriptor.roots.cache !== join(expectedRuntimeRoot, "cache")
+    || descriptor.roots.temporary !== join(expectedRuntimeRoot, "tmp")
   ) {
     throw new Error(
-      "Task runtime roots do not match the exact Task, owner, and runtime generation identity."
+      "Task runtime roots do not match the exact Task, owner, and runtime workspace identity."
     );
   }
   if (descriptor.serviceNamespace !== taskRuntimeServiceNamespace(
     descriptor.taskId,
     expectedOwner,
-    descriptor.generation.runtimeGenerationId,
-    descriptor.generation.generationId
+    descriptor.roots.runtime
   )) {
     throw new Error(
-      "Task runtime service namespace does not match its exact Task runtime generation."
+      "Task runtime service namespace does not match its exact Task runtime workspace."
     );
   }
-  if (!isWithin(runtimeRoot, descriptor.roots.generation)) {
-    throw new Error("Task runtime generation is outside its runtime root.");
+  if (!isWithin(runtimeRoot, descriptor.roots.runtime)) {
+    throw new Error("Task runtime workspace is outside its runtime root.");
   }
   for (const [name, root] of Object.entries(descriptor.roots)) {
-    if (name !== "generation" && !isWithin(descriptor.roots.generation, root)) {
-      throw new Error(`Task runtime ${name} root is outside its exact generation.`);
+    if (name !== "runtime" && !isWithin(descriptor.roots.runtime, root)) {
+      throw new Error(`Task runtime ${name} root is outside its exact runtime.`);
     }
   }
   const control = normalizeControlBoundary(input.controlPlane);
@@ -631,11 +530,11 @@ export function planTaskRuntimeCleanup(
   return Object.freeze([...ids].sort());
 }
 
-function inspectGenerationRoot(
+function inspectRuntimeRoot(
   descriptor: TaskRuntimeIsolationDescriptor,
   expectedFingerprint: string
 ): readonly TaskRuntimeResourceObservation[] {
-  const root = descriptor.roots.generation;
+  const root = descriptor.roots.runtime;
   let metadata;
   try {
     metadata = lstatSync(root);
@@ -694,7 +593,7 @@ function ensureOwnedDirectories(descriptor: TaskRuntimeIsolationDescriptor): voi
     join(descriptor.roots.data, "state"),
     join(descriptor.roots.temporary, "runtime")
   ]) {
-    ensureDirectoryChain(descriptor.roots.generation, path);
+    ensureDirectoryChain(descriptor.roots.runtime, path);
   }
 }
 
@@ -742,17 +641,16 @@ function taskRuntimeWorkspaceOwner(owner: ManagedWorkspaceOwner): TaskRuntimeWor
   return owner;
 }
 
-function taskRuntimeGenerationRoot(
+function taskRuntimeWorkspaceRoot(
   runtimeRoot: string,
   taskId: string,
   owner: TaskRuntimeWorkspaceOwner,
-  runtimeGenerationId: string,
   pathLayout: TaskRuntimePathLayout = "hierarchical"
 ): string {
   return join(
     taskRuntimeInventoryRoot(runtimeRoot, taskId, pathLayout),
     taskRuntimeOwnerDigest(taskId, owner, pathLayout),
-    taskRuntimeLaunchDigest(taskId, runtimeGenerationId, pathLayout)
+    "runtime"
   );
 }
 
@@ -774,17 +672,6 @@ function taskRuntimeOwnerDigest(
     : digest(JSON.stringify(owner)).slice(0, 24);
 }
 
-function taskRuntimeLaunchDigest(
-  taskId: string,
-  runtimeGenerationId: string,
-  pathLayout: TaskRuntimePathLayout
-): string {
-  return digest(JSON.stringify([taskId, runtimeGenerationId])).slice(
-    0,
-    pathLayout === "compact" ? 20 : 24
-  );
-}
-
 function taskRuntimePathLayout(value: TaskRuntimePathLayout | undefined): TaskRuntimePathLayout {
   const pathLayout = value ?? "hierarchical";
   if (pathLayout !== "hierarchical" && pathLayout !== "compact") {
@@ -796,14 +683,12 @@ function taskRuntimePathLayout(value: TaskRuntimePathLayout | undefined): TaskRu
 function taskRuntimeServiceNamespace(
   taskId: string,
   owner: TaskRuntimeWorkspaceOwner,
-  runtimeGenerationId: string,
-  generationId: string
+  runtimeRoot: string
 ): string {
   return `yui-task-${digest(JSON.stringify([
     taskId,
     owner,
-    runtimeGenerationId,
-    generationId
+    runtimeRoot
   ])).slice(0, 24)}`;
 }
 
