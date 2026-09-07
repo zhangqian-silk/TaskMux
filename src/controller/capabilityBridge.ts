@@ -34,27 +34,32 @@ export function createCapabilityDispatcher(capabilities: ReturnType<typeof creat
         }
       }
     }, value);
-    if (error) throw new Error(`Invalid capability envelope: ${error}`);
+    if (error) throw invalidParams(`Invalid capability envelope: ${error}`);
     const params = value as unknown as {
       taskId: string; caller: DurableJobCaller; query?: string; request?: CapabilityCall;
     };
     const context = capabilities.authenticate(params.caller, params.taskId);
     let result: unknown;
     if (method === "capability.search") {
-      if (params.request !== undefined) throw new Error("search accepts query, not request.");
+      if (params.request !== undefined) throw invalidParams("search accepts query, not request.");
       result = { capabilities: capabilities.registry.search(context, params.query) };
     } else {
-      if (params.query !== undefined || params.request === undefined) throw new Error("describe/call requires request.");
+      if (params.query !== undefined || params.request === undefined) throw invalidParams("describe/call requires request.");
       if (method === "capability.describe") result = capabilities.registry.describe(context, params.request);
       else if (method === "capability.call") {
-        if (!Object.hasOwn(params.request, "input")) throw new Error("call requires input.");
+        if (!Object.hasOwn(params.request, "input")) throw invalidParams("call requires input.");
         // Target is bound before acquisition, not inferred from plugin actor data.
         const input = params.request.input;
         if (typeof input === "object" && input !== null && "taskId" in input
-          && input.taskId !== params.taskId) throw new Error("Capability target is outside the authenticated Task.");
+          && input.taskId !== params.taskId) throw invalidParams("Capability target is outside the authenticated Task.");
         result = await capabilities.registry.call(context, params.request);
-      } else throw new Error("Unknown capability method.");
+      } else throw invalidParams("Unknown capability method.");
     }
     return JSON.parse(JSON.stringify(result)) as JsonValue;
   };
+}
+
+/** Expected ingress rejections use the Controller's existing safe error shape. */
+function invalidParams(message: string): Error {
+  return Object.assign(new Error(message), { name: "CoreApplicationError", code: "INVALID_PARAMS" });
 }

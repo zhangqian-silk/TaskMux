@@ -90,10 +90,14 @@ export class CapabilityRegistry {
 
   search(context: TrustedCallContext, query = ""): readonly CapabilityDescriptor[] {
     const visibility = this.authorize(context);
-    return this.#descriptors.filter((entry) => visible(entry.scope, visibility)
-      && `${entry.name} ${entry.summary}`.toLowerCase().includes(query.toLowerCase()))
+    const authorized = this.#descriptors.filter((entry) => visible(entry.scope, visibility))
       .filter((entry) => {
         try { this.authorize(context, entry); return true; } catch { return false; }
+      });
+    return authorized.filter((entry) => `${entry.name} ${entry.summary}`.toLowerCase().includes(query.toLowerCase()))
+      .map((entry) => {
+        const unavailable = this.#unavailable(entry, authorized, new Set());
+        return unavailable === undefined ? entry : Object.freeze({ ...entry, unavailable });
       });
   }
 
@@ -103,15 +107,13 @@ export class CapabilityRegistry {
         && (request.contractVersion === undefined || request.contractVersion === entry.contractVersion)
         && (request.providerId === undefined || request.providerId === entry.provider.id));
       if (!candidates.length) return result("unavailable", "No authorized compatible Provider is available.");
-      if (candidates.length > 1) return { ...result("ambiguous", "Select an explicit Provider and contract version."), candidates };
-      const selected = candidates[0];
-      if (selected.unavailable) return { ...result("unavailable", selected.unavailable), candidates };
-      // Explicit required names/versions only; no download, execution or solver.
-      const available = this.search(context);
-      const missing = selected.required?.filter((dependency) => !available.some((entry) => (
-        !entry.unavailable && entry.name === dependency.name && entry.contractVersion === dependency.contractVersion
-      )));
-      if (missing?.length) return { ...result("unavailable", `Missing required capabilities: ${missing.map((entry) => `${entry.name}@${entry.contractVersion}`).join(", ")}.`), candidates };
+      const available = candidates.filter((entry) => entry.unavailable === undefined);
+      if (!available.length) return {
+        ...result("unavailable", candidates.map((entry) => `${entry.provider.id}: ${entry.unavailable}`).join("; ")),
+        candidates
+      };
+      if (available.length > 1) return { ...result("ambiguous", "Select an explicit Provider and contract version."), candidates };
+      const selected = available[0];
       return {
         ...result("value"), value: selected, candidates, provider: selected.provider,
         selection: request.providerId === undefined ? "unique" : "explicit"
@@ -189,20 +191,54 @@ export class CapabilityRegistry {
         return { kind: "failed", detail: "External implementation returned no operation evidence.", effect: "possible", operations, ...origin };
       }
       let output: unknown;
-      try { output = JSON.parse(JSON.stringify(value)); } catch {
+      try {
+        output = JSON.parse(JSON.stringify(value, (_key, item: unknown) => {
+          if ((typeof item === "number" && !Number.isFinite(item))
+            || typeof item === "bigint" || typeof item === "function" || typeof item === "symbol") {
+            throw new Error("Output contains a non-JSON value.");
+          }
+          return item;
+        }));
+      } catch {
+        if (descriptor.effect !== "query") effect = accumulatedEffect(effect, "possible");
         return { kind: "invalid", detail: "Output is not JSON serializable.", effect, operations, ...origin };
       }
       const outputError = capabilitySchemaError(descriptor.outputSchema, output);
-      if (outputError) return { kind: "invalid", detail: `Output ${outputError}`, effect, operations, ...origin };
+      if (outputError) {
+        if (descriptor.effect !== "query") effect = accumulatedEffect(effect, "possible");
+        return { kind: "invalid", detail: `Output ${outputError}`, effect, operations, ...origin };
+      }
       return { kind: operations.length ? "operation" : "value", value: output, effect, operations, ...origin };
     } catch (error) {
-      if (entered && descriptor.effect !== "query" && !operations.length) effect = "possible";
+      // An unrelated observation (including a historical queued Job with none)
+      // cannot prove that a failing effectful wrapper performed no other action.
+      // Preserve the owner's precise facts while reporting wrapper uncertainty.
+      if (entered && descriptor.effect !== "query") effect = accumulatedEffect(effect, "possible");
       return {
         kind: entered ? "failed" : "unavailable",
         detail: error instanceof Error ? error.message : "Capability invocation failed.",
         effect, operations, ...origin
       };
     }
+  }
+
+  #unavailable(
+    entry: CapabilityDescriptor,
+    authorized: readonly CapabilityDescriptor[],
+    visiting: ReadonlySet<CapabilityDescriptor>
+  ): string | undefined {
+    if (entry.unavailable !== undefined) return entry.unavailable;
+    if (!this.host.isAvailable(entry.provider)) return "Provider implementation is not available.";
+    if (visiting.has(entry)) return "Required capability dependency cycle.";
+    const path = new Set([...visiting, entry]);
+    // Only declared exact name/version edges are checked. No installation,
+    // priority policy, version solver or persisted dependency state is involved.
+    const missing = entry.required?.filter((dependency) => !authorized.some((candidate) => (
+      candidate.name === dependency.name && candidate.contractVersion === dependency.contractVersion
+      && this.#unavailable(candidate, authorized, path) === undefined
+    )));
+    if (missing?.length) return `Missing available required capabilities: ${missing.map((dependency) => `${dependency.name}@${dependency.contractVersion}`).join(", ")}.`;
+    return undefined;
   }
 
   #publish(descriptors: readonly CapabilityDescriptor[], core: boolean): void {

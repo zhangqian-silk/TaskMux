@@ -1,4 +1,4 @@
-import { runTaskCommand } from "../commands/taskCommands.js";
+import { updateTaskMetadataCommand } from "../commands/taskCommands.js";
 import { runConfigCommand } from "../commands/configCommands.js";
 import { CONFIG_DOMAINS, type ConfigDomain } from "../config/configCatalog.js";
 import {
@@ -7,6 +7,7 @@ import {
 } from "../controller/jobControl.js";
 import type { JsonValue } from "../core/protocol.js";
 import type { TaskStore } from "../storage/taskStore.js";
+import type { TaskMetadataUpdate } from "../task/task.js";
 import type { TrustedCallContext } from "./callAuthority.js";
 import type { InstanceHost } from "./instanceHost.js";
 import { inspectJobOperation } from "./kernelPorts.js";
@@ -36,7 +37,7 @@ const definitions: readonly Omit<CapabilityDescriptor, "contractVersion" | "prov
   {
     name: "task.update", summary: "Update Task metadata through the existing command transaction.",
     effect: "local-mutation", requiredPermissions: ["task:manage"],
-    source: "runTaskCommand/updateTaskCommand (task update)",
+    source: "updateTaskMetadataCommand (task update)",
     inputSchema: object({
       taskId: text,
       patch: object({
@@ -125,21 +126,15 @@ export function createBuiltinCapabilities(
       if (name === "resource.workspaces") return store.listManagedWorkspaces(taskId);
       if (name === "config.read") return runConfigCommand(params.domain as ConfigDomain, ["show"], store).data;
       if (name === "task.update") {
-        const patch = params.patch as Record<string, unknown>;
-        const args = ["update", taskId];
-        for (const [key, value] of Object.entries(patch)) {
-          if (key === "tags") {
-            const tags = value as string[];
-            if (tags.some((tag) => tag.includes(","))) throw new Error("Task tags cannot contain commas.");
-            args.push(...(tags.length ? ["--tags", tags.join(",")] : ["--clear-tags"]));
-          } else if (key === "description" && value === "") args.push("--clear-description");
-          else args.push(`--${key}`, value as string);
-        }
-        runTaskCommand(args, store, {
+        const patch = params.patch as Pick<TaskMetadataUpdate, "title" | "description" | "priority" | "tags">;
+        return updateTaskMetadataCommand(store, taskId, {
+          ...patch,
+          ...(patch.description === "" ? { description: null } : {}),
+          ...(patch.tags?.length === 0 ? { tags: null } : {})
+        }, {
           environment: callerEnvironment(caller),
           runtime: { notifyStateChanged: signal, reconcileTask: signal }
         });
-        return requireTask(store, taskId);
       }
       if (name === "job.get") {
         const job = jobs.getJob(taskId, params.jobId as string);

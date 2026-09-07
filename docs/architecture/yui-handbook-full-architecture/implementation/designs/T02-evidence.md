@@ -1,7 +1,7 @@
 # T02 能力入口、验证与后继交接
 
 Task：task-12。采用的 T01 合并基线：
-`06fc9cf8fb3e3a922d38bda92a5c8fcd70d6d118`。日期：2026-09-06。
+`06fc9cf8fb3e3a922d38bda92a5c8fcd70d6d118`。更新日期：2026-09-07。
 精确候选提交、独立最终 Review 和 Leader 裁定以 Task 持久记录为准；
 本文是实现与开发证据，不是验收、远端合并或发布事实。
 
@@ -32,7 +32,7 @@ Registry、Store、认证器、调用者凭据或完整 ingress dispatcher。
 | 名称 | 效果分类 | 原入口及事实所有权 | 当前范围 |
 |---|---|---|---|
 | `task.read` | query | `TaskStore.getTask`，与 `task show` 读同一 Task | 已认证的当前 Task |
-| `task.update` | local-mutation | `runTaskCommand/updateTaskCommand` 原事务，Task、Event、Mailbox 各由原模块写一次 | Leader/Operator；title、description、priority、tags |
+| `task.update` | local-mutation | `updateTaskMetadataCommand`，与旧 CLI 共用原事务，Task、Event、Mailbox 各由原模块写一次 | Leader/Operator；title、description、priority、tags |
 | `config.read` | query | `runConfigCommand`，与 `config <domain> show` 共用有效值投影 | 已认证 global Operator |
 | `resource.workspaces` | query | `TaskStore.listManagedWorkspaces`，与 `task workspace list` 共用 managed workspace 事实 | 当前 Task 的工作区资源；不是 GC 或物理进程扫描 |
 | `job.get` | query | `DurableJobControlPort.getJob`，`inspectJobOperation` 是原 Job 的读模型 | 当前 Task 的原结果、效果与回执 |
@@ -54,6 +54,9 @@ Controller envelope 包含 `taskId`、已有 managed `caller` 凭据，
 以及 search 的 `query` 或 describe/call 的 `request`。
 caller 来自 CLI 的 `resolveJobCaller`；它不属于 capability input。
 任何 input 中的 actor/caller 注入、未声明参数或跨 Task 目标均拒绝。
+envelope 格式错误、参数组合错误及跨 Task 目标沿既有
+`CoreApplicationError/INVALID_PARAMS` 边界返回可操作诊断，不降为泛化
+`INTERNAL_ERROR`；原认证失败仍保持其独立错误语义。
 
 调用示例（在已认证 managed Session 内；开发时使用本 checkout 的绝对 launcher）：
 
@@ -68,6 +71,8 @@ effectful call 必须携带 requestId。Job 将它交给原 Job 去重事务，
 同一调用主体和 requestId 重入返回原记录，参数冲突仍由原 owner 拒绝。
 Task 元数据修改保持原事务语义；requestId 不新建本地修改账本，
 也不承诺跨请求去重，重复明确修改仍会产生原有 Event。
+元数据能力直接提交结构化 patch，旧 CLI 仅负责解析 flags 后调用同一事务。
+以 `--` 开头的标题/描述、包含逗号的单个 tag 都是数据，不再经过 argv 重编码。
 
 Registry 校验输入 snapshot、当前权限和效果上限之后才 acquire。
 每个嵌套调用复用原 TrustedCallContext 并重新认证；子调用的效果不得超过
@@ -81,10 +86,13 @@ scope 仅增加或减少可见候选，不授予权限。必要权限由受信�
 未获权的 descriptor 不出现在 search 中；撤权后旧 context 也不能发起新动作。
 
 扩展贡献不得使用核心 namespace，亦不得借用核心 Provider ID 替换目录。
-没有隐式 scope 优先级；多 Provider 或多个未指定版本返回 ambiguous，
+没有隐式 scope 优先级；多个可用 Provider 或多个可用未指定版本返回 ambiguous，
 可通过 `--provider`、`--version` 明确选择。结果记录实际 provider/generation
-与 explicit/unique 选择来源。required 仅检查明确名称和契约版本，
-缺失返回 unavailable，不下载、执行或求解依赖。
+与 explicit/unique 选择来源。唯一可用兼容者可以选择；不可用候选仍保留诊断，
+显式选择不可用 Provider 不会改选其他实现。目录只读 Host 当前可用性，
+不 acquire 或存储第二份实例状态。required 只沿明确名称/契约版本检查
+已授权依赖及其可用性；缺失、已 detach 或无可用依赖返回 unavailable，
+循环不会无限递归。不下载、执行或求解版本组合。
 
 ## 4. 返回与效果证据
 
@@ -97,14 +105,17 @@ state/outcome。pending、running、unknown 和 confirmed runner 观察均保持
 外部实现必须通过 invocation.observe 或嵌套调用提供原 owner 的 operationRef。
 包装器输出 schema 不匹配、输出无法 JSON 序列化、父包装器抛错时，
 已经观察到的 effect、receiptRefs、partialResultRefs 仍出现在返回中；
-实际回执仍由原 Job 持久化。未取得任何操作证据的 effectful 异常保守报告
-possible；没有 evidence 的 external-operation 不返回 value 成功。
+实际回执仍由原 Job 持久化。已进入实现的 effectful 异常或坏输出保守累积
+possible，已有 confirmed 不降级；历史 queued/none Job 的观察不能证明
+包装器没有产生其他效果，原 `operations[].effect` 则保持精确原值。
+没有 evidence 的 external-operation 不返回 value 成功。
 observe 不是持久化 API，也不授予写原 Job 的权限。
 
 schema 是明确的有界 JSON Schema 方言：type、properties、required、
 additionalProperties、items、enum、const、anyOf、minLength、minItems。
 未知 keyword 在注册时拒绝，不能静默声称完整 JSON Schema 支持。
 输出采用实际 JSON 投影校验，避免序列化失败绕过效果返回边界。
+NaN/Infinity、bigint、函数和 symbol 值明确拒绝，不让非有限数静默变为 null。
 
 ## 5. 注册与生命周期
 
@@ -143,7 +154,8 @@ Registry 不执行插件初始化代码；候选初始化及自有资源清理�
   不重发、不丢已观察证据。
 - S30：两个同名 Provider 返回 ambiguous；显式选择命中指定实现；
   缺 required、隐藏 Task scope、未知 schema keyword、半套注册失败均可读，
-  旧目录保持可用。
+  旧目录保持可用。唯一可用者可选，已 detach 和传递缺依赖者不造成伪歧义，
+  显式不可用者不 fallback。
 - S25：A 尚未返回时发布 B，新调用得到 B；A 的 disposer 等旧调用释放才执行。
 - S45：复制/伪造 context、跨 Task 参数、input actor、核心名字和核心 Provider ID
   均不能获得权力；query 嵌套 write 被拒绝。轮换 SQLite caller-key hash 后，
@@ -151,9 +163,39 @@ Registry 不执行插件初始化代码；候选初始化及自有资源清理�
 
 定向测试中先复现了核心 Provider ID 覆盖、父失败早于子结果、
 非 JSON 输出逃出 evidence 边界三个缺口，再验证修复。
-最终 `npm run build`、`npm run lint`、`npm run test:core` 均通过，
-core 82/82，测试阶段约 4.19 秒；专项 8/8，约 1.44 秒。
-永久 core 测试数量保持原样。独立审查结果见 Task 持久记录。
+首个候选的 build/lint/core 均通过，core 82/82，专项 8/8。
+2026-09-07 对当前修复重新执行：
+
+- `npm run build`、`npm run lint`、`npm run test:core` 全部 exit 0；
+  core 82/82，测试阶段约 4.25 秒。core 子进程移除继承的 `YUI_*`，
+  未连接真实控制面 Home。
+- `node --test output/t02-current-evidence.mjs output/t02-builtins-current.mjs`：
+  15/15，约 1.34 秒。脚本仅为临时开发证据，交付时移除，不作为后继命令。
+  新增真实 socket 的七种错误输入、结构化元数据、实际 runner 后坏输出回执，
+  以及历史 none 观察后抛错/非 JSON/坏 schema 的效果保留。
+- 最后两个坏输出用例先以 `none !== possible` 失败，入口诊断用例先以
+  `Controller request failed.` 失败；修复后同批专项全部通过。
+
+永久 core 测试数量保持原样。
+
+### 独立审查与 Leader 裁定
+
+原固定候选 `096defb1a97650fd8e91cd644c559256cb7ec45c` 的
+`review-round-1/turn-2` 因 missing-result 记录为执行失败。2026-09-07
+Leader 在精确 `turn-6` 上下文中通过受支持的 `task event show task-12 event-477`
+读取了 `runtime.observation` 内完整原始审查输出，不改写失败 Turn 或伪称 Round 通过。
+原 Reviewer 建议接受并提出两个非阻断 P2；报告包含独立 build/lint/core
+82/82 和 registry 10/10 探针，但未独立复现完整 socket/runner 链。
+
+Leader 接受并修复入口错误丢诊断的问题，补充上述真实 socket 红/绿证据。
+不采纳扩大永久异常测试的建议：Project Skill 明确要求本次异常与回归专项
+保持临时，不能把建议变成持续测试负担。
+另一次独立原生子审查发现结构化 patch 经 CLI 解析被拒绝及坏输出效果低报，
+均在当前 Task main 修复。最终有界复审覆盖新增修复及直接交互，未发现剩余
+material finding；独立重跑临时专项 15/15，约 1.35 秒，`git diff --check`
+通过。该复审没有重复完整基线 Review 或 build/lint/core，也不冒充原
+Round 状态。Leader 据原完整 Review、补充复审及当前隔离证据接受实现；
+Task 完成状态和精确交付 head 仍须由受支持的持久操作记录。
 
 ## 7. 采用与停止边界
 
