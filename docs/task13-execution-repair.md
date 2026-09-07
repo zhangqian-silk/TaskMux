@@ -96,10 +96,10 @@ Task13 event-4725 是原 implementer 报告，不是最终 Review。保留 turn-
 重启、push/merge/release/archive。历史第一次恢复失败的最内层原因已丢失，
 本修复不能声称还原其底层原因。
 
-## 已执行证据（最终 Review 前）
+## 已执行证据
 
 - `npm run build`、`npm run lint`、`npm test`：通过；现有 core 82/82，
-  最近一次 test 阶段 4.20 秒，未增加永久测试数量。
+  最后一轮 test 阶段 4.26 秒，未增加永久测试数量。
 - 临时 `node --test test/task13-evidence.mjs`：14/14；真实 SQLite、inbox、
   processor，包含接受前终态、无 native ID、重复/冲突、三处事务中断、迟到报告、
   detach 前未确认输入、1→2 升级及 v1 备份的实际读取。报告与 failed 记录不变。
@@ -123,7 +123,8 @@ Task13 event-4725 是原 implementer 报告，不是最终 Review。保留 turn-
   与 mismatch 不 cleanup、reservation 不被旧 Session 覆盖、resume 原会话、
   detach 保留 submitting/unknown/accepted、原 Activation 归属；不是完整 Provider 测试。
 
-这些临时脚本仅用于本次开发，handoff 前删除。最终精确提交和独立审查记录在交付说明补齐。
+这些临时脚本仅用于本次开发，独立 Reviewer 复验后在 handoff 前删除，
+不属于永久测试套件；上述命令记录实际执行证据，不代表脚本仍随交付保留。
 
 ## 独立审查过程
 
@@ -136,4 +137,46 @@ Task13 event-4725 是原 implementer 报告，不是最终 Review。保留 turn-
 
 R1 修正快照产生及全部控制回复的统一边界。R2 复用原错误事实写入者，保留
 准确 attempt 和 mailbox；新增验证还检查已接受后本地写入失败不丢接受事实。
-复查结论以最终 Reviewer 原始结果为准，不把本段修正说明当成审查通过。
+## 最终独立结论
+
+2026-09-07，同一独立 Reviewer 对精确代码 Candidate
+`2f199146f7df9b51646641887691c2f815a4934f` 完成实际复审，原始结论：
+“独立复审通过：未发现需要继续返修的问题。”
+
+Reviewer 确认 R1、R2 闭合，检查返修及直接交互，独立运行全部五组
+14/58/20/46/4 专项证据且通过，执行后核对 HEAD 未变化。
+此为原生独立代码审查记录，不伪称共享 Yui ReviewRound 或 Reviewer Turn。
+代码基线为 `6c8ce1e39c5cb6cbafd3652d2f5fa0fa498b27ee`；
+`cacd145b980814910113662ba4480afa1259bb68` 与
+`6cad36a23ed2394ba6e509b73f8d3fb8f953c2ea` 均经 Git 祖先关系核对保留。
+后续交付文档提交不改变此精确代码树。
+
+## 后续采用：单独授权的 Operator 操作
+
+本地实现、隔离验证及独立代码审查已经完成。以下不作为本次交付阻塞，
+也没有在本次执行；全局运行实例不会因为本地提交而自动得到修复。
+
+1. 指定要采用的精确代码提交、构建产物及目标 CLI/Controller/Home。
+   只读核对现有版本、原生 Session、资源所有权及未结清输入；
+   不能为了腾出升级窗口停止健康 Worker 或抹掉 unknown。
+2. 获得该共享实例维护授权后，安排一致性停写窗口，备份旧包和 Home；
+   使用既有中央 upgrade/update 入口执行 storage 1→2，禁止直接改表或全局重放。
+   无法取得不伤害既有执行的窗口时，停止升级，由 Operator 决定维护时机。
+3. 在另行授权的全局安装及 Controller 维护范围内采用新产物。
+   重建的 Yui 附件继续引用原 native Session；逐一核对配置兼容性、
+   可恢复性及 accepted/unknown 输入，不能默默新建 Conversation 或重发。
+4. 经恢复后的受支持任务入口，明确引用 Task13 event-4725/cacd145，
+   采用新的精确集成成果，产生新的合法交付记录。原 turn-20 的 failed、
+   原报告及原 Worker Session 保留，不把本地代码采用当成共享历史修复。
+   不对 Task12 私有记录执行任何操作。
+5. 失败时停止进一步写入并保留证据。仅回退二进制不能读取 v2 Home；
+   恢复备份前必须处理备份后的新 Task 数据，禁止盲目覆盖后续事实。
+
+真实 Provider 验证未执行，也未发起授权请求。若用户今后明确选择该验证，
+应按指定 Provider、Session、配额及隔离边界单独进行，不能把 fake Provider
+证据描述为真实 E2E。
+
+后续 T04 可以直接复用 exact attempt/原 Activation 关联、原 Store 的结果事务、
+终态去重与迟到结果规则、Host/Session 分离、启动 reservation 校验及完整错误链。
+仍需由 T04 自身实现的 AgentEndpoint 接口、实现 generation、热更新等不在此提交；
+不得为统一术语把本次 Activation generation 当作代码实现版本。
