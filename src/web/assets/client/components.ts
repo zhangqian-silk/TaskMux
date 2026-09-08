@@ -15,6 +15,22 @@ function adapterLabel(adapterId) {
   return adapterLabels[adapterId] || adapterId;
 }
 
+// Mirrors src/agent/executionComponents.ts, for the same reason.
+const componentLabels = {
+  "codex-cli": "Codex CLI",
+  "claude-code-cli": "Claude Code CLI",
+  "claude-agent-sdk": "Claude Agent SDK (ACP)",
+  "unknown-acp-agent": "ACP Agent (unidentified)"
+};
+
+// The component names the product; the adapter names only the connection plan,
+// which several products share. Prefer the component and fall back to the plan
+// for records written before the component axis existed.
+function componentLabel(component, adapterId) {
+  if (!component) return adapterLabel(adapterId);
+  return componentLabels[component] || component;
+}
+
 // --- Small widgets -----------------------------------------------------------
 export function metaItem(label, value) {
   const item = node("span", "detail-meta-item");
@@ -37,7 +53,9 @@ export function chip(text, extraClass) {
 export function agentBadge(agent) {
   if (!agent) return null;
   const badge = node("span", "agent-badge");
-  if (agent.adapterId) badge.append(chip(adapterLabel(agent.adapterId), "is-adapter"));
+  if (agent.adapterId || agent.component) {
+    badge.append(chip(componentLabel(agent.component, agent.adapterId), "is-adapter"));
+  }
   if (agent.model) badge.append(chip(agent.model));
   if (agent.effort) badge.append(chip(agent.effort));
   return badge.childNodes.length ? badge : null;
@@ -703,6 +721,7 @@ export function roleCard(role, task, t, locale, actions) {
   if (activeBinding) {
     const badge = agentBadge({
       adapterId: activeBinding.adapterId,
+      component: activeBinding.component,
       model: activeBinding.config && activeBinding.config.model,
       effort: activeBinding.config && activeBinding.config.effort
     });
@@ -754,10 +773,10 @@ export function roleCard(role, task, t, locale, actions) {
     const bindings = bindingIds.map(function (id) {
       const binding = role.agentBindings[id];
       const model = binding.config && binding.config.model;
-      return adapterLabel(binding.adapterId) + (model ? " · " + model : "");
+      return componentLabel(binding.component, binding.adapterId) + (model ? " · " + model : "");
     });
     const activeBindingLabel = activeBinding
-      ? adapterLabel(activeBinding.adapterId) + (activeBinding.config && activeBinding.config.model ? " · " + activeBinding.config.model : "")
+      ? componentLabel(activeBinding.component, activeBinding.adapterId) + (activeBinding.config && activeBinding.config.model ? " · " + activeBinding.config.model : "")
       : undefined;
     cols.append(chipRow(t("detail.agents"), bindings, activeBindingLabel));
   }

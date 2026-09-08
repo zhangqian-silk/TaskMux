@@ -1,4 +1,9 @@
 import { isAgentAdapterId, type AgentAdapterId } from "./adapterCatalog.js";
+import {
+  adapterIdForExecutionComponent,
+  resolveAgentExecutionComponent,
+  type AgentExecutionComponentId
+} from "./executionComponents.js";
 import { validateAgentBaseArguments } from "./argumentPolicy.js";
 
 export type EnvironmentBinding = Readonly<{
@@ -10,8 +15,17 @@ export type EnvironmentBinding = Readonly<{
 
 /** Durable Agent configuration. There is deliberately no probe runtime state here. */
 export type ConfiguredAgent = Readonly<{
-  schemaVersion: 2;
+  schemaVersion: 3;
   id: string;
+  /**
+   * Which execution component this Agent runs. Several products share one
+   * connection plan, so the plan alone cannot identify the product; recording
+   * it here is what lets registration, display and Role bindings tell a Claude
+   * Code CLI from a Claude Agent SDK bridge. The id below stays the user's own
+   * choice and is never renamed to match this value.
+   */
+  component: AgentExecutionComponentId;
+  /** The connection plan: the protocol Yui speaks and the carrier it uses. */
   adapterId: AgentAdapterId;
   command: string;
   baseArgs: readonly string[];
@@ -28,7 +42,8 @@ export function createConfiguredAgent(
   command: string,
   baseArgs: readonly string[],
   environment: readonly EnvironmentBinding[],
-  now: Date
+  now: Date,
+  component?: string
 ): ConfiguredAgent {
   const normalizedId = requireSafeIdentity(id, "Agent id");
   if (!isAgentAdapterId(adapterId)) throw new Error(`Agent adapter is unsupported: ${adapterId}.`);
@@ -36,8 +51,11 @@ export function createConfiguredAgent(
   validateAgentBaseArguments(adapterId, baseArgs);
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: normalizedId,
+    // An unnamed component resolves from the plan, which for ACP means the
+    // unidentified entry rather than a guess at which product is installed.
+    component: resolveAgentExecutionComponent(adapterId, component),
     adapterId,
     command: normalizedCommand,
     baseArgs: [...baseArgs],
@@ -75,9 +93,19 @@ export function resolveAgentEnvironment(
 }
 
 export function validateConfiguredAgent(agent: ConfiguredAgent): void {
-  if (agent.schemaVersion !== 2) throw new Error("Agent schema version is invalid.");
+  if (agent.schemaVersion !== 3) throw new Error("Agent schema version is invalid.");
   requireSafeIdentity(agent.id, "Agent id");
   if (!isAgentAdapterId(agent.adapterId)) throw new Error(`Agent adapter is unsupported: ${agent.adapterId}.`);
+  // The component determines its plan, so a stored pair that disagrees is
+  // corruption rather than a configuration the operator can act on.
+  const expected = adapterIdForExecutionComponent(
+    resolveAgentExecutionComponent(agent.adapterId, agent.component)
+  );
+  if (expected !== agent.adapterId) {
+    throw new Error(
+      `Agent execution component ${agent.component} does not match adapter ${agent.adapterId}.`
+    );
+  }
   requireText(agent.command, "Agent command");
   validateAgentBaseArguments(agent.adapterId, agent.baseArgs);
   if (!Array.isArray(agent.environment)) throw new Error("Agent environment must be an array.");

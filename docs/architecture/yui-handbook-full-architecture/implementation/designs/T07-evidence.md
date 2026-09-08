@@ -50,10 +50,15 @@ adapter 通过 T02 能力目录发现，用 T04 的普通执行请求创建 Turn
 结果沿同一归档路径保存。注册使用原有命令，没有 ACP 专用入口：
 
 ```text
+yui config agent add <agent-id> --component claude-agent-sdk --command <acp-executable>
 yui config agent add <agent-id> --adapter acp --command <acp-executable> --arg acp
 yui config agent capabilities <agent-id>
 yui task role add <task> <role> --agent <agent-id>
 ```
+
+第一行是 WorkItem-2 之后的推荐写法：命名执行组件即可，连接方案由组件唯一
+决定，无需再写 `--adapter`。第二行仍然有效，只声明连接方案而不声明产品，
+记录为 `unknown-acp-agent`——这正是既有绑定的读法（见第 7 节）。
 
 开发验证必须把上面的 `yui` 换成本 checkout 的绝对 launcher 并使用隔离 Home。
 `capabilities` 走一次真实 `initialize`，据此报告该 Agent 的实际字段可用性，
@@ -223,3 +228,131 @@ adapter、按连接协商能力覆盖。这些是隔离夹具证据，按统一�
 
 本节自查不代替独立最终 Review。本授权不包括 push、PR、merge、tag、release、
 archive 或启动后续 Task。
+
+## 7. WorkItem-2：执行组件与连接方案分离
+
+基线 `e0fcd244fe659e155a50265747641d683ae3b9ee`。本节只记录本 WorkItem 的
+改动，不改写前六节的裁定。
+
+### 7.1 为什么加一个轴而不是改名
+
+`adapterId` 混装了两件事：产品是谁，以及 Yui 用什么协议／载体连上去。
+第二件事它答得准确，第一件事答不了——Claude Code CLI、Claude Agent SDK
+和任意第三方 Agent 都从 `acp` 进来。把 `adapterId` 改名成产品名会同时
+损坏它答得准确的那件事，而它在 60 个文件、653 处被引用。
+
+因此保留 `adapterId` 作为**连接方案 id**，另加一条 `component` 轴。
+组件唯一决定方案（单向、全量），所以**只有一份权威绑定可写**，不存在
+可自由拼装的组合图。命名用实际执行的 CLI 或 SDK，不用 "native"。
+
+- `src/agent/executionComponents.ts`：`codex-cli`、`claude-code-cli`、
+  `claude-agent-sdk`、`unknown-acp-agent`，各自声明所属方案与 `identified`。
+- `src/agent/connectionPlan.ts`：protocol／protocolVersion／transport／
+  handshake 四元组。不协商的方案显式写 `handshake: "none"`，不是省略。
+  `launchBroker` 原本自带的 transport 表已删除，改为向该模块求值。
+
+Claude Code CLI 的 stream-json 与经 `claude-agent-acp` 的 Claude Agent SDK
+是**两套接入实现**：不同可执行文件、不同启动与认证面。本改动只给它们各自
+的身份，不假设两者配置或能力等价。Codex 目前只有 AppServer 一个运行时，
+因此只登记 `codex-cli` 一个组件，不臆造第二个引擎。
+
+### 7.2 调用链
+
+```text
+config agent add --component X
+  → resolveAgentExecutionComponent(adapterId, X)   # 唯一解析点，跨方案即报错
+  → createConfiguredAgent(... component)           # ConfiguredAgent.schemaVersion 3
+  → createRoleAgentBinding(agent)                  # RoleAgentBinding.component
+  → resolveEffectiveLaunch(role)                   # EffectiveLaunch.schemaVersion 4
+  → sessionContinuitySnapshot(...)                 # 含 component → 旧 Session 固定
+  → roleSessionMayContinue(existing, desired)
+```
+
+### 7.3 字段与迁移契约
+
+| 记录 | schemaVersion | 新字段 |
+|---|---|---|
+| `ConfiguredAgent` | 2 → 3 | `component` |
+| `RoleAgentBinding` | 不变 | `component` |
+| `EffectiveLaunchSnapshot` | 3 → 4 | `component` |
+
+storage **9 → 10** `agent-execution-component`（`introducedIn=0.15.8`），
+一条连续中央迁移，不改 1–9，不双读旧形状。回填规则只有三条：
+`codex→codex-cli`、`claude→claude-code-cli`、**其余一律
+`unknown-acp-agent`**。命令字符串不作为证据——名叫 `claude-agent-acp` 的
+可执行文件可能是包装器或别的东西，据此猜成 ClaudeSDK 就是给未经验证的
+事实贴确定标签。配置变更只影响**新** Session；旧 Session 由自己的 effective
+快照固定，`component` 进入连续性快照正是为此。
+
+`catalogFingerprint` 补入 `component`：否则同一 Home 上两个 ACP 产品会共用
+同一条能力缓存。
+
+### 7.4 协议事实更正
+
+原文案称 "ACP negotiates no model or reasoning effort" 与 "ACP does not
+expose a model catalog"。核对 ACP v1 规范后确认这是**错的**：协议定义了
+`session/set_mode` 与 `session/set_config_option`，Session Setup 返回的
+`configOptions` 含 `mode`／`model`／`model_config`／`thought_level` 语义类别。
+限制在 Yui 这一侧，文案改为陈述实现现状（"Yui's ACP client does not
+implement session/set_config_option"）。权限同理：ACP 定义了权限选项，
+Yui 未接通交互式同意，因此**保留显式拒绝，不自动放行**——API 授权与工具
+权限是两件事。
+
+`AgentHandshakeObservation` 把真实握手与静态支持分开：不协商的方案是
+`{status:"unsupported", reason}`，ACP 是 `{status:"observed", ...}` 并带
+protocolVersion／能力／authMethods；缺失值显式为 `unknown`，不留空。
+
+### 7.5 证据
+
+全部使用一次性 Home、绝对 launcher、`env -i` 清除继承 YUI 环境；
+**零真实模型、零凭据、零外部资源**。临时夹具已删除，未新增永久历史回归测试。
+
+**红／绿（行为级，非"文件不存在"）**：同一份探针分别在基线构建与本改动上
+运行。基线 **4/4 通过**（缺陷存在），本改动 **4/4 失败**（缺陷消失）。
+其中关键一条是 `roleSessionMayContinue(generic, sdk)`：基线返回 `true`
+（同方案同工作区，Session 会静默切换到另一个产品），改动后返回 `false`。
+另有专项夹具 **10/10** 覆盖四条验收线。
+
+**真实 v9 Home 原地升级**（不是模拟删账本行）：用基线构建创建 Home 并写入
+记录，再由本改动执行 `upgrade`：
+
+```text
+Storage upgraded through 9->10 agent-execution-component.
+legacy-acp cmd=claude-agent-acp schema=3 component=unknown-acp-agent
+my-codex   cmd=codex            schema=3 component=codex-cli
+migrations 1,2,3,4,5,6,7,8,9,10
+```
+
+命令字面为 `claude-agent-acp` 的旧绑定**保持 `unknown-acp-agent`**，没有被
+猜成 Claude Agent SDK；Codex 正确回填；升级后 `doctor` 全绿
+（`storage schema ok current=10 latest=10`），旧行为未回归。
+
+**通用产品复用**：同一份代码、同一条命令注册两个 ACP 产品，列表分别显示
+`claude-agent-sdk` 与 `unknown-acp-agent`，用户自定的实例 id
+（`sdk-agent`／`legacy-acp`）原样保留，未被改名为产品名。
+
+**常规验证**：`npm run build`、`npm run lint` 通过；`npm run test:core`
+**81/81**（约 4.4 秒），规模未变。
+
+### 7.6 本 WorkItem 未验证项
+
+1. **没有任何真实 Provider 调用。** 真实 Claude ACP 测试由 Leader 单独授权
+   与执行；本 WorkItem 只产出代码与隔离夹具，不安装、不认证、不调模型。
+   上文 ENOENT 降级来自本机确实没有这些可执行文件，属预期。
+2. `claude-agent-sdk` 组件的真实握手、认证面与能力矩阵**未经真实进程验证**。
+   计划中的 `@agentclientprotocol/claude-agent-acp` 0.75.1
+   （ClaudeSDK 0.3.257 / ACP SDK 1.4.0）是届时的测试对象，**不作为内核
+   永久版本限制**写入代码。
+3. 组件轴不改变任何 codec 行为，因此未重新验证 Codex／Claude 的真实
+   Provider 场景；`test:core` 通过只说明既有路径未回归。
+
+### 7.7 手册 HTML 未重新生成
+
+本节只改了 Markdown 源与 `MANIFEST.json` 校验和。`index.html` 与
+`full-architecture.html` 由 `tools/build_html.py` 从 Markdown 生成，需要
+`pandoc` 与 `beautifulsoup4`，本机两者都不存在，本 WorkItem 也不安装系统包。
+因此两个 HTML 仍是上一版内容，**不包含第 7 节与第 3 节新增的
+`--component` 采用行**；Markdown 源是权威。
+`tools/check_docs.py --write-manifest --typecheck --write-result` 通过
+（`typescript: passed`，`errors: []`）——该校验核对包完整性与 Markdown 结构，
+不比对 HTML 与 Markdown 的正文差异。取得 pandoc 后重新生成即可消除该滞后。

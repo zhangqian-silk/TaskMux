@@ -34,11 +34,46 @@ export type AgentConfigurationField = Readonly<{
   reason?: string;
 }>;
 
+/**
+ * What a live handshake reported, as distinct from what Yui statically
+ * supports.
+ *
+ * A connection plan's static table says which protocol Yui implements. It
+ * cannot say what the Agent on the other end agreed to, and for a plan whose
+ * products are interchangeable that difference is the whole point. Every field
+ * is explicit about absence: a plan with no capability exchange reports
+ * `unsupported`, and a plan that has one but learned nothing reports `unknown`,
+ * so a missing value is never read as a negative answer.
+ */
+export type AgentHandshakeObservation =
+  | Readonly<{
+      status: "unsupported";
+      /** Why no handshake facts exist: this plan negotiates nothing. */
+      reason: string;
+    }>
+  | Readonly<{
+      status: "observed";
+      /** Protocol version the two sides settled on. */
+      protocolVersion: number;
+      /** Self-reported product identity, `unknown` when the Agent stayed silent. */
+      agentName: string | "unknown";
+      agentVersion: string | "unknown";
+      /** Capability names the Agent advertised, sorted; `[]` means none. */
+      capabilities: readonly string[];
+      /** Authentication methods advertised, sorted; `[]` means none. */
+      authMethods: readonly string[];
+    }>;
+
 export type AgentConfigurationCatalog = Readonly<{
   schemaVersion: 1;
   agentId: string;
   adapterId: AgentAdapterId;
   cliVersion?: string;
+  /**
+   * Absent when the catalog was not produced by a live connection, which is a
+   * third state distinct from both branches above: nothing was attempted.
+   */
+  handshake?: AgentHandshakeObservation;
   models: readonly AgentModelChoice[];
   fields: readonly AgentConfigurationField[];
   warnings: readonly string[];
@@ -354,6 +389,10 @@ function catalogFingerprint(
         }
       : null;
   return createHash("sha256").update(JSON.stringify({
+    // The component, not just the plan: two ACP products answer the same
+    // handshake differently, so a cache keyed on the plan alone would serve one
+    // product's capabilities for the other.
+    component: input.agent.component,
     adapterId: input.agent.adapterId,
     command: input.agent.command,
     baseArgs: input.agent.baseArgs,

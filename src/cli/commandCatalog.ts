@@ -1,4 +1,5 @@
 import { supportedAgentAdapterIds } from "../agent/adapterCatalog.js";
+import { supportedAgentExecutionComponentIds } from "../agent/executionComponents.js";
 import {
   CONFIG_DEFINITIONS,
   CONFIG_DOMAINS,
@@ -182,10 +183,13 @@ function durableConfigDomainNode(domain: ConfigDomain): NodeInput {
 const agentChildren: readonly NodeInput[] = [
   {
     name: "add",
-    summary: "Add a configured native Agent CLI.",
-    usage: "yui config agent add <id> [--adapter <adapter>] --command <command> [--arg <arg> ...] [--env TARGET=PROCESS_NAME ...]",
-    options: ["--adapter", "--command", "--arg", "--env"],
-    optionValues: { "--adapter": supportedAgentAdapterIds() },
+    summary: "Add a configured Agent execution component.",
+    usage: "yui config agent add <id> [--component <component>] [--adapter <adapter>] --command <command> [--arg <arg> ...] [--env TARGET=PROCESS_NAME ...]",
+    options: ["--component", "--adapter", "--command", "--arg", "--env"],
+    optionValues: {
+      "--component": supportedAgentExecutionComponentIds(),
+      "--adapter": supportedAgentAdapterIds()
+    },
     executableOptions: ["--command"]
   },
   { name: "list", summary: "List configured Agents." },
@@ -198,9 +202,12 @@ const agentChildren: readonly NodeInput[] = [
   {
     name: "update",
     summary: "Update a configured Agent.",
-    usage: "yui config agent update <id> [--adapter <adapter>] [--command <command>] [--arg <arg> ... | --clear-args] [--env TARGET=PROCESS_NAME ... | --clear-env]",
-    options: ["--adapter", "--command", "--arg", "--clear-args", "--env", "--clear-env", "--yes"],
-    optionValues: { "--adapter": supportedAgentAdapterIds() },
+    usage: "yui config agent update <id> [--component <component>] [--adapter <adapter>] [--command <command>] [--arg <arg> ... | --clear-args] [--env TARGET=PROCESS_NAME ... | --clear-env]",
+    options: ["--component", "--adapter", "--command", "--arg", "--clear-args", "--env", "--clear-env", "--yes"],
+    optionValues: {
+      "--component": supportedAgentExecutionComponentIds(),
+      "--adapter": supportedAgentAdapterIds()
+    },
     executableOptions: ["--command"]
   },
   { name: "remove", summary: "Remove a configured Agent.", usage: "yui config agent remove <id>" }

@@ -49,9 +49,11 @@ export function renderRoleDetails(
           : `${effective.executionEnvironment.environmentRef}; ${effective.executionEnvironment.directory.path}; ${effective.executionEnvironment.access}`}`
     ] : []),
     `  Desired launch   r${role.launchRevision}; Profile intent=${role.defaultAccess}`,
+    // The component is what the Session is pinned to; its plan follows from it.
+    // Naming the plan alone would show two different ACP products identically.
     `  Effective launch ${effective === undefined
       ? "not started"
-      : `${effective.agentId}/${effective.adapterId}; r${effective.sourceDesiredRevision}; Profile intent=${effective.profileAccess}; permission=${effective.permission.strategy}`}`,
+      : `${effective.agentId}/${effective.component}; r${effective.sourceDesiredRevision}; Profile intent=${effective.profileAccess}; permission=${effective.permission.strategy}`}`,
     `  Desired drift    ${effective === undefined
       ? "-"
       : effective.sourceDesiredRevision === role.launchRevision
@@ -72,7 +74,10 @@ export function renderRoleDetails(
       [
         { header: "Agent", minWidth: 5, maxWidth: 20 },
         { header: "Active", minWidth: 6, maxWidth: 6 },
-        { header: "Adapter", minWidth: 7, maxWidth: 10 },
+        // Wide enough to hold the longest component id whole: it is an
+        // identifier, so splitting it mid-token reads worse than letting the
+        // prose in Permission wrap, which it does naturally.
+        { header: "Component", minWidth: 17, maxWidth: 18 },
         { header: "Model", minWidth: 8, maxWidth: 24 },
         { header: "Effort", minWidth: 8, maxWidth: 16 },
         { header: "Permission", minWidth: 10, maxWidth: 34 },
@@ -93,7 +98,7 @@ function bindingRow(
   return [
     binding.agentId,
     binding.agentId === role.activeAgentId ? "yes" : "",
-    binding.adapterId,
+    binding.component,
     binding.config.model ?? "CLI default",
     binding.config.effort ?? "CLI default",
     permission(binding),

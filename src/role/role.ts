@@ -5,6 +5,11 @@ import {
 } from "../resources/projectResource.js";
 
 import { isAgentAdapterId } from "../agent/adapterCatalog.js";
+import {
+  adapterIdForExecutionComponent,
+  resolveAgentExecutionComponent,
+  type AgentExecutionComponentId
+} from "../agent/executionComponents.js";
 import type { WorkerAccess } from "../profile/agentProfile.js";
 import type {
   ClaudeRoleAgentConfig,
@@ -39,6 +44,12 @@ export type RoleProfile = {
 
 export type RoleAgentBinding = {
   agentId: string;
+  /**
+   * The execution component the Role selected. It is carried here, not looked
+   * up from the Agent record at launch, so that a Session's effective snapshot
+   * records the product it actually started against.
+   */
+  component: AgentExecutionComponentId;
   adapterId: RoleAgentConfig["adapterId"];
   config: RoleAgentConfig;
 };
@@ -82,11 +93,14 @@ export type RoleAgentSwitchEvent = {
 };
 
 export function createRoleAgentBinding(
-  agent: { id: string; adapterId: string },
+  agent: { id: string; adapterId: string; component?: string },
   config?: RoleAgentConfig
 ): RoleAgentBinding {
   const agentId = requireSafeIdentity(agent.id, "Role Agent id");
   const adapterId = requireSupportedAdapterId(agent.adapterId);
+  // An Agent record predating the component axis names only its plan; that
+  // resolves to the plan's default, which for ACP is the unidentified entry.
+  const component = resolveAgentExecutionComponent(adapterId, agent.component);
   const defaults = defaultRoleAgentConfig(adapterId);
   const effectiveConfig = config === undefined
     ? defaults
@@ -96,7 +110,7 @@ export function createRoleAgentBinding(
   if (effectiveConfig.adapterId !== adapterId) {
     throw new Error(`Role Agent config adapter does not match Agent: ${agentId}.`);
   }
-  return cloneBinding({ agentId, adapterId, config: effectiveConfig });
+  return cloneBinding({ agentId, component, adapterId, config: effectiveConfig });
 }
 
 export function createRole(
@@ -453,6 +467,10 @@ function validateRoleOwner<T extends GlobalRole | TaskRole>(role: T): T {
 function validateRoleAgentBinding(binding: RoleAgentBinding): RoleAgentBinding {
   const agentId = requireSafeIdentity(binding.agentId, "Role Agent id");
   const adapterId = requireSupportedAdapterId(binding.adapterId);
+  const component = resolveAgentExecutionComponent(adapterId, binding.component);
+  if (adapterIdForExecutionComponent(component) !== adapterId) {
+    throw new Error(`Role Agent binding execution component is inconsistent: ${agentId}.`);
+  }
   if (binding.config === null || typeof binding.config !== "object" || Array.isArray(binding.config)) {
     throw new Error(`Role Agent config is invalid: ${agentId}.`);
   }
@@ -514,6 +532,9 @@ function cloneBindings(bindings: Record<string, RoleAgentBinding>): Record<strin
 function cloneBinding(binding: RoleAgentBinding): RoleAgentBinding {
   return {
     agentId: binding.agentId,
+    // A binding stored before the component axis existed carries none, and its
+    // plan supplies the answer — unidentified for ACP, never a guessed product.
+    component: resolveAgentExecutionComponent(binding.adapterId, binding.component),
     adapterId: binding.adapterId,
     config: cloneJson(binding.config)
   };

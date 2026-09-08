@@ -191,7 +191,7 @@ export function recordRoleAgentSession<TSet extends RoleSessionSet>(
     && !roleSessionMayContinue(existing.effective, effective)) {
     throw new Error(
       `Role Agent session cannot continue under this launch: ${agentId}. `
-      + "Its Agent, adapter or physical workspace changed."
+      + "Its Agent, execution component, connection plan or physical workspace changed."
     );
   }
   if (existing !== undefined && existing.nativeSessionId !== nativeSessionId

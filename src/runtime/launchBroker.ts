@@ -11,16 +11,8 @@ import type { ImplementationRef } from "../kernel/instanceHost.js";
 import { validateAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 import { validateExecutionEnvironmentSnapshot, type ExecutionEnvironmentSnapshot } from "../resources/projectResource.js";
 import { isAgentAdapterId, type AgentAdapterId } from "../agent/adapterCatalog.js";
+import { agentTransportForAdapter, type AgentTransport } from "../agent/connectionPlan.js";
 import { resolveAgentAdapter } from "../executor/agentAdapter.js";
-
-/** Each adapter speaks exactly one managed transport. */
-const ADAPTER_TRANSPORTS: Readonly<
-  Record<AgentAdapterId, AgentHostProviderControl["transport"]>
-> = Object.freeze({
-  codex: "codex-app-server-proxy",
-  claude: "claude-stream-json",
-  acp: "acp-stdio"
-});
 
 export type AgentHostLaunchPayload = Readonly<{
   schemaVersion: 2;
@@ -42,7 +34,7 @@ export type ProviderOwnedTurn = Readonly<{
 type AgentHostProviderControlBase = Readonly<{
   schemaVersion: 1;
   adapterId: AgentAdapterId;
-  transport: "codex-app-server-proxy" | "claude-stream-json" | "acp-stdio";
+  transport: AgentTransport;
   sessionTitle?: string;
   authority: ProviderAuthorityFence;
   codexThread?: CodexThreadOptions;
@@ -171,7 +163,9 @@ function validateProviderControl(control: AgentHostProviderControl): void {
   if (!isAgentAdapterId(control.adapterId)) {
     throw new Error("Agent Host Provider control adapter is invalid.");
   }
-  if (control.transport !== ADAPTER_TRANSPORTS[control.adapterId]) {
+  // The connection plan owns the protocol/transport pair. Re-deriving it here
+  // is what keeps a control from naming a carrier its adapter does not speak.
+  if (control.transport !== agentTransportForAdapter(control.adapterId)) {
     throw new Error("Agent Host Provider control transport does not match its adapter.");
   }
   if ((control.adapterId === "codex") !== (control.codexThread !== undefined)) {

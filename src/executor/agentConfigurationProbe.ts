@@ -22,8 +22,19 @@ import type {
   AgentConfigurationChoice,
   AgentConfigurationDiscoveryInput,
   AgentConfigurationField,
+  AgentHandshakeObservation,
   AgentModelChoice
 } from "./agentConfigurationCatalog.js";
+
+/**
+ * Codex and Claude Code are configured by flags and their own files; neither
+ * plan exchanges capabilities on connect. Saying so explicitly keeps a caller
+ * from reading a missing handshake as an Agent that answered with nothing.
+ */
+const NO_HANDSHAKE: AgentHandshakeObservation = Object.freeze({
+  status: "unsupported",
+  reason: "This connection plan has no capability handshake; support is static."
+});
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const PROCESS_TERMINATION_GRACE_MS = 100;
@@ -96,6 +107,7 @@ export async function discoverCodexConfiguration(
       agentId: input.agent.id,
       adapterId: "codex",
       ...(semanticVersion(version) === undefined ? {} : { cliVersion: semanticVersion(version) }),
+      handshake: NO_HANDSHAKE,
       models,
       fields: [
         field("model", [], true),
@@ -174,6 +186,7 @@ export async function discoverClaudeConfiguration(
     agentId: input.agent.id,
     adapterId: "claude",
     ...(semanticVersion(version) === undefined ? {} : { cliVersion: semanticVersion(version) }),
+    handshake: NO_HANDSHAKE,
     models,
     fields: [
       field("model", [], true),
@@ -382,15 +395,36 @@ export async function discoverAcpConfiguration(
       : semanticVersion(negotiated.agentVersion) === undefined
         ? {}
         : { cliVersion: semanticVersion(negotiated.agentVersion)! }),
-    // ACP negotiates no model catalog. Which model an Agent uses is its own
-    // configuration, and inventing choices here would misreport the protocol.
+    // What this Agent actually agreed to, kept separate from what Yui's client
+    // statically supports. An Agent that reports no name stays `unknown` here
+    // and is never resolved into a product by its command line.
+    handshake: {
+      status: "observed",
+      protocolVersion: negotiated.protocolVersion,
+      agentName: negotiated.agentName ?? "unknown",
+      agentVersion: negotiated.agentVersion ?? "unknown",
+      capabilities: Object.entries(negotiated.capabilities)
+        .filter(([, enabled]) => enabled)
+        .map(([name]) => name)
+        .sort(),
+      authMethods: negotiated.authMethods.map((method) => method.id).sort()
+    },
+    // Yui's ACP client does not implement `session/set_config_option`, so it
+    // has no model or effort selection to offer. This is Yui's limit, not the
+    // protocol's: ACP v1 defines that method and the `configOptions` an Agent
+    // advertises at session setup, with `model` and `thought_level` categories
+    // among them. Reporting it as a protocol absence would misdescribe ACP and
+    // hide the work that would lift the restriction.
     models: [],
     fields: [
       field("model", [], true, false,
-        "ACP does not expose a model catalog; configure the model in the Agent itself."),
-      field("effort", [], true, false, "ACP does not expose a reasoning-effort setting."),
+        "Yui's ACP client does not implement session/set_config_option, so it cannot "
+        + "select a model; configure the model in the Agent itself."),
+      field("effort", [], true, false,
+        "Yui's ACP client does not implement session/set_config_option, so it cannot "
+        + "select a reasoning effort; configure it in the Agent itself."),
       field("permission.strategy", [choice("default")], false, true,
-        "Yui always declines ACP permission requests: this transport carries no "
+        "Yui always declines ACP permission requests: this client holds no "
         + "interactive consent, so it cannot grant authority on the user's behalf."),
       field("additionalDirectories", [], true,
         negotiated.capabilities.additionalDirectories,

@@ -63,15 +63,19 @@ export type ClaudeAgentConfig = Readonly<{
   advanced?: AdvancedAgentConfig;
 }>;
 /**
- * Yui's ACP adapter leaves model and reasoning settings to the Agent. Workspace
- * roots travel through session setup rather than product-specific CLI flags.
+ * Configuration for an Agent reached over ACP.
+ *
+ * Model and reasoning effort are absent here because Yui's ACP client does not
+ * implement `session/set_config_option` — not because the protocol lacks it.
+ * ACP v1 defines that method and the `configOptions` an Agent advertises during
+ * session setup, including `model` and `thought_level` categories. Stating the
+ * limit as Yui's keeps the record honest and marks exactly what to build next.
  */
 export type AcpAgentConfig = Readonly<{
   adapterId: "acp";
   /**
-   * These settings are not exposed by Yui's current ACP implementation.
-   * Keeping them absent prevents callers from promising an override that this
-   * adapter does not send.
+   * Unsupported by Yui's ACP client, not by the protocol. Keeping them absent
+   * prevents callers from promising an override this adapter never sends.
    */
   model?: undefined;
   effort?: undefined;
@@ -547,11 +551,12 @@ class AcpAdapter extends BaseAdapter<AcpAgentConfig> {
     if (config.adapterId !== "acp") throw new Error("ACP Agent config adapter is invalid.");
     if (config.model !== undefined || config.effort !== undefined) {
       throw new Error(
-        "ACP negotiates no model or reasoning effort; configure them in the Agent itself."
+        "Yui's ACP client does not implement session/set_config_option, so it cannot "
+        + "send a model or reasoning-effort selection; configure them in the Agent itself."
       );
     }
     if (config.settingsFile !== undefined || config.settingsSources !== undefined) {
-      throw new Error("ACP exposes no client-side settings configuration.");
+      throw new Error("Yui's ACP client exposes no client-side settings configuration.");
     }
     // `additionalDirectories` is a real ACP session-lifecycle field, so a
     // Project-backed workspace is configurable here. Whether it is actually
@@ -564,14 +569,16 @@ class AcpAdapter extends BaseAdapter<AcpAgentConfig> {
       throw new Error("ACP permission strategy is required.");
     }
     exact(config.permission, ["strategy"], "ACP permission config");
-    // ACP has no client-side permission policy to configure: Yui answers every
-    // `session/request_permission` by declining, because this transport carries
-    // no interactive consent. Accepting a "bypass" strategy would promise an
-    // elevation that must never happen on the user's behalf.
+    // Yui declines every `session/request_permission`, because this client
+    // carries no interactive consent. ACP does define permission options an
+    // Agent may offer; Yui simply has no user decision to relay, so accepting a
+    // "bypass" strategy would promise an elevation that must never happen on
+    // the user's behalf. Wiring interactive consent is what would change this,
+    // not a protocol capability appearing.
     if (config.permission.strategy !== "default") {
       throw new Error(
-        "ACP supports only the default permission strategy: Yui declines every ACP "
-        + "permission request rather than granting authority the user did not give."
+        "Yui's ACP client supports only the default permission strategy: it declines every "
+        + "ACP permission request rather than granting authority the user did not give."
       );
     }
     advanced(this.id, config.advanced);

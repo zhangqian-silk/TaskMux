@@ -1,4 +1,5 @@
 import { renderTable, type TableColumn } from "../output/table.js";
+import { displayExecutionComponent } from "../agent/executionComponents.js";
 import type {
   AgentConfigurationCatalog,
   ResolvedAgentConfigurationCatalog
@@ -16,7 +17,7 @@ export type RoleWizardResolution =
   | Readonly<{ kind: "cancelled"; args: string[] }>;
 
 type Entity = Readonly<Record<string, unknown>>;
-type AgentChoice = Readonly<{ id: string; adapterId: string }>;
+type AgentChoice = Readonly<{ id: string; adapterId: string; component: string }>;
 type AgentSelection = Readonly<{
   agents: readonly AgentChoice[];
   defaultAgent?: string;
@@ -24,6 +25,7 @@ type AgentSelection = Readonly<{
 type RoleBinding = Readonly<{
   agentId: string;
   adapterId: string;
+  component: string;
   config: Entity;
 }>;
 type RoleView = Readonly<{
@@ -305,6 +307,7 @@ async function configureNewAgentField(
   const binding = {
     agentId: agent.id,
     adapterId: agent.adapterId,
+    component: agent.component,
     config: {
       adapterId: agent.adapterId,
       permission: { strategy: "bypass" }
@@ -508,11 +511,11 @@ async function updateAgentSettings(
     "Select Role Agent binding",
     bindings.map((binding) => ({
       value: binding.agentId,
-      cells: [binding.agentId, binding.adapterId, binding.agentId === role.activeAgentId ? "active" : "bound"]
+      cells: [binding.agentId, binding.component, binding.agentId === role.activeAgentId ? "active" : "bound"]
     })),
     [
       { header: "Agent", minWidth: 5, maxWidth: 24 },
-      { header: "Adapter", minWidth: 7, maxWidth: 12 },
+      { header: "Component", minWidth: 9, maxWidth: 18 },
       { header: "State", minWidth: 6, maxWidth: 8 }
     ],
     io,
@@ -832,7 +835,11 @@ async function selectActiveAgent(
   const byId = new Map(configured.map((agent) => [agent.id, agent]));
   for (const binding of Object.values(role.agentBindings)) {
     if (!byId.has(binding.agentId)) {
-      byId.set(binding.agentId, { id: binding.agentId, adapterId: binding.adapterId });
+      byId.set(binding.agentId, {
+        id: binding.agentId,
+        adapterId: binding.adapterId,
+        component: binding.component
+      });
     }
   }
   return choose(
@@ -841,13 +848,13 @@ async function selectActiveAgent(
       value: agent.id,
       cells: [
         agent.id,
-        agent.adapterId,
+        agent.component,
         agent.id === role.activeAgentId ? "active" : role.agentBindings[agent.id] === undefined ? "new" : "bound"
       ]
     })),
     [
       { header: "Agent", minWidth: 5, maxWidth: 24 },
-      { header: "Adapter", minWidth: 7, maxWidth: 12 },
+      { header: "Component", minWidth: 9, maxWidth: 18 },
       { header: "State", minWidth: 5, maxWidth: 8 }
     ],
     io,
@@ -867,11 +874,11 @@ async function selectConfiguredAgent(
     title,
     selection.agents.map((agent) => ({
       value: agent.id,
-      cells: [agent.id, agent.adapterId, agent.id === selection.defaultAgent ? "yes" : ""]
+      cells: [agent.id, agent.component, agent.id === selection.defaultAgent ? "yes" : ""]
     })),
     [
       { header: "Agent", minWidth: 5, maxWidth: 24 },
-      { header: "Adapter", minWidth: 7, maxWidth: 12 },
+      { header: "Component", minWidth: 9, maxWidth: 18 },
       { header: "Default", minWidth: 7, maxWidth: 7 }
     ],
     io,
@@ -902,7 +909,11 @@ async function configuredAgents(ports: SelectionPorts): Promise<AgentChoice[]> {
     const input = entity(candidate);
     const id = stringField(input, "id");
     const adapterId = stringField(input, "adapterId");
-    return id === undefined || adapterId === undefined ? [] : [{ id, adapterId }];
+    return id === undefined || adapterId === undefined ? [] : [{
+      id,
+      adapterId,
+      component: displayExecutionComponent(adapterId, stringField(input, "component"))
+    }];
   });
 }
 
@@ -956,7 +967,12 @@ function asRole(value: unknown): RoleView | undefined {
     const config = entity(binding?.config);
     return agentId === undefined || adapterId === undefined || config === undefined
       ? []
-      : [[id, { agentId, adapterId, config }]];
+      : [[id, {
+          agentId,
+          adapterId,
+          component: displayExecutionComponent(adapterId, stringField(binding, "component")),
+          config
+        }]];
   }));
   return {
     name,

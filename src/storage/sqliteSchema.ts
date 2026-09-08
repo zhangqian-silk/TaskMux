@@ -974,6 +974,85 @@ CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
     // migration checksums. Workspace delivery is negotiated at initialize, not
     // stored as another configuration authority.
     sql: "SELECT 1; -- ACP bindings may carry additionalDirectories; history stays valid"
+  },
+  {
+    version: 10,
+    name: "agent-execution-component",
+    introducedIn: "0.15.8",
+    // Which product executes is now its own recorded fact, separate from the
+    // connection plan that reaches it. The plan keeps its `adapterId` name and
+    // its meaning; only the product identity is new.
+    //
+    // The backfill is a total function of the stored plan, never of a command
+    // string. `codex` and `claude` each have exactly one component, so those
+    // rows gain their true value. Every `acp` row becomes `unknown-acp-agent`:
+    // a v9 Home cannot say which product answered, and an executable named
+    // `claude-agent-acp` is not evidence that it was the Claude Agent SDK. The
+    // unidentified value is the honest one and stays correctable by hand.
+    //
+    // Sessions keep their own recorded component, so a Session started before
+    // this migration continues against exactly the implementation it began on.
+    sql: `
+UPDATE configured_agents SET payload = json_set(payload,
+  '$.schemaVersion', 3,
+  '$.component', CASE json_extract(payload, '$.adapterId')
+    WHEN 'codex' THEN 'codex-cli'
+    WHEN 'claude' THEN 'claude-code-cli'
+    ELSE 'unknown-acp-agent' END)
+WHERE json_extract(payload, '$.component') IS NULL;
+
+UPDATE global_roles SET payload = json_set(payload, '$.agentBindings', json((
+  SELECT json_group_object(key, json_set(value, '$.component',
+    CASE json_extract(value, '$.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.agentBindings')
+))) WHERE json_type(payload, '$.agentBindings') = 'object';
+
+UPDATE task_roles SET payload = json_set(payload, '$.agentBindings', json((
+  SELECT json_group_object(key, json_set(value, '$.component',
+    CASE json_extract(value, '$.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.agentBindings')
+))) WHERE json_type(payload, '$.agentBindings') = 'object';
+
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.effective.schemaVersion', 4,
+    '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.sessions')
+)));
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_object(key, json_set(value, '$.effective.schemaVersion', 4,
+    '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'object';
+
+UPDATE role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.effective.schemaVersion', 4,
+    '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.sessions')
+)));
+UPDATE role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_array(json_set(value, '$.effective.schemaVersion', 4,
+    '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'array';
+`
   }
 ]);
 

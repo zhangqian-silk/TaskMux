@@ -4,6 +4,14 @@ import { defaultTableWidth, renderTable } from "../output/table.js";
 import type { AgentAdapterId } from "../agent/adapterCatalog.js";
 import { isAgentAdapterId, supportedAgentAdapterIds } from "../agent/adapterCatalog.js";
 import {
+  adapterIdForExecutionComponent,
+  agentExecutionComponentLabel,
+  executionComponentsForAdapter,
+  isAgentExecutionComponentId,
+  supportedAgentExecutionComponentIds,
+  type AgentExecutionComponentId
+} from "../agent/executionComponents.js";
+import {
   createConfiguredAgent,
   validateConfiguredAgent,
   type ConfiguredAgent as ConfiguredAgentRecord,
@@ -29,6 +37,7 @@ export type { ConfiguredAgentRecord, EnvironmentBinding };
 
 export type ConfiguredAgentPatch = Readonly<{
   adapterId?: AgentAdapterId;
+  component?: AgentExecutionComponentId;
   command?: string;
   baseArgs?: readonly string[];
   environment?: readonly EnvironmentBinding[];
@@ -77,8 +86,16 @@ function addAgent(args: string[], store: AgentCommandStore): string {
   const [rawId, ...tail] = args;
   const id = agentId(rawId);
   const parsed = parseAgentOptions(tail, "add");
-  const adapterId = parsed.one("--adapter") ?? (isAgentAdapterId(id) ? id : undefined);
-  if (adapterId === undefined) throw usageError("--adapter is required.");
+  const component = parsed.one("--component")?.trim();
+  if (component !== undefined) assertComponent(component);
+  // Naming the component is enough: it determines its own connection plan, so
+  // there is one fact to state rather than a pair that could contradict.
+  const adapterId = parsed.one("--adapter")
+    ?? (component === undefined ? undefined : adapterIdForExecutionComponent(component))
+    ?? (isAgentAdapterId(id) ? id : undefined);
+  if (adapterId === undefined) {
+    throw usageError("--component or --adapter is required.");
+  }
   assertAdapter(adapterId);
   const command = parsed.one("--command")?.trim();
   if (command === undefined || command.length === 0) throw usageError("--command is required.");
@@ -90,7 +107,8 @@ function addAgent(args: string[], store: AgentCommandStore): string {
       command,
       parsed.many("--arg"),
       parsed.many("--env").map(parseEnvironmentBinding),
-      new Date()
+      new Date(),
+      component
     );
   } catch (error) {
     throw usageError(error instanceof Error ? error.message : String(error));
@@ -110,12 +128,14 @@ function listAgents(args: string[], store: AgentCommandStore): string {
     "Agents",
     [
       { header: "Agent", minWidth: 5, maxWidth: 24 },
+      { header: "Component", minWidth: 9, maxWidth: 20 },
       { header: "Adapter", minWidth: 7, maxWidth: 12 },
       { header: "Command", minWidth: 7, maxWidth: 48 },
       { header: "Environment", minWidth: 11, maxWidth: 32 }
     ],
     agents.map((agent) => [
       agent.id,
+      agent.component,
       agent.adapterId,
       [agent.command, ...agent.baseArgs].join(" "),
       agent.environment.map((binding) => `${binding.target}<-${binding.sourceName}`).join(", ")
@@ -149,10 +169,25 @@ function updateAgent(args: string[], store: AgentCommandStore): string {
   }
   const adapterId = parsed.one("--adapter")?.trim();
   if (adapterId !== undefined) assertAdapter(adapterId);
+  const component = parsed.one("--component")?.trim();
+  if (component !== undefined) assertComponent(component);
+  if (component !== undefined && adapterId !== undefined
+    && adapterIdForExecutionComponent(component) !== adapterId) {
+    throw usageError(
+      `Agent execution component ${component} is reached over the `
+      + `${adapterIdForExecutionComponent(component)} connection plan, not ${adapterId}. `
+      + "Pass --component alone to move the Agent onto its own plan."
+    );
+  }
   const command = parsed.one("--command")?.trim();
   if (command !== undefined && command.length === 0) throw usageError("--command is required.");
   const patch: ConfiguredAgentPatch = {
     ...(adapterId === undefined ? {} : { adapterId }),
+    // Changing the component can move the Agent onto its plan, which is the one
+    // way the two stay consistent without asking the operator to restate both.
+    ...(component === undefined
+      ? {}
+      : { component, adapterId: adapterIdForExecutionComponent(component) }),
     ...(command === undefined ? {} : { command }),
     ...(parsed.has("--arg")
       ? { baseArgs: parsed.many("--arg") }
@@ -261,7 +296,14 @@ function removeAgent(args: string[], store: AgentCommandStore): string {
 }
 
 type ActualAgentChanges = Readonly<{
+  /**
+   * The connection plan changed. Naming a component on another plan reports as
+   * an adapter change too, because that is what it is: the stored Role bindings
+   * hold plan-shaped configuration that the new plan cannot accept.
+   */
   adapter: boolean;
+  /** The product changed while staying on the same plan; new Sessions only. */
+  component: boolean;
   operational: boolean;
 }>;
 
@@ -270,12 +312,14 @@ function actualAgentChanges(
   patch: ConfiguredAgentPatch
 ): ActualAgentChanges {
   const adapter = patch.adapterId !== undefined && patch.adapterId !== existing.adapterId;
+  const component = patch.component !== undefined && patch.component !== existing.component;
   const operational = adapter
+    || component
     || (patch.command !== undefined && patch.command !== existing.command)
     || (patch.baseArgs !== undefined && !isDeepStrictEqual(patch.baseArgs, existing.baseArgs))
     || (patch.environment !== undefined
       && !isDeepStrictEqual(patch.environment, existing.environment));
-  return { adapter, operational };
+  return { adapter, component, operational };
 }
 
 function assertValidAgentCandidate(
@@ -413,6 +457,7 @@ type ParsedOptions = Readonly<{
 function parseAgentOptions(args: string[], mode: "add" | "update"): ParsedOptions {
   const valueOptions = new Map([
     ["--adapter", { repeatable: false, allowOptionLikeValue: false }],
+    ["--component", { repeatable: false, allowOptionLikeValue: false }],
     ["--command", { repeatable: false, allowOptionLikeValue: false }],
     ["--arg", { repeatable: true, allowOptionLikeValue: true }],
     ["--env", { repeatable: true, allowOptionLikeValue: false }]
@@ -486,6 +531,15 @@ function assertAdapter(value: string): asserts value is AgentAdapterId {
   }
 }
 
+function assertComponent(value: string): asserts value is AgentExecutionComponentId {
+  if (!isAgentExecutionComponentId(value)) {
+    throw usageError(
+      `Agent execution component is not supported: ${value}. Supported components: `
+      + `${supportedAgentExecutionComponentIds().join(", ")}.`
+    );
+  }
+}
+
 function assertNoArguments(args: string[], message: string): void {
   if (args.length > 0) throw usageError(`${message}. Unexpected argument: ${args[0]}`);
 }
@@ -493,6 +547,7 @@ function assertNoArguments(args: string[], message: string): void {
 function renderAgent(title: string, agent: ConfiguredAgentRecord): string {
   return [
     title,
+    `Component: ${agent.component} (${agentExecutionComponentLabel(agent.component)})`,
     `Adapter: ${agent.adapterId}`,
     `Executable: ${agent.command}`,
     `Arguments: ${agent.baseArgs.join(" ")}`,
