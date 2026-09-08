@@ -334,7 +334,10 @@ implement session/set_config_option"）。
 推送点固定在 Session 建立之后、首个 prompt 之前——ACP 只在 Session 存在后
 才报告可配置面，而 prompt 一旦先发就会以 Agent 默认值运行却显示用户的选择。
 任一拒绝直接中止启动：**被拒的配置对应零个 prompt**，不降级、不换模型。
-Agent 返回的完整选项列表用于逐项确认，"调用成功但当前值不同"按替换处理并失败。
+每个轴在轮到它时对 Agent 当前的完整选项列表解析，全部步骤落地后再按
+Agent 最后一次报告的列表校验所有显式请求值；"调用成功但当前值不同"按替换
+处理并失败。（turn-13 的实现只按初始列表一次性定好步骤，因此后一次调用重置
+前一个轴时报告与事实不符——见 §10.1、§10.3。）
 
 权限同理：ACP 定义了权限选项，Yui 未接通交互式同意，因此**保留对
 `session/request_permission` 的显式拒绝，不自动放行**——API 授权与工具
@@ -586,6 +589,9 @@ ACP 的两次结果分别回报费用 USD `0.00188` 和 `0.002295`；
 
 ## 9 ACP 运行配置接通（turn-13，work-item-3）
 
+> 本节的候选已被独立复审驳回。§9.2、§9.5、§9.6 有越界结论，
+> 已在 **§10.1** 逐条更正；返工与新证据见 §10。
+
 ### 9.1 本轮改的是什么
 
 不是改名，是把普通 Yui 配置入口接到真实协议效果上。此前 `AcpAgentConfig`
@@ -702,4 +708,173 @@ Controller、认证或全局安装；未 push／PR／远端合并／打标签／
 
 收尾：`npm run lint` 干净，`npm test` **81/81 通过**（维持既有规模，
 未新增永久回归测试），临时夹具与临时测试在交付前删除。
+手册 HTML 由 Leader 重新生成，本节只更新 Markdown。
+
+## 10 turn-15：驳回后的三处返工（work-item-3）
+
+turn-13 的候选被独立完整复审驳回。本节先更正 §9 越界的结论，再给出穿透
+Planner 的新证据。同 Role／同 Session，无新 WorkItem。
+
+### 10.1 对 §9 结论的更正
+
+§9.5 称"每例都从真实入口出发……不用理想内存对象绕过入口"。**这句话当时不成立**，
+必须按下列三点读：
+
+1. **那 10 项测试没有穿透 Planner。** 它们在 Session 夹具里手工提供了
+   `providerControl.component`。而真实的 `FileRoleLaunchPlanner` 两个分支
+   都没有填这个字段，`structuredProviderHost` 于是转发 `undefined`，ACP 侧解析为
+   未识别产品。也就是说：**一份普通的 `claude-agent-sdk` + bypass 配置在真实
+   Session 里必然失败**，而测试因为自己补了这个字段而看不到。§9.5 的"从真实入口
+   出发"只覆盖了 CLI 到落库这一段，没有覆盖落库到启动载荷这一段。
+2. **§9.2 的"逐项确认"只在单步内成立。** 当时 `#applyConfiguration` 依据
+   `session/new` 的初始列表一次性定好全部步骤，之后不再重算。所以后一次调用
+   重置前一个轴时，每一步的确认都通过、`open` 成功、`appliedConfiguration`
+   仍报告用户请求的值——报告与事实不符。反向同样错：只有换了模型才出现的
+   effort 取值会被提前拒绝。
+3. **§9.6 关于能力面的描述与代码不一致。** 探针把 model 轴报为
+   `models=[] + available=true`（延迟枚举、允许自定义输入），但
+   `validateCatalog` 仍以"models 为空"判定不完整，于是真实的
+   `AgentConfigurationCatalogService.resolve` 落到兜底目录并附
+   "Agent configuration model catalog is incomplete"，把实时握手与探针给出的
+   真实原因一起丢掉。§9.6 描述的是意图，不是当时的行为。
+
+另外，§9.5 缺少动态选项列表与目录校验两类覆盖，本轮补上。
+
+### 10.2 P1(1) Planner 携带执行组件
+
+`fileRoleLaunchPlanner.ts` 的 start 与 restore 两个分支各补
+`component: binding.component`。取值可信不靠约定：`binding` 来自本次启动
+所依据的固定快照（`activeRoleAgentBinding`），且此前已有
+`configured.component !== binding.component` 的显式校验。
+
+按要求遍历该字段的**全部实际消费者**，而不是只加一个接口字段。第三处消费者
+`runtime/agentHost.ts` 的 Codex 重连路径原本从零重建 control 并丢掉该字段——
+一个 Session 生命周期中途悄悄丢掉产品身份——已一并修正为透传。
+`launchBroker.validateProviderControl` 原有的一致性校验未动：非法组件、
+或组件与 `adapterId` 相互矛盾，仍然拒绝。
+
+**未**在测试里补 `component` 来掩盖问题：新证据一律从真实 CLI 配置取值。
+
+### 10.3 P1(2) 按最新状态解析，并在 prompt 前校验全部值
+
+`planAcpSessionConfiguration` 与 `AcpConfigurationPlan`（一次性计划）删除，
+改为每个字段在**轮到它时**对当前完整列表解析
+（`resolveAcpConfigurationField`），全部步骤落地后再按 Agent 最后一次报告的
+列表校验**所有显式请求值**（`verifyAcpConfiguration`）。顺序是有界且固定的
+`model → effort → permission`：model 会重定义其他轴，permission 放最后因为
+它的错值等于授出权限。**没有无界重试或自动修复循环**——有界显式顺序加一次
+最终确认即可。
+
+对只能应答的旧式 mode-only 对端，如实区分"确认过"与"仅被接受"：
+`confirmation` 有 `already`／`observed`／`acknowledged` 三态，
+`session/set_mode` 不返回选项列表，因此只记 `acknowledged`，
+且**不把请求值写回缓存列表**——那样做等于制造协议本身拒绝给出的确认，
+最终校验会把 Yui 自己的假设当成 Agent 的报告读回来。**从不伪造 `observed`。**
+
+### 10.4 P2(3) 目录完整性按当前字段契约判定
+
+`validateCatalog` 中"models 为空即不完整"改为
+`models.length === 0 && !modelAxisIsAccountedFor(fields)`。判据是 `model`
+字段**是否明确陈述了 `available`**：
+
+- `available: false` —— 该轴不存在，`reason` 说明原因；
+- `available: true` —— 该轴存在但取值延迟枚举（ACP：列出模型需要真实
+  可能计费的 Session）；
+- **未陈述** —— Codex／Claude 的形状，它们成功时把模型写进 `models`，
+  所以空列表确实意味着发现失败，仍然拒绝。
+
+判据不能用 `allowCustom` 或"是否可自定义"：Codex（probe:113）与
+Claude（probe:192）同样是 `allowCustom: true`，那样会把它们真正损坏的目录
+判为合格。实时握手与 `reason` 的透传、以及缓存读回路径共用同一段校验，
+因此三条路径一致。**没有 all-catch 或兜底遮蔽**：真正缺失的目录仍然落兜底
+并带原因。
+
+### 10.5 证据（穿透 Planner，共 21 项，全部通过）
+
+两个临时测试文件，均为一次性 Home、临时 HOME、绝对 launcher、无凭据对端；
+**零真实模型、零凭据读取**。命令：
+
+```
+node --test test/tmp/acp-run-configuration.test.mjs        # 14 项
+node --test test/tmp/acp-catalog-resolution.test.mjs        #  7 项
+```
+
+链路是完整的：真实 `yui config agent add --component` ／
+`yui config system set` ／ `yui task create` ／ `yui task role update
+--model --effort --permission-strategy` → 重开 Store
+（`openConfiguredTaskStore`）→ 真实 `resolveEffectiveLaunch` → 落 Turn →
+**真实 `FileRoleLaunchPlanner.plan`** → 真实
+`validateAgentHostLaunchPayload` → 真实 `startStructuredProviderSession` →
+无凭据 ACP 对端。**start 与 resume 两半都走完**（resume 通过真实
+`createRoleSessionSet` + `recordRoleAgentSession` 记录 Session 后再规划，
+因为 Planner 拒绝凭空造 Session）。
+
+P1(1)：真实规划的 start 载荷携带 `component=claude-agent-sdk`
+与 `desiredConfiguration={model:b,effort:high,permissionBypass:true}`；
+resume 的 restore 载荷携带同一 component；broker 拒绝与 adapter 矛盾的组件；
+bypass 以该产品自己的 `bypassPermissions` 到达对端，三轴均 `observed`；
+`unknown-acp-agent` 请求 bypass 被显式拒绝。
+
+P1(2)：effort 先被满足、换 model 后被重置 → 以
+`set model=b` 在前、`set effort=high` 在后重新下发，prompt 在
+`<model=b,effort=high,mode=normal>` 下发生；只有新 model 才提供的 effort
+**未被提前拒绝**；`mode` 重置了已确认的 model → 报
+`ACP Session run configuration did not hold.` 且 **零 prompt**；
+替换值在其所在步骤失败；对端不提供的 mode 被拒并列出真实取值
+（`Offered values: normal, plan`）；旧式对端得到且仅得到
+`[["permission","acknowledged"]]`，`observed` 一次都没有出现。
+
+新增/resume 与报错覆盖：resume 经 `session/load` 后按重载 Session 的当前
+状态应用配置，prompt 在 `<model=b,effort=high,mode=bypassPermissions>` 下
+发生；resume 的失败与 start 同形且零 prompt；拒绝信息同时给出轴、请求值
+与 Agent 自己的取值列表。
+
+P2(3)：真实 `AgentConfigurationCatalogService.resolve` 对
+`models=[] + available=true` 返回 `source=live`（此前是 `fallback`），
+`failure=undefined`，实时握手完整保留
+（`agentName=fake-acp-agent`、`protocolVersion=1`、`capabilities=[loadSession]`），
+且不含兜底目录的 "Runtime configuration catalog is unavailable."；
+每个延迟轴的 `reason` 都到达调用方（`available: false` 与 `true` 都被接受，
+且仍然是两种不同的答复）；缓存写盘后令发现失败 → `source=cache`
+且握手与 `available` 原样读回；一份 Codex／Claude 形状（未陈述 `available`
+且 `models` 为空）仍然被拒并落 `fallback`。
+**向导实测**：真实 `resolveRoleWizardArguments` + 真实 `agent.capabilities`
+端口，脚本化终端选到自定义模型，产出
+`--agent acp-fake --model sonnet-x --effort high`（该命令随后真实执行并读回
+生效），全程**没有出现** "Runtime capability request failed"／
+"Runtime configuration catalog is unavailable"；同一段脚本在探针真的不可用时
+**会**打印这两条警告——所以前一例的"没有出现"是解析结果的事实，
+不是脚本化终端的假象。
+
+绿测试单独不算证据，故做六次变异，每次都重建 `dist` 后复跑：
+
+| 变异 | 结果 |
+| --- | --- |
+| 删掉 Planner 两处 `component` | 11 项中 **7 项失败**（含 start／resume／bypass 到达／旧式对端） |
+| 删掉最终全值校验 | 仅"mode 重置已确认 model"失败 |
+| 改回按初始列表一次性解析 | 恰好复审点名的两项失败（effort 被重置、effort 仅新 model 提供） |
+| 旧式分支把 `acknowledged` 写成 `observed` | 仅旧式对端一项失败 |
+| `validateCatalog` 恢复"models 为空即不完整" | 目录 7 项中 **4 项失败** |
+| 判据改用 `allowCustom` | 仅"Codex／Claude 空目录仍被拒"失败 |
+
+第一次变异即是复审的结论本身：普通配置在真实 Session 里必然失败。
+六次变异后全部还原并复验 21/21 全绿。
+
+### 10.6 边界
+
+迁移 11 经复审无缺陷（未重写 payload、旧 `default` 未加宽、快照往返与
+方向明确），本轮**未改动**；1–10 未改。之前怀疑的 grouped options
+本轮**未被确认为缺陷**，因此不处理，也不为推测中的未来矩阵扩面。
+`runtimeEventInbox` 对 ACP 的排除仍然未改。
+
+本轮**未读共享凭据、未调用真实模型、未改共享服务或全局配置、
+未 push／PR／远端合并／发布／归档**。默认权限未放宽，bypass 仍必须显式；
+model／effort／权限的 Session 副作用失败时不发 prompt、不换值、不换模型、
+不换路由。仅本 W3 受管工作区、临时 HOME 与绝对本地 launcher。
+
+不声称与产品完整功能等价：本轮验证配置推送、确认与目录解析路径，
+工具权限往返、取消与并发竞态仍未真实覆盖。
+
+收尾：`npm run lint` 与 `npm run build` 干净，`npm test` 81/81 通过
+（未新增永久回归测试），临时夹具与临时测试在交付前删除。
 手册 HTML 由 Leader 重新生成，本节只更新 Markdown。

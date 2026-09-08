@@ -659,6 +659,11 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         ? {
             schemaVersion: 1,
             adapterId: binding.adapterId,
+            // The product identity is pinned by the snapshot this launch was
+            // resolved from, and the check above proves the Agent record still
+            // names it. Carrying only the adapter would leave the runtime with
+            // two products sharing one plan and no way to tell them apart.
+            component: binding.component,
             transport: managedCompiled!.transport,
             endpointImplementation,
             kind: "restore",
@@ -681,6 +686,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         : {
             schemaVersion: 1,
             adapterId: binding.adapterId,
+            component: binding.component,
             transport: managedCompiled!.transport,
             endpointImplementation,
             kind: "start",

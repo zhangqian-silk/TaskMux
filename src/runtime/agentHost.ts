@@ -416,6 +416,12 @@ export async function runAgentHost(input: Readonly<{
       providerControl: {
         schemaVersion: 1,
         adapterId: "codex",
+        // Reconnecting reaches the same product the disconnected Session was
+        // pinned to. Rebuilding the control without the component would quietly
+        // drop that identity halfway through a Session's life.
+        ...(previousControl.component === undefined
+          ? {}
+          : { component: previousControl.component }),
         transport: "codex-app-server-proxy",
         kind: "restore",
         mode: "resume",

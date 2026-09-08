@@ -28,10 +28,12 @@ import {
   type AcpInitializeResult
 } from "./acpProtocol.js";
 import {
+  ACP_CONFIGURATION_ORDER,
   confirmAcpConfigurationStep,
   describeAcpConfigurationRejections,
-  planAcpSessionConfiguration,
-  type AcpConfigurationStep,
+  resolveAcpConfigurationField,
+  verifyAcpConfiguration,
+  type AcpConfigurationOutcome,
   type AcpDesiredSessionConfiguration
 } from "./acpSessionConfiguration.js";
 import {
@@ -160,9 +162,10 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
   /**
    * What Yui asked this Session for and what the Agent did with it, recorded so
    * a launch reports the configuration it actually runs under rather than the
-   * one it requested.
+   * one it requested. Each entry carries how strongly it was confirmed, because
+   * a legacy mode-only peer cannot prove more than that it accepted the call.
    */
-  #appliedConfiguration: readonly AcpConfigurationStep[] = [];
+  #appliedConfiguration: readonly AcpConfigurationOutcome[] = [];
 
   private constructor(
     private readonly child: ChildProcessWithoutNullStreams,
@@ -428,26 +431,52 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
    * defaults while reporting the user's selection. So this sits exactly between
    * the two, and any failure here stops the launch rather than degrading it.
    *
-   * Every step is confirmed against the option list the Agent returns, which ACP
-   * requires to be complete. A call that succeeds but leaves a different current
-   * value is a substitution, and it fails here rather than passing silently.
+   * Within that window, each field is resolved against the option list the Agent
+   * reports at that moment, not against the list the Session opened with. This is
+   * what a single up-front plan cannot do: setting a model resets the reasoning
+   * effort on real Agents and can change which effort values exist at all, so a
+   * plan fixed before the model call would either re-send a now-stale value or
+   * reject a value that the new model does offer. Resolving one field at a time
+   * against the newest list handles both without guessing.
+   *
+   * The pass is bounded — each field is decided once, in a fixed order, and there
+   * is no retry or repair loop. What makes that sufficient is the final
+   * verification against the Agent's last complete list: it covers every
+   * explicitly requested value, so an axis moved by a later call is caught even
+   * though its own step had already been confirmed.
    */
   async #applyConfiguration(
     desired: AcpDesiredSessionConfiguration,
     component: AgentExecutionComponentId
   ): Promise<void> {
-    const plan = planAcpSessionConfiguration(desired, this.#configOptions, component);
-    if (plan.rejections.length > 0) {
-      // The user asked for something this Agent cannot deliver. Continuing would
-      // run the Turn under a configuration nobody chose, so the launch stops
-      // with the Agent's own enumeration in the message.
-      throw new Error(
-        `ACP Agent cannot apply the requested run configuration. `
-        + describeAcpConfigurationRejections(plan.rejections)
+    const outcomes: AcpConfigurationOutcome[] = [];
+    for (const field of ACP_CONFIGURATION_ORDER) {
+      const resolution = resolveAcpConfigurationField(
+        field,
+        desired,
+        this.#configOptions,
+        component
       );
-    }
-    const applied: AcpConfigurationStep[] = [...plan.satisfied];
-    for (const step of plan.steps) {
+      if (resolution.kind === "unrequested") continue;
+      if (resolution.kind === "rejection") {
+        // The user asked for something this Agent cannot deliver. Continuing
+        // would run the Turn under a configuration nobody chose, so the launch
+        // stops with the Agent's own enumeration in the message.
+        throw new Error(
+          `ACP Agent cannot apply the requested run configuration. `
+          + describeAcpConfigurationRejections([resolution.rejection])
+        );
+      }
+      if (resolution.kind === "satisfied") {
+        outcomes.push(Object.freeze({
+          field,
+          configId: resolution.step.configId,
+          value: resolution.step.value,
+          confirmation: "already" as const
+        }));
+        continue;
+      }
+      const step = resolution.step;
       // An Agent that only ever advertised legacy `modes` has no
       // `session/set_config_option` handler, so mode changes must use the method
       // it does implement. Sending the modern method to it would fail with
@@ -460,22 +489,39 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
           );
       if (this.#legacyModes) {
         // `session/set_mode` answers with no options, so the only fact available
-        // is that the Agent accepted the call. Record the intent without
-        // claiming a confirmation the protocol did not provide.
-        this.#configOptions = this.#configOptions.map((option) => option.id === step.configId
-          ? Object.freeze({ ...option, currentValue: step.value })
-          : option);
-      } else {
-        // The answer is the whole option list, so it both confirms this step and
-        // carries any change the Agent made alongside it.
-        const options = readAcpConfigOptions(asObject(result)?.configOptions);
-        if (options !== undefined) this.#configOptions = options;
-        const mismatch = confirmAcpConfigurationStep(step, this.#configOptions);
-        if (mismatch !== undefined) throw new Error(mismatch);
+        // is that the Agent accepted the call. Yui's own view is left untouched:
+        // writing the requested value into the cached list would manufacture the
+        // very confirmation the protocol withheld, and the final verification
+        // would then read Yui's own assumption back as the Agent's report.
+        outcomes.push(Object.freeze({
+          field,
+          configId: step.configId,
+          value: step.value,
+          confirmation: "acknowledged" as const
+        }));
+        continue;
       }
-      applied.push(step);
+      // The answer is the whole option list, so it both confirms this step and
+      // carries any change the Agent made alongside it.
+      const options = readAcpConfigOptions(asObject(result)?.configOptions);
+      if (options !== undefined) this.#configOptions = options;
+      const mismatch = confirmAcpConfigurationStep(step, this.#configOptions);
+      if (mismatch !== undefined) throw new Error(mismatch);
+      outcomes.push(Object.freeze({
+        field,
+        configId: step.configId,
+        value: step.value,
+        confirmation: "observed" as const
+      }));
     }
-    this.#appliedConfiguration = Object.freeze(applied);
+    // Every call has landed, so this is the configuration the prompt would run
+    // under. Re-checking all requested values here is what catches an axis that a
+    // later call reset after its own step had already been confirmed.
+    const failures = verifyAcpConfiguration(desired, this.#configOptions, component, outcomes);
+    if (failures.length > 0) {
+      throw new Error(`ACP Session run configuration did not hold. ${failures.join(" ")}`);
+    }
+    this.#appliedConfiguration = Object.freeze(outcomes);
   }
 
   /** The Session config options the Agent last reported. */
@@ -484,7 +530,7 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
   }
 
   /** Requested configuration this Session confirmed, in application order. */
-  get appliedConfiguration(): readonly AcpConfigurationStep[] {
+  get appliedConfiguration(): readonly AcpConfigurationOutcome[] {
     return this.#appliedConfiguration;
   }
 

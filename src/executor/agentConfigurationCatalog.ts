@@ -465,12 +465,7 @@ function validateCatalog(
   unique(models.map(({ value: model }) => model), "model");
   const fields = value.fields.map(validateField);
   unique(fields.map(({ key }) => key), "configuration field");
-  // An empty model list is only incomplete when the catalog still claims to
-  // offer models. An Agent whose protocol has no model catalog says so on the
-  // `model` field, and rejecting that answer discards the rest of the catalog
-  // — including the per-Agent warnings — as if discovery had failed outright.
-  if (models.length === 0
-    && fields.find(({ key }) => key === "model")?.available !== false) {
+  if (models.length === 0 && !modelAxisIsAccountedFor(fields)) {
     throw new Error("Agent configuration model catalog is incomplete.");
   }
   const warnings = value.warnings.map((warning) => text(warning, "catalog warning"));
@@ -493,6 +488,43 @@ function validateCatalog(
     fields,
     warnings
   };
+}
+
+/**
+ * Whether an empty model list is an answer or a failure.
+ *
+ * Emptiness alone does not distinguish the two, so the `model` field's own
+ * contract decides. `available` is the field that carries a probe's explicit
+ * statement about an axis, and only a probe that states it has said anything
+ * about what an empty list means:
+ *
+ * - `available: false` — the axis does not exist for this Agent, and `reason`
+ *   says why. Nothing to enumerate.
+ * - `available: true` — the axis exists and its values are deliberately
+ *   enumerated later, with `allowCustom` letting a value be named before Yui has
+ *   the list. This is ACP: models live in the `configOptions` a Session returns,
+ *   so listing them at probe time would mean opening a real, possibly billed
+ *   Session to populate a menu. The probe reports the axis, defers the values,
+ *   and the configured model is verified against the Agent's own list at launch.
+ * - absent — the probe made no claim, which is the Codex and Claude shape. Those
+ *   probes enumerate models into the top-level `models` array on success, so an
+ *   empty array there means `model list` failed or returned nothing usable, and
+ *   the catalog really is incomplete.
+ *
+ * So an unstated `available` with no models stays a rejection, which is what
+ * keeps a genuinely broken Codex or Claude discovery from passing as an answer.
+ *
+ * The earlier form of this check accepted only the first case. It therefore
+ * rejected a valid ACP catalog and replaced it with the fallback, discarding the
+ * live handshake and the probe's own reasons — the failure mode the
+ * `available`/`reason` pair exists to prevent.
+ */
+function modelAxisIsAccountedFor(fields: readonly AgentConfigurationField[]): boolean {
+  const model = fields.find(({ key }) => key === "model");
+  if (model === undefined) return false;
+  if (model.available === undefined) return model.choices.length > 0;
+  // Stated either way, the field itself explains the empty list.
+  return true;
 }
 
 /**
