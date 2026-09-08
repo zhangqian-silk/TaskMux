@@ -887,6 +887,34 @@ UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
     // Existing records deliberately keep their managed-workspace execution;
     // adopted preparations must never be inferred as an automatic binding.
     sql: "SELECT 1; -- explicit adopted execution environment; absent means managed workspace"
+  },
+  {
+    version: 10,
+    name: "plugin-validation-evidence",
+    introducedIn: "0.15.8",
+    sql: `
+CREATE TABLE plugin_validations (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
+`
+  },
+  {
+    version: 11,
+    name: "plugin-enable-intent",
+    introducedIn: "0.15.8",
+    // A v10 validation proves no enable/disable choice. Preserve it unchanged;
+    // never infer desired configuration from historical reports or processes.
+    sql: `
+CREATE TABLE plugin_intents (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  plugin_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, plugin_id)
+);
+`
   }
 ]);
 
@@ -1295,6 +1323,8 @@ export function migrateSqliteSchema(
 
 /** The names of every table the schema creates (for tests/introspection). */
 export const SQLITE_SCHEMA_TABLES: readonly string[] = [
+  "plugin_intents",
+  "plugin_validations",
   "artifacts",
   "local_resources",
   "environment_preparations",
