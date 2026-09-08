@@ -165,6 +165,26 @@ export function selfTest() {
 }
 ```
 
+### 作者模块的运行环境
+
+Node 子进程是宿主，不代表作者模块运行在完整的 Node 全局环境中。
+当前模块使用独立 vm context，仅依赖 ECMAScript 内建值和下述 SDK 端口：
+
+| 类别 | 当前可用性 |
+| --- | --- |
+| ECMAScript 内建值，例如 `Promise`、`JSON`、`Math`、`Date` | 可用；支持 `async/await`、`Promise.resolve()` |
+| `console` | 可见，但不是 SDK 日志或回执端口；子进程 stdout/stderr 不向调用者转发 |
+| `setTimeout`、`setInterval`、`queueMicrotask` | 不提供；不要使用普通 Node 定时器写异步流程 |
+| `structuredClone`、`process`、`Buffer` | 不提供 |
+| `fetch`、`URL`、`TextEncoder`、`AbortController`、`crypto` | 不提供 |
+| 业务 I/O 与下游工具 | 使用 handler 的 `api.call`，服从原调用者的权限与效果上限 |
+
+因此 `await Promise.resolve()` 可用，`await new Promise(r => setTimeout(r, 50))`
+不可用。一个永不 settle 的 handler 会触发下面的 30 秒子进程请求超时。
+表格描述正常作者 API，不是安全隔离声明；不能根据某个全局变量不存在推导
+恶意 trusted-local 代码无法触碰宿主。build 脚本是另一条已授信 Node 执行路径，
+不受这张作者模块全局表的约束。
+
 初始化只能准备完整注册，不得发送、发布、修改业务资料或启动后台服务。
 它得不到任何业务调用端口；初始化失败仅关闭候选子进程。trusted-local 作者
 仍必须遵守这个合同，缺少端口不是对任意恶意代码直接宿主访问的隔离保证。
@@ -208,8 +228,12 @@ package scope 替代资源授信。因 trusted-local 不约束直接宿主效果
 ```
 
 grant 不由 SDK 自签发。次数按真实执行尝试消费，失败也不回退；一次 validate
-包含 initialize/selfTest/dispose。build 是另一次执行。单次调用已消费的 reservation
-允许该调用继续复核，但撤销/到期仍阻止其后续受控动作；耗尽次数不允许新调用。
+包含 initialize/selfTest/dispose。build 是另一次执行。
+`call` 是不可从持久步骤恢复的短调用，只增加 usesUsed，不追加永久 reservation；
+其准入由当前调用的绑定闭包持有，不能导出、伪造或用于进程重启后的继续执行。
+build/validate/activate 保留现有 reservation 行为；已有历史 key 不截断或清理。
+已消费额度的当前调用可以继续复核，但撤销/到期仍阻止后续受控动作，
+额度耗尽则不允许新调用。长期使用不会因每次 call 再新增一条永久 key。
 尚未提交的启用意图事务失败不算已执行尝试，其消费随事务回滚。
 普通 disable 不撤销已在执行的原调用，撤权也不抹除意图或已发生效果。
 

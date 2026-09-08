@@ -755,7 +755,8 @@ export function isValidCapabilityGrantTransition(existing: CapabilityGrant, cand
   }
   // A use record must advance the counter (compare-and-swap): a stale equal
   // increment from a concurrent reader is rejected, so two workflows cannot
-  // spend the same maxUses slot. Reservations are append-only, one per use.
+  // spend the same maxUses slot. Existing reservations are append-only;
+  // non-resumable uses may advance the counter without adding a reservation.
   return (candidate.usesUsed as number) > (existing.usesUsed as number)
     && reservationsAppendOnly(existing.useReservations, candidate.useReservations)
     && Date.parse(candidate.updatedAt) >= Date.parse(existing.updatedAt);

@@ -105,16 +105,16 @@ export function createPluginService(store: TaskStore, host: InstanceHost, regist
   const refFor = (taskId: string, pkg: PluginPackage): ImplementationRef =>
     ({ id: keyFor(taskId, pkg.manifest.id), generation: randomUUID() });
 
-  /** Each actual code-execution attempt consumes one precisely bounded grant.
-   * The returned check rechecks that original reservation on subsequent child
-   * actions; scope or a manifest is never an executable-code grant. */
+  /** Each execution consumes one use. A live call's bound closure carries its
+   * admission; it is never resumed from a durable reservation or sent to code.
+   * Subsequent actions still check current authority, not cached permission. */
   const execution = (taskId: string, preparationId: string, pkg: PluginPackage, phase: string) => {
     const params = { pluginId: pkg.manifest.id, digest: pkg.digest,
       environmentRef: `${taskId}/${preparationId}`, trust: "trusted-local", phase };
     // This grants the capability to run code without OS effect confinement;
     // it does not claim that every invocation actually has irreversible effects.
     const request = { action: "plugin.execute", params, irreversibility: "irreversible" as const };
-    const reservation = `plugin/${randomUUID()}`;
+    const reservation = phase === "call" ? undefined : `plugin/${randomUUID()}`;
     const grantId = store.transaction((tx) => {
       const env = environment(taskId, preparationId);
       const grant = tx.listCapabilityGrants(taskId).find((candidate) =>
@@ -131,7 +131,7 @@ export function createPluginService(store: TaskStore, host: InstanceHost, regist
     return () => {
       environment(taskId, preparationId);
       const grant = store.listCapabilityGrants(taskId).find((candidate) => candidate.id === grantId);
-      if (!grant?.useReservations.includes(reservation)
+      if (!grant || (reservation !== undefined && !grant.useReservations.includes(reservation))
         || !checkGrant(grant, request, new Date(), { skipUsesCheck: true }).allowed) {
         throw new Error("Plugin execution authority was revoked.");
       }

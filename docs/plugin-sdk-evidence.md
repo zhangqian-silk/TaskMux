@@ -183,3 +183,46 @@ Turn 报告后裁定；审查身份、ReviewRound/Turn、精确候选及裁定�
 没有扩展 T10、T11、Project/global 提升、OS 沙箱、后台恢复或控制面自身的
 唤醒/busy 修复。未测试真实模型/生产/付费/共享资源；未 push/PR/merge/release/
 archive，未同步上游或升级共享安装/DB、重启共享服务。
+
+## review-round-2 修正（turn-8）
+
+正式 Claude `review-round-2/turn-7`（effective `claude/opus/max`）完整审查
+`43c2cd9b23ca68f7666939ca121dbbbd44334b67`，结论为无 P1、建议接受但有两个
+P2，以及作者运行环境说明缺口。Leader 完整读取原报告后作以下裁定：
+
+- 接受每次 call 永久追加 reservation 的增长问题。本地红证据确认 1000 次
+  调用追加 1000 个 key。修正后 `call` 只原子递增 usesUsed；原调用持有的绑定
+  闭包证明它已消费额度，并继续复核 grant 是否存在、撤权、到期、参数与上限。
+  不导出该闭包，也不将调用当作可跨进程恢复的步骤。管理阶段继续记录 key；
+  既有历史 key 保持原样，不截断，不添加清理 worker。
+- 现行 grant v2 与 Store 早已允许 reservation 数量小于 usesUsed，且允许
+  计数递增时原 reservation 数组不变；此次没有改变持久布局或验证规则，无需
+  新迁移。原 release workflow、environment adopt 继续显式提供自己的 key。
+- 部分采纳永久覆盖建议：按照 Project Skill 对缺失基础主路径的例外，新增
+  一条 `test/core/plugin-smoke.test.js`，覆盖真实认证入口下独立声明式包的
+  创建、验证、激活、调用、选择查询、停用及持久读取。没有把增长、撤权、
+  异常和竞态矩阵转成永久测试；不能仅按代码行数要求保留所有临时探针。
+- 接受文档缺口，补充 `docs/plugin-sdk.md` 的作者全局 API 表，区分 ECMAScript
+  内建值、缺失的 Node/Web/定时器 API 与 `api.call`。未改变运行环境或增加
+  API，更未把变量缺失解释成 OS 沙箱。
+
+本次实际运行：
+
+- `make install-local`、`npm run build`、`npm run lint`、`npm run test:core`
+  通过；core 从 81 增至 82/82，测试阶段约 4.23 秒。新增单条 smoke 独立运行
+  约 87ms，不包含模型或外部 API。
+- 临时 `node --test output/t09-call-grants.mjs`：5/5，通过真实已认证入口、
+  自有子进程和隔离 SQLite。1000 次 call 后 usesUsed 从 1 到 1001，
+  reservation 仍只有原历史 key，grant JSON 从 566 到 569 字节（仅数字位数）。
+  不以单机耗时声称通用吞吐保证。
+- 最后一次 `maxUses=1` 的合法调用仍能完成嵌套 query，下一调用被拒绝；
+  进行中撤权拒绝其后续嵌套动作。执行失败仍消费一次，消费事务失败不消费。
+  build/validate/activate 的原 key 方式与既有历史保留保持不变。
+- 通过实际作者模块确认文档中的 globals：Promise/JSON/Math/Date 与 console
+  可见，列出的 Node/Web API 和定时器不提供。未把这项检查称为安全隔离验证。
+
+增长/失败等临时脚本在交付前移除；仅上述正常主路径 smoke 常驻。本轮未改
+迁移链，因此复用原精确历史迁移证据，不重复或伪造迁移。新修正候选仍需正式
+Claude 复核；精确 ReviewRound/Turn、candidate 和最终裁定由 Task 记录保存，
+本节不预先宣称复核通过。所有原停止线不变，未同步上游、发布或使用真实资源
+作为测试对象。
