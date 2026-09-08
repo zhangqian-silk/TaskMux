@@ -80,3 +80,44 @@ trusted-local 不是 OS 沙箱；本次不承诺拦截任意作者代码绕过 S
 未改动既有嵌套操作回执 owner 或 unknown 语义，未重复宣称真实外部动作验收。
 独立审查与最终裁定记录在 Task；交付说明须区分工程完成与真实场景缺口。
 未 push、PR、merge、tag、release、archive，未升级共享安装/Home/DB 或重启共享服务。
+
+## 独立审查与 Leader 裁定（turn-3）
+
+已完整读取 `task-26/turn-2` 原报告。`review-round-1` 审查的固定候选为
+`583163581dccfe88418363d998b9bfcc28cba53c`，diff 基线为上述 PR320。
+Reviewer 未发现运行源码正确性缺陷；独立 build/lint/core 82/82 通过，并报告
+角色/跨 Task/Session、声明式提权、核心覆盖、Operator 主路径等临时探针通过。
+这些是 Reviewer 的直接检查，不把其无法读取的 Leader 私有专项证据冒称已复核。
+
+身份分开记录：Turn effective 为 `claude / opus / max`，Provider 回执为
+`anthropic/claude-code`，conversation 为
+`da2d93ff-09b3-4d62-a191-0fd23c6d8dce`；原报告却自述实际模型为
+`model_hub/es1_orange_o50`。执行配置与自述不一致，底层模型未经独立确认，
+因此不将本轮称为已确认的 Claude Opus 审查。没有成功的原生子审查。
+
+逐项裁定：
+
+- **P1「权限边界无永久拒绝断言」：降为测试覆盖建议，不认定当前 P1 缺陷。**
+  变异后的 Worker/Reviewer 越权说明正向 smoke 不覆盖拒绝分支，但当前源码
+  和双方临时探针均确认拒绝。按 Project 的 `develop-yui`／验证策略，异常及
+  权限矩阵作为 change-specific 证据，不为杀死变异扩充永久 suite。
+  另外，“去掉条件即给 Web/user 全部管理权限”表述过宽：循环前仍拒绝 Web
+  非 query 能力，RPC user 还受原 Session 入口拒绝；不能把变异推测写成
+  当前可达的 Web 管理漏洞。
+- **P2「Operator 主路径覆盖被移除」：采纳。** 在同一 smoke 内增加当前
+  Global Operator Session 对同一包的 `plugin.scan` 并核对 sourceDigest，
+  恢复该管理调用者的正向覆盖，不复制完整生命周期或增加测试矩阵。
+- **P2「T09 文档权限陈述过时」：部分采纳。** 增加历史范围及当前 T10
+  合同链接；T09 当时只支持 Operator、T10 不属其范围是真实历史，予以保留，
+  不改成 T09 当时已交付 Leader 自扩展。
+- **私有专项定位不可在 Reviewer worktree 读取：接受为证据可见性限制。**
+  Leader 仍能读取 Task main 的原 evidence.json（54 项记录及摘要）；不声称
+  Reviewer 已复跑 trusted-local 完整矩阵，原证据继续明确标为本地 fixture。
+- **真实 S32/S33/S42 场景未运行：保留缺口，不据此启动未授权测试。**
+
+补充仅修改主路径测试和证据说明，运行源码与固定审查候选一致；Leader 直接
+复核该增量，不再创建同范围 ReviewRound。实际运行
+`node --test test/core/plugin-smoke.test.js`：1/1 通过，测试约 143ms；
+`git diff --check` 通过。未重复此前成功且未变更的 build/lint/core。
+接受工程实现及上述补充，不将其等同于真实业务场景验收；Task 保持 active，
+等待用户或 Operator 的后续明确范围/授权事实，不自动重试或索取测试资源授权。

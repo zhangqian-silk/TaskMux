@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SqliteTaskStore } from "../../dist/storage/sqliteStore.js";
 import { createTask, activateTask } from "../../dist/task/task.js";
-import { createRole, createRoleAgentBinding } from "../../dist/role/role.js";
+import { createGlobalRole, createRole, createRoleAgentBinding } from "../../dist/role/role.js";
 import { createTurn } from "../../dist/turn/turn.js";
 import { createTurnInput } from "../../dist/context/turnInputContract.js";
 import { createRoleSessionSet, recordRoleAgentSession } from "../../dist/executor/agentExecutor.js";
@@ -38,10 +38,10 @@ test("a Leader uses a Task-local declarative plugin and preserves its result", a
     const dispatch = createCapabilityDispatcher(createBuiltinCapabilities(host, store, createDurableJobControl(store)));
     const caller = { scope: "task", taskId: task.id, role: role.name, nativeSessionId: "plugin-smoke-session" };
     let sequence = 0;
-    const call = async (name, input) => {
+    const call = async (name, input, asCaller = caller) => {
       const result = await dispatch("capability.call", {
         taskId: task.id,
-        caller,
+        caller: asCaller,
         request: { name, input, requestId: `smoke-${++sequence}` }
       });
       assert.equal(result.kind, "value", JSON.stringify(result));
@@ -51,6 +51,16 @@ test("a Leader uses a Task-local declarative plugin and preserves its result", a
     await call("environment.adopt", { taskId: task.id, preparationId: prepared.id });
     const created = await call("plugin.create", { preparationId: prepared.id, id: "demo", kind: "declarative" });
     const report = await call("plugin.validate", { preparationId: prepared.id, directory: created.directory });
+    // Operator remains a supported management caller alongside the Leader.
+    const operator = createGlobalRole("operator", [binding], binding.agentId, home, now);
+    store.saveGlobalRole(operator);
+    store.saveGlobalRoleSessionSet(recordRoleAgentSession(
+      createRoleSessionSet({ scope: "global", roleName: operator.name }, binding.agentId, now),
+      { agentId: binding.agentId, adapterId: binding.adapterId, nativeSessionId: "plugin-smoke-operator",
+        policy: "fixed", status: "active", effective: resolveEffectiveLaunch({ role: operator, purpose: "execution" }) }, now));
+    const scan = await call("plugin.scan", { preparationId: prepared.id, directory: created.directory },
+      { scope: "global", role: operator.name, nativeSessionId: "plugin-smoke-operator" });
+    assert.equal(scan.digest, report.sourceDigest);
     await call("plugin.activate", { validationId: report.id });
     const discovered = await dispatch("capability.search", { taskId: task.id, caller, query: "demo.echo" });
     assert.equal(discovered.capabilities.length, 1);
