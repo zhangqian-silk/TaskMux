@@ -21,10 +21,18 @@ export const ACP_METHOD_NOT_FOUND_CODE = -32601;
 export type AcpJsonValue = Record<string, unknown>;
 
 /**
- * Capabilities Yui advertises as an ACP client. Every entry is deliberately
- * false: Yui does not expose its filesystem or a terminal to the Agent through
- * this transport, so the Agent must not call `fs/*` or `terminal/*`. Declaring
- * a capability Yui does not implement would invite calls it must then refuse.
+ * Capabilities Yui advertises as an ACP client. The filesystem and terminal
+ * entries are deliberately false: Yui does not expose either to the Agent
+ * through this transport, so the Agent must not call `fs/*` or `terminal/*`.
+ * Declaring a capability Yui does not implement would invite calls it must then
+ * refuse.
+ *
+ * `session.configOptions.boolean` is likewise absent. ACP gates boolean config
+ * options behind that capability, and Yui's Role configuration expresses model,
+ * effort and permission mode as named values rather than flags. Advertising it
+ * would invite boolean options Yui has nothing to bind them to; staying silent
+ * means the Agent sends only the `select` options this client can actually act
+ * on, which the specification requires it to support unconditionally.
  */
 export const YUI_CLIENT_CAPABILITIES: AcpJsonValue = Object.freeze({
   fs: Object.freeze({ readTextFile: false, writeTextFile: false }),
@@ -76,6 +84,29 @@ export type AcpSessionOptions = Readonly<{
    * Session can state its own rules is inside the prompt itself.
    */
   sessionBootstrap?: string;
+  /**
+   * Model, effort and permission mode this launch asks the Session for, applied
+   * through `session/set_config_option` once the Session exists and before any
+   * prompt is sent. Carried here for the same reason the roots are: ACP takes no
+   * launch flags, so a per-Session request has nowhere else to travel.
+   */
+  desiredConfiguration?: AcpDesiredConfigurationOptions;
+}>;
+
+/**
+ * The requested run configuration in launch-payload form.
+ *
+ * Structurally identical to what the Session applies, but declared here so the
+ * launch payload stays a protocol-layer type: `permissionMode` is the exact id
+ * the Agent must offer, and `permissionBypass` is the user's explicit request
+ * for elevation, which resolves to a value only through the execution component.
+ * They are mutually exclusive; absence of both means Yui states no mode.
+ */
+export type AcpDesiredConfigurationOptions = Readonly<{
+  model?: string;
+  effort?: string;
+  permissionMode?: string;
+  permissionBypass?: boolean;
 }>;
 
 export type AcpInitializeResult = Readonly<{
@@ -205,6 +236,176 @@ export function acpPromptRequest(sessionId: string, text: string): AcpJsonValue 
   return { sessionId, prompt: [{ type: "text", text }] };
 }
 
+/**
+ * A value an Agent offers for one `select` config option.
+ *
+ * `value` is the wire identity Yui sends back; `name` is the Agent's own label
+ * for it. Yui never derives meaning from either — matching is by exact `value`,
+ * so an Agent renaming a label cannot change which option Yui selects.
+ */
+export type AcpConfigOptionValue = Readonly<{
+  value: string;
+  name: string;
+  description?: string;
+}>;
+
+/**
+ * One negotiated session config option.
+ *
+ * ACP's optional `category` is UX metadata, not a contract: it tells a client
+ * which axis an option belongs to (`mode`, `model`, `model_config`,
+ * `thought_level`) without fixing the option's id. Yui reads it as a hint and
+ * keeps the id, because the id is what `session/set_config_option` takes.
+ *
+ * Only `select` options are represented. Yui does not advertise the boolean
+ * capability, so an Agent must not send boolean options; one that arrives
+ * anyway is dropped by the reader rather than coerced into a select, exactly as
+ * the specification's "Clients SHOULD ignore unrecognized types" requires.
+ */
+export type AcpConfigOption = Readonly<{
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  currentValue: string;
+  options: readonly AcpConfigOptionValue[];
+}>;
+
+/**
+ * Read a `configOptions` array from a session setup or set-option result.
+ *
+ * Returns undefined when the field is absent, which is how an Agent that
+ * predates config options answers; that is a different fact from an Agent
+ * answering with an empty list, which offers nothing configurable. Callers must
+ * be able to tell those apart, so the absence is not flattened to `[]`.
+ */
+export function readAcpConfigOptions(value: unknown): readonly AcpConfigOption[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const options: AcpConfigOption[] = [];
+  for (const entry of value) {
+    const option = asObject(entry);
+    if (option === null) continue;
+    const id = optionalText(option.id);
+    // A select option's current value and choices are what make it settable.
+    // An entry missing either cannot be acted on, and inventing a default here
+    // would let Yui report a selection the Agent never offered.
+    const currentValue = optionalText(option.currentValue);
+    if (id === undefined || currentValue === undefined) continue;
+    if (option.type !== undefined && option.type !== "select") continue;
+    if (!Array.isArray(option.options)) continue;
+    const values: AcpConfigOptionValue[] = [];
+    for (const candidate of option.options) {
+      const choice = asObject(candidate);
+      const choiceValue = choice === null ? undefined : optionalText(choice.value);
+      if (choice === null || choiceValue === undefined) continue;
+      values.push(Object.freeze({
+        value: choiceValue,
+        name: optionalText(choice.name) ?? choiceValue,
+        ...(optionalText(choice.description) === undefined
+          ? {}
+          : { description: optionalText(choice.description)! })
+      }));
+    }
+    options.push(Object.freeze({
+      id,
+      name: optionalText(option.name) ?? id,
+      ...(optionalText(option.description) === undefined
+        ? {}
+        : { description: optionalText(option.description)! }),
+      ...(optionalText(option.category) === undefined
+        ? {}
+        : { category: optionalText(option.category)! }),
+      currentValue,
+      options: Object.freeze(values)
+    }));
+  }
+  return Object.freeze(options);
+}
+
+/**
+ * Read the session config options an Agent reports for a new or loaded Session.
+ *
+ * ACP is in transition here: `configOptions` supersedes the older `modes`
+ * field, and Agents are asked to send both while both exist. Yui reads the
+ * modern field when present and derives an equivalent `mode` option from
+ * `modes` when it is not, so one code path configures either generation of
+ * Agent. The derived option carries the same id ACP's own reference
+ * implementation uses, and is marked so callers can send `session/set_mode`
+ * instead of `session/set_config_option`.
+ */
+export type AcpSessionConfiguration = Readonly<{
+  options: readonly AcpConfigOption[];
+  /**
+   * True when the options came from the legacy `modes` field, which is set with
+   * `session/set_mode`. Yui must not send `session/set_config_option` to an
+   * Agent that never advertised config options.
+   */
+  legacyModes: boolean;
+}>;
+
+/** The config option id ACP uses for a session's permission mode. */
+export const ACP_MODE_CONFIG_ID = "mode";
+
+export function readAcpSessionConfiguration(value: unknown): AcpSessionConfiguration {
+  const result = asObject(value);
+  const modern = readAcpConfigOptions(result?.configOptions);
+  if (modern !== undefined) {
+    return Object.freeze({ options: modern, legacyModes: false });
+  }
+  const legacy = readAcpSessionModes(result?.modes);
+  return Object.freeze({
+    options: legacy === undefined ? Object.freeze([]) : Object.freeze([legacy]),
+    legacyModes: legacy !== undefined
+  });
+}
+
+/**
+ * Convert the legacy `modes` field into the one config option it describes.
+ *
+ * The shape is fixed by ACP: `currentModeId` plus `availableModes`. Presenting
+ * it as a config option keeps mode selection in one vocabulary without
+ * pretending the Agent supports the newer method.
+ */
+function readAcpSessionModes(value: unknown): AcpConfigOption | undefined {
+  const modes = asObject(value);
+  const currentValue = modes === null ? undefined : optionalText(modes.currentModeId);
+  if (modes === null || currentValue === undefined) return undefined;
+  const values: AcpConfigOptionValue[] = [];
+  if (Array.isArray(modes.availableModes)) {
+    for (const entry of modes.availableModes) {
+      const mode = asObject(entry);
+      const id = mode === null ? undefined : optionalText(mode.id);
+      if (mode === null || id === undefined) continue;
+      values.push(Object.freeze({
+        value: id,
+        name: optionalText(mode.name) ?? id,
+        ...(optionalText(mode.description) === undefined
+          ? {}
+          : { description: optionalText(mode.description)! })
+      }));
+    }
+  }
+  return Object.freeze({
+    id: ACP_MODE_CONFIG_ID,
+    name: "Mode",
+    category: "mode",
+    currentValue,
+    options: Object.freeze(values)
+  });
+}
+
+export function acpSetConfigOptionRequest(
+  sessionId: string,
+  configId: string,
+  value: string
+): AcpJsonValue {
+  return { sessionId, configId, value };
+}
+
+export function acpSetModeRequest(sessionId: string, modeId: string): AcpJsonValue {
+  return { sessionId, modeId };
+}
+
 export function acpCancelNotification(sessionId: string): AcpJsonValue {
   return { sessionId };
 }
@@ -270,6 +471,14 @@ export type AcpSessionUpdate =
   | Readonly<{ kind: "tool-call-update"; toolCallId: string; status?: string }>
   | Readonly<{ kind: "plan" }>
   | Readonly<{ kind: "usage"; used?: number; size?: number }>
+  /**
+   * The Agent changed the session configuration itself. ACP sends the complete
+   * option list, not a delta, so this replaces what Yui last observed rather
+   * than merging into it.
+   */
+  | Readonly<{ kind: "config-options"; options: readonly AcpConfigOption[] }>
+  /** The Agent changed the session mode through the legacy `modes` field. */
+  | Readonly<{ kind: "mode"; modeId: string }>
   | Readonly<{ kind: "other"; sessionUpdate: string }>;
 
 /** Decode a `session/update` notification payload for the given session. */
@@ -314,6 +523,16 @@ export function readAcpSessionUpdate(
     }
     case "plan":
       return Object.freeze({ kind: "plan" });
+    case "config_option_update": {
+      const options = readAcpConfigOptions(update.configOptions);
+      return options === undefined
+        ? undefined
+        : Object.freeze({ kind: "config-options", options });
+    }
+    case "current_mode_update": {
+      const modeId = optionalText(update.currentModeId);
+      return modeId === undefined ? undefined : Object.freeze({ kind: "mode", modeId });
+    }
     case "usage_update":
       return Object.freeze({
         kind: "usage",

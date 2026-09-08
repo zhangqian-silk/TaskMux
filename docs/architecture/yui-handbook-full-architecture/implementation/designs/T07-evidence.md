@@ -325,10 +325,25 @@ live 与缓存回读两条路径都取不到）。三态显式区分：`unsuppor
 expose a model catalog"。核对 ACP v1 规范后确认这是**错的**：协议定义了
 `session/set_mode` 与 `session/set_config_option`，Session Setup 返回的
 `configOptions` 含 `mode`／`model`／`model_config`／`thought_level` 语义类别。
-限制在 Yui 这一侧，文案改为陈述实现现状（"Yui's ACP client does not
-implement session/set_config_option"）。权限同理：ACP 定义了权限选项，
-Yui 未接通交互式同意，因此**保留显式拒绝，不自动放行**——API 授权与工具
-权限是两件事。
+当时限制在 Yui 这一侧，文案先改为陈述实现现状（"Yui's ACP client does not
+implement session/set_config_option"）。
+
+**turn-13 起该实现限制已不存在**：客户端接通了
+`session/set_config_option`（旧式 Agent 走 `session/set_mode`），
+`AcpAgentConfig` 因此接受 model／effort／`configured` 模式与显式 bypass。
+推送点固定在 Session 建立之后、首个 prompt 之前——ACP 只在 Session 存在后
+才报告可配置面，而 prompt 一旦先发就会以 Agent 默认值运行却显示用户的选择。
+任一拒绝直接中止启动：**被拒的配置对应零个 prompt**，不降级、不换模型。
+Agent 返回的完整选项列表用于逐项确认，"调用成功但当前值不同"按替换处理并失败。
+
+权限同理：ACP 定义了权限选项，Yui 未接通交互式同意，因此**保留对
+`session/request_permission` 的显式拒绝，不自动放行**——API 授权与工具
+权限是两件事。bypass 仅在用户显式选择时生效；`default` 一律不发送任何 mode，
+既有 `default` 绑定的语义不被加宽。bypass 的具体 mode id 是产品事实，
+按执行组件声明为数据（`claude-agent-sdk` → `bypassPermissions`）；
+`unknown-acp-agent` 故意不在表内，因此对未识别产品请求 bypass 是显式拒绝，
+**不按 mode 名称猜测**。model 列表需要真实 Session 才能枚举，
+普通能力查询因此停在 `initialize`，不为了填菜单制造可能计费的远端副作用。
 
 `AgentHandshakeObservation` 把真实握手与静态支持分开：不协商的方案是
 `{status:"unsupported", reason}`，ACP 是 `{status:"observed", ...}` 并带
@@ -568,3 +583,123 @@ ACP 的两次结果分别回报费用 USD `0.00188` 和 `0.002295`；
 仍未真实覆盖：取消／物理静止、工具权限往返、原生并发输入竞态、
 长负载下的 pending／unknown、完整自动调度和共享配置等价性。
 不将本次两请求验证描述为全场景 E2E，也没有开展 Codex 或 Kimi 模型测试。
+
+## 9 ACP 运行配置接通（turn-13，work-item-3）
+
+### 9.1 本轮改的是什么
+
+不是改名，是把普通 Yui 配置入口接到真实协议效果上。此前 `AcpAgentConfig`
+一律拒绝 model／effort／非 `default` 权限，理由写成"Yui 的 ACP 客户端未实现
+`session/set_config_option`"。本轮实现了该方法（旧式 Agent 走
+`session/set_mode`），因此该限制不再存在，四条入口命令改为被接受并真实生效。
+
+`selectedComponent`／`connectionPlan` 的唯一绑定未动，用户的 `Agent.id` 未变。
+
+### 9.2 推送点与拒绝语义
+
+配置在 `AcpStructuredProviderSession.open()` 内、`session/new`／`session/load`
+之后、任何 `submitTurn` 之前推送。这不是巧合而是唯一正确的位置：ACP 只在
+Session 存在后才报告可配置面，而先发 prompt 会以 Agent 默认值运行却显示
+用户的选择。任一拒绝直接抛出，因此**被拒配置对应零个 prompt**。
+
+通用轴由 ACP 自己的 `category` 元数据解析（`model`／`thought_level`／`mode`，
+以 id 兜底），Yui 从未见过的 Agent 走同一段代码。唯一的产品事实是 bypass 的
+mode id，按执行组件声明为**数据**而非分支（`claude-agent-sdk` →
+`bypassPermissions`）；`unknown-acp-agent` 故意不在表内。Task／Controller
+不含任何产品特判。
+
+Agent 返回的完整选项列表逐项确认；"调用成功但当前值不同"按替换处理并失败，
+不吞字段、不静默换值、不靠显示伪造。
+
+### 9.3 存储迁移 10 → 11
+
+持久契约确实变宽（ACP 绑定可携带 model／effort 与 `bypass`／`configured`
++`mode`），因此追加迁移 11 `acp-session-run-configuration`，1–10 未改。
+
+按迁移 9 的先例做**声明式加宽**，不重写任何 payload——这是实质决定而非省略：
+v10 的 ACP 绑定持 `permission.strategy = "default"`，其含义原本就是"Yui 不发送
+任何 mode，Agent 自己的默认成立"，改写它等于授予用户从未选择的权限。
+effective 快照无需变更：`model`／`effort` 本就在共享基类上可选，ACP 权限就是
+适配器规范化的同一对象，历史快照在 schemaVersion 4 下继续通过校验，覆盖
+Session、Session history、Turn、WorkItem Lane 与 ReviewRound Lane。
+
+真实 v10 Home 原地升级（一次性 Home，`env -i`，绝对 launcher）：升级前
+`doctor` 三项 `unsupported`（`current=10 latest=11 migration=available`），
+`upgrade` 报 `10 → 11 acp-session-run-configuration` 并留备份；升级后账本
+`1..11`，`doctor` 全绿（`current=11 latest=11`，`agents=1 tasks=1 roles=2`），
+重跑为 `already-current`（幂等）。关键一项：升级后经真实 Store 读回，
+`leader` 与 `worker` 两条既有 ACP 绑定仍为
+`permission={"strategy":"default"}`、`model=undefined`、`effort=undefined`
+——**旧默认权限未被加宽**。随后在同一升级后的 Home 上，用户显式
+`--model opus --effort high --permission-strategy bypass` 被接受，而未被触碰的
+`leader` 仍是 `default`。
+
+### 9.4 红→绿（同一串真实 CLI 命令）
+
+基线为 `git archive HEAD` 解出的**干净 HEAD 构建**，不是只回退两个文件的
+半改动树（后者一度给出全部"接受"的假绿，已弃用）。两次均为一次性 Home。
+
+| 命令 | 改动前（HEAD，v10） | 改动后（v11） |
+| --- | --- | --- |
+| `--model opus` | 拒绝："does not implement session/set_config_option…" | 接受，`model=opus` |
+| `--effort high` | 同上拒绝 | 接受，`effort=high` |
+| `--permission-strategy bypass` | 拒绝："supports only the default permission strategy…" | 接受，`bypass` |
+| `--permission-mode acceptEdits` | 拒绝："only supported by Claude." | 接受，`configured`+`mode` |
+| 不带选项 | 接受，`default` | 接受，`default`（未变） |
+
+### 9.5 隔离协议对端测试
+
+临时对端 `fake-acp-agent.mjs`（无凭据、零模型），逐条记录收到的方法、
+被要求应用的配置值，以及**prompt 到达时生效的配置**。每例都从真实入口出发
+（`yui` 子进程或 `runTaskCommand`）→ 落库 → 重开 Home 读回 → 编译 →
+对端实际所见，不用理想内存对象绕过入口。10 项全通过：
+
+CLI 配置的 model／effort／mode 三项均以 `session/set_config_option` 到达对端，
+且顺序被断言为 transcript 事实（`session/new` < 三次 set < `session/prompt`）；
+`session/prompt under mode=acceptEdits,model=opus,effort=high`。
+对端拒绝 effort 时零 prompt；对端"成功但保留旧值"被判为替换并失败；
+`default` 一个 set 都不发；显式 bypass 以 `bypassPermissions` 到达；
+对端不提供 bypass 时显式拒绝；`unknown-acp-agent` 即使对端存在字面名为
+`bypassPermissions` 的 mode 仍拒绝（不按名猜测）；旧式对端走 `set_mode`
+而不发 `set_config_option`；`session/load` 恢复后两个 prompt 均在正确配置下；
+clear+`default` 回到"不发任何请求"；codex 专属选项在 ACP 上被 CLI 拒绝且未落库。
+
+绿测试单独不算证据，故做变异验证：给 `unknown-acp-agent` 加上 bypass 映射
+→ 仅"不按 mode 名猜测"一例失败；跳过配置推送 → 8 项协议用例失败、2 项纯 CLI
+用例正确保持通过；吞掉 plan 拒绝 → 2 项 plan 侧拒绝用例失败（对端 JSON-RPC
+错误走请求路径，由另一用例覆盖，两类拒绝各有归属）；跳过确认 → 仅替换用例失败。
+四次变异后均已还原并复验全绿。
+
+### 9.6 一致性与边界
+
+能力面：model／effort／`permission.mode` 为 `degraded`（可配置，取值按
+Session 协商），`permission.strategy` 为 `available` 且列出三值；ACP 无
+`settingsFile`／`settingsSources`／工具规则字段。离线兜底目录返回 ACP 自身形状
+（`adapterId: "acp"`），`permission.mode` 不预填候选——modeid 来自实时 Session，
+在此列举等于凭构建期猜测编造 Agent 词汇表。向导对 ACP 只问 mode 且选项来自
+目录，不再生成固定 bypass；权限策略取自能力字段而非硬编码。
+
+model 列表需要真实 Session 才能枚举，普通能力查询因此停在 `initialize`：
+为填菜单去建 Session 会造成可能计费的真实远端副作用。这是"静态可配置"与
+"协商后可用"的区别，按真实原因陈述，不伪装成产品无此能力，也不吞掉请求值。
+
+删除 `src/cli/roleOptionCatalog.ts`：经完整 importer 追踪，除 `orderRoleOptions`
+外全部导出零引用，是无人读取的第二配置权威。仅存的展示助手移入
+`roleOptionOrder.ts` 并注明不持有配置权威。真实权威仍是
+`commands/roleConfiguration.ts`，未新增第二处。顺带修掉两个真实缺陷：
+`permissionPatch` 的兜底原为硬编码 `{strategy:"bypass"}`（改为
+`defaultRoleAgentConfig(...).permission`），且 ACP 原会落入 Claude 分支被写入
+工具数组；向导探测绑定原会对 ACP 构造非法配置。
+
+`runtimeEventInbox` 对 ACP 的排除**未改**，经核为正确：`RuntimeTurnTerminalInput`
+的 `adapterId` 类型为 `"codex" | "claude"`，ACP 按设计无原生 Turn id。
+
+本轮**未做真实模型测试、未读共享凭据**；此前两次 Claude ACP 真实测试不因本次
+泛化而被重新授权。仅本 W3 工作区、本地 launcher 与隔离 Home；未改共享 Home、
+Controller、认证或全局安装；未 push／PR／远端合并／打标签／发布。
+不声称与产品完整功能等价：本轮验证的是配置推送与确认路径，工具权限往返、
+取消与并发竞态仍未真实覆盖。
+
+收尾：`npm run lint` 干净，`npm test` **81/81 通过**（维持既有规模，
+未新增永久回归测试），临时夹具与临时测试在交付前删除。
+手册 HTML 由 Leader 重新生成，本节只更新 Markdown。

@@ -96,6 +96,12 @@ export type ClaudeEffectiveLaunchSnapshot = EffectiveLaunchBase & Readonly<{
  */
 export type AcpEffectiveLaunchSnapshot = EffectiveLaunchBase & Readonly<{
   adapterId: "acp";
+  /**
+   * The permission decision this launch runs under, including the exact mode id
+   * when one was named. Frozen here like every other launch fact, so a resumed
+   * Session is configured from what the launch recorded rather than from a Role
+   * that may have changed since.
+   */
   permission: NonNullable<AcpAgentConfig["permission"]>;
 }>;
 
@@ -216,11 +222,18 @@ function claudeConfigFromSnapshot(
 function acpConfigFromSnapshot(
   snapshot: AcpEffectiveLaunchSnapshot
 ): AcpAgentConfig {
-  // No model/effort/settings round-trip: ACP resolves those inside the Agent,
-  // and the snapshot type keeps them permanently absent.
+  // Model and effort round-trip because they are ACP session config options
+  // that this launch pushes and confirms. Settings deliberately do not: the
+  // protocol defines no client-side settings file or settings source, so the
+  // snapshot type keeps those permanently absent.
   return {
     adapterId: "acp",
+    ...(snapshot.model === undefined ? {} : { model: snapshot.model }),
+    ...(snapshot.effort === undefined ? {} : { effort: snapshot.effort }),
     permission: clone(snapshot.permission),
+    ...(snapshot.additionalDirectories === undefined
+      ? {}
+      : { additionalDirectories: [...snapshot.additionalDirectories] }),
     ...(snapshot.advanced === undefined
       ? {}
       : { advanced: clone(snapshot.advanced) })

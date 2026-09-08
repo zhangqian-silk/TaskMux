@@ -1,0 +1,339 @@
+/**
+ * Turning a Yui Role's requested run configuration into ACP config option
+ * calls, and judging what the Agent answered.
+ *
+ * Two rules shape this module.
+ *
+ * The first is that the protocol does the work. ACP describes a Session's
+ * configurable surface as a list of `select` options, each with an id, an
+ * optional category naming the axis it belongs to, a current value and the
+ * complete enumeration of values it accepts. Model, reasoning effort and
+ * permission mode are all just options on that list, so resolving them is one
+ * generic lookup by category rather than three product branches. An Agent Yui
+ * has never seen is configured by the same code as one it ships knowledge of.
+ *
+ * The second is that a product-specific fact must be named, never inferred. One
+ * such fact exists: which mode value means "act without asking". No ACP field
+ * marks it, and its name is the Agent's own choice, so a value called
+ * `bypassPermissions` proves nothing on its own — a different Agent could use
+ * the same word for something narrower, or a narrower word for the same power.
+ * Guessing from the string would convert an unverified reading into granted
+ * authority. So each identified component states its own value below, and a
+ * component Yui cannot identify reports the request as unsupported instead.
+ * That is a worse user experience and the only honest one.
+ *
+ * Nothing here performs I/O: the caller owns the transport, this module owns
+ * the decision. That keeps the mapping testable against recorded option lists
+ * without a live Agent, and keeps the Session free of product knowledge.
+ */
+
+import type { AgentExecutionComponentId } from "../agent/executionComponents.js";
+import {
+  ACP_MODE_CONFIG_ID,
+  type AcpConfigOption,
+  type AcpDesiredConfigurationOptions
+} from "./acpProtocol.js";
+
+/**
+ * The run configuration a launch asks an ACP Session for.
+ *
+ * Every field is optional because absence is a real and common request: a Role
+ * that never named a model is asking for the Agent's own default, which is
+ * satisfied by sending nothing at all. Only a stated value is pushed, so an
+ * unset field can never be widened into a chosen one.
+ */
+export type AcpDesiredSessionConfiguration = Readonly<{
+  model?: string;
+  effort?: string;
+  /**
+   * How the Session's permission mode should be decided.
+   *
+   * - `default`: leave the Agent's own mode untouched. Yui states no opinion,
+   *   so an Agent that starts conservative stays conservative and one that
+   *   starts permissive is not silently narrowed either.
+   * - `bypass`: the user explicitly asked this Role to act without approval
+   *   prompts. Applied only through the component's own declared value, and
+   *   only when the Agent actually offers it.
+   * - a `{ modeId }` selection: the user named one exact mode. Matched by that
+   *   exact id against what the Agent offers, never by its label.
+   */
+  permission: AcpDesiredPermission;
+}>;
+
+export type AcpDesiredPermission =
+  | Readonly<{ kind: "default" }>
+  | Readonly<{ kind: "bypass" }>
+  | Readonly<{ kind: "mode"; modeId: string }>;
+
+/** One resolved call the Session should make before it sends any prompt. */
+export type AcpConfigurationStep = Readonly<{
+  /** Which requested field this step satisfies, for diagnostics. */
+  field: "model" | "effort" | "permission";
+  configId: string;
+  value: string;
+  /** The value the Agent reported before this step ran. */
+  previousValue: string;
+}>;
+
+/**
+ * A requested value that cannot be sent, with the reason stated in the Agent's
+ * own terms.
+ *
+ * `offered` carries the values the Agent actually enumerated so the message can
+ * show a real alternative set rather than advice. It is empty when the axis
+ * itself is missing, which is a different failure from a value being outside a
+ * present axis.
+ */
+export type AcpConfigurationRejection = Readonly<{
+  field: "model" | "effort" | "permission";
+  requested: string;
+  reason: string;
+  offered: readonly string[];
+}>;
+
+export type AcpConfigurationPlan = Readonly<{
+  steps: readonly AcpConfigurationStep[];
+  rejections: readonly AcpConfigurationRejection[];
+  /**
+   * Values already correct on the Agent's side, recorded so a launch can report
+   * that a request was honoured without implying Yui sent a redundant call.
+   */
+  satisfied: readonly AcpConfigurationStep[];
+}>;
+
+/**
+ * The mode value each identified component uses for "act without asking".
+ *
+ * Declared per component rather than per protocol because it is a product
+ * decision, and stated as data so adding a second ACP product means adding a
+ * line here instead of a branch in the Session. A component absent from this
+ * map has no known bypass value, and `unknown-acp-agent` is deliberately absent:
+ * Yui does not know which product answered, so it cannot know which of its
+ * modes — if any — grants that authority.
+ */
+const BYPASS_MODE_BY_COMPONENT:
+  Readonly<Partial<Record<AgentExecutionComponentId, string>>> = Object.freeze({
+    // The Claude Agent SDK's ACP bridge exposes Claude Code's own permission
+    // modes, where `bypassPermissions` is the documented mode that skips
+    // approval prompts. The bridge offers it only when its own preconditions
+    // hold, so its presence in the option list is still checked rather than
+    // assumed.
+    "claude-agent-sdk": "bypassPermissions"
+  });
+
+/** ACP categories that name each configurable axis. */
+const MODEL_CATEGORY = "model";
+const EFFORT_CATEGORY = "thought_level";
+const MODE_CATEGORY = "mode";
+
+/**
+ * Find the option describing one axis.
+ *
+ * Category is the primary key because it is the field ACP defines for exactly
+ * this purpose and it does not depend on an Agent's choice of id. The id is
+ * consulted only as a fallback, for an Agent that omits the optional category
+ * but uses the conventional id anyway. An Agent doing neither leaves the axis
+ * unconfigurable, which is reported rather than worked around.
+ */
+function findOption(
+  options: readonly AcpConfigOption[],
+  category: string,
+  fallbackId: string
+): AcpConfigOption | undefined {
+  return options.find((option) => option.category === category)
+    ?? options.find((option) => option.id === fallbackId);
+}
+
+/**
+ * Resolve one requested value against one axis.
+ *
+ * A value is sendable only when the Agent enumerated it. ACP requires a `select`
+ * option to carry its complete set of accepted values, so that list is
+ * authoritative: sending anything outside it would be sending a value the Agent
+ * has already said it does not take. Reporting the mismatch with the real
+ * enumeration is both more accurate and more useful than relaying whatever
+ * generic error the Agent would answer with.
+ */
+function resolveValue(
+  field: "model" | "effort" | "permission",
+  requested: string,
+  option: AcpConfigOption | undefined,
+  missingAxisReason: string
+): AcpConfigurationStep | AcpConfigurationRejection {
+  if (option === undefined) {
+    return Object.freeze({ field, requested, reason: missingAxisReason, offered: Object.freeze([]) });
+  }
+  const offered = Object.freeze(option.options.map(({ value }) => value));
+  const match = option.options.find(({ value }) => value === requested);
+  if (match === undefined) {
+    return Object.freeze({
+      field,
+      requested,
+      reason: `ACP Agent option \`${option.id}\` does not offer the value \`${requested}\`.`,
+      offered
+    });
+  }
+  return Object.freeze({
+    field,
+    configId: option.id,
+    value: match.value,
+    previousValue: option.currentValue
+  });
+}
+
+function isRejection(
+  value: AcpConfigurationStep | AcpConfigurationRejection
+): value is AcpConfigurationRejection {
+  return "reason" in value;
+}
+
+/**
+ * Decide every call a launch must make, and every request it cannot honour.
+ *
+ * The plan is computed once from the option list the Agent returned for this
+ * Session, before any prompt is sent. A caller that finds any rejection must
+ * refuse to prompt: continuing would run the Turn under a configuration the
+ * user did not ask for, which is the silent substitution this whole path exists
+ * to prevent.
+ */
+export function planAcpSessionConfiguration(
+  desired: AcpDesiredSessionConfiguration,
+  options: readonly AcpConfigOption[],
+  component: AgentExecutionComponentId
+): AcpConfigurationPlan {
+  const steps: AcpConfigurationStep[] = [];
+  const rejections: AcpConfigurationRejection[] = [];
+  const satisfied: AcpConfigurationStep[] = [];
+  const record = (outcome: AcpConfigurationStep | AcpConfigurationRejection): void => {
+    if (isRejection(outcome)) rejections.push(outcome);
+    // A value the Agent already holds needs no call. Recording it separately
+    // keeps "asked for and already true" distinguishable from "asked for and
+    // set", so a launch never claims to have sent something it did not.
+    else if (outcome.previousValue === outcome.value) satisfied.push(outcome);
+    else steps.push(outcome);
+  };
+
+  if (desired.model !== undefined) {
+    record(resolveValue(
+      "model",
+      desired.model,
+      findOption(options, MODEL_CATEGORY, "model"),
+      "ACP Agent offers no model config option for this Session, so the requested model "
+      + "cannot be selected over the protocol; configure it in the Agent itself."
+    ));
+  }
+  if (desired.effort !== undefined) {
+    record(resolveValue(
+      "effort",
+      desired.effort,
+      findOption(options, EFFORT_CATEGORY, "effort"),
+      "ACP Agent offers no reasoning-effort config option for this Session, so the "
+      + "requested effort cannot be selected over the protocol."
+    ));
+  }
+
+  const permission = desired.permission;
+  if (permission.kind === "bypass") {
+    const bypassValue = BYPASS_MODE_BY_COMPONENT[component];
+    if (bypassValue === undefined) {
+      // The user asked for real elevation and Yui cannot name the value that
+      // grants it for this product. Selecting a mode by how its name reads
+      // would be a guess with authority attached, so the request stops here.
+      rejections.push(Object.freeze({
+        field: "permission",
+        requested: "bypass",
+        reason: `Yui cannot map the bypass permission strategy onto execution component `
+          + `${component}: no mode value is known to grant it, and Yui does not infer one `
+          + `from a mode's name. Select an exact mode this Agent offers instead.`,
+        offered: Object.freeze(
+          findOption(options, MODE_CATEGORY, ACP_MODE_CONFIG_ID)?.options
+            .map(({ value }) => value) ?? []
+        )
+      }));
+    } else {
+      record(resolveValue(
+        "permission",
+        bypassValue,
+        findOption(options, MODE_CATEGORY, ACP_MODE_CONFIG_ID),
+        "ACP Agent offers no permission-mode config option for this Session, so the "
+        + "requested bypass strategy cannot be applied."
+      ));
+    }
+  } else if (permission.kind === "mode") {
+    record(resolveValue(
+      "permission",
+      permission.modeId,
+      findOption(options, MODE_CATEGORY, ACP_MODE_CONFIG_ID),
+      "ACP Agent offers no permission-mode config option for this Session, so the "
+      + "requested mode cannot be applied."
+    ));
+  }
+  // `default` deliberately produces nothing. Yui states no mode, so whatever
+  // the Agent chose for itself stands: an old Role's conservative default is
+  // never widened, and a permissive Agent is not narrowed behind the user's
+  // back either.
+
+  return Object.freeze({
+    steps: Object.freeze(steps),
+    rejections: Object.freeze(rejections),
+    satisfied: Object.freeze(satisfied)
+  });
+}
+
+/**
+ * Confirm that one applied step actually took effect.
+ *
+ * `session/set_config_option` answers with the Session's complete option list,
+ * so the proof is in that answer rather than in the call having not thrown. An
+ * Agent that accepts the call and reports a different current value has
+ * substituted something for what was asked, and that substitution must surface
+ * as a failure instead of passing as success.
+ */
+export function confirmAcpConfigurationStep(
+  step: AcpConfigurationStep,
+  options: readonly AcpConfigOption[]
+): string | undefined {
+  const option = options.find(({ id }) => id === step.configId);
+  if (option === undefined) {
+    return `ACP Agent stopped reporting config option \`${step.configId}\` after Yui set it, `
+      + `so the requested ${step.field} cannot be confirmed.`;
+  }
+  if (option.currentValue !== step.value) {
+    return `ACP Agent accepted \`${step.configId}\` = \`${step.value}\` but reports `
+      + `\`${option.currentValue}\`, so the requested ${step.field} was not applied.`;
+  }
+  return undefined;
+}
+
+/** A single readable diagnostic for every request the Agent cannot honour. */
+export function describeAcpConfigurationRejections(
+  rejections: readonly AcpConfigurationRejection[]
+): string {
+  return rejections
+    .map((rejection) => rejection.offered.length === 0
+      ? rejection.reason
+      : `${rejection.reason} Offered values: ${rejection.offered.join(", ")}.`)
+    .join(" ");
+}
+
+/**
+ * Read a launch payload's requested configuration into the form this module
+ * plans from.
+ *
+ * The payload keeps the two permission requests as separate fields because they
+ * travel as JSON; this collapses them into the one decision they represent.
+ * Neither present means `default`, which sends no mode at all.
+ */
+export function acpDesiredSessionConfiguration(
+  options: AcpDesiredConfigurationOptions
+): AcpDesiredSessionConfiguration {
+  return Object.freeze({
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.effort === undefined ? {} : { effort: options.effort }),
+    permission: options.permissionMode !== undefined
+      ? Object.freeze({ kind: "mode" as const, modeId: options.permissionMode })
+      : options.permissionBypass === true
+        ? Object.freeze({ kind: "bypass" as const })
+        : Object.freeze({ kind: "default" as const })
+  });
+}

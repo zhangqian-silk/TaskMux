@@ -119,9 +119,18 @@ function permission(binding: RoleAgentBinding): string {
       permission.approval === undefined ? undefined : `approval=${permission.approval}`
     ].filter((value): value is string => value !== undefined).join("; ");
   }
-  // ACP has exactly one strategy, and "CLI default" would misdescribe it:
-  // Yui answers the Agent's permission requests itself, and always declines.
-  if (binding.config.adapterId === "acp") return "decline (no interactive consent)";
+  // ACP's strategy decides the Session mode Yui requests over the protocol. It
+  // is stated separately from how Yui answers `session/request_permission`,
+  // which is always a decline on this transport: those are two different
+  // questions, and collapsing them would make a configured Session mode read as
+  // interactive consent Yui does not hold.
+  if (binding.config.adapterId === "acp") {
+    const permission = binding.config.permission;
+    const requests = "requests declined";
+    if (permission.strategy === "default") return `Agent default; ${requests}`;
+    if (permission.strategy === "bypass") return `bypass; ${requests}`;
+    return `mode=${permission.mode}; ${requests}`;
+  }
   const permission = binding.config.permission;
   if (permission.strategy === "default") return "CLI default";
   if (permission.strategy === "bypass") return "bypass";

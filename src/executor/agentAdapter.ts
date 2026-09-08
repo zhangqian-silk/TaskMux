@@ -74,18 +74,40 @@ export type ClaudeAgentConfig = Readonly<{
 export type AcpAgentConfig = Readonly<{
   adapterId: "acp";
   /**
-   * Unsupported by Yui's ACP client, not by the protocol. Keeping them absent
-   * prevents callers from promising an override this adapter never sends.
+   * Selected through ACP's own session config options after the Session exists.
+   * The protocol enumerates the values each Agent accepts, so a value stated
+   * here is checked against that enumeration at launch rather than guessed at
+   * configuration time.
    */
-  model?: undefined;
-  effort?: undefined;
+  model?: string;
+  effort?: string;
   additionalDirectories?: readonly string[];
+  /**
+   * Unsupported by Yui's ACP client, not by the protocol: ACP defines no
+   * client-side settings file or settings source, so there is nothing to send.
+   */
   settingsFile?: undefined;
   settingsSources?: undefined;
-  /** Only "default" is valid: Yui declines every ACP permission request. */
-  permission: Readonly<{ strategy: "default" }>;
+  /**
+   * How this Role's Session permission mode is decided.
+   *
+   * `default` states no opinion: Yui sends no mode, so the Agent's own default
+   * stands. `bypass` is the user explicitly asking to act without approval
+   * prompts, and is applied only through the mode value the selected execution
+   * component declares. `configured` names one exact mode id the Agent offers.
+   *
+   * This is separate from how Yui answers `session/request_permission`. That
+   * client-side question has one answer on this transport — Yui holds no
+   * interactive consent and declines — and no strategy here changes it.
+   */
+  permission: AcpPermissionConfig;
   advanced?: AdvancedAgentConfig;
 }>;
+
+export type AcpPermissionConfig =
+  | Readonly<{ strategy: "default" }>
+  | Readonly<{ strategy: "bypass" }>
+  | Readonly<{ strategy: "configured"; mode: string }>;
 export type RoleAgentConfig = CodexAgentConfig | ClaudeAgentConfig | AcpAgentConfig;
 export type CodexRoleAgentConfig = CodexAgentConfig;
 export type ClaudeRoleAgentConfig = ClaudeAgentConfig;
@@ -549,12 +571,15 @@ class AcpAdapter extends BaseAdapter<AcpAgentConfig> {
     exact(config, ["adapterId", "model", "effort", "permission", "additionalDirectories",
       "settingsFile", "settingsSources", "advanced"], "ACP Agent config");
     if (config.adapterId !== "acp") throw new Error("ACP Agent config adapter is invalid.");
-    if (config.model !== undefined || config.effort !== undefined) {
-      throw new Error(
-        "Yui's ACP client does not implement session/set_config_option, so it cannot "
-        + "send a model or reasoning-effort selection; configure them in the Agent itself."
-      );
-    }
+    // Model and effort are session config options in ACP, so a value is legal
+    // here whatever this build knows about the product. Whether the Agent
+    // actually offers it is decided by the live option list at launch: the
+    // protocol enumerates the accepted values, and only that enumeration can
+    // answer it. Rejecting an unrecognised name here would require Yui to hold
+    // a model list per product, which is the fabricated authority this design
+    // avoids.
+    optionalText(config.model, "ACP model");
+    optionalText(config.effort, "ACP effort");
     if (config.settingsFile !== undefined || config.settingsSources !== undefined) {
       throw new Error("Yui's ACP client exposes no client-side settings configuration.");
     }
@@ -568,18 +593,20 @@ class AcpAdapter extends BaseAdapter<AcpAgentConfig> {
     if (config.permission === undefined) {
       throw new Error("ACP permission strategy is required.");
     }
-    exact(config.permission, ["strategy"], "ACP permission config");
-    // Yui declines every `session/request_permission`, because this client
-    // carries no interactive consent. ACP does define permission options an
-    // Agent may offer; Yui simply has no user decision to relay, so accepting a
-    // "bypass" strategy would promise an elevation that must never happen on
-    // the user's behalf. Wiring interactive consent is what would change this,
-    // not a protocol capability appearing.
-    if (config.permission.strategy !== "default") {
-      throw new Error(
-        "Yui's ACP client supports only the default permission strategy: it declines every "
-        + "ACP permission request rather than granting authority the user did not give."
-      );
+    // `configured` carries the one mode id the user named; the other two
+    // strategies carry nothing, so an extra field would mean a caller expected a
+    // value this adapter never reads.
+    if (config.permission.strategy === "configured") {
+      exact(config.permission, ["strategy", "mode"], "ACP permission config");
+      // The mode is matched by exact id against what the Agent offers at launch.
+      // Yui keeps no per-product mode list, so any non-empty id is accepted here
+      // and verified there.
+      requireOneText(config.permission.mode, "ACP permission mode");
+    } else {
+      exact(config.permission, ["strategy"], "ACP permission config");
+      if (config.permission.strategy !== "default" && config.permission.strategy !== "bypass") {
+        throw new Error("ACP permission strategy is invalid.");
+      }
     }
     advanced(this.id, config.advanced);
   }
@@ -602,15 +629,29 @@ class AcpAdapter extends BaseAdapter<AcpAgentConfig> {
     const config = this.canonicalizeConfig(input.config);
     const bootstrap = acpSessionBootstrap(input);
     const directories = config.additionalDirectories ?? [];
+    // What the Role asked for, in the form the Session applies. Only stated
+    // fields travel: an absent model is a request for the Agent's own default,
+    // and `default` permission deliberately sends no mode at all.
+    const desired = {
+      ...(config.model === undefined ? {} : { model: config.model }),
+      ...(config.effort === undefined ? {} : { effort: config.effort }),
+      ...(config.permission.strategy === "configured"
+        ? { permissionMode: config.permission.mode }
+        : config.permission.strategy === "bypass"
+          ? { permissionBypass: true }
+          : {})
+    };
+    const hasDesired = Object.keys(desired).length > 0;
     return {
       ...this.compileNew(input),
       transport: "acp-stdio",
       // ACP accepts no Yui flags, so everything a managed Session needs travels
       // as protocol input. Omit the key entirely when there is nothing to say.
-      ...(directories.length === 0 && bootstrap === undefined ? {} : {
+      ...(directories.length === 0 && bootstrap === undefined && !hasDesired ? {} : {
         acpSession: {
           ...(directories.length === 0 ? {} : { additionalDirectories: [...directories] }),
-          ...(bootstrap === undefined ? {} : { sessionBootstrap: bootstrap })
+          ...(bootstrap === undefined ? {} : { sessionBootstrap: bootstrap }),
+          ...(hasDesired ? { desiredConfiguration: desired } : {})
         }
       })
     };
@@ -820,11 +861,19 @@ export function inspectAgentCapabilities(
 }
 
 function baseline(id: AgentAdapterId): CapabilityField[] {
-  // ACP negotiates capability over the wire, so the only thing this static
-  // baseline can honestly state is what Yui itself decides: it answers
-  // permission requests, and it never grants authority it was not given.
+  // ACP negotiates its whole configurable surface per Session, so a static
+  // baseline can only say which axes exist — never which values one Agent
+  // accepts. Model, effort and mode are all `degraded` for exactly that reason:
+  // they are configurable and the enumeration comes from the live Session, so
+  // promising values here would be inventing them.
   if (id === "acp") return [
-    field("permission.strategy", "enum", "available", false, ["default"]),
+    field("model", "enum", "degraded", true),
+    field("effort", "enum", "degraded", true),
+    field("permission.strategy", "enum", "available", false,
+      ["default", "bypass", "configured"]),
+    // The exact mode ids belong to the Agent, and only a live Session lists
+    // them. `configured` carries whichever id the user names.
+    field("permission.mode", "enum", "degraded", true),
     // Configurable, but only reaches an Agent that advertises
     // `sessionCapabilities.additionalDirectories` at `initialize`. A static
     // baseline cannot see that handshake, so it reports the field as degraded
@@ -1047,6 +1096,10 @@ function absolutePath(value: string, label: string): void {
 }
 function optionalText(value: unknown, label: string): void {
   if (value !== undefined) text(value, label);
+}
+/** A required non-empty single-line value. */
+function requireOneText(value: unknown, label: string): void {
+  text(value, label);
 }
 function optionalTexts(values: readonly string[] | undefined, label: string): void {
   if (values === undefined) return;

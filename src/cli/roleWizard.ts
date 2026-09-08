@@ -1,5 +1,7 @@
 import { renderTable, type TableColumn } from "../output/table.js";
 import { displayExecutionComponent } from "../agent/executionComponents.js";
+import { isAgentAdapterId } from "../agent/adapterCatalog.js";
+import { defaultRoleAgentConfig } from "../executor/agentAdapter.js";
 import type {
   AgentConfigurationCatalog,
   ResolvedAgentConfigurationCatalog
@@ -308,10 +310,17 @@ async function configureNewAgentField(
     agentId: agent.id,
     adapterId: agent.adapterId,
     component: agent.component,
-    config: {
-      adapterId: agent.adapterId,
-      permission: { strategy: "bypass" }
-    }
+    // A probe binding used only to fetch this Agent's capability catalog, before
+    // the user has chosen anything. It carries the adapter's own default
+    // permission rather than a fixed `bypass`: the user has stated no permission
+    // preference at this point, and inventing an elevated one here produced a
+    // config ACP's own validator rejects. The catalog does not depend on this
+    // value, so the honest default costs nothing. An adapter this build does not
+    // know cannot have a default resolved, so it keeps the bare plan and lets
+    // the capability port report the problem.
+    config: isAgentAdapterId(agent.adapterId)
+      ? defaultRoleAgentConfig(agent.adapterId) as unknown as Entity
+      : { adapterId: agent.adapterId }
   };
   const resolved = await loadAgentCatalog(ports, binding);
   const fields = agentFields(binding, resolved?.catalog);
@@ -673,7 +682,8 @@ function agentFields(
         ...catalogChoices(catalog, "search", ["true"])
       ])
     ] : []),
-    ...(binding.adapterId === "claude" && permission.strategy === "configured" ? [
+    ...((binding.adapterId === "claude" || binding.adapterId === "acp")
+      && permission.strategy === "configured" ? [
       agentField(
         "permission-mode",
         "Permission mode",
@@ -778,6 +788,24 @@ async function configuredPermissionArgs(
     return value === undefined
       ? undefined
       : ["--permission-strategy", "configured", option, value];
+  }
+  if (binding.adapterId === "acp") {
+    // An ACP Session's configured permission is one mode the Agent enumerated,
+    // so there is nothing to choose between: ask for the mode directly rather
+    // than offering tool rules the protocol has no place for. The choices come
+    // from the capability catalog, so a Session that offers no modes presents
+    // none instead of inviting a value the Agent would reject.
+    const value = await promptAgentFieldValue(agentField(
+      "permission-mode",
+      "Permission mode",
+      undefined,
+      "--permission-mode",
+      ["--permission-strategy", "default"],
+      catalogChoices(catalog, "permission.mode")
+    ), io);
+    return value === undefined || value.length === 0
+      ? undefined
+      : ["--permission-strategy", "configured", "--permission-mode", value];
   }
   const field = await choose(
     "Native permission option",

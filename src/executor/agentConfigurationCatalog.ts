@@ -252,7 +252,12 @@ export function fallbackAgentConfigurationCatalog(
       models: [],
       fields: [
         ...common,
-        field("permission.strategy", [choice("default")], false)
+        field("permission.strategy",
+          [choice("default"), choice("bypass"), choice("configured")], false),
+        // The mode ids come from a live Session, so an offline catalog can only
+        // say the axis exists. Listing candidates here would invent an Agent's
+        // vocabulary from a build-time guess.
+        field("permission.mode", [], true)
       ],
       warnings: ["Runtime configuration catalog is unavailable."]
     };

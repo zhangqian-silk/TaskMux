@@ -24,6 +24,7 @@ import type {
 import { serializeAgentErrorRaw } from "./agentError.js";
 import type { AgentAdapterId } from "../agent/adapterCatalog.js";
 import { AcpStructuredProviderSession } from "./acpSession.js";
+import { acpDesiredSessionConfiguration } from "./acpSessionConfiguration.js";
 import { YUI_VERSION } from "../version.js";
 import {
   JsonLineChannel,
@@ -218,6 +219,17 @@ export async function startStructuredProviderSession(
         ...(control.acpSession?.sessionBootstrap === undefined
           ? {}
           : { sessionBootstrap: control.acpSession.sessionBootstrap }),
+        ...(control.acpSession?.desiredConfiguration === undefined
+          ? {}
+          : {
+              desiredConfiguration: acpDesiredSessionConfiguration(
+                control.acpSession.desiredConfiguration
+              )
+            }),
+        // The product identity comes from the Agent binding the launch was
+        // compiled from. It is needed for one decision only — which mode value
+        // grants bypass — and is never inferred from the command that was run.
+        ...(control.component === undefined ? {} : { component: control.component }),
         ...(control.nativeSessionId === undefined
           ? {}
           : { nativeSessionId: control.nativeSessionId }),

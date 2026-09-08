@@ -11,6 +11,11 @@ import type { ImplementationRef } from "../kernel/instanceHost.js";
 import { validateAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 import { validateExecutionEnvironmentSnapshot, type ExecutionEnvironmentSnapshot } from "../resources/projectResource.js";
 import { isAgentAdapterId, type AgentAdapterId } from "../agent/adapterCatalog.js";
+import {
+  adapterIdForExecutionComponent,
+  isAgentExecutionComponentId,
+  type AgentExecutionComponentId
+} from "../agent/executionComponents.js";
 import { agentTransportForAdapter, type AgentTransport } from "../agent/connectionPlan.js";
 import { resolveAgentAdapter } from "../executor/agentAdapter.js";
 
@@ -34,6 +39,14 @@ export type ProviderOwnedTurn = Readonly<{
 type AgentHostProviderControlBase = Readonly<{
   schemaVersion: 1;
   adapterId: AgentAdapterId;
+  /**
+   * Which product executes, as recorded by the Agent binding. The plan above
+   * says how Yui reaches it; this says what answers. Carried because one
+   * protocol decision depends on the product — the mode value that grants
+   * bypass — and it must come from the stored binding rather than from the
+   * command line that was assembled.
+   */
+  component?: AgentExecutionComponentId;
   transport: AgentTransport;
   sessionTitle?: string;
   authority: ProviderAuthorityFence;
@@ -168,6 +181,19 @@ function validateProviderControl(control: AgentHostProviderControl): void {
   if (control.transport !== agentTransportForAdapter(control.adapterId)) {
     throw new Error("Agent Host Provider control transport does not match its adapter.");
   }
+  // The component determines its plan, so a control naming both must have them
+  // agree. Letting them drift would let a launch apply one product's
+  // configuration decisions to another product's Session.
+  if (control.component !== undefined) {
+    if (!isAgentExecutionComponentId(control.component)) {
+      throw new Error("Agent Host Provider control execution component is invalid.");
+    }
+    if (adapterIdForExecutionComponent(control.component) !== control.adapterId) {
+      throw new Error(
+        "Agent Host Provider control execution component does not match its adapter."
+      );
+    }
+  }
   if ((control.adapterId === "codex") !== (control.codexThread !== undefined)) {
     throw new Error("Agent Host Provider thread settings do not match its adapter.");
   }
@@ -260,6 +286,28 @@ function validateAcpSessionOptions(options: AcpSessionOptions): void {
   }
   if (options.sessionBootstrap !== undefined) {
     text(options.sessionBootstrap, "ACP session bootstrap");
+  }
+  const desired = options.desiredConfiguration;
+  if (desired !== undefined) {
+    if (desired === null || typeof desired !== "object" || Array.isArray(desired)) {
+      throw new Error("Agent Host ACP session configuration is invalid.");
+    }
+    if (desired.model !== undefined) text(desired.model, "ACP session model");
+    if (desired.effort !== undefined) text(desired.effort, "ACP session effort");
+    if (desired.permissionMode !== undefined) {
+      text(desired.permissionMode, "ACP session permission mode");
+    }
+    if (desired.permissionBypass !== undefined && typeof desired.permissionBypass !== "boolean") {
+      throw new Error("Agent Host ACP session permission bypass is invalid.");
+    }
+    // Naming an exact mode and asking for bypass are two different requests, and
+    // a payload carrying both leaves it ambiguous which one the user made.
+    if (desired.permissionMode !== undefined && desired.permissionBypass === true) {
+      throw new Error(
+        "Agent Host ACP session configuration cannot request both a named permission "
+        + "mode and the bypass strategy."
+      );
+    }
   }
 }
 

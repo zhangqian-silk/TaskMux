@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { isAbsolute } from "node:path";
 
+import type { AgentExecutionComponentId } from "../agent/executionComponents.js";
 import { MAX_TURN_RESULT_OUTPUT_BYTES } from "../domain/agentResultTransport.js";
 import {
   ACP_METHOD_NOT_FOUND_CODE,
@@ -11,16 +12,28 @@ import {
   acpPermissionResult,
   acpPermissionSummary,
   acpPromptRequest,
+  acpSetConfigOptionRequest,
+  acpSetModeRequest,
   acpStopReasonDetail,
   acpTerminalStatus,
   asObject,
   optionalText,
+  readAcpConfigOptions,
   readAcpInitializeResult,
   readAcpPermissionRequest,
+  readAcpSessionConfiguration,
   readAcpSessionUpdate,
   readAcpStopReason,
+  type AcpConfigOption,
   type AcpInitializeResult
 } from "./acpProtocol.js";
+import {
+  confirmAcpConfigurationStep,
+  describeAcpConfigurationRejections,
+  planAcpSessionConfiguration,
+  type AcpConfigurationStep,
+  type AcpDesiredSessionConfiguration
+} from "./acpSessionConfiguration.js";
 import {
   JsonLineChannel,
   terminateProcessGroup,
@@ -55,6 +68,18 @@ export type AcpSessionOpenInput = Readonly<{
    * nowhere else in the protocol for it to go.
    */
   sessionBootstrap?: string;
+  /**
+   * Run configuration this launch asks the Session for, applied through ACP's
+   * own config options after the Session exists and before any prompt is sent.
+   * Absent fields state no opinion and send nothing.
+   */
+  desiredConfiguration?: AcpDesiredSessionConfiguration;
+  /**
+   * Which product is on the other end, as recorded by the Agent binding. Needed
+   * because one configuration fact — the mode value that grants bypass — is a
+   * product decision that no ACP field carries.
+   */
+  component?: AgentExecutionComponentId;
   /** Present for resume; the Agent's own Session id from a previous launch. */
   nativeSessionId?: string;
   onTerminal?: (terminal: StructuredProviderTurnTerminal) => void;
@@ -119,6 +144,25 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
    * would repeat instructions the Conversation already holds.
    */
   #pendingBootstrap: string | undefined;
+  /**
+   * The Session's config options as the Agent last reported them, from setup,
+   * from a set call's answer or from an Agent-initiated update. ACP always sends
+   * the complete list, so this is replaced wholesale and never merged.
+   */
+  #configOptions: readonly AcpConfigOption[] = [];
+  /**
+   * True when this Agent described its options through the legacy `modes` field
+   * only. Mode changes then go to `session/set_mode`, because an Agent that
+   * never advertised config options must not receive
+   * `session/set_config_option`.
+   */
+  #legacyModes = false;
+  /**
+   * What Yui asked this Session for and what the Agent did with it, recorded so
+   * a launch reports the configuration it actually runs under rather than the
+   * one it requested.
+   */
+  #appliedConfiguration: readonly AcpConfigurationStep[] = [];
 
   private constructor(
     private readonly child: ChildProcessWithoutNullStreams,
@@ -164,6 +208,18 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
     session.#sessionId = input.nativeSessionId === undefined
       ? await session.#create(input.cwd, requested)
       : await session.#restore(input.nativeSessionId, input.cwd, negotiated, requested);
+    // The Session now exists, so its configurable surface is known — and no
+    // prompt has been sent yet, so nothing has run under the wrong settings.
+    // This is the only point where both are true.
+    if (input.desiredConfiguration !== undefined) {
+      await session.#applyConfiguration(
+        input.desiredConfiguration,
+        // An unnamed component is the unidentified ACP product, which is exactly
+        // what an Agent Yui cannot identify should be treated as: it has no known
+        // bypass value, so such a request is refused rather than guessed.
+        input.component ?? "unknown-acp-agent"
+      );
+    }
     // Only a new Conversation is owed the bootstrap. `session/load` replays a
     // Conversation that already carries it, so resending would repeat rules the
     // model has already been given.
@@ -317,6 +373,7 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
     ));
     const sessionId = result === null ? undefined : optionalText(result.sessionId);
     if (sessionId === undefined) throw new Error("ACP `session/new` returned no sessionId.");
+    this.#readConfiguration(result);
     return sessionId;
   }
 
@@ -343,11 +400,92 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
     // notifications before it answers. Those replays are history: the receive
     // path only settles a Turn from a `session/prompt` response, so replayed
     // content can never be mistaken for a new terminal.
-    await this.#request("session/load", {
+    const result = asObject(await this.#request("session/load", {
       sessionId,
       ...(acpNewSessionRequest(cwd, this.#sendableDirectories(additionalDirectories)) as JsonObject)
-    });
+    }));
+    // A resumed Session reports its own current configuration, which is the
+    // Agent's state after the earlier launch — not this launch's request. Both
+    // are read the same way so a resume is configured from what is true now.
+    this.#readConfiguration(result);
     return sessionId;
+  }
+
+  /** Record the option list from a session setup or set-option result. */
+  #readConfiguration(result: object | null): void {
+    const configuration = readAcpSessionConfiguration(result);
+    this.#configOptions = configuration.options;
+    this.#legacyModes = configuration.legacyModes;
+  }
+
+  /**
+   * Push this launch's requested run configuration and verify the Agent applied
+   * it, before any prompt exists to be affected by it.
+   *
+   * Ordering matters and is not incidental. ACP reports a Session's options only
+   * once the Session exists, so the request cannot be made at `initialize`; and
+   * a prompt sent before the options are set would run under the Agent's
+   * defaults while reporting the user's selection. So this sits exactly between
+   * the two, and any failure here stops the launch rather than degrading it.
+   *
+   * Every step is confirmed against the option list the Agent returns, which ACP
+   * requires to be complete. A call that succeeds but leaves a different current
+   * value is a substitution, and it fails here rather than passing silently.
+   */
+  async #applyConfiguration(
+    desired: AcpDesiredSessionConfiguration,
+    component: AgentExecutionComponentId
+  ): Promise<void> {
+    const plan = planAcpSessionConfiguration(desired, this.#configOptions, component);
+    if (plan.rejections.length > 0) {
+      // The user asked for something this Agent cannot deliver. Continuing would
+      // run the Turn under a configuration nobody chose, so the launch stops
+      // with the Agent's own enumeration in the message.
+      throw new Error(
+        `ACP Agent cannot apply the requested run configuration. `
+        + describeAcpConfigurationRejections(plan.rejections)
+      );
+    }
+    const applied: AcpConfigurationStep[] = [...plan.satisfied];
+    for (const step of plan.steps) {
+      // An Agent that only ever advertised legacy `modes` has no
+      // `session/set_config_option` handler, so mode changes must use the method
+      // it does implement. Sending the modern method to it would fail with
+      // method-not-found and read as the Agent refusing the value.
+      const result = this.#legacyModes
+        ? await this.#request("session/set_mode", acpSetModeRequest(this.#sessionId, step.value))
+        : await this.#request(
+            "session/set_config_option",
+            acpSetConfigOptionRequest(this.#sessionId, step.configId, step.value)
+          );
+      if (this.#legacyModes) {
+        // `session/set_mode` answers with no options, so the only fact available
+        // is that the Agent accepted the call. Record the intent without
+        // claiming a confirmation the protocol did not provide.
+        this.#configOptions = this.#configOptions.map((option) => option.id === step.configId
+          ? Object.freeze({ ...option, currentValue: step.value })
+          : option);
+      } else {
+        // The answer is the whole option list, so it both confirms this step and
+        // carries any change the Agent made alongside it.
+        const options = readAcpConfigOptions(asObject(result)?.configOptions);
+        if (options !== undefined) this.#configOptions = options;
+        const mismatch = confirmAcpConfigurationStep(step, this.#configOptions);
+        if (mismatch !== undefined) throw new Error(mismatch);
+      }
+      applied.push(step);
+    }
+    this.#appliedConfiguration = Object.freeze(applied);
+  }
+
+  /** The Session config options the Agent last reported. */
+  get configOptions(): readonly AcpConfigOption[] {
+    return this.#configOptions;
+  }
+
+  /** Requested configuration this Session confirmed, in application order. */
+  get appliedConfiguration(): readonly AcpConfigurationStep[] {
+    return this.#appliedConfiguration;
   }
 
   /**
@@ -496,6 +634,21 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
   #notification(method: string, params: unknown): void {
     if (method !== "session/update") return;
     const update = readAcpSessionUpdate(params, this.#sessionId);
+    // An Agent may change the Session's configuration itself, and ACP sends the
+    // complete option list when it does. Tracking it keeps this Session's view
+    // of what it is running under accurate; it is not treated as a failure,
+    // because the Agent is entitled to do this and Yui's own requests were
+    // already confirmed before any prompt was sent.
+    if (update?.kind === "config-options") {
+      this.#configOptions = update.options;
+      return;
+    }
+    if (update?.kind === "mode") {
+      this.#configOptions = this.#configOptions.map((option) => option.category === "mode"
+        ? Object.freeze({ ...option, currentValue: update.modeId })
+        : option);
+      return;
+    }
     // Streamed content is Provider-visible progress, mirrored for the Turn
     // record. It never settles a Turn: only the prompt response does.
     if (update?.kind !== "agent-message") return;

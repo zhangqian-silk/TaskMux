@@ -7,6 +7,7 @@ import {
   type ResolvedAgentConfigurationCatalog
 } from "../executor/agentConfigurationCatalog.js";
 import type {
+  AcpPermissionConfig,
   ClaudePermissionConfig,
   CodexPermissionConfig,
   RoleAgentConfig
@@ -158,6 +159,19 @@ export async function selectAgentPermission(
     claude === undefined ? undefined : OMIT
   );
   if (mode.kind === "cancelled") return mode;
+  // ACP's configured permission is exactly the mode, and its adapter requires
+  // one: the value is matched against what the Agent enumerates at launch, so
+  // there is no "configured with nothing set" to fall back to. Claude's remains
+  // optional because its other native options can carry the configuration
+  // instead.
+  if (resolved.catalog.adapterId === "acp") {
+    return mode.value === undefined
+      ? { kind: "cancelled" }
+      : {
+          kind: "selected",
+          permission: { strategy: "configured", mode: mode.value } as AcpPermissionConfig
+        };
+  }
   const permission: Record<string, unknown> = {
     ...(claude ?? { strategy: "configured" })
   };

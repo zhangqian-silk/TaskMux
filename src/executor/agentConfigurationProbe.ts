@@ -409,23 +409,40 @@ export async function discoverAcpConfiguration(
         .sort(),
       authMethods: negotiated.authMethods.map((method) => method.id).sort()
     },
-    // Yui's ACP client does not implement `session/set_config_option`, so it
-    // has no model or effort selection to offer. This is Yui's limit, not the
-    // protocol's: ACP v1 defines that method and the `configOptions` an Agent
-    // advertises at session setup, with `model` and `thought_level` categories
-    // among them. Reporting it as a protocol absence would misdescribe ACP and
-    // hide the work that would lift the restriction.
+    // Deliberately empty, and not because ACP cannot select a model. ACP
+    // enumerates a Session's models in the `configOptions` returned by
+    // `session/new` — which means listing them requires creating a real Session
+    // on the Agent, and for a hosted product that is a billable remote effect
+    // triggered by what the user asked to be a capability query. So this probe
+    // stops at `initialize`: it reports that the axis is configurable and that
+    // its values are negotiated per Session, rather than opening a Session to
+    // populate a menu. The values are checked where they are actually known, at
+    // launch, against the option list that Session returns.
     models: [],
     fields: [
-      field("model", [], true, false,
-        "Yui's ACP client does not implement session/set_config_option, so it cannot "
-        + "select a model; configure the model in the Agent itself."),
-      field("effort", [], true, false,
-        "Yui's ACP client does not implement session/set_config_option, so it cannot "
-        + "select a reasoning effort; configure it in the Agent itself."),
-      field("permission.strategy", [choice("default")], false, true,
-        "Yui always declines ACP permission requests: this client holds no "
-        + "interactive consent, so it cannot grant authority on the user's behalf."),
+      field("model", [], true, true,
+        "ACP selects a model with session/set_config_option. The values one Agent "
+        + "accepts are enumerated per Session at session/new, so Yui does not list "
+        + "them here: creating a Session to populate the list would be a real, "
+        + "possibly billed remote effect for what is only a capability query. A "
+        + "configured model is checked against the Agent's own list at launch and "
+        + "the launch fails if it is not offered."),
+      field("effort", [], true, true,
+        "ACP selects reasoning effort with session/set_config_option, under the "
+        + "`thought_level` category. As with the model, the accepted values are "
+        + "negotiated per Session and verified at launch rather than listed here."),
+      field("permission.strategy", [choice("default"), choice("bypass"), choice("configured")],
+        false, true,
+        "`default` sends no mode, so the Agent's own default stands. `configured` "
+        + "selects one exact mode the Agent offers. `bypass` applies the mode that "
+        + "grants unattended action, and only for an execution component Yui can "
+        + "identify — it is never guessed from a mode's name. None of these change "
+        + "how Yui answers session/request_permission: this client holds no "
+        + "interactive consent and always declines."),
+      field("permission.mode", [], true, true,
+        "The mode ids belong to the Agent and are enumerated per Session, so Yui "
+        + "verifies a configured mode against that list at launch instead of "
+        + "listing candidates here."),
       field("additionalDirectories", [], true,
         negotiated.capabilities.additionalDirectories,
         negotiated.capabilities.additionalDirectories

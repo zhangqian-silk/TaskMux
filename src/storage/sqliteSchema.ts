@@ -1101,6 +1101,34 @@ UPDATE review_rounds SET payload = json_set(payload, '$.executionGroup.lanes', j
   FROM json_each(payload, '$.executionGroup.lanes') AS lane
 ))) WHERE json_type(payload, '$.executionGroup.lanes') = 'array';
 `
+  },
+  {
+    version: 11,
+    name: "acp-session-run-configuration",
+    introducedIn: "0.15.8",
+    // An ACP Role binding may now carry a model, a reasoning effort and a
+    // permission strategy beyond `default`, because Yui's ACP client implements
+    // `session/set_config_option` and pushes those values to the Session before
+    // it prompts. Previously the adapter rejected all three, so no stored
+    // payload can contain them.
+    //
+    // This widens the contract without rewriting anything, and the absence of a
+    // payload update is the substantive decision rather than an omission. A v10
+    // ACP binding holds `permission.strategy = "default"`, which keeps exactly
+    // the meaning it always had: Yui sends no mode, so the Agent's own default
+    // stands. Rewriting those rows to `bypass` — or to any newly expressible
+    // value — would grant authority the user never chose, on Homes whose owner
+    // did nothing but upgrade. `bypass` is reachable only by asking for it.
+    //
+    // Effective launch snapshots need no change either. They already carry
+    // optional `model` and `effort` on the shared base, and their ACP permission
+    // is the same object the adapter canonicalizes, so a historical snapshot
+    // still validates unchanged at schemaVersion 4 across Sessions, Session
+    // history, Turns, WorkItem ExecutionLanes and ReviewRound ExecutionLanes.
+    // A frozen snapshot therefore keeps describing the launch it actually ran,
+    // which is what makes replaying old history honest.
+    sql: "SELECT 1; -- ACP bindings may carry model/effort and a chosen "
+      + "permission mode; existing `default` bindings keep their meaning"
   }
 ]);
 
