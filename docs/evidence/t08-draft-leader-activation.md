@@ -1,7 +1,8 @@
 # T08 — Draft Leader 与正式执行:实现与验证证据
 
-WorkItem: `work-item-1` (task-22, turn-9 候选;turn-2 的 `9d314e3` 已被拒绝,
-turn-4 的 `0e30089` 未被接受、其历史原样保留)
+WorkItem: `work-item-1` (task-22, turn-13 候选;turn-2 的 `9d314e3` 已被拒绝,
+turn-4 的 `0e30089` 未被接受、turn-9 的 `5400ac9` 未被接受,其历史均原样保留;
+turn-11 的实测运行记录在第 11 节,该 Turn 未产出候选)
 分支: `yui/task-22-69eeaf67/work-item-1`
 采用的上游 SHA: `013ffdc3154c18974f64c66b05ade018feb63c2b` (PR320;PR319
 `c432ad719e17d3b615829db9d2ec0a9115697220` 已验证为其祖先),合并提交 `ae6f28e`
@@ -79,6 +80,10 @@ event-3 turn.dispatched {"turnId":"turn-1","role":"leader","purpose":"planning",
 关键门禁值(同一 Task 实测):`planning admitted: true` / `execution admitted: false` /
 `workspaceReady: false`。这正是 `leaderWakeupProcessor` 中放行 planning 的原因:
 执行就绪门禁对 planning 不适用。
+
+> **取证面升级(turn-11):** 本小节由 `processLeaderWakeups` 驱动,属 `[internal]`。
+> 同一路径已在**真实 detached daemon 自己的调度循环**上跑通(第 11.1 节),
+> 无需再依赖此处的进程内取证面。
 
 ### S02 关闭原 Session,新的兼容会话读取 Context
 
@@ -177,6 +182,13 @@ sessions: { "claude": { "status": "active", "native": "b09e9ac2-...", "root": "/
 task status: active | cwd: undefined | workspace record: null
 ```
 
+**范围限定(turn-11 补充,避免与第 11.6 节被读成矛盾):** 上面这些空计划 Task
+(`task-3`/`task-4`/`task-6`/`task-7`)**都不绑定 Project**,所以确实没有任何目录。
+若一个 Task **绑定了 Project**,即使激活计划为 `empty`、**不采用任何资源**,
+激活仍会物化其**受管 Git 工作区**,`workspace.root` 因此改变(见第 11.6 节实测)。
+两者并不冲突:S27 主张的是"**不为满足框架模型而创建 worktree**",
+而受管工作区来自 **Project 绑定**这一显式事实,不是为了凑框架模型。
+
 ### S40 Draft 对话中调用 Activation:立即返回引用、结束后按当前意图采用、已取消不继续
 
 请求来自 Leader 自己**正在运行的 planning Turn** 时:
@@ -220,6 +232,11 @@ Status: active
 ```
 
 → **取消作用于请求,不是整个 Task**:同一 Task 可用新 requestId 重新请求并采用。
+
+> **取证面升级(turn-11):** 上面 `deferred → ready → adopted` 的判定取自进程内
+> 采用边界。同一序列现已在**真实 daemon** 上成立:planning 活着时 `pending`
+> 且**未采用**,terminal 后由 **daemon 自己**采用并派发 execution;
+> 取消与撤权两条阻止路径也都在 daemon 上跑通(第 11.2/11.3/11.7 节)。
 
 ---
 
@@ -481,6 +498,8 @@ Task 创建、`message send`、`activation request` 是**真实 `dist/cli.js` �
   以及第 2/3 节中标 `[internal]` 的那些用例仍是进程内取证面。
 - 兼容路径的 `RESUME MODE: resume` 与 digest 相等在**库级**验证;
   不兼容路径(handover)在**真实 CLI** 与本次 `[internal]` 采用边界两侧均验证。
+  **turn-11 补充:两条路径现各有一次真实 daemon E2E**(同一 `conversationId` 复用 /
+  换 Session 并留下持久 handover 事件,见第 11.5 节);其余组合仍只在库级覆盖。
 - Claude 侧**未**主张与 Codex 配置化 read-only/never 等价的 OS 级只读保证;
   `isolation: "trusted-local"` 只表示"本地受信目录",**不是** OS 级强制只读。
 - Scratch 未作为结果自动交付。
@@ -488,6 +507,9 @@ Task 创建、`message send`、`activation request` 是**真实 `dist/cli.js` �
   见第 5 节);后续若再有并行迁移,仍需再次协调。
 - 授权/资源撤销在**注入窗口**中验证(`/tmp/f45/f4windows.mjs`);
   真实多进程并发下的竞态时序未验证。
+  **turn-11 补充:"撤权阻止延后采用"已在真实 daemon 上成立**(第 11.7 节:
+  planning 活动期间吊销 grant → daemon 采用 fail closed、`disposition=failed`);
+  但**采用后启动失败**(第 3 节)仍只有注入窗口证据,**未**做成 daemon E2E。
 
 ---
 
@@ -583,98 +605,284 @@ Session 入口的 disabled 改为**按是否真的存在在线 Session**,
 
 ---
 
-## 10. 第 4 部分:native better-sqlite3 崩溃的诊断(**未能复现,如实声明**)
+## 10. 第 4 部分:native better-sqlite3 崩溃(**已复现,根因=本地 gyp 构建**)
 
-Leader 在其新 Integration worktree 上报:Node 24.20.0 下 better-sqlite3 的
-`Statement` 析构触发 `RemoveEnvironmentCleanupHook` 断言,完整 core 反复失败
-(并行与串行皆然),而单独 `core-smoke` 曾一次通过 47/47。
+> **本节在 turn-11 被整体重写。** 上一版结论是"未能复现,如实声明",并写下
+> "依赖版本与 native 二进制均可排除,也与 Leader 的一致"。
+> **这两句都被撤回:它们是错的。** 当时我只在自己树上跑了同一个(预编译)
+> 二进制,却把"我这里没崩"推广成"二进制相同、可以排除",这是从缺失证据
+> 做的推断,不是观察。Leader 随后取证:失败 Integration 的
+> `better_sqlite3.node` 与我树上的**不是**同一个文件。按该线索,
+> 我在隔离目录里**逐字节复现了 Leader 的失败二进制,并复现了崩溃**。
 
-### 结论(先说清楚)
+### 结论
 
-**我在自己的隔离目录中无法复现该崩溃。** 因此我**不宣称已修复、也不宣称已定位根因**。
-下面是可复核的事实与已排除项,以及仍未排除的差异。
+崩溃与 Yui 代码、与 `YUI_STORE_WORKER`、与 Node 二进制**都无关**;
+它取决于 `better-sqlite3` 的 **native 产物来源**:
 
-### 本树上的精确运行记录
+| 来源 | `better_sqlite3.node` sha256 | 工具链(`readelf -p .comment`) | daemon 启动 |
+| --- | --- | --- | --- |
+| `npm ci`(上游预编译) | `45cb92a1…e84f2` | `GCC: (Debian 10.2.1-6) 10.2.1 20210110` | **0/5** 崩溃 |
+| `npm ci --build-from-source`(本机编译) | **`2e5e2fc1…ffdc34`** | `GCC: (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0` | **4/5** 崩溃 |
+
+第二行的 sha256 与 Leader 报告其失败 Integration 的值**完全相同**
+(`2e5e2fc17e752c952da4c5f89b990e30909e31144e7fa22923cac756f4ffdc34`),
+`.comment` 也同为 Ubuntu 13.3.0;该目录同时存在 `Release/obj.target`、
+`obj.target/deps/sqlite3.a`、`test_extension.node` —— 与 Leader 的观察逐项吻合。
+故失败侧是**本机 node-gyp 编译产物**,成功侧是**上游 Debian 预编译产物**。
+
+### 复现所用的精确命令
+
+`tmp-p4b/install.sh`(临时脚手架,交付前删除)在**同一** `package.json` +
+`package-lock.json`、同一 node、同一宿主工具链下做两份隔离安装:
+
+```
+node v24.20.0 · npm 11.19.0 · gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+
+$ cd <iso>/prebuilt   && npm ci                       # 预编译路径
+    real 0m2.372s        added 49 packages
+$ cd <iso>/fromsource && npm ci --build-from-source    # 本机编译路径
+    real 1m4.352s        added 49 packages
+    npm warn: ... allowScripts ...   (better-sqlite3 与 node-pty 各一条)
+```
+
+两份都落在隔离目录内;**未改共享 Node、全局依赖或任何服务,也没有复制来源不明的
+二进制去蒙混门禁**。`npm ci` 的 49 packages / 约 1 分钟 / 两条 `allowScripts`
+警告与 Leader 的安装日志一致 —— 该日志描述的是**编译**那一侧。
+
+### 崩溃形态(以及它此前为何"看不见")
+
+用同一 Home、把 `controllerMain.js` 放到**前台**运行,本机编译版稳定给出:
+
+```
+exit code 134
+node: ../src/node_api.cc:1128: napi_status napi_remove_env_cleanup_hook(...):
+  Assertion `(env) != nullptr' failed.        ← RemoveEnvironmentCleanupHook
+frames #3–#4: better_sqlite3.node  Statement::~Statement()
+```
+
+`src/controller/clientRuntime.ts:266-272` 以 `detached: true, stdio: "ignore"`
+派生 daemon,所以 native abort **不进任何日志、CLI 也只看到 daemon 没起来**;
+上一版之所以"未能复现",部分原因就是我一直在观察一个把 abort 丢弃的通道。
+本节的 exit 134 是把同一进程拉到前台后**直接捕获**的。
+
+### 已实测排除项(逐条给出观察,不是推断)
+
+1. **Node 二进制相同,debug build 假设作废。** Leader 的
+   `/data00/home/zhangqian.0326/.nvm/versions/node/v24.20.0/bin/node`
+   sha256 `89af8424…aabbae7`,与我使用的**逐字节相同**;
+   `process.version=v24.20.0`、`process.features.debug=false`、
+   `v8_enable_debugging_features` 与 `v8_enable_debug` 均 `undefined`。
+   上一版第 4 点"断言属于 debug/assert 构建"**不成立**:
+   release 构建的 `node_api.cc` 同样带这条断言,**不能从断言形态反推 debug build**。
+2. **`YUI_STORE_WORKER=0` 不是修复。** 在本机编译版上仍 **2/3 崩溃**。
+   把 `workerEnabled=0` 当作修复会掩盖真实根因,本轮明确不采用。
+   (turn-9 那四组 worker 假设实验的结论保持有效:worker 生命周期不是本崩溃的原因。)
+3. **与 TMPDIR、与并行/串行无关**:两种 TMPDIR、两种模式在预编译版上均通过。
+
+### 恢复到可通过状态(可重复)
+
+```
+$ cd node_modules/better-sqlite3 && npx prebuild-install    # 取回上游预编译产物
+$ sha256sum build/Release/better_sqlite3.node
+  45cb92a176fb758533db6d9a343acdfc73e4de27ac4c20a0cb2a6fb5be3e84f2
+$ <daemon 启动 × 3>                                          → 0/3 崩溃
+$ node --test test/core/*.test.js
+  ℹ tests 82  ℹ pass 82  ℹ fail 0                            exit 0
+```
+
+### 供 Leader 在全新 Integration 上重复的完整配方
+
+```
+node v24.20.0(同一 nvm 路径即可,无需改动)
+npm ci                          # 不加 --build-from-source:走上游预编译
+npm run lint                    # tsc --noEmit                → exit 0
+npm run build                   # tsc                         → exit 0
+node --test test/core/*.test.js #                             → 82/82 exit 0
+sha256sum node_modules/better-sqlite3/build/Release/better_sqlite3.node
+  # 期望 45cb92a1…e84f2;若得到 2e5e2fc1…ffdc34,说明本机编译被触发,
+  # 此时 build/Release/obj.target 会存在 —— 用上面的 prebuild-install 恢复
+```
+
+**边界(如实限定):** 本节证明的是**预编译产物稳定、本机编译产物在此宿主上崩溃**,
+以及两者与 Leader 两侧观察逐字节对应。我**没有**修复 better-sqlite3 自身的
+析构/cleanup-hook 缺陷 —— 那是第三方 native 模块的问题,不在 T08 范围内,
+本轮也不为此重写第三方模块。因此第 4 部分的产品结论是:
+**Yui 侧无需改代码**,门禁只需保证 native 产物来自上游预编译。
+
+---
+
+## 11. turn-11:Draft→延后采用→执行 的真实 daemon 链路证据
+
+> 本节的实测运行发生在 turn-11;turn-13 以**同一 directive** 再次派发同一 WorkItem,
+> 本节内容未改,仅在 turn-13 完成交付前的最终验证与提交(见第 12 节)。
+
+本节补齐此前被我报成 "optional" 的核心链路。它们在 message-2 与 turn-7 指令中
+**是必须项**,上一轮未跑通就不该被降级 —— 这里给出实际跑通的结果。
+
+**方法与边界:** 全部经由**真实生产 daemon**(`controller restart`,独立 pid,
+`detached`)与**真实公共 CLI**;唯一被替换的是 **Provider 边界**(一个绝对路径的
+外部协议 stub 可执行文件)。**没有**直接调用 `runControllerSchedulerPass` 或任何
+调度函数;下列每一次状态迁移都是 daemon 自己的循环产生的。
+`task turn list` 只渲染表格、没有结构化载荷,故用一个**只读**观测脚本读同一批
+持久记录(只读、不写、不替代 daemon)。不要求真实模型,也没有使用真实 Provider。
+四个场景各自在独立隔离 Home 中运行,并在最终确认轮中复跑:
+
+```
+adopt    ===== adopt: 36/36 passed =====
+empty    ===== empty: 32/32 passed =====
+cancel   ===== cancel: 18/18 passed =====
+revoke   ===== revoke: 19/19 passed =====
+```
+
+### 11.1 Draft 消息真的被 accepted 并到达 terminal
+
+Project-bound Draft 收到 `task message send` 后,**daemon 自己**在真实 60s
+Leader 唤醒窗口后派发 planning Turn(实测 61s,与
+`LEADER_WAKE_AGGREGATION_MS = 60_000` 相符);外部 Endpoint 确实收到该受管 Turn,
+身份为 `{YUI_SESSION_SCOPE:"task", YUI_TASK_ID:"task-1", YUI_ROLE:"leader"}`;
+Turn 随后进入 terminal。**这是实际 accepted/terminal,不是模拟。**
+
+### 11.2 planning Turn 内的 CLI request 立即拿到原操作引用
+
+在**自身受管 planning Turn 内部**调用激活请求,立即返回
+`operationRef task-activation:task-1/req-activate-1`,
+`startMode:"after-planning-turn"`、`after=turn-1` —— 即**原操作引用**,不是新建操作。
+`activationCaller`(`taskActivationCommands.ts:201`)从"调用者是否处于该 Task 自己的
+存活 planning Turn"推导 `startMode`,**从不接受调用方自报**。
+同一 `requestId` 重复请求返回 `created=false` 与同一引用(幂等)。
+
+### 11.3 持续活动期间不得采用;terminal 后由 daemon 自行采用并派发 execution
+
+planning 仍活着时读取:`status=draft`、`disposition=pending` —— **未采用**。
+planning 到达 terminal 后,**daemon 自己**完成采用:`status=active`、
+`disposition=adopted`,并派发 execution Turn。
+
+### 11.4 真实 executionEnvironment 的目录/权限,经核验
+
+```json
+{ "environmentRef": "task-1/preparation-<uuid>", "access": "write",
+  "isolation": "trusted-local",
+  "directory": { "path": "<granted dir>", "device": "64784",
+                 "inode": "1706136", "ownership": "user" } }
+```
+
+`device`/`inode` 与活文件系统实测值一致(`resolveExecutionEnvironment`
+本就会在不一致时拒绝),preparation 的 `resourceRefs=["native-dir"]`,
+execution Turn **带着该已采用环境**真正到达 Endpoint。
+
+### 11.5 新旧 Session 身份:两个结果都在真实链路上成立
+
+* **不兼容(必须换 Session):** planning Session `2adf5e41…` → execution Session
+  `8f4caa02…`,并有持久事件
+  `{"reason":"activation-changed-physical-launch","roleName":"leader",
+  "nativeSessionId":"2adf5e41…","continuity":"persistent-context"}` 作为依据。
+* **兼容(必须复用 Session):** 事实不变时再派发**第二个 execution Turn**,
+  `turn-2` 与 `turn-3` 的 `conversationId` **同为** `8f4caa02…`,
+  且全程**只有一次** handover 记录(就是激活那次)。
+
+`roleSessionMayContinue`(`effectiveLaunch.ts:222`)深比较的
+`sessionContinuitySnapshot` 正是这两个结果的判据。内部风险窗口的既有证据继续复用,
+不要求把所有组合都做成 E2E。
+
+### 11.6 空环境计划:一处**修正我自己的假设**
+
+我原以为"空计划 → 物理启动不变 → Session 可续"。**实测否证了这个假设。**
+空计划确实**不采用任何物理资源、连 preparation 都不创建**
+(`adoptTaskActivationResources`:`if (plan.kind === "empty") return { request }`),
+但激活一个 Project-bound Task 会**物化其受管 Git 工作区**
+(`workspace` → `workspace/tasks/task-1/main`,并多出一个 Project worktree),
+`workspace.root` 因此改变,Session 仍然无法续用。
+**真正的原因是受管工作区物化,不是"被采用的目录"。** 此处照实记录,不掩盖。
+(第二个 execution Turn 在事实不变后同样复用 Session。)
+
+### 11.7 取消 / 撤权:两条阻止延后采用的路径
+
+* **取消**(`cancel: 18/18`):在 planning **仍活着**时取消 pending 请求 →
+  `disposition=cancelled`,Task 保持 `draft`,**无** execution Turn、**无**环境、
+  **无**已采用 preparation;重放被拒:
+  `Activation request req-activate-1 was already cancelled for task-1 (operator withdrew the request). Use a new reques…`
+* **撤权**(`revoke: 19/19`):在 planning 活着时由 Operator 吊销 grant
+  (`revokeGrant(grant, "global:operator", now)`)→ daemon 在 terminal 后的采用
+  **fail closed**:`disposition=failed`、
+  `outcome="Resource grant unavailable: native-dir/write."`,
+  Task 仍是**可继续的 Draft**,没有任何绑定或采用,也没有 execution Turn。
+
+  首次尝试没能证明这一点:stub 在请求后约 0.1s 就 terminal,daemon 的采用
+  **合法地**赢得竞态。加入 `STUB_HOLD_MS` 让 planning 真正保持活动后,
+  才是在"持续活动期间"施加取消/撤权。此处如实记录该修正。
+
+### 11.8 独立 Controller 重启后当前事实恢复
+
+`cancel`/`revoke` 之外,`adopt` 场景做了一次**独立 Controller 重启**(新 pid):
+`status`/`disposition`/`preparationId`/`executionEnvironment` **逐项保持**,
+planning **没有**被重放。(重启的是本场景隔离 Home 里的私有 daemon,
+**没有**重启共享 Controller/Provider。)
+
+### 11.9 浏览器只验证受影响的交互
+
+真实 Chrome(CDP)对真实 Web 服务器 `http://127.0.0.1:4173`,在真实渲染列表里
+点开 Task 行,**11/11 通过**;turn-9 的 35/35 矩阵保持有效、本轮不重跑:
+
+```json
+{ "planning": "active",
+  "text": "Planning Turn is active; messages reach the Task Leader.\n\nPlanning Turn: turn-1 (active)\n\nProvider terminal: not reported\n\nProvider conversation: not reported\n\nLive Leader Session: f358a21a-a7eb-4d2e-b84c-4b7ea4f28e77\n\nEnvironment: empty (legal for planning)\n\nTurn observed at: ...",
+  "sessionButton": { "label": "View Leader Session (read-only)", "disabled": false } }
+```
+
+`data-planning="active"` 等于持久 Turn 状态(**没有**谎报 "not-dispatched"),
+渲染出的 Session id 与持久状态一致,Session 入口因**真的存在** Leader Session 而可用。
+一处自查修正:最初的选择器 `/session|conversation/i` 命中的是全局
+"Operator session" 按钮,那条断言并没有在测它声称的东西;改为按真实文案
+`View Leader Session (read-only)` 定位 Task 界面自己的按钮后重跑,才是有效证据。
+
+### 11.10 本轮的验收覆盖层级(精确,不夸大)
+
+| 项 | 覆盖层级 | 依据 |
+| --- | --- | --- |
+| **S01** 路由到 Leader 并按需启动 planning | **真实 daemon E2E + 真实浏览器** | 11.1、11.9;daemon 自己派发,外部 Endpoint 实收 |
+| **S02** 关闭原 Session、兼容会话读取 Context | **真实 daemon E2E,两个结果都有** | 11.5:不兼容换 Session(带持久 handover 事件)、兼容复用同一 `conversationId` |
+| **S27** 空环境计划合法、不为框架模型建 worktree | **真实 daemon E2E,并修正了我的假设** | 11.6:空计划不创建 preparation;`workspace.root` 变化来自受管工作区物化 |
+| **S40** Draft 内激活:立即返回引用、结束后按当前意图采用、已取消不继续 | **真实 daemon E2E,四场景** | 11.2、11.3、11.7:立即拿到原操作引用;活动期间不采用;取消/撤权均阻止延后采用 |
+
+**仍未做到 E2E、故不声称完成的部分(如实列出):**
+
+1. **没有真实 Provider/模型。** Provider 边界是外部协议 stub;
+   "真实模型会如何回话"不在本节证据内(本轮也不要求)。
+2. **采用后启动失败**(第 3 节)仍是内部风险窗口层级的证据,**未**做成 daemon E2E。
+3. **兼容/不兼容的其余组合**只在内部层级覆盖;本节只把**各一个**结果做成了 E2E。
+4. **`crashForTest()` 重启后在飞请求不 settle 的挂起**(§10 早前发现)
+   仍是**未修复的独立问题**,本轮明确不扩范围。
+5. 第 7 节列出的未验证协议边界**未**变化。
+
+---
+
+## 12. 交付前的最终验证(turn-13,清理后的实际树)
+
+临时脚手架(`tmp-a/` 四场景 harness 与只读观测器、`tmp-p4b/` 两份隔离安装)
+**已在提交前删除**;交付 diff 只含本证据文档。删除后在实际交付树上跑:
 
 ```
 $ node --version && npm --version
 v24.20.0
 11.19.0
 
-$ npm run lint            # tsc -p tsconfig.json --noEmit      → exit 0
-$ npm run build           # tsc -p tsconfig.json               → exit 0
+$ sha256sum node_modules/better-sqlite3/build/Release/better_sqlite3.node
+  45cb92a176fb758533db6d9a343acdfc73e4de27ac4c20a0cb2a6fb5be3e84f2   ← 上游预编译
+  build/Release/obj.target: 不存在                                    ← 未本地编译
+  readelf -p .comment: GCC: (Debian 10.2.1-6) 10.2.1 20210110
 
-$ node --test test/core/*.test.js      (TMPDIR=/tmp)
-ℹ tests 82  ℹ pass 82  ℹ fail 0        exit 0        ← 连续 4 次,含 3 次重复运行
-$ node --test test/core/*.test.js      (默认 TMPDIR,即 .yui.task-runtimes/... )
-ℹ tests 82  ℹ pass 82  ℹ fail 0        exit 0
-$ YUI_STORE_WORKER=1 node --test test/core/*.test.js
-ℹ tests 82  ℹ pass 82  ℹ fail 0        exit 0
+$ npm run lint     # tsc -p tsconfig.json --noEmit    → exit 0
+$ npm run build    # tsc -p tsconfig.json             → exit 0
+$ TMPDIR=/tmp node --test test/core/*.test.js
+  ℹ tests 82  ℹ pass 82  ℹ fail 0                     → exit 0
 ```
 
-`grep -c 'RemoveEnvironmentCleanupHook\|Assertion failed'` 在上述所有运行日志上均为 **0**。
+即第 10 节给出的配方在本树上成立:**native 产物来自上游预编译时,完整 core 通过**。
 
-### native 构建来源(逐项记录,不是推测)
-
-```
-better-sqlite3 12.11.1   (package-lock lockfileVersion 3, resolved: registry.npmjs.org)
-prebuild-install 7.1.3 · bindings 1.5.0 · @types/better-sqlite3 9.6.0 (dev)
-build/Release/better_sqlite3.node
-  sha256 45cb92a176fb758533db6d9a343acdfc73e4de27ac4c20a0cb2a6fb5be3e84f2
-  provenance strings: "GCC: (Debian 10.2.1-6) 10.2.1 20210110"   ← 上游预编译产物
-  build/Release/obj.target 不存在 → 本机**未**从源码编译
-```
-
-在 `/tmp` 独立目录中按同一 `package.json` + `package-lock.json` 跑
-**全新 `npm ci`**,产出的 `.node` 与本树**逐字节相同**(同一 sha256)。
-故 **依赖版本与 native 二进制均可排除**,也与 Leader 的一致。
-另注:npm 11.19.0 的 `npm ci` 会因 `allowScripts` 而**跳过安装脚本**
-(`better-sqlite3` 与 `node-pty` 都有警告),但预编译产物仍然到位。
-
-### 已实测排除的机制假设
-
-此前唯一自洽的假设是:worker 线程自成 Environment/Isolate,`Addon::Cleanup` 是
-per-Isolate 的,可能在 `Statement::~Statement` 仍要 `CloseHandles()` 时就
-`delete addon`;而 `persistenceWorker.ts` 正是这种用法,且在生产**默认开启**
-(`resolveStoreWorkerEnabledForHome` 缺省 `true`),而 `core-smoke.test.js:3522`
-把 `workerEnabled` 固定为 `false` —— **生产 worker 配置确实未被 core 覆盖**。
-turn-9 针对该假设做了四组隔离实验,**全部未复现断言**:
-
-| 实验 | 形态 | 结果 |
-| --- | --- | --- |
-| worker 持活 `Statement` 后退出 | 64 个 prepared 语句从不 finalize,直接 `process.exit(0)` | 40 cycles,**0** 异常 |
-| `terminate()` 打断进行中的查询 | 真实 SQLite 读写循环中被强杀,句柄全活 | 40 cycles,**0** 异常 |
-| **真实生产 worker** + 关闭竞态 | 真 `dist/storage/persistenceWorker.js`,200 请求在飞时 `close()`(其 `close()` 只等 **20ms** 就 `terminate()`) | 20 cycles,**0** 异常 |
-| **真实生产 worker** + 崩溃重启 | `crashForTest()` 反复强杀,由 `BoundedRpcClient` 退出处理器自动重启新 Environment | 见下 |
-
-最后一组暴露了**另一个真实问题(不是本次崩溃)**:崩溃重启后,
-被重放的在飞请求**再也不 settle**,进程表现为**挂起**而非崩溃
-(有界等待 5s 后判定 `replayed requests never settled (hang)`,第 0 轮即出现)。
-这与之前观察到的"放弃 worker-backed store 客户端会 exit 124 挂起"一致。
-**这是独立发现,不是 Leader 报告的那个断言**,不应混为一谈。
-
-上述探针脚本(`tmp-p4-*.mjs`)均为临时脚手架,**已在交付前删除**。
-
-### 仍未排除的差异(需要 Leader 侧信息才能收敛)
-
-1. **`integration-3` 已被 Leader 自己确认是漏构建导致 `dist` 缺失,不是产品证据**;
-   我未把它计入。
-2. Leader 的失败发生在**其 Integration worktree**,我无法读取该目录,
-   因此无法比对:该处 `node_modules` 是否同一 sha256、是否曾 `node-gyp rebuild`、
-   `NODE_OPTIONS`/`--max-old-space-size` 等是否不同。
-3. Leader 报"清空 YUI 环境仍复现",故不可归因于 YUI 继承 —— 我认同该判断,
-   我这边**带与不带** `YUI_STORE_WORKER=1`、**默认与 `/tmp`** 两种 TMPDIR 均通过。
-4. 断言属于 Node 的 **debug/assert 构建**才会大量出现的形态;
-   Leader 所用 node 二进制是否与我的同一构建(同一 nvm 路径/同一 checksum)未知。
-
-### 可复核的下一步(未执行,因需 Leader 侧资源)
-
-在 Leader 的 Integration worktree 内、**不改共享 Node/全局依赖/服务**的前提下:
-`sha256sum node_modules/better-sqlite3/build/Release/better_sqlite3.node` 与本文件
-记录值比对;`node -p "process.config.variables.v8_enable_debug"`、
-`node -p "process.versions"`;然后 `YUI_STORE_WORKER=0 node --test test/core/*.test.js`
-与 `=1` 各跑一次。若 `=0` 通过而 `=1` 失败,则确认为生产 worker 路径,
-且该路径正是 core 未覆盖之处;若两者皆失败,则与 worker 无关,应转向 node 二进制差异。
-
-**我没有绕过该 native 失败,也没有删检查换取通过;在我的树上它不出现,
-所以我不声称第 4 部分已完成。**
+**本轮未做、也不声称做过的事:** 没有 push / PR / 远端 merge / release / archive;
+没有自我 accept 或自我 complete(候选交由 Leader 独立 Review);
+没有 amend / rebase 既有 `9d314e3` / `0e30089` / `ae6f28e` / `5400ac9`;
+没有重启共享 Controller/Provider;没有真实 Provider/模型/付费/生产 E2E;
+没有触碰 T10/T11/ACP/SDK;没有新增重试 worker / lease / 第二账本;
+没有改动中央已发布迁移(本分支仍为顺延的 12)。
