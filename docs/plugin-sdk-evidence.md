@@ -6,6 +6,11 @@ Task：task-20。精确基线：
 `task-20/turn-1` 和 `context-snapshot-1` 摘要。精确交付 head 与 Task 完成事实
 以受支持的 Task 记录为准；本文不是发布、合并或共享 Home 升级授权。
 
+范围说明（2026-09-08）：本文的权限与“不在范围”陈述记录 **T09 交付时**
+的合同，不是后续版本的当前权限目录。T10 已补充受认证 Leader 的 Task-local
+插件管理；现行合同见 [SDK 文档](plugin-sdk.md)，工程与真实场景的验收边界见
+[T10 证据](self-extension-evidence.md)。以下历史事实不回写为 T10 已验收。
+
 ## 当前结果与采用（累计交付汇总）
 
 独立 Task 的最终接受基准为 `66fd46fe9cf6f4ce0245f2258c79abfd56f12363`

@@ -1,8 +1,9 @@
 # 独立插件 SDK
 
 独立目录可以通过现有 `capability` 入口贡献 Task-local 能力，无需修改 Yui
-安装目录。SDK 管理仍只允许当前受认证的 global Operator；它不授予 Leader
-自扩展权限，也不实现 T10、Endpoint 注册或 T11 自动升级。
+安装目录。当前受认证的 Leader 可以管理自己 Task 的插件，global Operator
+仍可管理指定 Task 的插件；Worker／Reviewer 保持调用和读取权限，不获得管理
+或自行授信权限。本 SDK 不实现 Endpoint 注册或 T11 自动升级。
 
 Store 持久保存用户希望启用/停用的选择，以及对应的确切验证产物引用；
 Host 是实际实例和引用生命周期的唯一权威。Controller 重启后仍能读取选择及
@@ -12,7 +13,7 @@ Host 是实际实例和引用生命周期的唯一权威。Controller 重启后�
 ## 入口与环境
 
 所有管理操作复用原 Controller、CapabilityRegistry、InstanceHost 和身份入口。
-在已认证 managed Operator Session 中使用以下能力；普通终端不能靠声明
+在已认证 managed Leader／Operator Session 中使用以下能力；普通终端不能靠声明
 `scope:user` 获权。开发 checkout 必须使用其绝对 `output/dev/bin/yui`，
 并明确选择自己的隔离 Home，不能用全局安装验证。
 
@@ -52,6 +53,24 @@ SDK 的实际构建、候选和活实例引用会阻止公开 `environment.relea
 
 `requestId` 对有副作用的能力必填，但 SDK 不另建通用幂等账本。验证重做生成新
 报告，激活重做采用新 generation；发生通信错误后先查当前事实再决定是否重试。
+
+## 原 Task 中的自扩展
+
+Leader 先通过稳定 `capability search/describe` 读取当前目录和契约，判断复用、
+组合或临时脚本是否足够；不强制另建插件开发 Task，也不要求注册所有脚本。
+选择插件时，沿上述入口创建、验证、修复、激活。下一次桥调用即可发现并调用
+新增能力，不需要热改原生工具 schema、替换自身 Endpoint 或重启 Controller。
+
+Task-local 管理权限不等于执行信任：可执行包仍逐阶段核对下面定义的精确
+`plugin.execute` grant，源码改变后不会继承旧摘要授权。资源、网络、全局
+配置及核心 namespace 的边界不变；已有授权充分时不重复批准，缺少新权限则
+报告具体缺口，不冒充 Operator 或自己签发 grant。
+
+验证失败由 Agent 保存原错误并判断修复；不可把 unknown／部分效果自动重跑。
+使用新增能力取得实际业务结果后，通过 `artifact.save` 保存独立内容，并在
+Task 结果中保留引用。`artifact.read` 不依赖插件仍活跃。加载成功或保留插件
+源码不是业务闭环完成证据。工程验证与真实 Agent 场景的区别见
+[T10 验证记录](self-extension-evidence.md)。
 
 ## 期望选择与实际实例
 

@@ -361,6 +361,10 @@ export function createBuiltinCapabilities(
         (caller.scope === "task" && caller.role === "leader")
         || (caller.scope === "global" && caller.role === "operator")
       )) continue;
+      // PluginService binds every management target to this authenticated
+      // Task. This admits package management, not author-code execution:
+      // adopted environments and exact plugin.execute grants remain separate.
+      if (permission === "plugin:manage" && caller.scope === "task" && caller.role === "leader") continue;
       if ((permission === "config:read" || permission === "plugin:manage" || permission === "resource:register")
         && caller.scope === "global" && caller.role === "operator") continue;
       throw new Error(`Permission unavailable: ${permission}.`);

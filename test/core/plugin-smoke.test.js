@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SqliteTaskStore } from "../../dist/storage/sqliteStore.js";
 import { createTask, activateTask } from "../../dist/task/task.js";
-import { createGlobalRole, createRoleAgentBinding } from "../../dist/role/role.js";
+import { createGlobalRole, createRole, createRoleAgentBinding } from "../../dist/role/role.js";
+import { createTurn } from "../../dist/turn/turn.js";
+import { createTurnInput } from "../../dist/context/turnInputContract.js";
 import { createRoleSessionSet, recordRoleAgentSession } from "../../dist/executor/agentExecutor.js";
 import { resolveEffectiveLaunch } from "../../dist/executor/effectiveLaunch.js";
 import { createBuiltinCapabilities } from "../../dist/kernel/builtinCapabilities.js";
@@ -15,7 +17,7 @@ import { InstanceHost } from "../../dist/kernel/instanceHost.js";
 
 // One primary product path. Fault injection, trust-boundary matrices and
 // performance regressions remain change-specific development evidence.
-test("an independent declarative plugin follows the authenticated lifecycle and persists its selection", async () => {
+test("a Leader uses a Task-local declarative plugin and preserves its result", async () => {
   const home = mkdtempSync(join(tmpdir(), "yui-plugin-smoke-"));
   const store = new SqliteTaskStore(home);
   const host = new InstanceHost();
@@ -24,18 +26,22 @@ test("an independent declarative plugin follows the authenticated lifecycle and 
     const task = activateTask(createTask("task-1", "Plugin smoke", now), now);
     store.saveTask(task);
     const binding = createRoleAgentBinding({ id: "codex", adapterId: "codex" });
-    const role = createGlobalRole("operator", [binding], binding.agentId, home, now);
-    store.saveGlobalRole(role);
-    store.saveGlobalRoleSessionSet(recordRoleAgentSession(
-      createRoleSessionSet({ scope: "global", roleName: "operator" }, binding.agentId, now),
+    const role = createRole(task.id, "leader", [binding], binding.agentId, home, now);
+    store.saveRole(task.id, role);
+    store.saveTaskRoleSessionSet(recordRoleAgentSession(
+      createRoleSessionSet({ scope: "task", taskId: task.id, roleName: role.name }, binding.agentId, now),
       { agentId: binding.agentId, adapterId: binding.adapterId, nativeSessionId: "plugin-smoke-session",
         policy: "fixed", status: "active", effective: resolveEffectiveLaunch({ role, purpose: "execution" }) }, now));
+    store.saveActiveTurn(createTurn("turn-1", task.id, role.name, "new", createTurnInput({
+      source: { type: "yui", channel: "leader-wakeup" }, directive: "Use a Task-local plugin.", deltaRefIds: []
+    }), now, { effective: resolveEffectiveLaunch({ role, purpose: "execution" }) }));
     const dispatch = createCapabilityDispatcher(createBuiltinCapabilities(host, store, createDurableJobControl(store)));
+    const caller = { scope: "task", taskId: task.id, role: role.name, nativeSessionId: "plugin-smoke-session" };
     let sequence = 0;
-    const call = async (name, input) => {
+    const call = async (name, input, asCaller = caller) => {
       const result = await dispatch("capability.call", {
         taskId: task.id,
-        caller: { scope: "global", role: "operator", nativeSessionId: "plugin-smoke-session" },
+        caller: asCaller,
         request: { name, input, requestId: `smoke-${++sequence}` }
       });
       assert.equal(result.kind, "value", JSON.stringify(result));
@@ -45,12 +51,30 @@ test("an independent declarative plugin follows the authenticated lifecycle and 
     await call("environment.adopt", { taskId: task.id, preparationId: prepared.id });
     const created = await call("plugin.create", { preparationId: prepared.id, id: "demo", kind: "declarative" });
     const report = await call("plugin.validate", { preparationId: prepared.id, directory: created.directory });
+    // Operator remains a supported management caller alongside the Leader.
+    const operator = createGlobalRole("operator", [binding], binding.agentId, home, now);
+    store.saveGlobalRole(operator);
+    store.saveGlobalRoleSessionSet(recordRoleAgentSession(
+      createRoleSessionSet({ scope: "global", roleName: operator.name }, binding.agentId, now),
+      { agentId: binding.agentId, adapterId: binding.adapterId, nativeSessionId: "plugin-smoke-operator",
+        policy: "fixed", status: "active", effective: resolveEffectiveLaunch({ role: operator, purpose: "execution" }) }, now));
+    const scan = await call("plugin.scan", { preparationId: prepared.id, directory: created.directory },
+      { scope: "global", role: operator.name, nativeSessionId: "plugin-smoke-operator" });
+    assert.equal(scan.digest, report.sourceDigest);
     await call("plugin.activate", { validationId: report.id });
-    assert.deepEqual(await call("demo.echo", { text: "hello" }), { text: "hello" });
+    const discovered = await dispatch("capability.search", { taskId: task.id, caller, query: "demo.echo" });
+    assert.equal(discovered.capabilities.length, 1);
+    const result = await call("demo.echo", { text: "hello" });
+    assert.deepEqual(result, { text: "hello" });
+    const artifact = await call("artifact.save", { taskId: task.id, artifact: {
+      kind: "content", displayName: "Plugin result", provenance: `demo@${report.package.digest}`,
+      content: result.text
+    } });
     const current = await call("plugin.inspect", { id: "demo" });
     assert.equal(current.desired.validationId, report.id);
     assert.equal(current.actual.validationId, report.id);
     assert.equal((await call("plugin.disable", { id: "demo" })).drained, true);
+    assert.equal((await call("artifact.read", { taskId: task.id, artifactId: artifact.id })).content, "hello");
     await host.close();
     store.close();
     const reopened = new SqliteTaskStore(home);

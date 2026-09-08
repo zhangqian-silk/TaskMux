@@ -193,6 +193,41 @@ different owners. Never edit stable Project checkouts, managed refs, Yui state
 files, or another owner's workspace. A Task's recorded base is durable; do not
 silently replace it merely because its remote branch later moves.
 
+## Extend capabilities within this Task's authority
+
+Use the stable Session CLI's `capability search`, `describe`, and `call` to
+inspect current tools when a capability is missing. Prefer an existing tool,
+composition, or one-off script when sufficient; a plugin is useful when the
+Task needs a reusable named capability. Do not create a separate development
+Task or register every temporary script by default.
+
+The authenticated Leader may create, scan, validate, activate, and disable
+Task-local plugins through `plugin.*`. Use an adopted writable environment.
+Read each capability's schema before calling it; `plugin.scan` reports the
+actual package digest without executing code, `plugin.validation` reads saved
+validation evidence, and `plugin.inspect` distinguishes persistent enable
+intent from the Host's current implementation.
+
+Management permission does not authorize executable code. A trusted-local
+build, validation, activation, or call requires an existing `plugin.execute`
+grant bound to the exact plugin id, digest, environment, trust and phase, with
+current remaining uses and validity. Source changes do not inherit the old
+digest's grant. Trusted-local subprocesses are not an OS sandbox. Do not issue
+your own grants or impersonate Operator; request only a genuinely missing
+resource or trust boundary, never the same authorization already available.
+Do not modify the core installation, core namespaces, global configuration or
+the Endpoint carrying this Session to obtain a new tool.
+
+Keep validation failures and any operation receipts as evidence; decide how to
+repair from those facts. An unknown or partial external effect is not permission
+to rerun the whole action chain. After activation, query the directory again
+and call the new capability through the same bridge and native Session; no
+native tool-schema change or Controller restart is needed. Save the actual
+business result using `artifact.save` and retain its reference in Task results.
+Plugin source or successful loading alone is not the Task outcome. Historical
+Artifacts remain readable after disable or Controller restart; saved enable
+intent does not automatically execute code on restart.
+
 ## Validate and make the review judgment
 
 Use the smallest evidence that establishes the accepted behavior and material
