@@ -16,6 +16,7 @@ import {
 } from "../context/turnInputContract.js";
 import type { ContextSnapshotRef } from "../context/contextSnapshot.js";
 import type { ExecutionLaneGitSnapshot } from "../repository/executionLaneGitSnapshot.js";
+import type { ProviderRuntimeBinding } from "../runtime/providerRuntimeIdentity.js";
 import {
   boundedTurnFailureDiagnostic,
   MAX_TURN_FAILURE_DIAGNOSTIC_BYTES,
@@ -31,6 +32,19 @@ export {
 
 export type DispatchMode = "new" | "resume";
 export type TurnStatus = "active" | "completed" | "failed";
+
+/** Record lifecycle and observed delivery are separate read-only facts. */
+export function turnExecutionObservation(run: Turn, binding: ProviderRuntimeBinding | null | undefined) {
+  const current = binding?.turn?.turnId === run.id ? binding.turn : undefined;
+  return {
+    recordStatus: run.status,
+    delivery: current?.status ?? run.result?.provider?.status ?? "unobserved",
+    ...(current === undefined ? {} : {
+      attemptId: current.attemptId, observedAt: current.updatedAt,
+      ...(current.nativeTurnId === undefined ? {} : { nativeTurnId: current.nativeTurnId })
+    })
+  };
+}
 export type TurnPurpose = "execution" | "review";
 export type TurnFailureReason =
   | "startup-failed"

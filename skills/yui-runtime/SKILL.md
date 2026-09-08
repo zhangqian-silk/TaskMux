@@ -9,7 +9,16 @@ Treat the Session Manifest and Turn Bootstrap Envelope as pointers, never as the
 Task brief. Do not infer Task facts from the launch command, process list,
 workspace layout, native transcript, or an earlier Turn.
 
-For every managed Task Turn:
+There are two normal Task entry points. A user may continue directly with the
+current, unrevoked Leader Session: read current context using the Session CLI
+with `task context <task-id> --json`. Do not request a self-wake, reopen a Task,
+or reuse an old completed Turn snapshot merely to obtain authority. Pending
+delivery, unknown execution evidence and missing reports do not themselves
+revoke Session authority. Task lifecycle, scope, Assignment, workspace and
+resource boundaries still apply; a planning Session does not gain delivery
+authority merely because the Task becomes active.
+
+For every explicitly dispatched managed Task Turn:
 
 1. Read the exact Turn identity from the newest Bootstrap Envelope.
 2. Before acting, load its authorized pack with the Session CLI named by the
@@ -76,10 +85,15 @@ state the material gap, and optionally recommend a separate follow-up. Do not
 create an InputRequest merely to solicit permission for it.
 
 Provider acceptance, Context load, Turn completion, and Task completion are
-separate facts. For a managed Task Turn, end the Provider Turn with one truthful
+separate facts. For an explicitly dispatched managed Task Turn, end with one truthful
 final report. Yui automatically correlates that native terminal with the exact
 current Turn and persists the report; no completion command is required. The
 Leader alone decides whether the WorkItem or Task is complete.
+
+Ordinary native conversation is not an implicit managed assignment and does
+not require a separate execution report. Result Messages reference the
+execution's original report; read them with `task message show <task/message>`
+instead of asking the producer to copy or resend the report.
 
 After a failed Provider Turn, read the referenced `runtime.agent-error` fact.
 The failed Turn is immutable; a recovery is always a new Turn. Continue on the

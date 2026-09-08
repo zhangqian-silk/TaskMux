@@ -887,6 +887,14 @@ UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
     // Existing records deliberately keep their managed-workspace execution;
     // adopted preparations must never be inferred as an automatic binding.
     sql: "SELECT 1; -- explicit adopted execution environment; absent means managed workspace"
+  },
+  {
+    version: 10,
+    name: "session-authority-and-execution-admission",
+    introducedIn: "0.15.9",
+    // A new exact busy/not-accepted fact is distinct from terminal refusal.
+    // Historical refusals are not heuristically reclassified from raw text.
+    sql: "SELECT 1; -- deferred Provider admission, optional Message resultRef, and Session-sourced management facts"
   }
 ]);
 

@@ -4,8 +4,9 @@ import type { TaskStore } from "../storage/taskStore.js";
 import { contextContentDigest } from "./contextSnapshot.js";
 import { buildTurnContextPack } from "./turnContextPack.js";
 import { sourceTurnContextValue } from "./sourceTurnContext.js";
-import type { TaskMessage } from "../message/message.js";
+import { expandTaskMessageResult, type TaskMessage } from "../message/message.js";
 import { managedWorkspaceKey } from "../worktree/managedWorkspace.js";
+import { turnExecutionObservation, type Turn } from "../turn/turn.js";
 
 const MAX_RECORDS = 256;
 const MAX_VALUE_BYTES = 4096;
@@ -163,7 +164,19 @@ export function inspectTaskContext(
     if (Buffer.byteLength(JSON.stringify(entry.value)) > MAX_INSPECT_BYTES) {
       throw usageError("Context value exceeds the bounded inspect limit.", undefined, { ref: entry.ref, maxBytes: MAX_INSPECT_BYTES });
     }
-    return { ...entry, coreCursor: encode(currentCursor(reader, taskId)) };
+    const expansion = selector.store === "task-message"
+      ? expandTaskMessageResult(value as TaskMessage, (task, turn) => reader.getTurn(task, turn))
+      : undefined;
+    const response = { ...entry, ...(expansion !== undefined && "result" in expansion
+      ? { result: expansion.result } : {}),
+      ...(selector.store === "turn" ? { execution: turnExecutionObservation(value as Turn,
+        reader.getTaskRoleSessionSet(taskId, (value as Turn).roleName)?.providerBinding) } : {}),
+      coreCursor: encode(currentCursor(reader, taskId)) };
+    if (Buffer.byteLength(JSON.stringify(response)) > MAX_INSPECT_BYTES) {
+      throw usageError("Expanded Context exceeds the bounded inspect limit.", undefined,
+        { ref: entry.ref, maxBytes: MAX_INSPECT_BYTES });
+    }
+    return response;
   });
 }
 

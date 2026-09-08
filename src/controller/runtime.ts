@@ -754,7 +754,7 @@ export function createRuntimeLifecycleDispatcher(
       const status = (params as Record<string, unknown>).status;
       const reason = (params as Record<string, unknown>).reason;
       const raw = (params as Record<string, unknown>).raw;
-      if ((status !== "rejected" && status !== "delivery-unknown")
+      if ((status !== "rejected" && status !== "deferred" && status !== "delivery-unknown")
         || typeof reason !== "string" || reason.trim().length === 0
         || typeof raw !== "string" || raw.trim().length === 0) {
         throw applicationError("INVALID_PARAMS", "Provider Turn resolution is invalid.");

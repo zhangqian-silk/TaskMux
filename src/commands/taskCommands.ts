@@ -57,6 +57,7 @@ import { formatTimestamp } from "../output/timePresentation.js";
 import { renderRoleDetails } from "../output/rolePresentation.js";
 import {
   createTaskMessage,
+  expandTaskMessageResult,
   taskMessageAuthorLabel,
   updateDraftTaskMessage,
   type TaskMessage,
@@ -90,6 +91,7 @@ import {
 } from "../role/role.js";
 import {
   createTurn,
+  turnExecutionObservation,
   withTurnContextSnapshot,
   type Turn
 } from "../turn/turn.js";
@@ -283,8 +285,7 @@ import {
 import { runGrantCommand } from "./grantCommands.js";
 import { runWorkflowCommand } from "./workflowCommands.js";
 import {
-  taskLocalActor as resolveTaskLocalActor,
-  taskLeaderActionTurnId
+  taskLocalActor as resolveTaskLocalActor
 } from "./taskActor.js";
 import { currentManagedRuntime } from "../runtime/managedCaller.js";
 import { enqueueOperatorEvent } from "../scheduler/operatorEvent.js";
@@ -1528,30 +1529,31 @@ function reopenTaskCommand(
       throw usageError("Restoring a cancelled Task requires user or Operator authority.");
     }
     const dispatchHistory = JSON.stringify(taskDispatchMailboxes(tx, task.id));
-    // Historical pending/unknown mailbox deliveries are not new intent.
-    // Resuming selected work requires a fresh explicit dispatch/message.
-    for (const mailbox of tx.listWorkMailboxes()) {
-      if ((mailbox.target.kind === "task" || mailbox.target.kind === "role")
-        && mailbox.target.taskId === task.id) tx.removeWorkMailbox(mailbox.target);
-    }
-    tx.clearPendingWakeup(task.id);
+    // Reopening changes Task intent, not the disposition of existing inputs.
+    // In particular, external messages and unknown deliveries remain owned by
+    // their existing mailbox fences.
     const active = reopenTask(task, now);
     tx.saveTask(active);
     const reopenedReason = wakeReason("task-reopened");
-    enqueueWork(tx, leaderMailbox(task.id), reopenedReason, now, [taskRef(task.id)]);
+    if (actor !== "leader") {
+      enqueueWork(tx, leaderMailbox(task.id), reopenedReason, now, [taskRef(task.id)]);
+    }
     enqueueWork(tx, taskMailbox(task.id), reopenedReason, now, [taskRef(task.id)]);
     recordTaskEvent(tx, task.id, "task.reopened", {
-      status: active.status, by: actor, historicalInputs: "not-replayed", dispatchHistory,
+      status: active.status, by: actor, historicalInputs: "preserved", dispatchHistory,
+      ...(actor === "leader" ? leaderActionEventPayload(tx, task.id, options) : {}),
       previous: editedFieldValues(task, [
         "status", "completedAt", "completedBy", "completionSummary", "completionArtifactRefs",
         "retiredAt", "retiredBy", "retirementSummary", "replacementTaskId", "retirementIsolation"
       ])
     }, now);
-    return { task: active, changed: true } as const;
+    return { task: active, changed: true, wakeLeader: actor !== "leader" } as const;
   });
   if (result.changed) {
     notifyMailbox(options.runtime, taskMailbox(result.task.id), result.task.id);
-    notifyMailbox(options.runtime, leaderMailbox(result.task.id), result.task.id);
+    if (result.wakeLeader) {
+      notifyMailbox(options.runtime, leaderMailbox(result.task.id), result.task.id);
+    }
   }
   return result.changed
     ? `Reopened task ${result.task.id}\n`
@@ -1978,6 +1980,16 @@ function taskMessageCommand(
   options: TaskCommandOptions
 ): string | TaskCommandExecution {
   const [command, ...rest] = args;
+  if (command === "show") {
+    const usage = "Task message show usage: yui task message show <task/message>.";
+    exactPositionals(rest, 1, usage);
+    const ref = taskRecordReference(rest[0], "message", "Message reference", options);
+    const message = listContextMessages(store, ref.taskId, options.environment)
+      .find((entry) => entry.id === ref.localId);
+    if (message === undefined) throw dataError("Message is unavailable in the caller's scope.");
+    const expanded = expandTaskMessageResult(message, (task, turn) => store.getTurn(task, turn));
+    return { kind: "output", output: `${JSON.stringify(expanded, null, 2)}\n`, data: expanded };
+  }
   if (command === "send") {
     const usage = "Task message send usage: yui task message send <id> (<body>|--body-file <path|->) [--wake-policy leader|none].";
     const parsed = parseTail(
@@ -4877,10 +4889,6 @@ function retireTurn(
       return { task, turn: run, changed: false } as const;
     }
     if (run.status === "active") {
-      if (actor === "leader"
-        && taskLeaderActionTurnId(tx, task.id, options.environment) === run.id) {
-        throw usageError("A Task Leader cannot retire its own current authority Turn.", usage);
-      }
       const expectedProgressAt = requiredOption(
         parsed.options,
         parsed.options.has("--expected-progress-at")
@@ -6260,14 +6268,15 @@ function showTurn(
     const retirement = tx.listEvents(run.taskId)
       .map(taskRecordRetirement)
       .find((entry) => entry?.recordKind === "turn" && entry.recordId === run.id) ?? null;
-    return { turn: run, retirement };
+    return { turn: run, retirement, execution: turnExecutionObservation(run,
+      tx.getTaskRoleSessionSet(run.taskId, run.roleName)?.providerBinding) };
   });
   if (asJson) {
     return { kind: "output" as const, output: `${JSON.stringify(data, null, 2)}\n`, data };
   }
   return {
     kind: "output" as const,
-    output: renderTurnShow(
+    output: `Delivery observation: ${data.execution.delivery}\n` + renderTurnShow(
       data.turn,
       data.retirement
     ),
@@ -7278,12 +7287,10 @@ function leaderActionEventPayload(
   taskId: string,
   options: TaskCommandOptions
 ): TaskEventPayload {
-  const turnId = taskLeaderActionTurnId(
-    store,
-    taskId,
-    options.environment
-  );
-  return turnId === undefined ? {} : { leaderTurnId: turnId };
+  const caller = currentManagedRuntime(store, options.environment, taskId, "leader");
+  // A long-lived Session may be handling direct input while another request
+  // awaits admission. The Role's active pointer cannot prove command origin.
+  return caller === undefined ? {} : { leaderNativeSessionId: caller.nativeSessionId };
 }
 
 function recordTaskEventRecord(

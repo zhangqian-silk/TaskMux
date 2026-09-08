@@ -8,6 +8,7 @@ export type ProviderTurnStatus =
   | "failed"
   | "cancelled"
   | "rejected"
+  | "deferred"
   | "delivery-unknown";
 
 export type ProviderGoalStatus =
@@ -298,7 +299,7 @@ export function settleProviderTurnSubmission(
   raw: ProviderRuntimeBinding,
   input: Readonly<{
     attemptId: string;
-    status: "rejected" | "delivery-unknown";
+    status: "rejected" | "deferred" | "delivery-unknown";
     reason: string;
     resolvedAt: string;
   }>
@@ -314,6 +315,17 @@ export function settleProviderTurnSubmission(
     && !(binding.turn.status === "delivery-unknown" && input.status === "rejected")
   ) {
     throw new Error("Provider Turn does not match a resolvable delivery state.");
+  }
+  if (input.status === "deferred") {
+    return validateProviderRuntimeBinding({
+      ...binding,
+      turn: {
+        ...binding.turn,
+        status: "deferred",
+        terminalReason: identity(input.reason, "Provider admission deferral reason"),
+        updatedAt: orderedTurnTimestamp(binding.turn, input.resolvedAt, "Provider deferredAt")
+      }
+    });
   }
   return input.status === "delivery-unknown"
     ? markProviderTurnDeliveryUnknown(binding, {
@@ -528,7 +540,7 @@ function validateProviderTurn(turn: ProviderTurn, currentAuthorityEpoch: number)
   if (turn.authorityEpoch > currentAuthorityEpoch) {
     throw new Error("Provider Turn authority epoch is ahead of current authority.");
   }
-  if (!["submitting", "accepted", "completed", "failed", "cancelled", "rejected", "delivery-unknown"]
+  if (!["submitting", "accepted", "completed", "failed", "cancelled", "rejected", "deferred", "delivery-unknown"]
     .includes(turn.status)) {
     throw new Error("Provider Turn status is invalid.");
   }

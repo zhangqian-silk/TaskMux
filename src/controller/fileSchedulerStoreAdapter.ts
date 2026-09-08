@@ -32,7 +32,6 @@ import {
   currentProviderConversation,
   managedProviderTurnId,
   clearProviderGoal,
-  providerGoalContinues,
   settleProviderTurnSubmission,
   settleProviderTurn,
   transferProviderAuthority,
@@ -62,7 +61,6 @@ import {
 import { SYSTEM_OPERATOR_ROLE } from "../role/systemRoles.js";
 import {
   appendTurnInput,
-  createTurn,
   type Turn
 } from "../turn/turn.js";
 import { transportAgentResult } from "../domain/agentResultTransport.js";
@@ -488,6 +486,9 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
           }
       : {
           status: "failed" as const,
+          ...(typeof input.payload.output === "string"
+            && transportAgentResult(input.payload.output).status === "completed"
+            ? { output: input.payload.output } : {}),
           diagnostic: providerStatus === "cancelled"
             ? "Provider cancelled the Agent Turn."
             : `Provider Agent Turn failed: ${input.payload.failure?.error.message ?? "unknown provider failure"}`,
@@ -1271,7 +1272,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
     roleName: string;
     turnId?: string;
     attemptId: string;
-    status: "rejected" | "delivery-unknown";
+    status: "rejected" | "deferred" | "delivery-unknown";
     reason: string;
     raw: string;
     now: Date;
@@ -1307,7 +1308,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         }),
         message: input.reason,
         raw: input.raw,
-        inputDisposition: input.status === "rejected" ? "not-accepted" : "unknown"
+        inputDisposition: input.status === "delivery-unknown" ? "unknown" : "not-accepted"
       });
       const errorEvent = createTaskEvent(
         store.nextEventId(input.taskId),
@@ -1339,6 +1340,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         input.now
       );
       store.saveEvent(input.taskId, errorEvent);
+      if (input.status === "deferred") return;
       const route = input.roleName === "leader"
         ? { kind: "operator" } as const
         : { kind: "role", taskId: input.taskId, roleName: "leader" } as const;
@@ -2316,10 +2318,8 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         // the Turn terminal is the same fact, not a second notification.
         const structuredFailure = input.observation?.kind === "turn.failed"
           && input.observation.payload.failure !== undefined;
-        if (!structuredFailure && (
-          terminalTurn.status === "failed"
-          || (terminalTurn.roleName !== "leader" && !providerGoalContinues(binding.goal))
-        )) {
+        if (!structuredFailure && terminalTurn.roleName === "leader"
+          && terminalTurn.status === "failed") {
           routeRoleEvent(
             store,
             event,
@@ -2622,44 +2622,23 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         const session = sessions?.sessions[input.fence.agentId];
         const binding = sessions?.providerBinding;
         const nativeTurnId = input.fence.nativeTurnId!;
-        const active = store.getActiveTurn(taskId, input.fence.roleName);
         if (sessions === null || sessions === undefined || binding === null || binding === undefined || session === undefined || session.nativeSessionId !== input.fence.nativeSessionId || currentProviderConversation(binding).conversationId !== input.fence.nativeSessionId) {
           recordCanonicalObservationObsolete(store, input, "direct-turn-session-mismatch", now);
           return "obsolete";
         }
         if (binding.turn?.attemptId === ordinaryAttemptId
-          && binding.turn.nativeTurnId === nativeTurnId
-          && binding.turn.turnId !== undefined
-          && active?.id === binding.turn.turnId) {
+          && binding.turn.nativeTurnId === nativeTurnId) {
           return "applied";
         }
-        if (active !== null) {
-          recordCanonicalObservationObsolete(store, input, "direct-turn-conflicts-with-active-turn", now);
-          return "obsolete";
-        }
-        const turnId = store.nextTurnId(taskId);
-        const goalContinuation = input.payload.input === undefined
-          && providerGoalContinues(binding.goal);
-        const direct = createTurn(
-          turnId,
-          taskId,
-          input.fence.roleName,
-          "resume",
-          createTurnInput({
-            source: goalContinuation
-              ? { type: "provider", channel: "goal-continuation" }
-              : { type: "user", channel: "direct" },
-            ...(input.payload.input === undefined
-              ? {}
-              : { directive: input.payload.input }),
-            deltaRefIds: []
-          }),
-          now,
-          { effective: session.effective }
-        );
+        // Native conversation is not an implicit managed assignment. Keep its
+        // observation without borrowing or overwriting another request's
+        // accepted, unknown, or waiting admission evidence.
+        if (binding.turn !== null
+          && (["submitting", "accepted", "delivery-unknown"].includes(binding.turn.status)
+            || (binding.turn.turnId !== undefined
+              && store.getTurn(taskId, binding.turn.turnId)?.status === "active"))) return "applied";
         const submittedAt = input.observedAt ?? input.receivedAt;
         const accepted = acceptProviderTurn(beginProviderTurn(binding, {
-          turnId,
           attemptId: ordinaryAttemptId,
           authorityEpoch: binding.authority.epoch,
           submittedAt
@@ -2668,16 +2647,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
           nativeTurnId,
           acceptedAt: submittedAt
         });
-        store.saveTurn(direct);
-        store.saveActiveTurn(direct);
         store.saveTaskRoleSessionSet(updateTaskRoleProviderRuntime(sessions, accepted, now));
-        store.saveEvent(taskId, createTaskEvent(
-          store.nextEventId(taskId),
-          taskId,
-          "turn.dispatched",
-          turnLaunchEventPayload(direct),
-          now
-        ));
         return "applied";
       }
       if (ordinaryAttemptId !== undefined) {
@@ -3085,6 +3055,13 @@ function runtimeReceiptBelongsToTurn(
   const receiptId = input.fence.receiptId;
   if (receiptId === formatTurnReceiptId(taskId, turnId)) return true;
   if (receiptId === undefined) return false;
+  const sessions = store.getTaskRoleSessionSet(taskId, input.fence.roleName);
+  const current = sessions?.providerBinding?.turn;
+  if (current?.turnId === turnId && current.attemptId === receiptId
+    && current.status !== "rejected" && current.status !== "deferred"
+    && sessions?.sessions[input.fence.agentId]?.nativeSessionId === input.fence.nativeSessionId) {
+    return true;
+  }
   return store.listEvents(taskId).some((event) => {
     const accepted = runtimeObservationFromTaskEvent(event);
     return accepted?.kind === "turn.accepted" && accepted.fence.turnId === turnId && accepted.fence.roleName === input.fence.roleName && accepted.fence.agentId === input.fence.agentId && accepted.fence.nativeSessionId === input.fence.nativeSessionId && accepted.fence.receiptId === receiptId;
@@ -3834,7 +3811,7 @@ function resolveTerminalExecution(store: TaskStore, input: TerminalExecutionInpu
     && currentProviderConversation(binding).conversationId === input.nativeSessionId
     && identityMatches(pending.attemptId, pending.nativeTurnId)
     && (input.turnId === undefined || input.turnId === pending.turnId)
-    && pending.status !== "rejected") {
+    && pending.status !== "rejected" && pending.status !== "deferred") {
     const turn = pending.turnId === undefined ? null : store.getTurn(input.taskId, pending.turnId);
     if (pending.turnId === undefined || (
       turn !== null && turn.roleName === input.roleName
@@ -3850,7 +3827,6 @@ function resolveTerminalExecution(store: TaskStore, input: TerminalExecutionInpu
       && event.fence.agentId === input.agentId
       && event.fence.nativeSessionId === input.nativeSessionId
       && identityMatches(event.fence.receiptId, event.fence.nativeTurnId)
-      && event.fence.turnId !== undefined
       && (input.turnId === undefined || event.fence.turnId === input.turnId));
   const accepted = matches[0];
   if (accepted === undefined || accepted.fence.receiptId === undefined) return null;
@@ -3858,7 +3834,11 @@ function resolveTerminalExecution(store: TaskStore, input: TerminalExecutionInpu
     || event.fence.receiptId !== accepted.fence.receiptId)) {
     throw new Error("Runtime terminal has conflicting durable execution bindings.");
   }
-  const turn = store.getTurn(input.taskId, accepted.fence.turnId!);
+  if (accepted.fence.turnId === undefined) {
+    return { turn: null, current: false, attemptId: accepted.fence.receiptId,
+      nativeTurnId: accepted.fence.nativeTurnId };
+  }
+  const turn = store.getTurn(input.taskId, accepted.fence.turnId);
   if (turn === null || turn.effective.adapterId !== input.adapterId
     || turn.effective.agentId !== input.agentId || turn.roleName !== input.roleName) return null;
   return {

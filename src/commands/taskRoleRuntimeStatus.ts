@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import type { RoleAgentSession } from "../executor/agentExecutor.js";
 import type { EffectiveLaunchSnapshot } from "../executor/effectiveLaunch.js";
-import type { Turn } from "../turn/turn.js";
+import { turnExecutionObservation, type Turn } from "../turn/turn.js";
 import type { TaskRole } from "../role/role.js";
 import {
   hasRuntimeCleanupObligation,
@@ -83,6 +83,7 @@ export type TaskRoleRuntimeStatus = Readonly<{
   openInputRequestCount: number;
   role: TaskRole;
   activeTurn: Turn | null;
+  execution?: ReturnType<typeof turnExecutionObservation>;
   /**
    * Issue 09: the most recently updated Turn for this Role, regardless of
    * status. Lets the status display both axes — the last Turn outcome and the
@@ -143,7 +144,7 @@ export function inspectTaskRoleRuntimeStatuses(
 export function renderTaskRoleRuntimeStatus(status: TaskRoleRuntimeStatus): string {
   const activeTurn = status.activeTurn === null
     ? "-"
-    : `${status.activeTurn.id} (${activeTurnDeliveryLabel(status.activeTurn)})`;
+    : `${status.activeTurn.id} (${status.execution?.delivery ?? "unobserved"})`;
   const lastTurn = status.activeTurn !== null || status.lastTurn === null
     ? undefined
     : `${status.lastTurn.id} (${status.lastTurn.status}${
@@ -386,6 +387,8 @@ function inspectTaskRoleRuntimeStatus(
     activeTurn,
     lastTurn,
     activeWork,
+    ...(activeTurn === null ? {} : { execution: turnExecutionObservation(activeTurn,
+      store.getTaskRoleSessionSet(taskId, role.name)?.providerBinding) }),
     nativeSession,
     tmux,
     workspace,
@@ -631,8 +634,4 @@ function runtimeNativeTurnId(
   return observations.filter(({ kind }) => kind === "turn.accepted").at(-1)
     ?.fence.nativeTurnId
     ?? observations.at(-1)?.fence.nativeTurnId;
-}
-
-function activeTurnDeliveryLabel(run: Turn): string {
-  return run.status === "active" ? "active" : run.status;
 }

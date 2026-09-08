@@ -1935,7 +1935,7 @@ async function resolveProviderTurnSubmission(
     ...durableTurn,
     status: error instanceof ProviderDeliveryUnknownError
       ? "delivery-unknown"
-      : "rejected",
+      : error instanceof ProviderTurnBusyError ? "deferred" : "rejected",
     reason: errorText(error),
     raw: serializeAgentErrorRaw(error),
     observedAt: new Date().toISOString()

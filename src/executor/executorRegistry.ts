@@ -284,7 +284,9 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
             kind: input.receiptId === formatTurnReceiptId(
               input.delivery.prepared.taskId,
               turnId
-            ) ? "turn" : "turn-input",
+            ) || input.receiptId.startsWith(`${formatTurnReceiptId(
+              input.delivery.prepared.taskId, turnId
+            )}/attempt/`) ? "turn" : "turn-input",
             taskId: input.delivery.prepared.taskId,
             localId: turnId
           },

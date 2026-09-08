@@ -486,7 +486,7 @@ const taskChildren: readonly NodeInput[] = [
   {
     name: "message",
     summary: "Manage durable Task messages.",
-    sections: [{ id: "manage", title: "Commands", entries: ["send", "list", "update", "retire"] }],
+    sections: [{ id: "manage", title: "Commands", entries: ["send", "list", "show", "update", "retire"] }],
     children: [
       {
         name: "send",
@@ -503,6 +503,11 @@ const taskChildren: readonly NodeInput[] = [
         summary: "List Task messages.",
         usage: "yui task message list <id> [--after <timestamp>] [--limit <n>]",
         options: ["--after", "--limit"]
+      },
+      {
+        name: "show",
+        summary: "Read a scoped Message and expand its single execution result.",
+        usage: "yui task message show <task>/<message>"
       },
       {
         name: "update",

@@ -434,10 +434,9 @@ function validateJobTarget(store: TaskStore, params: Omit<DurableJobStartParams,
  * - `user` (non-managed): rejected because it has no managed Session identity.
  * - `global`: full Task authority after current Role Session verification.
  * - `task` + mismatched taskId: rejected.
- * - `task` + missing `turnId`: rejected (a managed caller must bind to a Turn).
- * - `task` + Turn not found / not active / `roleName !== role`: rejected — the
- *   claimed Role must be the real Role of an active Turn.
- * - `task`: full authority inside the matching Task after active Turn and
+ * - A non-Leader Task caller requires its current active Assignment.
+ * - A Leader Task caller requires its current, unrevoked native Session.
+ * - `task`: authority inside the matching Task after current Session and
  *   native Session verification; Role does not narrow it.
  */
 /**
@@ -486,10 +485,8 @@ function assertCallerAuthorized(
       "A managed Task Session may not start or cancel Jobs for a different Task."
     );
   }
-  // The Turn is resolved from durable state rather than presented by the
-  // caller: a long-lived Session process cannot hold a current Turn in its
-  // frozen environment, and its own claim would add nothing the store does
-  // not already own.
+  // A long-lived Session is the Leader's identity, not its execution
+  // occupancy. Non-Leader callers still require their active Assignment.
   const current = (() => {
     try {
       return requireManagedTaskCaller(store, {
@@ -500,7 +497,7 @@ function assertCallerAuthorized(
       throw jobControlError("UNAUTHORIZED", error instanceof Error ? error.message : String(error));
     }
   })();
-  if (current.currentTurnId === undefined) {
+  if (current.roleName !== "leader" && current.currentTurnId === undefined) {
     throw jobControlError("UNAUTHORIZED", "A managed Task Session's Role is not bound to an active Turn.");
   }
   const sessions = store.getTaskRoleSessionSet(taskId, current.roleName);

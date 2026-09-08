@@ -17,7 +17,7 @@ import {
 } from "../runtime/runtimeProjection.js";
 import { builtinDriverIdForAdapter } from "../runtime/builtinAgentDrivers.js";
 import { formatTurnReceiptId } from "../task/taskRecordReference.js";
-import type { Turn } from "../turn/turn.js";
+import { turnExecutionObservation, type Turn } from "../turn/turn.js";
 import { resolveRuntimeHealth } from "../config/yuiConfig.js";
 import {
   projectSessionTokenMetrics,
@@ -239,7 +239,8 @@ export function buildWebTaskDetail(
         observability: workItemObservability.get(item.id),
         execution: projectWorkItemExecution(item, turns, roleSessionSets, reader)
       })),
-      turns,
+      turns: turns.map((run) => ({ ...run, execution: turnExecutionObservation(run,
+        reader.getTaskRoleSessionSet(taskId, run.roleName)?.providerBinding) })),
       runtimeHealth: { needsAttentionTurns, activeTurns: activeTurnHealth },
       reviewRounds: reader.listReviewRounds(taskId),
       openInputs: inputs.filter((request) => request.status === "open"),

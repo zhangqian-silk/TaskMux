@@ -368,7 +368,12 @@ export async function publishStructuredProviderTerminal(input: Readonly<{
         ? fence.receiptId === undefined ? {} : { receiptId: fence.receiptId }
         : { receiptId: input.terminal.attemptId })
     },
-    payload
+    payload: {
+      ...payload,
+      ...(kind !== "turn.completed" && transported.status === "completed"
+        ? { output: transported.output } : {}),
+      ...(input.terminal.input === undefined ? {} : { input: input.terminal.input })
+    }
   });
   await persistAndApply(
     input.home,

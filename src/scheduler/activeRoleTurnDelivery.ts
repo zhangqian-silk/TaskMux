@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { serializeTurnInputEnvelope } from "../context/turnInputContract.js";
 import {
   roleSessionMayContinue,
@@ -103,6 +104,11 @@ async function deliverActiveTurn(
     || binding?.authority.owner === "unknown") {
     return { ...base, status: "skipped", reason: "writer-attached" };
   }
+  if (currentProviderTurn === null && observedTurn !== null
+    && ["submitting", "accepted", "delivery-unknown"].includes(observedTurn.status)) {
+    return { ...base, status: "skipped",
+      reason: observedTurn.status === "delivery-unknown" ? "delivery-uncertain" : "not-ready" };
+  }
   if (currentProviderTurn?.status === "accepted") {
     settleAcceptedRoleTurnDispatch(store, turn, dispatchToken);
     return { ...base, status: "skipped", reason: "not-ready" };
@@ -115,7 +121,11 @@ async function deliverActiveTurn(
       currentProviderTurn.terminalReason ?? "Provider could not determine whether the Turn was accepted.");
   }
 
-  if (currentProviderTurn !== null) {
+  if (currentProviderTurn?.status === "rejected") {
+    return failTurnDelivery(store, turn, now, "runtime-failed",
+      currentProviderTurn.terminalReason ?? "Provider rejected the input.");
+  }
+  if (currentProviderTurn !== null && currentProviderTurn.status !== "deferred") {
     const reason = currentProviderTurn.terminalReason
       ?? `Provider Turn ended with status ${currentProviderTurn.status} without recording its Turn result.`;
     // A terminal Provider projection without an application result is a
@@ -124,7 +134,11 @@ async function deliverActiveTurn(
     return { ...base, status: "skipped", reason: "delivery-uncertain", error: reason };
   }
 
-  const attemptId = initialAttemptId;
+  // Only a durable, exact busy/not-accepted disposition permits a new
+  // transport attempt. Keep the business input and every earlier receipt.
+  const attemptId = currentProviderTurn?.status === "deferred"
+    ? `${initialAttemptId}/attempt/${randomUUID()}`
+    : initialAttemptId;
   const mode = turn.mode;
   const existingSession = store.getRoleSession(task.id, role.name, turn.effective.agentId);
   let prepared: PreparedRoleDelivery | undefined;

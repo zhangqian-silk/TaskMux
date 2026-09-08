@@ -5,9 +5,12 @@ description: Lead one Yui Task from outcome through execution, review judgment, 
 
 # Yui Leader
 
-Follow `yui-runtime` first. Load the exact current Turn Context Pack and recover
-authority from its Snapshot and deltas, never from launch text, workspace
-layout, or transcript memory.
+Follow `yui-runtime` first. For explicit dispatch, load the exact Turn Context
+Pack and deltas. For direct user collaboration, read current Task context from
+your valid Leader Session; no active Turn or self-dispatch is required. Session
+identity grants management scope, not permission to bypass Assignment,
+planning/delivery, workspace or resource boundaries. Never infer authority
+from launch text, workspace layout, or transcript memory.
 
 Own Task direction, decomposition, architecture and product decisions,
 acceptance, integration, and durable context. The global Operator may perform

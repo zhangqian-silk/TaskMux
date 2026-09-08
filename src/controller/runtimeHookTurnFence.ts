@@ -75,6 +75,7 @@ export function resolveRuntimeHookTurnFence(
   const providerTurn = sessions?.providerBinding?.turn;
   const matchesProviderTurn = providerTurn !== null
     && providerTurn !== undefined
+    && providerTurn.status !== "rejected" && providerTurn.status !== "deferred"
     && executionSession?.adapterId === adapterId
     && executionSession.effective.workspace.root === workspace
     && sessions?.providerBinding != null
@@ -122,7 +123,7 @@ export function resolveRuntimeHookTurnFence(
     roleName
   }));
   const directProviderTurn = matchesProviderTurn && providerTurn.turnId === undefined;
-  const sessionOnlyObservation = options.sessionOnly === true && activeTurn === null;
+  const sessionOnlyObservation = options.sessionOnly === true;
   if (acceptedBinding === null && (directProviderTurn || sessionOnlyObservation)) {
     const observedSession = directProviderTurn ? executionSession : session;
     if (observedSession === undefined

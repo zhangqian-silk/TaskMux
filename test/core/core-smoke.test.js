@@ -64,7 +64,7 @@ import {
 } from "../../dist/runtime/ports.js";
 import { RuntimeLaunchCoordinator } from "../../dist/controller/runtimeLaunchCoordinator.js";
 import { resolveManagedTaskCaller } from "../../dist/runtime/managedCaller.js";
-import { taskLeaderActionTurnId } from "../../dist/commands/taskActor.js";
+import { taskLocalActor } from "../../dist/commands/taskActor.js";
 import { buildTurnContextPack } from "../../dist/context/turnContextPack.js";
 import {
   buildTaskWakeEnvelope,
@@ -1302,7 +1302,7 @@ test("a direct Provider Turn records visible input and output without workflow s
     "accepted"
   );
   const directTurn = store.getActiveTurn(task.id, role.name);
-  assert.notEqual(directTurn, null);
+  assert.equal(directTurn, null);
   const terminal = {
     taskId: task.id,
     roleName: role.name,
@@ -1311,7 +1311,6 @@ test("a direct Provider Turn records visible input and output without workflow s
     nativeSessionId: "thread-1",
     nativeTurnId: "turn-ordinary-1",
     attemptId: "direct:turn-ordinary-1",
-    turnId: directTurn.id,
     input: "Please inspect the current code.",
     providerStatus: "completed",
     outcome: {
@@ -1323,11 +1322,8 @@ test("a direct Provider Turn records visible input and output without workflow s
   assert.equal(adapter.classifyRuntimeTurnTerminal(terminal), "apply");
   const observed = adapter.observeRuntimeTurnTerminal(terminal, completedAt);
   assert.equal(observed.duplicate, false);
-  assert.equal(observed.turn.inputs[0].input.source.type, "user");
-  assert.equal(observed.turn.inputs[0].input.source.channel, "direct");
-  assert.equal(observed.turn.inputs[0].input.directive, "Please inspect the current code.");
-  assert.equal(observed.turn.result.output, "\nOrdinary conversation reply.\n");
-  assert.equal(store.listTurns(task.id).length, 1);
+  assert.equal(observed.turn, undefined);
+  assert.equal(store.listTurns(task.id).length, 0);
   assert.equal(store.getTask(task.id).status, "active");
   assert.equal(store.getTaskRoleSessionSet(task.id, role.name).providerBinding.turn.status, "completed");
   assert.equal(store.getPendingWakeup(task.id), null);
@@ -1337,7 +1333,7 @@ test("a direct Provider Turn records visible input and output without workflow s
     fence: { nativeTurnId: "turn-goal-2", receiptId: "direct:turn-goal-2" }
   }), continuationAt), "applied");
   const goalTurn = store.getActiveTurn(task.id, role.name);
-  assert.notEqual(goalTurn, null);
+  assert.equal(goalTurn, null);
   const continued = adapter.observeRuntimeTurnTerminal({
     taskId: task.id,
     roleName: role.name,
@@ -1346,40 +1342,30 @@ test("a direct Provider Turn records visible input and output without workflow s
     nativeSessionId: "thread-1",
     nativeTurnId: "turn-goal-2",
     attemptId: "direct:turn-goal-2",
-    turnId: goalTurn.id,
     providerStatus: "completed",
     outcome: {
       status: "completed",
       output: "Goal-directed continuation reply."
     }
   }, continuationAt);
-  assert.deepEqual(continued.turn.inputs[0].input.source, {
-    type: "provider",
-    channel: "goal-continuation"
-  });
-  assert.equal(continued.turn.inputs[0].input.directive, undefined);
-  assert.equal(store.listTurns(task.id).length, 2);
+  assert.equal(continued.turn, undefined);
+  assert.equal(store.listTurns(task.id).length, 0);
   assert.equal(store.getPendingWakeup(task.id), null);
 
   assert.equal(adapter.observeRuntimeObservation(observation("turn.accepted", 7, {
     fence: { nativeTurnId: "turn-missing-result-3", receiptId: "direct:turn-missing-result-3" }
   }), new Date("2026-08-31T00:31:01.000Z")), "applied");
   const missingResultTurn = store.getActiveTurn(task.id, role.name);
-  assert.notEqual(missingResultTurn, null);
+  assert.equal(missingResultTurn, null);
   const preciseDiagnostic = "Provider Agent result is 900000 bytes and exceeds the durable result limit.";
   assert.equal(adapter.observeRuntimeObservation(observation("turn.completed", 8, {
     fence: {
-      turnId: missingResultTurn.id,
       nativeTurnId: "turn-missing-result-3",
       receiptId: "direct:turn-missing-result-3"
     },
     payload: { resultTransportDiagnostic: preciseDiagnostic }
   }), new Date("2026-08-31T00:31:02.000Z")), "applied");
-  const failedResultTurn = store.getTurn(task.id, missingResultTurn.id);
-  assert.equal(failedResultTurn.status, "failed");
-  assert.equal(failedResultTurn.result.output, undefined);
-  assert.equal(failedResultTurn.result.diagnostic, preciseDiagnostic);
-  assert.equal(failedResultTurn.result.failureReason, "runtime-failed");
+  assert.equal(store.listTurns(task.id).length, 0);
 
   assert.equal(adapter.observeRuntimeObservation(observation("goal.updated", 9, {
     payload: {
@@ -1390,7 +1376,6 @@ test("a direct Provider Turn records visible input and output without workflow s
     }
   }), new Date("2026-08-31T00:31:03.000Z")), "applied");
   assert.deepEqual(store.getPendingWakeup(task.id).reasons, [
-    "role-turn-result",
     "provider-goal-complete"
   ]);
 });
@@ -3541,7 +3526,7 @@ test("Controller begin-handover accepts a null fromReleaseId", async (t) => {
 
 test("production storage exposes one current version and one migration floor", () => {
   assert.equal(MIN_SUPPORTED_STORAGE_VERSION, 1);
-  assert.equal(CURRENT_STORAGE_VERSION, 9);
+  assert.equal(CURRENT_STORAGE_VERSION, 10);
   for (const retiredExport of [
     "FileTaskStore",
     "STORAGE_STATE_FILE",
@@ -3564,7 +3549,7 @@ test("a new current Home initializes its SQLite authority exactly once", (t) => 
   try {
     assert.deepEqual(
       database.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),
-      [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }]
+      Array.from({ length: CURRENT_STORAGE_VERSION }, (_, index) => ({ version: index + 1 }))
     );
     assert.deepEqual(
       database.prepare("PRAGMA table_info(schema_migrations)").all().map(({ name }) => name),
@@ -4267,6 +4252,7 @@ test("managed Session authority follows durable state, not a frozen environment"
   assert.equal(betweenTurns.agentId, "codex");
   assert.equal(betweenTurns.adapterId, "codex");
   assert.equal(betweenTurns.currentTurnId, undefined);
+  assert.equal(taskLocalActor(store, environment, task.id), "leader");
 
   store.saveActiveTurn(createTurn(
     "turn-7",
@@ -4281,16 +4267,16 @@ test("managed Session authority follows durable state, not a frozen environment"
   // The same unchanged environment now reports the current Turn, so a Turn
   // advance can never strand a live Session.
   assert.equal(resolveManagedTaskCaller(store, environment).currentTurnId, "turn-7");
-  assert.equal(taskLeaderActionTurnId(store, task.id, environment), "turn-7");
+  assert.equal(taskLocalActor(store, environment, task.id), "leader");
 
   // A caller naming another Session cannot act as this Role.
   assert.throws(
     () => resolveManagedTaskCaller(store, { ...environment, CODEX_THREAD_ID: "other-session" }),
     /no longer the current runtime of task-1\/leader/u
   );
-  assert.equal(taskLeaderActionTurnId(store, task.id, {
+  assert.throws(() => taskLocalActor(store, {
     ...environment, CODEX_THREAD_ID: "other-session"
-  }), undefined);
+  }, task.id));
 });
 
 test("a Turn Context Pack reports which of the Task's records are in flight", (t) => {

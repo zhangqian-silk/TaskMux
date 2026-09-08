@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
+import { createTaskMessage } from "../message/message.js";
+import { enqueueWork } from "../coordination/workMailboxQueue.js";
 
 import {
   captureRoleTurnDispatch,
@@ -337,7 +339,8 @@ export function retireExactActiveTurn(
     && (providerTurn?.status === "completed"
       || providerTurn?.status === "failed"
       || providerTurn?.status === "cancelled"
-      || providerTurn?.status === "rejected");
+      || providerTurn?.status === "rejected"
+      || providerTurn?.status === "deferred");
   if (session?.status === "active" && !providerSettled) {
     return {
       disposition: "blocked",
@@ -501,6 +504,21 @@ export function terminalizeExactTaskTurn(
     }
   }
   store.saveTurn(terminal);
+  if (terminal.roleName !== "leader") {
+    // Keep the report in its execution record; atomically publish only a
+    // collaboration reference. Duplicate terminals have already returned.
+    const message = createTaskMessage(
+      store.nextMessageId(terminal.taskId), terminal.taskId,
+      `Execution ${terminal.id} ${terminal.status}.`,
+      "role-result", { type: "role", roleName: terminal.roleName }, now,
+      { resultRef: { type: "agent-run-result", runId: terminal.id }, ...(terminal.workItemId === undefined
+        ? {} : { workItemId: terminal.workItemId }) }
+    );
+    store.saveMessage(terminal.taskId, message);
+    enqueueWork(store, { kind: "role", taskId: terminal.taskId, roleName: "leader" },
+      "role-result", now, [{ type: "message", taskId: terminal.taskId, id: message.id }],
+      { source: "task-event", dedupeKey: `result:${terminal.taskId}/${terminal.id}` });
+  }
   const dispatchIdentity = {
     taskId: terminal.taskId,
     roleName: terminal.roleName,

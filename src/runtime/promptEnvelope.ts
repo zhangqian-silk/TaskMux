@@ -69,6 +69,9 @@ function requireQualifiedReceiptId(
     }
     return value;
   }
+  if (kind === "turn" && value.startsWith(`${expected}/attempt/`)
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+      value.slice(`${expected}/attempt/`.length))) return value;
   if (value !== expected) throw new Error("Prompt envelope id does not match its source.");
   return expected;
 }
