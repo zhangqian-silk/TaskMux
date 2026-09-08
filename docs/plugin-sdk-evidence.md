@@ -6,10 +6,20 @@ Task：task-20。精确基线：
 `task-20/turn-1` 和 `context-snapshot-1` 摘要。精确交付 head 与 Task 完成事实
 以受支持的 Task 记录为准；本文不是发布、合并或共享 Home 升级授权。
 
-## 结果与采用
+## 当前结果与采用（累计交付汇总）
 
-交付 [SDK 合同](plugin-sdk.md)：独立包经 `plugin.create/scan/validate/
-validation/activate/disable` 和现有 capability CLI/RPC 贡献 Task-local 能力。
+最近已验证的代码基准为 `c08ebf7e21d010645782d0c66187eab60f52e5bc`：
+build/lint 与 core **82/82** 通过。正式 Claude `review-round-3/turn-9`
+（effective `claude/opus/max`）独立确认 82/82、10 项隔离探针及真实 v8→v10
+升级通过，接受代码，仅指出本文累计汇总的文档准确性问题；本次校正不改代码。
+最终交付 head 与文档复核裁定以 Task 记录为准。
+
+以下是累计交付合同；后面的分阶段证据标明各自提交，历史 81/81 不代表当前
+门禁，也不能被回写成当时尚不存在的 82/82。
+
+交付 [SDK 合同](plugin-sdk.md)：独立包经 create/scan/validate/activate/disable
+管理入口，以及 validation/inspect/list 查询入口，通过现有 capability CLI/RPC
+贡献 Task-local 能力；这些入口均在 `plugin` namespace 下。
 声明式解释器与明确授信的可执行 Node 子进程均已实现并验证，不只是 manifest
 描述或 unavailable 占位。无需修改安装目录、建立第二个 Controller、Host、
 Registry 或 Store。
@@ -18,11 +28,15 @@ Registry 或 Store。
 实际执行检查。持久报告不是 grant；激活复核当前源码、权限、环境和依赖，只
 初始化报告的确切产物。进程内发布完整贡献，旧调用保留原 generation；停用
 停止新调用并在实际排空后 dispose。报告可以跨 Store 重开读取，重启不自动激活。
+用户的启用/停用选择也已持久化，与 Host 实际实例分开；只读视图区分 desired、
+actual 和排空引用。合法激活失败保留期望选择与原实例，非法/未获权请求不写意图。
 
-中央存储 8→9 `plugin-validation-evidence` 仅新增不可变报告表，最低支持仍为 1。
-沿用 T05 环境与 CapabilityGrant 记录，不增加长期开发状态机、active 标志、
-自动恢复、签名市场或 OS 沙箱。Operator 集成 T06/T07/T09 时应协调尚未发布
-迁移的连续编号，不能重写已发布迁移或以本交付为授权升级共享 Home。
+当前分支中央存储链包含两步：8→9 `plugin-validation-evidence` 新增不可变报告表，
+9→10 `plugin-enable-intent` 新增持久选择表，当前版本为 **10**，最低支持仍为 1。
+沿用 T05 环境与 CapabilityGrant 记录，不增加长期开发状态机、可写运行中状态、
+自动恢复、签名市场或 OS 沙箱。Operator 集成 T06/T07/T09 时须将这两步一并纳入
+尚未发布迁移的连续编号协调，不能只按新增 v9 处理，不能重写已发布迁移，
+也不能以本交付为授权升级共享 Home。
 
 SDK 权限仍由 global Operator 管理。可执行的 build/validate/activate/call
 分别要求精确 pluginId、源码/产物摘要、environmentRef、trust、phase 的现行
@@ -35,7 +49,10 @@ requiredPermissions 和 effect 上限约束。未复制 T07 ACP/Endpoint。
 T04 原生 Session 的 environmentRef 消费、T10 Leader 自扩展、Project/global
 提升、T11 全面热插拔和自动升级不在本次实现内。
 
-## 实际开发证据
+## 首轮开发证据（faf09fb 历史记录）
+
+本节仅记录首轮提交 `faf09fb642c76553f765fd8efb75daa739e83755` 的检查，
+不是当前累计交付的门禁结果；当前 core 82/82 见前面的累计汇总。
 
 全部使用一次性 SQLite Home、自有源码、临时 Git、独立 Unix socket、Node
 子进程及 loopback HTTP fixture。测试进程移除继承的 YUI 身份/控制面变量，
@@ -45,8 +62,8 @@ CLI 使用本 checkout 的绝对 launcher，构建/执行不进入共享 Home。
 
 - `make install-local`：当前 checkout 的本地 launcher，无全局链接。
 - `npm run build`、`npm run lint`、`npm run test:core`：
-  core 81/81，测试阶段约 4.23 秒。永久测试仅同步当前存储版本期望，
-  没有加入专项或历史异常矩阵。
+  该历史候选 core 81/81，测试阶段约 4.23 秒。当时永久测试仅同步存储版本期望，
+  尚未加入后续的插件主路径 smoke；没有加入专项或历史异常矩阵。
 - `node --test output/t09-evidence.mjs`：最终 10/10，约 3.00 秒。
 - `node output/t09-migration.mjs`：从精确基线构建出的真实 v8 loader 先验证
   旧 Home；新 loader 拒绝未迁移数据，显式 upgrade 生成备份并成功到 v9，
@@ -142,11 +159,12 @@ Leader 据完整审查、修复复核和最终本地验证接受该限定实现�
 
 ### 证据
 
-本节为 Leader 实际执行的增量验证，不冒充独立 Review：
+本节仅记录提交 `43c2cd9b23ca68f7666939ca121dbbbd44334b67` 的历史增量验证，
+不冒充独立 Review，也不代表后续当前门禁（82/82）：
 
 - `make install-local`、`npm run build`、`npm run lint`、
-  `npm run test:core` 通过；core 81/81，测试阶段约 4.25 秒，
-  永久用例仅同步当前迁移版本期望。
+  `npm run test:core` 通过；该历史候选 core 81/81，测试阶段约 4.25 秒，
+  当时永久用例仅同步迁移版本期望，尚未加入后续的插件主路径 smoke。
 - 临时 `node --test output/t09-intent-evidence.mjs` 最终 11/11，约 3.22 秒。
   使用真实隔离 SQLite、原 authenticated dispatcher、Node 子进程、自有代码、
   原 grant Store，以及真实 Unix socket/绝对本地 launcher。
