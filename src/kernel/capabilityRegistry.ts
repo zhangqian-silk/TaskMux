@@ -57,6 +57,15 @@ export type CapabilityImplementation = Readonly<{
   invoke(name: string, input: unknown, invocation: CapabilityInvocation): unknown | Promise<unknown>;
 }>;
 export type CapabilityVisibility = Readonly<{ taskIds: readonly string[]; projectIds: readonly string[] }>;
+/** Trusted owners may accompany a failed operation with its current read model.
+ * This is diagnostic data, not an operation receipt or an authority token. */
+export class CapabilityExecutionError extends Error {
+  readonly value: unknown;
+  constructor(message: string, value: unknown) {
+    super(message);
+    this.value = structuredClone(value);
+  }
+}
 type Authorize = (context: TrustedCallContext, descriptor?: CapabilityDescriptor, input?: unknown) => CapabilityVisibility;
 const effectRank = { query: 0, "local-mutation": 1, "external-operation": 2 };
 const reserved = new Set(["yui", "task", "context", "config", "job", "resource", "plugin", "runtime", "grant", "capability", "artifact", "environment", "project"]);
@@ -243,6 +252,7 @@ export class CapabilityRegistry {
       return {
         kind: entered ? "failed" : "unavailable",
         detail: error instanceof Error ? error.message : "Capability invocation failed.",
+        ...(error instanceof CapabilityExecutionError ? { value: error.value } : {}),
         effect, operations, ...origin
       };
     }

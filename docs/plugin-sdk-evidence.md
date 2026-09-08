@@ -114,3 +114,72 @@ Leader 据完整审查、修复复核和最终本地验证接受该限定实现�
 未 push、PR、merge、tag、release、archive，未升级全局安装或共享 Home，
 未重启共享 Controller/Provider，未启动后续 Task。采用需由 Operator 另行
 集成代码及协调迁移；本 Task 完成不扩大这些授权。
+
+## 持久启用意图增量（turn-6）
+
+用户经 message-5 明确授权在原 Task 补齐持久启用/停用选择。增量基线为已接受的
+`faf09fb642c76553f765fd8efb75daa739e83755`；原正式 Claude
+`review-round-1/turn-2` 只覆盖该旧候选，不能作为本节新代码的审查结论。
+
+### 合同变化
+
+- 原 Store 新增 `plugin_intents`，保存 Task、plugin、enabled、确切 validation
+  引用、选择 revision/时间，以及可选的该选择最近管理失败。没有持久 active/
+  draining 标志；实际选择由 SDK 的目录引用关联唯一 Host，实际引用观察也只读
+  Host。版本和摘要从原不可变 validation 派生。
+- `plugin.inspect/list` 区分 desired、actual、instances、needsActivation。
+  查询不加载作者代码、不消费 grant、不写 Store；重启保留选择但 actual 为 null。
+- 激活的静态输入/归属、内容、环境、权限/依赖准入先于意图写入；可执行 grant
+  消费与合法启用选择同事务提交。准入拒绝或事务失败不写选择、不启动候选。
+  初始化/发布失败保留期望 B、原实际 A 和诊断。失败响应仍为 `kind: failed`，
+  在可读取时附带当前视图；不把管理失败变成业务成功。
+- 意图 revision 替换了原进程内 `changes` token。迟到候选只能对仍匹配的选择
+  发布，失败诊断也仅能更新该 revision；没有新 lease、工作流阶段或外部 CAS
+  参数。停用先提交选择并阻止新 acquire，原调用和清理仍按 Host 生命周期结束。
+- 本分支中央链追加 9→10 `plugin-enable-intent`。原 1–9 不重写；
+  旧验证没有表达启用意图，因此新表为空，不根据历史报告或进程猜测回填。
+  与主线的编号冲突仍按用户要求留到合入协调，不访问/升级共享 Home。
+
+### 证据
+
+本节为 Leader 实际执行的增量验证，不冒充独立 Review：
+
+- `make install-local`、`npm run build`、`npm run lint`、
+  `npm run test:core` 通过；core 81/81，测试阶段约 4.25 秒，
+  永久用例仅同步当前迁移版本期望。
+- 临时 `node --test output/t09-intent-evidence.mjs` 最终 11/11，约 3.22 秒。
+  使用真实隔离 SQLite、原 authenticated dispatcher、Node 子进程、自有代码、
+  原 grant Store，以及真实 Unix socket/绝对本地 launcher。
+- 临时 `node output/t09-intent-migration.mjs` 通过：从精确旧提交导出并构建
+  v9 loader，创建合法 Task、环境、真实验证报告并激活；关闭后由旧 loader
+  确认 current v9。新 loader 先拒绝普通打开，显式 upgrade 产生备份并进入
+  v10，原 Task/验证逐值相同、意图表为空，旧 binary 拒读新 Home。
+- `node scripts/assemble-runtime-package.mjs --output output/t09-intent-runtime`
+  与组装包 `dist/cli.js --version` 通过；新实现文件与 SDK 文档包含在包内，
+  文档链接/代码围栏及 `git diff --check` 通过。临时组装包随后清理，未发布。
+
+专项覆盖启用/停用后的重开 Store、读取不执行代码、Task scope、非法字段/
+跨 Task/无 grant 不写意图、事务失败不发布/不停用并回滚未执行的 grant 消费、
+失败 B 保留 desired B/actual A/诊断、撤权后重启不自动或显式执行、
+停用期间的真实引用数、迟到候选/清理失败不覆盖更新选择。
+正常停用后原报告仍可读；本增量未修改原 Job/receipt owner 或重跑完整旧
+loopback 效果专项，不能把这轮查询检查冒充旧外部效果链的新 E2E。
+
+最初的两项契约检查分别以缺少 `plugin.inspect` 和缺少失败视图失败，随后变绿。
+故障注入还复现了新增响应读取在发布后出错时会误入候选回滚的问题：
+已选中实例被卸载，actual 变为 null。修正将发布后的诊断读取移出候选回滚
+边界，同一探针确认错误响应不会撤销已发生发布，后续实际调用仍成功。
+
+事务、注册和清理故障使用受控 port 注入；重启验证包含真实 Store 重开和
+全新 Host/Registry/SDK，CLI/socket 验证保持自有控制连接，不宣称完整生产
+Controller 崩溃恢复。临时脚本在交付前移除，不进入永久 suite 或 CI。
+
+### 审查与停止线
+
+本增量须针对新精确候选请求正式 Claude Opus 审查，并由 Leader 完整读取原
+Turn 报告后裁定；审查身份、ReviewRound/Turn、精确候选及裁定以 Task 持久记录
+为准。本节不预先声称独立审查通过，也不改写旧审查事实。
+
+没有扩展 T10、T11、Project/global 提升、OS 沙箱、后台恢复或控制面自身的
+唤醒/busy 修复。未测试真实模型/生产/付费/共享资源；未 push/PR/merge/release/
+archive，未同步上游或升级共享安装/DB、重启共享服务。

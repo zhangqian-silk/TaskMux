@@ -9,6 +9,8 @@ import { createProjectResources } from "../resources/projectResourceService.js";
 import type { TrustedCallContext } from "../kernel/callAuthority.js";
 import type { InstanceHost, ImplementationRef } from "../kernel/instanceHost.js";
 import type { CapabilityRegistry, CapabilityDescriptor, CapabilityImplementation } from "../kernel/capabilityRegistry.js";
+import { CapabilityExecutionError } from "../kernel/capabilityRegistry.js";
+import { validatePluginId, type PluginIntent } from "./pluginIntent.js";
 import { packagePath, readPluginPackage, type PluginPackage, type PluginValidation } from "./pluginPackage.js";
 import { interpretPlugin } from "./pluginInterpreter.js";
 import { PluginProcess, pluginProcessEnvironment } from "./pluginProcess.js";
@@ -16,9 +18,9 @@ import { PluginProcess, pluginProcessEnvironment } from "./pluginProcess.js";
 const execute = promisify(execFile);
 type Active = { ref: ImplementationRef; validationId: string };
 
-/** SDK management owner. Validation is durable evidence; active implementations
- * belong to the existing Host. Restart requires explicit activation, not a
- * stored active flag, automatic author execution or an upgrade/recovery worker. */
+/** SDK management owner. The Store owns desired selection and validation;
+ * the Host alone owns live implementations. Reading/restarting never executes
+ * author code or treats saved intent as a grant. */
 export function createPluginService(store: TaskStore, host: InstanceHost, registry: CapabilityRegistry) {
   const resources = createProjectResources(store);
   const active = new Map<string, Active>();
@@ -30,10 +32,51 @@ export function createPluginService(store: TaskStore, host: InstanceHost, regist
     environmentUsers.set(token, { taskId, preparationId });
     return () => { environmentUsers.delete(token); };
   };
-  // In-process compare token only: prevents async candidate publication after a
-  // competing activate/disable. It is neither a lease nor durable workflow state.
-  const changes = new Map<string, object>();
   const keyFor = (taskId: string, pluginId: string) => `plugin:${taskId}:${pluginId}`;
+  const selection = (taskId: string, validationId: string) => {
+    const report = store.getPluginValidation(taskId, validationId);
+    if (!report) throw new Error("Plugin selection references missing validation evidence.");
+    return { validationId, version: report.package.manifest.version, digest: report.package.digest };
+  };
+  const inspect = (taskId: string, pluginId: string) => {
+    validatePluginId(pluginId);
+    return store.transaction(() => {
+      const desired = store.getPluginIntent(taskId, pluginId);
+      const selected = active.get(keyFor(taskId, pluginId));
+      const actual = selected && host.isAvailable(selected.ref)
+        ? { ...selection(taskId, selected.validationId), provider: selected.ref } : null;
+      return {
+        pluginId, scope: { kind: "task" as const, id: taskId },
+        desired: desired === null ? null : {
+          ...desired, ...(desired.validationId === undefined ? {} : selection(taskId, desired.validationId))
+        },
+        actual,
+        instances: host.inspect(keyFor(taskId, pluginId)),
+        needsActivation: desired?.enabled === true && desired.validationId !== actual?.validationId
+      };
+    });
+  };
+  const choose = (taskId: string, pluginId: string, enabled: boolean, validationId?: string): PluginIntent =>
+    store.transaction(() => {
+      const previous = store.getPluginIntent(taskId, pluginId);
+      const chosen = validationId ?? previous?.validationId;
+      const intent: PluginIntent = {
+        schemaVersion: 1, taskId, pluginId, revision: (previous?.revision ?? 0) + 1,
+        enabled, ...(chosen === undefined ? {} : { validationId: chosen }), updatedAt: new Date().toISOString()
+      };
+      store.savePluginIntent(intent);
+      return intent;
+    });
+  const fail = (intent: PluginIntent, error: unknown): CapabilityExecutionError => {
+    let message = error instanceof Error ? error.message : String(error);
+    try {
+      store.recordPluginIntentFailure(intent.taskId, intent.pluginId, intent.revision,
+        { message, occurredAt: new Date().toISOString() });
+    } catch (recordError) {
+      message += `; failure diagnostic could not be saved: ${recordError instanceof Error ? recordError.message : String(recordError)}`;
+    }
+    return new CapabilityExecutionError(message, inspect(intent.taskId, intent.pluginId));
+  };
   const environment = (taskId: string, preparationId: string) => {
     const task = store.getTask(taskId);
     if (!task || !["draft", "active"].includes(task.status)) throw new Error("Plugin environment requires an open Task.");
@@ -96,13 +139,13 @@ export function createPluginService(store: TaskStore, host: InstanceHost, regist
   };
 
   const prepare = async (taskId: string, preparationId: string, pkg: PluginPackage, phase: "validate" | "activate",
-    executionInput = pkg) => {
+    executionInput = pkg, admittedExecution?: () => void) => {
     if (pkg.manifest.kind === "declarative") {
       const implementation = interpretPlugin(pkg);
       const release = retainEnvironment(taskId, preparationId);
       return { implementation, dispose: async () => { release(); } };
     }
-    const check = execution(taskId, preparationId, executionInput, phase);
+    const check = admittedExecution ?? execution(taskId, preparationId, executionInput, phase);
     const env = environment(taskId, preparationId);
     const process = new PluginProcess(env.directory!.path);
     const release = retainEnvironment(taskId, preparationId);
@@ -127,6 +170,12 @@ export function createPluginService(store: TaskStore, host: InstanceHost, regist
   };
 
   return {
+    current: inspect,
+    list(taskId: string) {
+      return store.transaction(() => store.listPluginIntents(taskId)
+        .sort((left, right) => left.pluginId.localeCompare(right.pluginId))
+        .map((intent) => inspect(taskId, intent.pluginId)));
+    },
     assertEnvironmentUnused(taskId: string, preparationId: string) {
       if ([...environmentUsers.values()].some((owner) => owner.taskId === taskId && owner.preparationId === preparationId)) {
         throw new Error("Environment has live plugin references; disable and drain its plugins or finish validation first.");
@@ -239,52 +288,73 @@ export function createPluginService(store: TaskStore, host: InstanceHost, regist
       const ref = refFor(taskId, pkg);
       const entries = descriptors(taskId, pkg, ref);
       registry.checkRegistration(context, entries);
-      const token = {};
-      changes.set(ref.id, token);
-      const candidate = await prepare(taskId, preparationId, pkg, "activate");
+      // Intent is admitted only after input, content, environment, caller and
+      // execution authorization pass. Grant consumption and selection commit
+      // together, before any author initialization or publication.
+      let admittedExecution: (() => void) | undefined;
+      const intent = store.transaction(() => {
+        if (pkg.manifest.kind === "trusted-local") admittedExecution = execution(taskId, preparationId, pkg, "activate");
+        return choose(taskId, pkg.manifest.id, true, validationId);
+      });
+      let candidate: Awaited<ReturnType<typeof prepare>> | undefined;
       let attached = false;
+      let previous: Active | undefined;
       try {
+        candidate = await prepare(taskId, preparationId, pkg, "activate", pkg, admittedExecution);
         verify();
         registry.checkRegistration(context, entries);
-        if (changes.get(ref.id) !== token) throw new Error("Plugin activation superseded by another explicit management action.");
+        if (store.getPluginIntent(taskId, pkg.manifest.id)?.revision !== intent.revision) {
+          throw new Error("Plugin activation superseded by another explicit management action.");
+        }
+        const implementation = candidate.implementation;
         host.attach(ref, {
           invoke: (name: string, input: unknown, invocation: Parameters<CapabilityImplementation["invoke"]>[2]) => {
             environment(taskId, preparationId);
-            return candidate.implementation.invoke(name, input, invocation);
+            return implementation.invoke(name, input, invocation);
           }
         }, [candidate.dispose]);
         attached = true;
-        const previous = active.get(ref.id);
+        previous = active.get(ref.id);
         registry.register(entries);
         active.set(ref.id, { ref, validationId });
-        if (previous) {
-          // Old calls keep their exact Host handle. Replacement must not block on
-          // them, nor allow a cleanup error to roll back the published provider.
-          void host.detach(previous.ref).catch((error: unknown) => {
-            resources.saveArtifact(taskId, { kind: "content", displayName: "Plugin instance cleanup failure",
-              provenance: `PluginService.dispose ${previous.ref.id}/${previous.ref.generation}`,
-              content: error instanceof Error ? error.message : String(error) });
-          });
-        }
-        return { provider: ref, validationId, digest: pkg.digest, capabilities: entries.map((entry) => entry.name),
-          lifetime: "current-controller", previousDraining: previous?.ref };
       } catch (error) {
-        if (attached) await host.detach(ref);
-        else await candidate.dispose();
-        throw error;
+        let failure = error;
+        try {
+          if (attached) await host.detach(ref);
+          else await candidate?.dispose();
+        } catch (cleanup) {
+          failure = new Error(`${error instanceof Error ? error.message : String(error)}; candidate cleanup failed: ${String(cleanup)}`);
+        }
+        throw fail(intent, failure);
       }
+      // Publication has committed. A later diagnostic/read failure must never
+      // enter candidate rollback or detach the new selected implementation.
+      if (previous) {
+        const retired = previous;
+        void host.detach(retired.ref).catch((error: unknown) => {
+          resources.saveArtifact(taskId, { kind: "content", displayName: "Plugin instance cleanup failure",
+            provenance: `PluginService.dispose ${retired.ref.id}/${retired.ref.generation}`,
+            content: error instanceof Error ? error.message : String(error) });
+        });
+      }
+      return { provider: ref, validationId, digest: pkg.digest, capabilities: entries.map((entry) => entry.name),
+        lifetime: "current-controller", previousDraining: previous?.ref, ...inspect(taskId, pkg.manifest.id) };
     },
 
     async disable(taskId: string, pluginId: string) {
+      validatePluginId(pluginId);
       const key = keyFor(taskId, pluginId);
-      changes.set(key, {});
+      // A failed commit must leave the currently selected implementation alone.
+      const intent = choose(taskId, pluginId, false);
       const current = active.get(key);
-      if (!current) return { disabled: true, providerId: key, note: "No active instance in this Controller." };
+      if (!current) return { disabled: true, providerId: key, ...inspect(taskId, pluginId) };
       registry.disable(key);
       active.delete(key);
       try { await host.detach(current.ref); }
-      catch (error) { throw new Error(`Plugin disabled; owned cleanup failed: ${error instanceof Error ? error.message : String(error)}`); }
-      return { disabled: true, provider: current.ref, drained: true };
+      catch (error) {
+        throw fail(intent, new Error(`Plugin disabled; owned cleanup failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+      return { disabled: true, provider: current.ref, drained: true, ...inspect(taskId, pluginId) };
     }
   };
 }

@@ -4,9 +4,10 @@
 安装目录。SDK 管理仍只允许当前受认证的 global Operator；它不授予 Leader
 自扩展权限，也不实现 T10、Endpoint 注册或 T11 自动升级。
 
-这里的激活指当前 Controller 中的实例。验证记录及实际包内容持久保存在原
-Store，Controller 重启后可以读取报告，但必须显式重新激活。不存在独立的
-`active=true` 账本、自动执行作者代码、市场、签名平台或恢复 worker。
+Store 持久保存用户希望启用/停用的选择，以及对应的确切验证产物引用；
+Host 是实际实例和引用生命周期的唯一权威。Controller 重启后仍能读取选择及
+报告，但必须显式重新激活。不存在独立的可写 `active=true` 账本、自动执行
+作者代码、市场、签名平台或恢复 worker。
 
 ## 入口与环境
 
@@ -21,8 +22,10 @@ Store，Controller 重启后可以读取报告，但必须显式重新激活。�
 | `plugin.scan` | `preparationId, directory` | 数据型扫描的 manifest、文件名、SHA-256 |
 | `plugin.validate` | `preparationId, directory` | 不可变 validation ID、源码/产物摘要、环境和已执行检查 |
 | `plugin.validation` | `validationId` | 报告摘要，不启动代码；本 Task 的 `task:read` 调用者可读 |
-| `plugin.activate` | `validationId` | 实际 Provider generation、产物摘要及完整贡献名 |
-| `plugin.disable` | `id` | 停止发现/新调用，等待实际引用排空和 dispose |
+| `plugin.inspect` | `id` | 本 Task 的期望选择、实际选择、Host 引用及最近管理失败；不加载代码 |
+| `plugin.list` | `{}` | 本 Task 全部显式选择的当前视图，含已停用选择 |
+| `plugin.activate` | `validationId` | 通过准入后保存启用选择，准备并发布实例，返回当前视图 |
+| `plugin.disable` | `id` | 保存停用选择，停止新调用，等待实际引用排空和 dispose |
 
 `directory` 可以是环境内的相对路径或绝对规范路径，但不能是环境根、外部
 路径或经 symlink 到达的目录。先通过 T05 的 `environment.prepare/adopt`
@@ -41,11 +44,49 @@ SDK 的实际构建、候选和活实例引用会阻止公开 `environment.relea
 <checkout>/output/dev/bin/yui capability call plugin.validate --task T --request-id validate-1 --input '{"preparationId":"P","directory":"demo"}'
 <checkout>/output/dev/bin/yui capability call plugin.activate --task T --request-id activate-1 --input '{"validationId":"V"}'
 <checkout>/output/dev/bin/yui capability call demo.echo --task T --input '{"hello":"world"}'
+<checkout>/output/dev/bin/yui capability call plugin.inspect --task T --input '{"id":"demo"}'
 <checkout>/output/dev/bin/yui capability call plugin.disable --task T --request-id disable-1 --input '{"id":"demo"}'
 ```
 
 `requestId` 对有副作用的能力必填，但 SDK 不另建通用幂等账本。验证重做生成新
 报告，激活重做采用新 generation；发生通信错误后先查当前事实再决定是否重试。
+
+## 期望选择与实际实例
+
+`plugin.inspect/list` 属于 `task:read`，不 acquire、初始化或恢复插件，也不消费
+grant 或写入 Store。当前视图中：
+
+- `desired` 是持久选择，包含 enabled、固定 validationId、内部 revision、
+  选择时间及可选 lastFailure。version/digest 从不可变验证报告派生，不重复保存。
+- `actual` 是当前 Controller 为新调用选中的 Host 实现及其验证引用；没有选择
+  或不能 acquire 时为 null。它不是子进程健康检查，也不证明当前 grant 仍有效。
+- `instances` 来自 Host 的未完成释放实例观察：确切 implementation、实际引用数、
+  是否接受新 acquire。停用后 actual 可以为 null，但这里仍有排空中的旧引用。
+- `needsActivation` 只比较期望启用选择与实际选择，不是独立工作状态或自动任务。
+
+首次查询一个未配置插件得到 `desired: null`。停用未知插件也保存明确的 disabled
+选择，但没有 validationId；停用已配置插件保留原验证引用。所有 scope 均为 Task，
+查询其他 Task 不泄漏本 Task 的选择。
+
+激活先检查输入、验证记录归属、当前源码/环境、契约/依赖和权限；未通过准入的
+请求不创建或更改意图。可执行 grant 的消费和启用选择在同一事务提交；事务失败
+不执行作者代码、不发布实例，grant 消费也回滚。之后初始化或发布失败，则保留
+已合法接受的期望 B、失败原因以及原实际 A，让 Agent 决定重试、更换或停用。
+
+失败的 activate/disable 仍返回 `kind: failed`，不是伪装成功；在能够读取状态时，
+其 `value` 附带上述当前视图。最近的管理失败按原意图 revision 记录，迟到结果
+不能覆盖新的选择。revision 由内部事务递增，调用者不需要携带 expected token。
+每次新的明确选择清除上次管理失败；历史 Turn/报告与业务 receipt 不受影响。
+
+停用先提交 disabled，再同步移除新调用入口，等待原引用排空；清理失败不反转
+disabled。若持久提交失败，原实例仍保持可用，不能宣称已停用。发布成功后的
+诊断读取失败也不能卸载已经发布的新实例。错误后应查询当前事实，而不是自动重试。
+同一插件有并发管理动作时，操作结果中的精确 provider 指该次操作的实例，
+附带的当前视图则可能已经反映更晚的显式选择。
+
+重启只保留选择和已有失败诊断，不从旧报告猜测过去是否启用，不自动重放操作，
+也不伪称历史实际实例仍运行。原来期望 B 但运行 A 的情形重启后表现为
+desired=B、actual=null；再次显式激活 B 必须重新通过现行授权和环境检查。
 
 ## 包合同
 
@@ -169,7 +210,8 @@ package scope 替代资源授信。因 trusted-local 不约束直接宿主效果
 grant 不由 SDK 自签发。次数按真实执行尝试消费，失败也不回退；一次 validate
 包含 initialize/selfTest/dispose。build 是另一次执行。单次调用已消费的 reservation
 允许该调用继续复核，但撤销/到期仍阻止其后续受控动作；耗尽次数不允许新调用。
-普通 disable 不撤销已在执行的原调用，撤权也不抹除已发生效果。
+尚未提交的启用意图事务失败不算已执行尝试，其消费随事务回滚。
+普通 disable 不撤销已在执行的原调用，撤权也不抹除意图或已发生效果。
 
 ### 构建与产物
 
@@ -193,10 +235,12 @@ grant 不由 SDK 自签发。次数按真实执行尝试消费，失败也不回
 
 ## 采用与迁移
 
-新增不可变 `plugin_validations` 表，中央存储版本 8→9
-`plugin-validation-evidence`，最低支持仍为 1；没有另一条版本兼容链。
-此前有效数据保持原样，启用通过现有显式 upgrade/update 与备份机制。
-采用本源码不等于授权升级共享 Home、重启 Controller 或执行任何插件。
+本分支中央链为 8→9 `plugin-validation-evidence`（不可变验证报告），再追加
+9→10 `plugin-enable-intent`（用户选择），最低支持仍为 1。旧验证和 Task 保持
+原样，新意图表为空：旧报告不证明旧用户的启用/停用选择，因此不推测回填。
+没有其他兼容版本轴或自动修复。应用持久结构变更走原显式 upgrade/update
+与备份机制。本分支与主线的迁移编号冲突需在合入时协调，不能覆盖已有迁移；
+采用本源码不等于授权升级共享 Home、重启 Controller 或执行插件。
 
 T06 可以消费既有 CapabilityDescriptor，不需要复制 SDK Host；
 T07 的 ACP/Endpoint 注册、T04 原生 Session 的 environmentRef 消费、

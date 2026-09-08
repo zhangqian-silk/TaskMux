@@ -21,6 +21,7 @@ type Instance = {
   detached: boolean;
   disposers: readonly (() => void | Promise<void>)[];
   disposal?: Promise<void>;
+  disposed: boolean;
   drained: Promise<void>;
   resolve(): void;
   reject(error: unknown): void;
@@ -45,7 +46,7 @@ export class InstanceHost {
     void drained.catch(() => undefined);
     const ref = Object.freeze({ ...implementation });
     this.#instances.set(key, {
-      implementation: ref, value, references: 0, detached: false,
+      implementation: ref, value, references: 0, detached: false, disposed: false,
       disposers: [...ownedDisposers], drained, resolve, reject
     });
     return ref;
@@ -56,6 +57,17 @@ export class InstanceHost {
   isAvailable(implementation: ImplementationRef): boolean {
     const instance = this.#instances.get(implementationKey(implementation));
     return !this.#closed && instance !== undefined && !instance.detached;
+  }
+
+  /** Only the Host reports actual reference/disposal facts. Metadata consumers
+   * must not persist these observations as independently writable state. */
+  inspect(providerId: string) {
+    return [...this.#instances.values()].filter((instance) => instance.implementation.id === providerId && !instance.disposed)
+      .map((instance) => Object.freeze({
+        implementation: instance.implementation,
+        references: instance.references,
+        accepting: !this.#closed && !instance.detached
+      }));
   }
 
   acquire<T>(implementation: ImplementationRef): ImplementationHandle<T> {
@@ -117,6 +129,7 @@ export class InstanceHost {
       // Re-attaching a generation must not resurrect an old reference.
       instance.value = undefined;
       instance.disposers = [];
+      instance.disposed = true;
       if (errors.length) throw new AggregateError(errors, "Instance cleanup failed.");
     })();
     void instance.disposal.then(instance.resolve, instance.reject);

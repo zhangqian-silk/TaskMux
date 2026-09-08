@@ -207,6 +207,16 @@ const definitions: readonly Omit<CapabilityDescriptor, "contractVersion" | "prov
     name: "plugin.validation", summary: "Read immutable validation evidence without starting the plugin.",
     effect: "query", requiredPermissions: ["task:read"], source: "PluginService.inspect",
     inputSchema: object({ validationId: text }), outputSchema: recordOutput
+  },
+  {
+    name: "plugin.inspect", summary: "Read durable desired selection, actual Host selection/references and latest intent failure; never activates code.",
+    effect: "query", requiredPermissions: ["task:read"], source: "PluginService.current",
+    inputSchema: object({ id: text }), outputSchema: recordOutput
+  },
+  {
+    name: "plugin.list", summary: "List this Task's explicit plugin choices and current Host observations without executing code.",
+    effect: "query", requiredPermissions: ["task:read"], source: "PluginService.list",
+    inputSchema: object({}), outputSchema: { type: "array", items: recordOutput }
   }
 ];
 export const BUILTIN_CAPABILITIES: readonly CapabilityDescriptor[] = definitions.map((entry) => ({
@@ -245,6 +255,8 @@ export function createBuiltinCapabilities(
       if (name === "plugin.scan") return plugins.scan(taskId, params.preparationId as string, params.directory as string);
       if (name === "plugin.validate") return plugins.validate(invocation.context, params.preparationId as string, params.directory as string);
       if (name === "plugin.validation") return plugins.inspect(taskId, params.validationId as string);
+      if (name === "plugin.inspect") return plugins.current(taskId, params.id as string);
+      if (name === "plugin.list") return plugins.list(taskId);
       if (name === "plugin.activate") return plugins.activate(invocation.context, params.validationId as string);
       if (name === "plugin.disable") return plugins.disable(taskId, params.id as string);
       if (name === "context.read") {

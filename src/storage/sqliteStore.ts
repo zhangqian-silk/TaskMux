@@ -39,6 +39,7 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import Database from "better-sqlite3";
 import { validatePluginValidation, type PluginValidation } from "../plugins/pluginPackage.js";
+import { validatePluginIntent, validatePluginIntentFailure, type PluginIntent, type PluginIntentFailure } from "../plugins/pluginIntent.js";
 import {
   validateArtifact, validateLocalResource, validateEnvironmentPreparation,
   type Artifact, type LocalResource, type EnvironmentPreparation
@@ -846,6 +847,45 @@ export class SqliteTaskStore implements TaskStore {
       }
       this.#db.prepare("INSERT INTO plugin_validations (task_id, id, payload) VALUES (?, ?, ?)")
         .run(validation.taskId, validation.id, this.#json(validation));
+    });
+  }
+
+  savePluginIntent(intent: PluginIntent): void {
+    validatePluginIntent(intent);
+    this.#mutate(() => {
+      const previous = this.getPluginIntent(intent.taskId, intent.pluginId);
+      if (intent.revision !== (previous?.revision ?? 0) + 1 || intent.lastFailure !== undefined) {
+        throw new StorageRecordError("Plugin intent must be a new explicit choice without historical failure.");
+      }
+      if (intent.validationId !== undefined) {
+        const validation = this.getPluginValidation(intent.taskId, intent.validationId);
+        if (validation?.package.manifest.id !== intent.pluginId) throw new StorageRecordError("Plugin validation is outside this intent.");
+      }
+      this.#db.prepare(`INSERT INTO plugin_intents (task_id, plugin_id, payload) VALUES (?, ?, ?)
+        ON CONFLICT(task_id, plugin_id) DO UPDATE SET payload = excluded.payload`)
+        .run(intent.taskId, intent.pluginId, this.#json(intent));
+    });
+  }
+
+  getPluginIntent(taskId: string, pluginId: string): PluginIntent | null {
+    const value = this.#getPayload<PluginIntent>("plugin_intents", "task_id = ? AND plugin_id = ?", [taskId, pluginId]);
+    return value === null ? null : validatePluginIntent(value);
+  }
+
+  listPluginIntents(taskId: string): PluginIntent[] {
+    return this.#listPayload<PluginIntent>("plugin_intents", "task_id = ?", [taskId]).map(validatePluginIntent);
+  }
+
+  recordPluginIntentFailure(taskId: string, pluginId: string, revision: number, failure: PluginIntentFailure): boolean {
+    validatePluginIntentFailure(failure);
+    return this.transaction(() => {
+      const current = this.getPluginIntent(taskId, pluginId);
+      if (current === null || current.revision !== revision) return false;
+      this.#mutate(() => {
+        this.#db.prepare("UPDATE plugin_intents SET payload = ? WHERE task_id = ? AND plugin_id = ?")
+          .run(this.#json({ ...current, lastFailure: failure }), taskId, pluginId);
+      });
+      return true;
     });
   }
 
