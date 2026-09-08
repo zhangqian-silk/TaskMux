@@ -183,6 +183,21 @@ function detailKeyOf(detail) {
   return text.length + ":" + hash;
 }
 
+// The optional observation arrives after the core snapshot has already been
+// rendered, so the render key has to cover the observed facts the detail
+// actually draws or they would stay stale until the core snapshot changed.
+// Only the rendered identity is included: observation timestamps advance on
+// every poll and would re-render the detail continuously.
+function runtimeSignatureOf(detail) {
+  const roles = (detail.runtime && detail.runtime.roles) || [];
+  return detail.runtimeStatus + "|" + roles.map(function (role) {
+    const session = role.runtimeSession;
+    return role.name + ":" + (session
+      ? session.nativeSessionId + "/" + session.status
+      : "-");
+  }).join(",");
+}
+
 function renderCurrentDetail(force) {
   if (state.detail) {
     // Polling must not replace an unsent draft or an in-flight form, including
@@ -190,7 +205,8 @@ function renderCurrentDetail(force) {
     if (elements.detail.dataset.taskId === state.detail.task.id
       && (elements.detail.querySelector('[data-unsent="true"]')
         || elements.detail.contains(document.activeElement))) return;
-    const key = i18n.getLocale() + "|" + state.detailKey;
+    const key = i18n.getLocale() + "|" + state.detailKey
+      + "|" + runtimeSignatureOf(state.detail);
     if (!force && key === renderedDetailKey) return;
     renderTaskDetail(
       elements.detail,
@@ -383,6 +399,11 @@ function updateRuntimePanel(detail) {
   if (value) value.textContent = detail.runtime
     ? JSON.stringify({ roles: detail.runtime.roles, runtimeHealth: detail.runtime.runtimeHealth }, null, 2)
     : "";
+  // Patching the panel in place is not enough: the observation also feeds facts
+  // the detail rendered before it arrived. Re-render when the observed identity
+  // has actually changed — renderCurrentDetail still compares the render key,
+  // so an unchanged observation costs nothing and an unsent form is preserved.
+  if (state.detail === detail) renderCurrentDetail();
 }
 
 async function inspectRecord(taskId, ref) {

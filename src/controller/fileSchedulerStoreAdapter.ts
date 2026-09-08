@@ -3365,7 +3365,14 @@ function recordTaskRuntimeNativeSession(
   if (task.status === "archived") {
     throw new Error(`Cannot register a native session for archived Task: ${input.taskId}.`);
   }
-  if (task.status !== "active" || task.executionGate.state !== "enabled") {
+  // A Draft registers a Session only for its planning Turn. Admission is decided
+  // by the active Turn's purpose through the one shared invariant, so a Draft
+  // still cannot open an execution Session before activation.
+  const admittingTurn = store.getActiveTurn(input.taskId, input.roleName);
+  if (!(admittingTurn !== null
+    && admittingTurn.purpose === "planning"
+    && turnPurposeAdmitsTaskState(admittingTurn.purpose, task))
+    && (task.status !== "active" || task.executionGate.state !== "enabled")) {
     throw new Error(
       `Cannot register a native session for a Task that is not active: ${input.taskId}.`
     );

@@ -2114,14 +2114,16 @@ export function sendTaskMessageCommand(
     // Issue 05: only `wakePolicy=leader` (the default for backward
     // compatibility) enqueues Leader work; `wakePolicy=none` persists the
     // message as context without waking the Leader.
-    if (leaderWakingTaskStatus(task.status) && actor !== "leader" && wakePolicy !== "none") {
+    const queuedForLeader = leaderWakingTaskStatus(task.status)
+      && actor !== "leader" && wakePolicy !== "none";
+    if (queuedForLeader) {
       enqueueWork(tx, leaderMailbox(task.id), actor === "operator" ? "operator-input" : "user-message",
         now, [messageRef(task.id, message.id)], { source: actor, dedupeKey: `message:${task.id}:${message.id}` });
     }
-    return { task, message, actor };
+    return { task, message, actor, queuedForLeader };
   });
   if (result.actor !== "leader") {
-    notifyMailbox(options.runtime, leaderWakingTaskStatus(result.task.status)
+    notifyMailbox(options.runtime, result.queuedForLeader
       ? leaderMailbox(result.task.id) : taskMailbox(result.task.id), result.task.id);
   }
   return result;

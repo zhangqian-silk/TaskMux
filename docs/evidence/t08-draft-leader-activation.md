@@ -1,8 +1,11 @@
 # T08 — Draft Leader 与正式执行:实现与验证证据
 
-WorkItem: `work-item-1` (task-22, turn-4 修正候选;turn-2 的 `9d314e3` 已被拒绝)
+WorkItem: `work-item-1` (task-22, turn-9 候选;turn-2 的 `9d314e3` 已被拒绝,
+turn-4 的 `0e30089` 未被接受、其历史原样保留)
 分支: `yui/task-22-69eeaf67/work-item-1`
-存储版本: `CURRENT_STORAGE_VERSION = 10`
+采用的上游 SHA: `013ffdc3154c18974f64c66b05ade018feb63c2b` (PR320;PR319
+`c432ad719e17d3b615829db9d2ec0a9115697220` 已验证为其祖先),合并提交 `ae6f28e`
+存储版本: `CURRENT_STORAGE_VERSION = 12`(上游占用 10/11,详见第 5 节)
 
 本文件记录**实际执行过的命令与实际输出**。静态断言不作为运行证据;
 凡未真实跑过的边界,本文件在"未验证边界"一节显式声明。
@@ -352,13 +355,17 @@ status: active | request: adopted effect: confirmed
 ## 5. 持久化与并行合并
 
 先检查了持久载荷是否必须变更:activation request、其 settled 历史与 planning purpose
-都是**新增可选字段**,因此**在既有迁移 1–9 之后仅追加迁移 10**,未修改任何既有迁移。
-turn-4 将本候选新增的内容**合并为单一当前版本迁移**,`introducedIn` 修正为 `"0.15.8"`
-——最后的发布 tag `v0.15.7` 的 `CURRENT_STORAGE_VERSION = 3`,迁移 4–9 同属未发布的
-`0.15.8`,本迁移属于同一未发布版本,不另起版本号。
+都是**新增可选字段**,因此**只在既有迁移之后追加一条**,未修改任何既有迁移。
+`introducedIn` 为 `"0.15.8"`——最后的发布 tag `v0.15.7` 的
+`CURRENT_STORAGE_VERSION = 3`,其后各迁移同属未发布的 `0.15.8`,
+本迁移属于同一未发布版本,不另起版本号。
+
+**turn-9 采用上游后本节已更新。** turn-4 时本迁移编号为 10;采用 PR319/PR320 后,
+上游 master 已占用 **10(`plugin-validation-evidence`)与 11(`plugin-enable-intent`)**,
+因此本迁移在合并时**顺延为 12**,`CURRENT_STORAGE_VERSION = 12`:
 
 ```
-version: 10, name: "draft-planning-and-deferred-activation", introducedIn: "0.15.8"
+version: 12, name: "draft-planning-and-deferred-activation", introducedIn: "0.15.8"
 sql: CREATE INDEX IF NOT EXISTS idx_turns_planning_active   ON turns(...)        WHERE ...
      CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(...) WHERE ...
 ```
@@ -369,9 +376,10 @@ sql: CREATE INDEX IF NOT EXISTS idx_turns_planning_active   ON turns(...)       
 不推断、不重写。
 
 已实测迁移不可变性(而非静态声称):对 `sqliteSchema.ts` 的 `git diff` 只有
-**两个 hunk**——迁移 10 条目本身与 `REQUIRED_SCHEMA_INDEXES` 列表;
-diff 中**没有任何一行**触及 `version: 1..9`,12 个具名 `*_SQL` 基线常量逐一
-按 SHA-256 与 base `fa70078` 比对**全部一致**。
+**两个 hunk**——本迁移条目本身与 `REQUIRED_SCHEMA_INDEXES` 列表;
+diff 中**没有任何一行**触及既有迁移,12 个具名 `*_SQL` 基线常量逐一
+按 SHA-256 与 base `fa70078` 比对**全部一致**。上游的 10/11 条目**原样保留**,
+本次采用只把自己的条目排到其后。
 
 部分索引确实被查询计划器使用(不是假定):
 
@@ -383,9 +391,11 @@ plan: SCAN records USING INDEX idx_tasks_activation_pending | SEARCH catalog ...
 INDEX CHECK: PASS (correct rows; partial index used, so no Task-history scan)
 ```
 
-**并行合并协调需求:`CURRENT_STORAGE_VERSION` 由 9 改为 10 是全局单点。**
-若有其他分支同期也追加迁移,必须协调序号(本分支占用 10),否则会出现两个 version 10;
-`core-smoke.test.js` 中迁移头断言需同步。此项需在合并时由人工确认,我未做跨分支协调。
+**并行编号协调(已实际发生并已处理):`CURRENT_STORAGE_VERSION` 是全局单点。**
+turn-4 占用的 10 已被上游 PR320 占用;turn-9 采用上游时按"上游已发布条目不动、
+本分支条目顺延"处理为 12,并同步了 `core-smoke.test.js` 的迁移头断言
+(该断言现由 `production storage admission is owned by the SQLite migration head`
+覆盖,实跑通过)。若后续仍有其他分支同期追加迁移,仍需再次协调序号。
 
 ---
 
@@ -401,8 +411,8 @@ $ npm run build           # tsc -p tsconfig.json
 (无输出,exit 0)
 
 $ node --test test/core/*.test.js
-ℹ tests 81
-ℹ pass 81
+ℹ tests 82
+ℹ pass 82
 ℹ fail 0
 
 $ node tmp-f6/deferral.mjs        # 无 Project 的延迟链
@@ -430,16 +440,16 @@ $ node /tmp/f45/verify.mjs        # F4/F5 请求身份与历史
 **取证面必须区分,不得混同。** `deferral.mjs` 与 `project.mjs` 中,
 Task 创建、`message send`、`activation request` 是**真实 `dist/cli.js` 子进程**(标 `[CLI]`);
 调度 pass、terminalization、采用边界是**从 `dist/` 导入的导出函数**(标 `[internal]`)。
-**没有 CLI 的 run-once 动词**,因此单个调度周期只能进程内驱动;
-这不是"daemon 正常性"证明,也不等于全链路 CLI 端到端。
+**没有 CLI 的 run-once 动词**,因此本节这些用例的单个调度周期只能进程内驱动;
+**本节不是"daemon 正常性"证明**——daemon 正常性另见第 9 节,那里由真实 daemon
+自己的调度循环驱动,不用 `runControllerSchedulerPass`。
 
 `tmp-f6/*.mjs` 与 `/tmp/f45/*.mjs` 是**临时诊断脚本,已在交付前删除**
 (故上述命令无法在本候选上原样复跑;它们的输出是删除前的真实运行记录)。
 删除后在**即将提交的这棵树上**重跑了 `lint` / `build` / `test:core`,
-三者退出码均为 `0`、`81/81` 通过。
+三者退出码均为 `0`、`82/82` 通过(采用上游后总数由 81 变为 82)。
 永久回归矩阵**未扩容**:`test/core/core-smoke.test.js` 仅更新迁移头断言
-(`CURRENT_STORAGE_VERSION` 9→10、迁移列表加 `{version: 10}`),未新增测试;
-`git diff 9d314e3 -- test/` 为空,即本次修正未再触碰任何测试文件。
+(`CURRENT_STORAGE_VERSION` → 12、迁移列表加本条目),未新增测试。
 
 **这些临时脚本自身的一个缺陷已被发现并修正,如实记录**:早期版本把调度时钟写成
 硬编码常量(`new Date("2026-09-08T10:00:00.000Z")`),而 CLI 子进程按**真实时钟**入队。
@@ -463,15 +473,19 @@ Task 创建、`message send`、`activation request` 是**真实 `dist/cli.js` �
   因此可主张的仅是"**该 fixture 在协议层确实接受并终止了**",
   **不可**据此主张任何真实 Provider 的行为。
 - **未做真实模型/付费/生产/共享资源 E2E**,亦未申请该授权。
-- **没有 CLI 的 run-once 动词**,所以单个调度周期由进程内 `runControllerSchedulerPass`
-  驱动。私有 Home 的 daemon 未被用来自动排空 wake 队列,
-  **本文件不含任何 daemon 正常性证明**。
+- **daemon 正常性已在 turn-9 单独证明,不再是空白**(见第 9 节):
+  `tmp-p3/daemon.mjs` 用真实 `yui web` 拉起**独立 detached daemon 进程**,
+  由**它自己的调度循环**排空 wake 队列并派发 planning Turn,
+  真实 Chrome 经 CDP 驱动真实 Web 入口。该 harness **从不调用**
+  `runControllerSchedulerPass`。仍然成立的是:**没有 CLI 的 run-once 动词**,
+  以及第 2/3 节中标 `[internal]` 的那些用例仍是进程内取证面。
 - 兼容路径的 `RESUME MODE: resume` 与 digest 相等在**库级**验证;
   不兼容路径(handover)在**真实 CLI** 与本次 `[internal]` 采用边界两侧均验证。
 - Claude 侧**未**主张与 Codex 配置化 read-only/never 等价的 OS 级只读保证;
   `isolation: "trusted-local"` 只表示"本地受信目录",**不是** OS 级强制只读。
 - Scratch 未作为结果自动交付。
-- **跨分支迁移序号未协调**(见第 5 节),需人工在合并时确认。
+- **跨分支迁移序号已在 turn-9 采用上游时协调完成**(10/11 归上游、本分支顺延 12,
+  见第 5 节);后续若再有并行迁移,仍需再次协调。
 - 授权/资源撤销在**注入窗口**中验证(`/tmp/f45/f4windows.mjs`);
   真实多进程并发下的竞态时序未验证。
 
@@ -492,3 +506,175 @@ Task 创建、`message send`、`activation request` 是**真实 `dist/cli.js` �
 - **查询**:`yui task activation show <task>`。
 - 空计划合法:`active` 且 `cwd`/`workspaceIdentity`/workspace 记录均不存在;
   下游若需要目录,必须显式请求 `scratch`/`local`,不可假设 worktree 存在。
+
+---
+
+## 9. turn-9:真实 daemon + 真实浏览器的公共路径证据
+
+取证脚本 `tmp-p3/daemon.mjs`(**交付前删除**,输出为删除前真实运行记录)。
+它替换的**只有 Provider 边界**;其余全部是产品自己的东西:
+
+| 环节 | 是否真实 |
+| --- | --- |
+| daemon 进程 | **真实**:`yui web` 经 `ensureFileTaskController` 拉起 detached 进程,pid 与 harness/web 进程均不同 |
+| 调度循环 | **daemon 自己的**;harness **从不调用** `runControllerSchedulerPass` |
+| 持久化 worker | **生产配置** `workerEnabled: true`(即 `core-smoke` 固定为 `false` 的那条路径) |
+| HTTP listener | **真实** `yui web` 监听 |
+| 浏览器 | **真实 Chrome 149.0.7827.55**,经 CDP;token 由服务端注入 HTML 自动获得 |
+| 时钟 | **真实**;真实等满 `LEADER_WAKE_AGGREGATION_MS`(60s),实测 65s 后才出现派发 |
+| Provider | **协议 stub**(外部可执行文件 + 绝对路径 launcher),不是模型 |
+
+最终结果 **35 passed, 0 failed of 35**。关键实测事实:
+
+```
+PASS [BROWSER] 真实 Chrome 加载 daemon 的 dashboard 并渲染 Task surface
+PASS [BROWSER] Draft 聊天输入存在且 Send 是 ENABLED(不是禁用外壳)
+PASS [BROWSER] 真实鼠标点击后,实时 DOM 收据为
+               "Queued for Leader; not proof of execution · message-1"
+               —— 不是 "planning unavailable"
+PASS [DAEMON]  daemon 自己的调度循环消费 wake-1 并派发 turn-1 (purpose=planning)
+PASS [PROVIDER] 外部 Endpoint 收到真实受管 Turn:
+               task=task-1 turn=turn-1 role=leader purpose=planning
+               snapshot=context-snapshot-1@<64 hex>,绝对 manifest 路径,
+               且使用 Yui 预分配的 --session-id
+PASS [PROVIDER] 持久 Provider terminal:
+               {providerNamespace:"anthropic/claude-code", accountScope:"claude",
+                conversationId:"d9740f22-…", attemptId:"turn:task-1/turn-1",
+                status:"completed"},turn.status=completed
+PASS [PLANNING] planning Turn 的 writeProjectIds=[](空环境合法)
+PASS [DURABLE]  浏览器键入的文本经公共 `task context` 读回,确为持久 Task 记录
+PASS [BROWSER]  页面显示真实 Turn id / Provider 终态 / Provider 会话 id
+PASS [BROWSER]  Leader Session 入口按**真实 Session**开合,不按 Draft 状态
+```
+
+**capability 探针不算派发,已分开计数**:12 次调用中只有 1 次携带受管身份
+(`YUI_TASK_ID`/`YUI_ROLE`),其余是 `--version` 探针。早期版本曾把探针误当作
+"Provider 真的执行了",此错误由本人发现并修正,如实记录。
+
+**产品的 `YUI_TURN_ID` 并不注入 Provider 进程**(实际注入集见脚本头注释);
+Turn 身份走 directive 文本 + `--session-id`。早期断言曾要求该变量,
+属对产品的误解,已删除并记录。
+
+### turn-9 中发现并修复的三个真实产品缺陷
+
+1. `src/controller/runtimeHookTurnFence.ts` —— Draft 的 planning Turn 上报运行时被拒
+   (`Runtime observation Hook Task does not accept this lifecycle boundary`),
+   导致 `startup-failed`。修复复用**既有唯一不变量** `turnPurposeAdmitsTaskState`,
+   不新增判定;Draft 仍不能产生 execution 观测。
+2. `src/controller/fileSchedulerStoreAdapter.ts` —— 同因导致
+   `Cannot register a native session for a Task that is not active`。同样交由
+   该不变量裁决,Draft 仍不能在激活前开 execution Session。
+3. `src/web/assets/client/app.ts` —— **渲染键不覆盖异步到达的观测**。
+   `runtime` 由**独立**请求(1s 超时)填充,而 `updateRuntimePanel` 只就地
+   打补丁两个节点,渲染键只由 core 快照算出;因此任何依赖观测的界面
+   在观测到达后**永远保持旧值**。修复:渲染键加入**稳定**的观测签名
+   (只含 role/session 身份,不含每次轮询都变的时间戳,避免持续重绘),
+   并让观测到达后走 `renderCurrentDetail()`(仍受"未发送草稿/焦点"保护)。
+
+### 第 2 部分的界面语义(不是删提示、不是删 disabled)
+
+`taskSurface.ts` 现在从**Context 快照**(权威持久读、且驱动重渲染)取 planning 事实,
+而不是从可选观测取:显示真实 planning Turn id 与状态、Provider 终态与会话 id、
+环境(空环境显示"empty (legal for planning)")与 Turn 观测时间;
+受限快照隐藏 Turn 时显示 `withheld`,**不谎报** "not-dispatched"。
+Session 入口的 disabled 改为**按是否真的存在在线 Session**,
+不再"因为是 Draft 就禁用";Draft 的收据文案按提交事实区分 queued/saved。
+
+
+---
+
+## 10. 第 4 部分:native better-sqlite3 崩溃的诊断(**未能复现,如实声明**)
+
+Leader 在其新 Integration worktree 上报:Node 24.20.0 下 better-sqlite3 的
+`Statement` 析构触发 `RemoveEnvironmentCleanupHook` 断言,完整 core 反复失败
+(并行与串行皆然),而单独 `core-smoke` 曾一次通过 47/47。
+
+### 结论(先说清楚)
+
+**我在自己的隔离目录中无法复现该崩溃。** 因此我**不宣称已修复、也不宣称已定位根因**。
+下面是可复核的事实与已排除项,以及仍未排除的差异。
+
+### 本树上的精确运行记录
+
+```
+$ node --version && npm --version
+v24.20.0
+11.19.0
+
+$ npm run lint            # tsc -p tsconfig.json --noEmit      → exit 0
+$ npm run build           # tsc -p tsconfig.json               → exit 0
+
+$ node --test test/core/*.test.js      (TMPDIR=/tmp)
+ℹ tests 82  ℹ pass 82  ℹ fail 0        exit 0        ← 连续 4 次,含 3 次重复运行
+$ node --test test/core/*.test.js      (默认 TMPDIR,即 .yui.task-runtimes/... )
+ℹ tests 82  ℹ pass 82  ℹ fail 0        exit 0
+$ YUI_STORE_WORKER=1 node --test test/core/*.test.js
+ℹ tests 82  ℹ pass 82  ℹ fail 0        exit 0
+```
+
+`grep -c 'RemoveEnvironmentCleanupHook\|Assertion failed'` 在上述所有运行日志上均为 **0**。
+
+### native 构建来源(逐项记录,不是推测)
+
+```
+better-sqlite3 12.11.1   (package-lock lockfileVersion 3, resolved: registry.npmjs.org)
+prebuild-install 7.1.3 · bindings 1.5.0 · @types/better-sqlite3 9.6.0 (dev)
+build/Release/better_sqlite3.node
+  sha256 45cb92a176fb758533db6d9a343acdfc73e4de27ac4c20a0cb2a6fb5be3e84f2
+  provenance strings: "GCC: (Debian 10.2.1-6) 10.2.1 20210110"   ← 上游预编译产物
+  build/Release/obj.target 不存在 → 本机**未**从源码编译
+```
+
+在 `/tmp` 独立目录中按同一 `package.json` + `package-lock.json` 跑
+**全新 `npm ci`**,产出的 `.node` 与本树**逐字节相同**(同一 sha256)。
+故 **依赖版本与 native 二进制均可排除**,也与 Leader 的一致。
+另注:npm 11.19.0 的 `npm ci` 会因 `allowScripts` 而**跳过安装脚本**
+(`better-sqlite3` 与 `node-pty` 都有警告),但预编译产物仍然到位。
+
+### 已实测排除的机制假设
+
+此前唯一自洽的假设是:worker 线程自成 Environment/Isolate,`Addon::Cleanup` 是
+per-Isolate 的,可能在 `Statement::~Statement` 仍要 `CloseHandles()` 时就
+`delete addon`;而 `persistenceWorker.ts` 正是这种用法,且在生产**默认开启**
+(`resolveStoreWorkerEnabledForHome` 缺省 `true`),而 `core-smoke.test.js:3522`
+把 `workerEnabled` 固定为 `false` —— **生产 worker 配置确实未被 core 覆盖**。
+turn-9 针对该假设做了四组隔离实验,**全部未复现断言**:
+
+| 实验 | 形态 | 结果 |
+| --- | --- | --- |
+| worker 持活 `Statement` 后退出 | 64 个 prepared 语句从不 finalize,直接 `process.exit(0)` | 40 cycles,**0** 异常 |
+| `terminate()` 打断进行中的查询 | 真实 SQLite 读写循环中被强杀,句柄全活 | 40 cycles,**0** 异常 |
+| **真实生产 worker** + 关闭竞态 | 真 `dist/storage/persistenceWorker.js`,200 请求在飞时 `close()`(其 `close()` 只等 **20ms** 就 `terminate()`) | 20 cycles,**0** 异常 |
+| **真实生产 worker** + 崩溃重启 | `crashForTest()` 反复强杀,由 `BoundedRpcClient` 退出处理器自动重启新 Environment | 见下 |
+
+最后一组暴露了**另一个真实问题(不是本次崩溃)**:崩溃重启后,
+被重放的在飞请求**再也不 settle**,进程表现为**挂起**而非崩溃
+(有界等待 5s 后判定 `replayed requests never settled (hang)`,第 0 轮即出现)。
+这与之前观察到的"放弃 worker-backed store 客户端会 exit 124 挂起"一致。
+**这是独立发现,不是 Leader 报告的那个断言**,不应混为一谈。
+
+上述探针脚本(`tmp-p4-*.mjs`)均为临时脚手架,**已在交付前删除**。
+
+### 仍未排除的差异(需要 Leader 侧信息才能收敛)
+
+1. **`integration-3` 已被 Leader 自己确认是漏构建导致 `dist` 缺失,不是产品证据**;
+   我未把它计入。
+2. Leader 的失败发生在**其 Integration worktree**,我无法读取该目录,
+   因此无法比对:该处 `node_modules` 是否同一 sha256、是否曾 `node-gyp rebuild`、
+   `NODE_OPTIONS`/`--max-old-space-size` 等是否不同。
+3. Leader 报"清空 YUI 环境仍复现",故不可归因于 YUI 继承 —— 我认同该判断,
+   我这边**带与不带** `YUI_STORE_WORKER=1`、**默认与 `/tmp`** 两种 TMPDIR 均通过。
+4. 断言属于 Node 的 **debug/assert 构建**才会大量出现的形态;
+   Leader 所用 node 二进制是否与我的同一构建(同一 nvm 路径/同一 checksum)未知。
+
+### 可复核的下一步(未执行,因需 Leader 侧资源)
+
+在 Leader 的 Integration worktree 内、**不改共享 Node/全局依赖/服务**的前提下:
+`sha256sum node_modules/better-sqlite3/build/Release/better_sqlite3.node` 与本文件
+记录值比对;`node -p "process.config.variables.v8_enable_debug"`、
+`node -p "process.versions"`;然后 `YUI_STORE_WORKER=0 node --test test/core/*.test.js`
+与 `=1` 各跑一次。若 `=0` 通过而 `=1` 失败,则确认为生产 worker 路径,
+且该路径正是 core 未覆盖之处;若两者皆失败,则与 worker 无关,应转向 node 二进制差异。
+
+**我没有绕过该 native 失败,也没有删检查换取通过;在我的树上它不出现,
+所以我不声称第 4 部分已完成。**
