@@ -12,7 +12,7 @@ F1/F2/F3 与证据缺口逐项处理见下；**上一版的部分结论已被本
 
 | 上一版写法 | 本轮实测 |
 |---|---|
-| "`yui doctor` 正确拒绝 fake proxy：缺少 `--config`、`resume` 能力"，据此判定公共入口全链路"受禁止付费验证约束未覆盖" | **错误。** doctor 的 Agent 检查是对 `--version` / `--help` 的只读探测。绝对路径本地夹具实现这两个能力面后 doctor 全绿（`agent:faux2:command ok version=0.150.1`、`agent:faux2:capability ok`），不需要付费模型。公共入口全链路本轮已真实覆盖 |
+| "`yui doctor` 正确拒绝 fake proxy：缺少 `--config`、`resume` 能力"，据此判定公共入口全链路"受禁止付费验证约束未覆盖" | **错误。** doctor 的 Agent 检查是对 `--version` / `--help` 的只读探测：最低版本见 `agentAdapter.ts:223`（codex `0.150.1`），必需能力面是 `missingRequiredCapabilities`（`agentAdapter.ts:766-787`，codex 仅需 `--config` 与行首 `resume`）。绝对路径本地夹具实现这两个能力面后 doctor 全绿（`agent:faux2:command ok version=0.150.1`、`agent:faux2:capability ok`），不需要付费模型。公共入口全链路本轮已真实覆盖 |
 | 后续 Turn 的持久 Turn 发布"属 task23 边界"，仅断言"只允许在此拒绝" | **错误的归因。** 那是本 Task 自己的配置缺口，不是外部阻塞。本轮完整配置隔离 Task 并**真实完成了后续 Turn**（见下），不再以拒绝充当通过 |
 | `generation` = 四个手写模块字节摘要，"每进程只计算一次" | 手写清单无法声称覆盖完整；且首次调用才读盘时，加载 A 之后磁盘换成 B 会把自己标成 B。已改为发布包字节摘要 + 模块加载期一次解析（F3） |
 
