@@ -125,6 +125,7 @@ import { createTaskBrief, updateTaskBrief } from "../brief/taskBrief.js";
 import { createDecision, supersedeDecision } from "../decision/decision.js";
 import { createMilestone } from "../milestone/milestone.js";
 import { runPublicationCommand } from "./taskPublicationCommands.js";
+import { runTaskActivationCommand } from "./taskActivationCommands.js";
 import {
   assertTaskRemoteDeliveryProof,
   type TaskRemoteDeliveryProof,
@@ -154,6 +155,7 @@ import {
   createTask,
   retireTask,
   reopenTask,
+  taskOwnsManagedWorkspace,
   updateTaskMetadata,
   type TaskCompletedBy,
   type Task,
@@ -758,6 +760,7 @@ export function runTaskCommand(
       options.actualTaskReviewCandidate ?? null
     );
     case "activate": return output(activateTaskCommand(rest, store, options));
+    case "activation": return runTaskActivationCommand(rest, store, options);
     case "complete": return completeTaskCommand(rest, store, options);
     case "reopen": return output(reopenTaskCommand(rest, store, options));
     case "archive": return output(archiveTaskCommand(rest, store, options));
@@ -1315,12 +1318,26 @@ function activateTaskCommand(
         || activation.task.id !== task.id
         || activation.task.status !== "active"
         || !isDeepStrictEqual(activation.task.workspaceIdentity, task.workspaceIdentity)
-        || activation.path !== task.cwd
-        || workspace === null
-        || workspace.owner.type !== "task"
-        || workspace.owner.taskId !== task.id
-        || workspace.root !== task.cwd) {
+        || activation.path !== task.cwd) {
         throw usageError(`Task workspace activation proof does not match ${task.id}.`);
+      }
+      // An empty environment plan over no bound Project is a legal Task shape,
+      // so the proof of adoption is the *absence* of a workspace rather than a
+      // ManagedWorkspace record. Demanding one here would have forced every
+      // such activation to create a worktree purely to satisfy this check.
+      if (taskOwnsManagedWorkspace(task)) {
+        if (workspace === null
+          || workspace.owner.type !== "task"
+          || workspace.owner.taskId !== task.id
+          || workspace.root !== task.cwd) {
+          throw usageError(`Task workspace activation proof does not match ${task.id}.`);
+        }
+      } else if (workspace !== null
+        || task.workspaceIdentity !== undefined
+        || activation.path !== undefined) {
+        throw usageError(
+          `Workspace-free Task activation proof claims a workspace: ${task.id}.`
+        );
       }
       return { task, changed: activation.changed } as const;
     }
@@ -2021,7 +2038,12 @@ function taskMessageCommand(
       // Issue 05: only `wakePolicy=leader` (the default for backward
       // compatibility) enqueues Leader work. `wakePolicy=none` persists the
       // message as context without waking the Leader.
-      if (task.status === "active"
+      //
+      // A Draft wakes its Leader too: that is the Task entry point for the
+      // planning conversation, which needs no delivery environment and no prior
+      // Activation (S01). The wake carries intent only; the Controller decides
+      // the Turn's purpose from the Task's own lifecycle.
+      if ((task.status === "active" || task.status === "draft")
         && actor !== "leader"
         && wakePolicy !== "none") {
         enqueueWork(
@@ -2041,7 +2063,7 @@ function taskMessageCommand(
     if (result.actor !== "leader") {
       notifyMailbox(
         options.runtime,
-        result.task.status === "active"
+        result.task.status === "active" || result.task.status === "draft"
           ? leaderMailbox(result.task.id)
           : taskMailbox(result.task.id),
         result.task.id

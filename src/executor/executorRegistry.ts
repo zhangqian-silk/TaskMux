@@ -153,6 +153,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     effective: EffectiveLaunchSnapshot;
     workspace: string;
     managedWorkspace?: ManagedWorkspace;
+    workspaceFree?: true;
     runtimePolicy?: TaskRuntimeLaunchPolicy;
     mode: RoleSessionLaunchMode;
     turnId?: string;
@@ -195,6 +196,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
         ...(input.managedWorkspace === undefined
           ? {}
           : { managedWorkspace: input.managedWorkspace }),
+        ...(input.workspaceFree === true ? { workspaceFree: true as const } : {}),
         ...(input.runtimePolicy === undefined
           ? {}
           : { runtimePolicy: input.runtimePolicy }),

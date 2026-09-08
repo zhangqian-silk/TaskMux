@@ -121,7 +121,7 @@ export type ControllerRuntimeOptions = Readonly<{
   diagnosticAfterMs?: number;
   now?: () => Date;
   onError?: (error: unknown) => void;
-  workspacePreparer?: Pick<TaskWorkspacePreparer, "prepareTaskWorkspace">;
+  workspacePreparer?: Pick<TaskWorkspacePreparer, "prepareTaskWorkspace" | "activateTaskWorkspace">;
   runtimeEventProcessor?: RuntimeEventProcessorPort | AsyncRuntimeEventProcessorPort;
   runtimeObserver?: AgentRuntimeObserverPort;
   runtimeObserverIntervalMs?: number;
@@ -264,7 +264,7 @@ export async function runControllerSchedulerPass(
   store: SchedulerStorePort,
   delivery: TmuxDeliveryPort,
   now: Date,
-  workspacePreparer?: Pick<TaskWorkspacePreparer, "prepareTaskWorkspace">,
+  workspacePreparer?: Pick<TaskWorkspacePreparer, "prepareTaskWorkspace" | "activateTaskWorkspace">,
   scope: ReconcileScope = { kind: "full" },
   includeOperator = true,
   runtimeCleanupOutcomes: RuntimeCleanupOutcome[] = [],
@@ -274,7 +274,8 @@ export async function runControllerSchedulerPass(
   onMaintenanceFenceDefer?: ControllerRuntimeOptions["onMaintenanceFenceDefer"],
   blockedTaskIds: ReadonlySet<string> = new Set(),
   diagnosticAfterMs = DEFAULT_WORKFLOW_STALL_CANDIDATE_AGE_MS,
-  leaderWakeFence?: () => boolean
+  leaderWakeFence?: () => boolean,
+  onError?: (error: unknown) => void
 ): Promise<ControllerSchedulerResult> {
   const compiledSelection = compileReconcileSelection(scope);
   const selection = includeOperator
@@ -322,6 +323,11 @@ export async function runControllerSchedulerPass(
     );
     // Preserve ready-Leader-first ordering, then bound the repeated state
     // projections that follow it in this pass.
+    await controlEventLoopTurn();
+    // A Task whose deferred activation was just released must become active
+    // before the workspace phase, so its first workspace preparation happens in
+    // this same pass rather than waiting for the next one.
+    await adoptReleasedTaskActivations(store, workspacePreparer, selection, onError);
     await controlEventLoopTurn();
     const workspacePreparation = await prepareActiveWorkspaces(
       store,
@@ -818,6 +824,59 @@ export function compileReconcileSelection(scope: ReconcileScope): ReconcileSelec
   };
 }
 
+/**
+ * Adopts activation requests whose deferral has been released.
+ *
+ * The deferral is only ever released by the planning Turn ending, so this phase
+ * re-reads the request instead of trusting the signal that woke it: a request
+ * cancelled, or a Task retired or stopped, while the Turn was still running is
+ * left alone rather than replayed as historical intent. Adoption itself belongs
+ * to the preparer's single activation boundary, so status and environment facts
+ * still commit together, and a failure here leaves a continuable Draft.
+ *
+ * Full reconciliation resolves the candidates from the durable pending-request
+ * projection rather than from dirty keys. A Controller that restarts after the
+ * releasing signal was enqueued has no dirty key for it, and the startup pass
+ * claims and completes that Task's mailbox — so without the projection a
+ * released request would wait for unrelated traffic on the Task.
+ */
+async function adoptReleasedTaskActivations(
+  store: SchedulerStorePort,
+  workspace: ControllerRuntimeOptions["workspacePreparer"],
+  selection: ReconcileSelection,
+  onError?: (error: unknown) => void
+): Promise<void> {
+  if (workspace === undefined) return;
+  const candidates = selection.full
+    ? (store.listPendingActivationRequestTaskIds?.()
+      ?? store.listTasks().flatMap((task) => (
+        task.status === "draft" && task.activationRequest?.disposition === "pending"
+          ? [task.id]
+          : []
+      )))
+    : selection.taskIds;
+  for (const taskId of candidates) {
+    if (selection.blockedTaskIds?.has(taskId)) continue;
+    const task = store.getTask(taskId);
+    if (task?.status !== "draft") continue;
+    const request = task.activationRequest;
+    if (request?.disposition !== "pending") continue;
+    if (request.startMode !== "after-planning-turn") continue;
+    // Still inside its planning Turn: the deferral has not been released yet.
+    const planningTurn = request.afterPlanningTurn === undefined
+      ? null
+      : store.getActiveTurn(taskId, "leader");
+    if (planningTurn?.id === request.afterPlanningTurn) continue;
+    try {
+      await workspace.activateTaskWorkspace(taskId);
+    } catch (error) {
+      // Activation failure is durable Task state, not a Controller fault: the
+      // request records it and the Draft stays continuable.
+      onError?.(error);
+    }
+  }
+}
+
 async function prepareActiveWorkspaces(
   store: SchedulerStorePort,
   workspace: ControllerRuntimeOptions["workspacePreparer"],
@@ -985,7 +1044,7 @@ export class FileTaskController {
   readonly #now: () => Date;
   readonly #onError: (error: unknown) => void;
   readonly #workspacePreparer:
-    | Pick<TaskWorkspacePreparer, "prepareTaskWorkspace">
+    | Pick<TaskWorkspacePreparer, "prepareTaskWorkspace" | "activateTaskWorkspace">
     | undefined;
   readonly #deliveryRetryMs: number;
   readonly #deliveryRetryLimit: number;
@@ -1406,7 +1465,8 @@ export class FileTaskController {
               this.#onMaintenanceFenceDefer,
               runtimeFailedTaskIds,
               this.#diagnosticAfterMs,
-              this.#leaderWakeFence
+              this.#leaderWakeFence,
+              this.#onError
             );
           } else {
             const dirtyPass = await this.#runDirtySchedulerPass(
@@ -1540,7 +1600,8 @@ export class FileTaskController {
         this.#onMaintenanceFenceDefer,
         blockedTaskIds,
         this.#diagnosticAfterMs,
-        this.#leaderWakeFence
+        this.#leaderWakeFence,
+        this.#onError
       ));
     }
     if (
@@ -1594,7 +1655,8 @@ export class FileTaskController {
               this.#onMaintenanceFenceDefer,
               blockedTaskIds,
               this.#diagnosticAfterMs,
-              this.#leaderWakeFence
+              this.#leaderWakeFence,
+              this.#onError
             );
             this.#clearTaskPassRetry(selected.taskScope.taskId);
           } catch (error) {

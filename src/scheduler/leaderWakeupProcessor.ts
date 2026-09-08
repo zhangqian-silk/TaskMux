@@ -4,11 +4,12 @@ import {
 } from "../context/turnInputContract.js";
 import { roleSessionMayContinue } from "../executor/effectiveLaunch.js";
 import { roleAgentSessionResumeMode } from "../executor/agentExecutor.js";
-import { createTurn } from "../turn/turn.js";
+import { createTurn, turnPurposeAdmitsTaskState, type TurnPurpose } from "../turn/turn.js";
 import type {
   SchedulerReconcileSelection,
   SchedulerRoleSession,
   SchedulerStorePort,
+  SchedulerTask,
   TmuxDeliveryPort
 } from "./ports.js";
 import { isSchedulerTaskWorkspaceReady } from "./ports.js";
@@ -53,14 +54,24 @@ export async function processLeaderWakeups(
   for (const wakeup of wakeups) {
     const task = store.getTask(wakeup.taskId);
     const role = store.getRole(wakeup.taskId, "leader");
+    // A Draft's Leader conversation is a planning Turn: the same logical Leader,
+    // admitted before Activation so the user can plan without first creating a
+    // delivery environment (S01). Everything after this point is shared with
+    // execution, so planning gains no separate dispatch path.
+    const purpose: TurnPurpose = task?.status === "draft" ? "planning" : "execution";
     if (task === null
-      || task.status !== "active"
-      || task.executionGate.state !== "enabled"
-      || role === null) {
+      || role === null
+      || !turnPurposeAdmitsTaskState(purpose, task)) {
       results.push({ taskId: wakeup.taskId, status: "skipped", reason: "unavailable" });
       continue;
     }
-    if (!isSchedulerTaskWorkspaceReady(task, store.getTaskWorkspace(task.id))) {
+    // A planning Turn deliberately runs before any delivery environment
+    // exists, so a Draft that binds Projects has no managed workspace yet and
+    // must not be held back by the execution readiness gate (S01). It launches
+    // from the Role's own configured workspace; the launch planner still proves
+    // that no Task workspace was silently substituted.
+    if (purpose !== "planning"
+      && !isSchedulerTaskWorkspaceReady(task, store.getTaskWorkspace(task.id))) {
       results.push({ taskId: task.id, status: "skipped", reason: "workspace-not-ready" });
       continue;
     }
@@ -120,7 +131,9 @@ export async function processLeaderWakeups(
       const contextSnapshot = store.freezeLeaderContextSnapshot?.(task.id, role.name, now);
       const input = createTurnInput({
         source: leaderWakeInputSource(wakeup.reasons),
-        directive: [
+        directive: purpose === "planning"
+          ? planningDirective(task, turnId, wakeup.reasons)
+          : [
           `Wake reasons: ${wakeup.reasons.join(", ")}.`,
           ...(envelope === null ? [] : [envelope.text.trim()]),
           `Load exact context for ${task.id}/${turnId}.`,
@@ -133,7 +146,8 @@ export async function processLeaderWakeups(
       });
       const turn = createTurn(turnId, task.id, role.name, mode, input, now, {
         ...(role.managedWorkspace === undefined ? {} : { workspace: role.managedWorkspace }),
-        effective: role.effective
+        effective: role.effective,
+        purpose
       });
       const claim = store.saveLeaderDispatch({
         task,
@@ -162,8 +176,33 @@ export async function processLeaderWakeups(
   return results;
 }
 
-function leaderWakeInputSource(reasons: readonly string[]): TurnInputSource {
-  if (reasons.length > 0 && reasons.every((reason) => reason === "user-message")) {
+/**
+ * The Draft Leader's planning directive.
+ *
+ * A Draft owns no workspace and no delivery environment, so the conversation is
+ * told what is durable: the Task facts it writes, not this transcript. Nothing
+ * it produces becomes a Candidate, and leaving Draft is an explicit request
+ * rather than something planning does on its own.
+ */
+function planningDirective(
+  task: SchedulerTask,
+  turnId: string,
+  reasons: readonly string[]
+): string {
+  return [
+    `Planning conversation for Draft Task ${task.id}: ${task.title}.`,
+    `Wake reasons: ${reasons.join(", ")}.`,
+    `Load exact context for ${task.id}/${turnId}.`,
+    "Persist every goal, current approach and decision you establish into the"
+    + " Task itself; this conversation's transcript is not durable planning state.",
+    "The Task owns no workspace and no delivery environment yet, and nothing"
+    + " here becomes a Candidate or implies a WorkItem result.",
+    "When the plan is ready, request Activation explicitly:"
+    + ` yui task activation request ${task.id} --request-id <id> --environment <plan>.`
+  ].join("\n");
+}
+
+function leaderWakeInputSource(reasons: readonly string[]): TurnInputSource {  if (reasons.length > 0 && reasons.every((reason) => reason === "user-message")) {
     return { type: "yui", channel: "user-message" };
   }
   if (reasons.length > 0 && reasons.every((reason) => reason.startsWith("input-answered:"))) {

@@ -81,7 +81,7 @@ export type EffectiveLaunchRole = TaskRole | GlobalRole;
 
 export type ResolveEffectiveLaunchInput = Readonly<{
   role: EffectiveLaunchRole;
-  purpose: "execution" | "review";
+  purpose: "execution" | "review" | "planning";
   workspace?: ManagedWorkspace;
   /** Undefined means a non-WorkItem run; [] is an explicit read-only WorkItem scope. */
   workItemWriteProjectIds?: readonly string[];

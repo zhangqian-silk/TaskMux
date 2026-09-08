@@ -13,7 +13,7 @@ export const TURN_INPUT_PROTOCOL = "yui-turn/v1" as const;
 export const TURN_INPUT_MAX_BYTES = 4 * 1024;
 export const TURN_INPUT_MAX_DELTAS = 16;
 
-export type TurnPurpose = "execution" | "review" | "global";
+export type TurnPurpose = "execution" | "review" | "global" | "planning";
 export const YUI_TURN_INPUT_CHANNELS = [
   "user-message",
   "input-response",
@@ -222,7 +222,7 @@ function normalizeEnvelopeContext(
 }
 
 function normalizeEnvelope(input: TurnInputEnvelope): TurnInputEnvelope {
-  if (!(["execution", "review", "global"] as const).includes(input.purpose)) {
+  if (!(["execution", "review", "global", "planning"] as const).includes(input.purpose)) {
     throw new Error("Turn input purpose is invalid.");
   }
   const normalizedInput = normalizeInput(input);
@@ -236,6 +236,13 @@ function normalizeEnvelope(input: TurnInputEnvelope): TurnInputEnvelope {
   }
   if (input.purpose === "review" && subject.reviewRoundId === undefined) {
     throw new Error("A review Turn input requires a ReviewRound subject.");
+  }
+  if (input.purpose === "planning"
+    && (subject.workItemId !== undefined
+      || subject.reviewRoundId !== undefined
+      || subject.executionGroupId !== undefined
+      || subject.sourceExecutionGroupId !== undefined)) {
+    throw new Error("A planning Turn input carries only its Task subject.");
   }
   return {
     protocol: TURN_INPUT_PROTOCOL,

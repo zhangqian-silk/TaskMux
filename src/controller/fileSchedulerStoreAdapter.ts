@@ -63,6 +63,7 @@ import { SYSTEM_OPERATOR_ROLE } from "../role/systemRoles.js";
 import {
   appendTurnInput,
   createTurn,
+  turnPurposeAdmitsTaskState,
   type Turn
 } from "../turn/turn.js";
 import { transportAgentResult } from "../domain/agentResultTransport.js";
@@ -864,6 +865,16 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       left.localeCompare(right, undefined, { numeric: true })
     ));
   }
+  listPlanningDraftTaskIds(): readonly string[] {
+    return [...this.store.listPlanningDraftTaskIds()].sort((left, right) => (
+      left.localeCompare(right, undefined, { numeric: true })
+    ));
+  }
+  listPendingActivationRequestTaskIds(): readonly string[] {
+    return [...this.store.listPendingActivationRequestTaskIds()].sort((left, right) => (
+      left.localeCompare(right, undefined, { numeric: true })
+    ));
+  }
   getTask(taskId: string) { return this.store.getTask(taskId); }
   getTaskWorkspace(taskId: string) { return this.store.getTaskWorkspace(taskId); }
   getTaskBrief(taskId: string) { return this.store.getTaskBrief(taskId); }
@@ -1057,8 +1068,8 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
     return this.store.transaction((store) => {
       const task = store.getTask(input.taskId);
       const run = store.getActiveTurn(input.taskId, input.roleName);
-      if (task === null || task.status !== "active" || task.executionGate.state !== "enabled"
-        || run === null || run.id !== input.turnId || run.status !== "active") {
+      if (task === null || run === null || !turnPurposeAdmitsTaskState(run.purpose, task)
+        || run.id !== input.turnId || run.status !== "active") {
         return "state-changed";
       }
       const latest = latestTurnEventTime(
@@ -1094,10 +1105,9 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const run = store.getActiveTurn(input.taskId, input.roleName);
       if (
         task === null
-        || task.status !== "active"
-        || task.executionGate.state !== "enabled"
         || role === null
         || run === null
+        || !turnPurposeAdmitsTaskState(run.purpose, task)
         || run.id !== input.turnId
         || run.status !== "active"
         || run.effective.agentId !== input.agentId
@@ -1147,9 +1157,8 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const run = store.getActiveTurn(input.taskId, input.roleName);
       if (
         task === null
-        || task.status !== "active"
-        || task.executionGate.state !== "enabled"
         || run === null
+        || !turnPurposeAdmitsTaskState(run.purpose, task)
         || run.id !== input.turnId
         || run.status !== "active"
       ) return "state-changed";
@@ -1829,7 +1838,11 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
   saveLeaderDispatch(input: LeaderDispatchPersistence): LeaderDispatchClaimResult {
     return this.store.transaction((store) => {
       const task = store.getTask(input.task.id);
-      if (task === null || task.status !== "active" || task.executionGate.state !== "enabled") {
+      // Re-check the lifecycle against the Turn's own purpose: a planning Turn
+      // is admitted while the Task is still a Draft, execution is not. The
+      // execution gate applies to both, so a stopped Task gains no live process
+      // through the planning door.
+      if (task === null || !turnPurposeAdmitsTaskState(input.turn.purpose, task)) {
         return "unavailable";
       }
       const role = requireRole(store, input.task.id, input.role.name);
@@ -1946,13 +1959,17 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
   saveRoleTurnPrepared(input: RoleTurnDeliveryPersistence): void {
     this.store.transaction((store) => {
       const task = store.getTask(input.task.id);
-      if (task === null || task.status !== "active" || task.executionGate.state !== "enabled") {
-        throw new Error(`Task is not active: ${input.task.id}.`);
-      }
       const role = requireRole(store, input.task.id, input.role.name);
       const active = store.getActiveTurn(input.task.id, input.role.name);
       if (active === null || active.id !== input.turn.id) {
         throw new Error(`Active Turn changed before preparation was persisted: ${input.turn.id}.`);
+      }
+      // The Turn's own purpose decides which Task lifecycle admits it, so a
+      // planning Turn on a Draft persists its Session while every other purpose
+      // still requires an active Task. Read the durable active Turn, never the
+      // caller's copy, so admission cannot be widened by a stale input.
+      if (task === null || !turnPurposeAdmitsTaskState(active.purpose, task)) {
+        throw new Error(`Task is not active: ${input.task.id}.`);
       }
       if (store.getTaskRoleSessionSet(input.task.id, input.role.name) === null) {
         store.saveTaskRoleSessionSet(createRoleSessionSet(
@@ -1992,10 +2009,9 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const session = sessions?.sessions[input.agentId];
       if (
         task === null
-        || task.status !== "active"
-        || task.executionGate.state !== "enabled"
-        || role === null
         || active === null
+        || !turnPurposeAdmitsTaskState(active.purpose, task)
+        || role === null
         || active.id !== input.turnId
         || active.status !== "active"
         || active.effective.agentId !== input.agentId

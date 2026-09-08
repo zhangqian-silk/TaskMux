@@ -60,7 +60,7 @@ import type { InputRequest } from "../input/inputRequest.js";
 import type { GlobalRoleSessionSet, RoleAgentSession, TaskRoleSessionSet } from "../executor/agentExecutor.js";
 import type { TaskMessage } from "../message/message.js";
 import type { Milestone } from "../milestone/milestone.js";
-import type { Turn } from "../turn/turn.js";
+import { turnPurposeAdmitsTaskState, type Turn } from "../turn/turn.js";
 import type { RuntimeOwner } from "../runtime/runtimeOwner.js";
 import {
   compareRuntimeSessionCandidates,
@@ -245,6 +245,13 @@ function isUniqueConstraint(error: unknown): boolean {
     && "code" in error
     && (error as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY"
     || (error as { code?: string })?.code === "SQLITE_CONSTRAINT_UNIQUE";
+}
+
+/** One admission rule for every active-Turn write path in this store. */
+function assertTurnAdmission(task: Task | null, turn: Turn): void {
+  if (task === null || !turnPurposeAdmitsTaskState(turn.purpose, task)) {
+    throw new StorageRecordError(`Task execution is not enabled: ${turn.taskId}.`);
+  }
 }
 
 export class SqliteTaskStore implements TaskStore {
@@ -1219,6 +1226,39 @@ export class SqliteTaskStore implements TaskStore {
   listActiveTaskIds(): string[] {
     const rows = this.#db.prepare(
       "SELECT task_id FROM tasks_catalog WHERE is_active = 1 ORDER BY task_id"
+    ).all() as Array<{ task_id: string }>;
+    return rows.map((row) => row.task_id);
+  }
+
+  /**
+   * Draft Task ids that carry an active planning Turn.
+   *
+   * Bounded by the active-Turn pointers rather than Task history: a Draft
+   * appears only while one of its Roles actually holds an admitted planning
+   * Turn, so an ordinary Draft is never selected for execution phases.
+   */
+  listPlanningDraftTaskIds(): string[] {
+    const rows = this.#db.prepare(
+      `SELECT DISTINCT catalog.task_id AS task_id
+         FROM tasks_catalog AS catalog
+         JOIN active_turns AS pointers ON pointers.task_id = catalog.task_id
+         JOIN turns ON turns.task_id = pointers.task_id AND turns.turn_id = pointers.turn_id
+        WHERE catalog.status = 'draft'
+          AND turns.status = 'active'
+          AND json_extract(turns.payload, '$.purpose') = 'planning'
+        ORDER BY catalog.task_id`
+    ).all() as Array<{ task_id: string }>;
+    return rows.map((row) => row.task_id);
+  }
+
+  listPendingActivationRequestTaskIds(): string[] {
+    const rows = this.#db.prepare(
+      `SELECT records.task_id AS task_id
+         FROM task_records AS records
+         JOIN tasks_catalog AS catalog ON catalog.task_id = records.task_id
+        WHERE catalog.status = 'draft'
+          AND json_extract(records.payload, '$.activationRequest.disposition') = 'pending'
+        ORDER BY records.task_id`
     ).all() as Array<{ task_id: string }>;
     return rows.map((row) => row.task_id);
   }
@@ -2449,9 +2489,7 @@ export class SqliteTaskStore implements TaskStore {
     }
     this.transaction((store) => {
       const task = store.getTask(turn.taskId);
-      if (task === null || task.status !== "active" || task.executionGate.state !== "enabled") {
-        throw new StorageRecordError(`Task execution is not enabled: ${turn.taskId}.`);
-      }
+      assertTurnAdmission(task, turn);
       this.#assertActiveTurnForWrite(turn);
       const current = store.getActiveTurn(turn.taskId, turn.roleName);
       if (current !== null && current.id !== turn.id) {

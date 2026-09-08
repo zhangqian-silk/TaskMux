@@ -80,16 +80,25 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
     let isolation;
     if (request.owner.scope === "task" && this.options.runtimeIsolation !== undefined) {
       const workspace = request.managedWorkspace;
-      if (workspace === undefined || workspace.owner.taskId !== request.owner.taskId
+      // A Task that legitimately owns no workspace has nothing to isolate: an
+      // empty environment plan over no bound Project (S27). Skipping isolation
+      // here is what lets such a Leader launch at all; a *missing*
+      // authoritative workspace still fails closed below.
+      if (request.workspaceFree === true) {
+        if (workspace !== undefined) {
+          throw new Error("A workspace-free Task launch cannot carry a ManagedWorkspace.");
+        }
+      } else if (workspace === undefined || workspace.owner.taskId !== request.owner.taskId
         || workspace.root !== request.workspace) {
         throw new Error("Task launch requires its authoritative ManagedWorkspace.");
+      } else {
+        isolation = this.options.runtimeIsolation.preflight({
+          workspace,
+          ...(request.runtimePolicy === undefined ? {} : { policy: request.runtimePolicy }),
+          allowExactActive: true
+        });
+        this.options.runtimeIsolation.activate(isolation);
       }
-      isolation = this.options.runtimeIsolation.preflight({
-        workspace,
-        ...(request.runtimePolicy === undefined ? {} : { policy: request.runtimePolicy }),
-        allowExactActive: true
-      });
-      this.options.runtimeIsolation.activate(isolation);
     }
     let preflightObserved = beforeHostStart === undefined;
     const observePreflight: RuntimeLaunchPreStart = (preflight) => {

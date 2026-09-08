@@ -887,6 +887,38 @@ UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
     // Existing records deliberately keep their managed-workspace execution;
     // adopted preparations must never be inferred as an automatic binding.
     sql: "SELECT 1; -- explicit adopted execution environment; absent means managed workspace"
+  },
+  {
+    version: 10,
+    name: "draft-planning-and-deferred-activation",
+    // Same unreleased release as migrations 4-9: this does not bump the version.
+    introducedIn: "0.15.8",
+    // One current-version migration for everything this change adds. No existing
+    // record is rewritten and no payload is backfilled:
+    //
+    //   - the optional Task activation request: absent means activation was
+    //     never explicitly requested, so a Draft is never inferred to have
+    //     requested it;
+    //   - its bounded settled-request history: absent means no request ever
+    //     reached a terminal disposition on this Task. It is what makes an
+    //     explicitly cancelled requestId unreplayable after a later request
+    //     takes the latest slot — per-request evidence inside the Task that
+    //     owns it, not a second scheduling or operation ledger;
+    //   - the planning Turn purpose: historical Turns keep their execution or
+    //     review purpose untouched.
+    //
+    // The partial indexes bound Draft planning selection and pending-activation
+    // recovery to the few rows that qualify, so no execution phase scans Task
+    // history to find them. Creating an index adds no row and rewrites no
+    // payload.
+    sql: `
+-- explicit activation request, its bounded settled history, and planning Turn
+-- purpose; absent means activation was never requested
+CREATE INDEX IF NOT EXISTS idx_turns_planning_active ON turns(task_id, turn_id)
+  WHERE status = 'active' AND json_extract(payload, '$.purpose') = 'planning';
+CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
+  WHERE json_extract(payload, '$.activationRequest.disposition') = 'pending';
+`
   }
 ]);
 
@@ -909,7 +941,9 @@ if (MIGRATIONS.at(-1)?.version !== CURRENT_STORAGE_VERSION) {
 /** Current hot-path indexes whose absence would invalidate a current Home. */
 const REQUIRED_SCHEMA_INDEXES = [
   "idx_mailboxes_ready",
-  "idx_input_requests_open_hot"
+  "idx_input_requests_open_hot",
+  "idx_turns_planning_active",
+  "idx_tasks_activation_pending"
 ] as const;
 
 function checksum(sql: string): string {
