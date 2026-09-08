@@ -50,6 +50,7 @@ const state = {
 const VALID_FILTERS = ["all", "active", "draft", "completed", "cancelled", "archived"];
 let terminalSession = null;
 let terminalStateKey = "terminal.closed";
+const submittedRequests = new Set();
 
 const i18n = createI18n(elements.locale);
 createThemeController(elements.theme);
@@ -125,7 +126,18 @@ function syncUrlFromState(options) {
 function detailActions() {
   return {
     answerInput: answerInput,
-    openTerminal: openTerminal
+    openTerminal: openTerminal,
+    inspect: inspectRecord,
+    sendMessage: (taskId, body, requestId) => submitMutation(taskId + "/messages",
+      "/api/tasks/" + encodeURIComponent(taskId) + "/messages", { body, requestId }),
+    updateTask: (taskId, patch, requestId) => submitMutation(taskId + "/metadata",
+      "/api/tasks/" + encodeURIComponent(taskId) + "/metadata", { patch, requestId }),
+    panels: (taskId) => requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/panels",
+      { signal: AbortSignal.timeout(3000) }),
+    readPanel: (taskId, ref, input) => requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/panels", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ref, input }),
+      signal: AbortSignal.timeout(3000)
+    })
   };
 }
 
@@ -173,6 +185,11 @@ function detailKeyOf(detail) {
 
 function renderCurrentDetail(force) {
   if (state.detail) {
+    // Polling must not replace an unsent draft or an in-flight form, including
+    // after the user has moved focus. This is view state, never Task state.
+    if (elements.detail.dataset.taskId === state.detail.task.id
+      && (elements.detail.querySelector('[data-unsent="true"]')
+        || elements.detail.contains(document.activeElement))) return;
     const key = i18n.getLocale() + "|" + state.detailKey;
     if (!force && key === renderedDetailKey) return;
     renderTaskDetail(
@@ -275,18 +292,36 @@ async function requestJson(path, options) {
     ...options,
     headers: {
       accept: "application/json",
+      "x-yui-web-token": token,
       ...(options && options.headers ? options.headers : {})
     }
   });
   if (!response.ok) {
     let message = "HTTP " + response.status;
+    let disposition = "unknown";
     try {
       const body = await response.json();
       if (body && body.error) message = body.error;
+      if (body && body.disposition === "not-submitted") disposition = "not-submitted";
     } catch {}
-    throw new Error(message);
+    throw Object.assign(new Error(message), { disposition });
   }
   return response.json();
+}
+
+async function submitMutation(key, path, body) {
+  if (submittedRequests.has(key)) throw new Error("An earlier submission is unresolved; read current facts.");
+  submittedRequests.add(key);
+  try {
+    const receipt = await requestJson(path, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+    });
+    submittedRequests.delete(key);
+    return receipt;
+  } catch (error) {
+    if (error.disposition === "not-submitted") submittedRequests.delete(key);
+    throw error;
+  }
 }
 
 async function loadTaskDetail(taskId, showLoading) {
@@ -295,11 +330,38 @@ async function loadTaskDetail(taskId, showLoading) {
     elements.mainCol.scrollTop = 0;
   }
   const savedScrollTop = showLoading ? 0 : elements.mainCol.scrollTop;
-  const detail = await requestJson("/api/tasks/" + encodeURIComponent(taskId));
+  const base = "/api/tasks/" + encodeURIComponent(taskId);
+  // Rendering consumes the current snapshot, not event pages. Reconnect uses
+  // this same read; the independent delta API retains its fixed-bound contract.
+  const core = await requestJson(base + "/context");
+  const taskEntry = core.records.find(function (entry) { return entry.ref.store === "task"; });
+  if (!taskEntry) throw new Error("Task reference unavailable.");
+  const task = taskEntry.omitted ? (await inspectRecord(taskId, taskEntry.ref)).value : taskEntry.value;
+  const previous = state.detail && state.detail.task.id === taskId ? state.detail : null;
+  const detail = {
+    task, core,
+    runtime: previous && previous.runtime,
+    runtimeStatus: previous ? previous.runtimeStatus : "waiting",
+    runtimeObservedAt: previous ? previous.runtimeObservedAt : new Date().toISOString()
+  };
   if (state.selected !== taskId) return;
   state.detail = detail;
-  state.detailKey = detailKeyOf(detail);
-  renderCurrentDetail(true);
+  state.detailKey = detailKeyOf(core);
+  renderCurrentDetail();
+  // Optional observation does not participate in core readiness or cursor.
+  void requestJson(base, { signal: AbortSignal.timeout(1000) }).then(function (runtime) {
+    if (state.detail !== detail) return;
+    detail.runtime = runtime;
+    detail.runtimeStatus = "available";
+    detail.runtimeObservedAt = new Date().toISOString();
+    updateRuntimePanel(detail);
+  }).catch(function () {
+    if (state.detail !== detail) return;
+    detail.runtime = null;
+    detail.runtimeStatus = "unavailable";
+    detail.runtimeObservedAt = new Date().toISOString();
+    updateRuntimePanel(detail);
+  });
   // Reveal the tab bar before measuring/scroll so anchors land correctly.
   setDetailActive(true);
   updateStickyOffsets();
@@ -312,6 +374,20 @@ async function loadTaskDetail(taskId, showLoading) {
     elements.mainCol.scrollTop = savedScrollTop;
   }
   syncTabHighlight();
+}
+
+function updateRuntimePanel(detail) {
+  const status = elements.detail.querySelector("[data-runtime-status]");
+  const value = elements.detail.querySelector("[data-runtime-value]");
+  if (status) status.textContent = detail.runtimeStatus + " · " + detail.runtimeObservedAt;
+  if (value) value.textContent = detail.runtime
+    ? JSON.stringify({ roles: detail.runtime.roles, runtimeHealth: detail.runtime.runtimeHealth }, null, 2)
+    : "";
+}
+
+async function inspectRecord(taskId, ref) {
+  const query = new URLSearchParams({ store: ref.store, ref: ref.refId, digest: ref.digest });
+  return requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/inspect?" + query);
 }
 
 async function selectTask(taskId) {
@@ -345,27 +421,27 @@ async function selectTask(taskId) {
 async function answerInput(input, answer) {
   if (!state.detail) return;
   const taskId = state.detail.task.id;
+  const key = taskId + "/input/" + input.id;
   try {
-    await requestJson(
+    await submitMutation(key,
       "/api/tasks/" + encodeURIComponent(taskId)
         + "/inputs/" + encodeURIComponent(input.id) + "/answer",
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-yui-web-token": token
-        },
-        body: JSON.stringify(answer)
-      }
+      answer
     );
     showToast(i18n.t("input.answered"));
+    submittedRequests.delete(key);
     await refreshDashboard({ quiet: true });
-  } catch {
-    showToast(i18n.t("errors.answer"));
+  } catch (error) {
+    showToast(error.disposition === "not-submitted" ? error.message : i18n.getLocale().startsWith("zh")
+      ? "回答结果未知；请刷新检查原问题，不要盲目重发。"
+      : "Answer outcome unknown; refresh the original question before resubmitting.");
   }
 }
 
+let refreshing = false;
 async function refreshDashboard(options) {
+  if (refreshing) return;
+  refreshing = true;
   const quiet = options && options.quiet;
   if (!quiet) {
     elements.refresh.disabled = true;
@@ -386,8 +462,10 @@ async function refreshDashboard(options) {
     if (previousInputs !== null && dashboard.counts.openInputs > previousInputs) {
       showToast(i18n.t("input.new"));
     }
-    if (state.selected && !quiet) {
-      try { await loadTaskDetail(state.selected, false); } catch {}
+    if (state.selected) {
+      try { await loadTaskDetail(state.selected, false); } catch {
+        showToast(i18n.getLocale().startsWith("zh") ? "连接不可用；保留上次读取。" : "Disconnected; showing the last read.");
+      }
     }
   } catch {
     if (!quiet) {
@@ -395,6 +473,7 @@ async function refreshDashboard(options) {
       showToast(i18n.t("errors.dashboard"));
     }
   } finally {
+    refreshing = false;
     if (!quiet) elements.refresh.disabled = false;
   }
 }

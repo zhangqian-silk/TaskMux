@@ -2001,52 +2001,7 @@ function taskMessageCommand(
     } else {
       throw usageError(`--wake-policy must be 'leader' or 'none': ${wakePolicyRaw}.`);
     }
-    const now = clock(options);
-    const result = store.transaction((tx) => {
-      const task = requireTask(tx, parsed.positionals[0]);
-      assertTaskOpen(task);
-      const actor = taskActor(tx, options, task.id);
-      const message = actor === "leader"
-        ? appendMessage(
-            tx,
-            task.id,
-            body,
-            "role-result",
-            { type: "role", roleName: LEADER_ROLE },
-            now
-          )
-        : actor === "operator"
-          ? appendMessage(tx, task.id, body, "operator", { type: "operator" }, now, { wakePolicy })
-          : appendMessage(tx, task.id, body, "user", { type: "user" }, now, { wakePolicy });
-      // Issue 05: only `wakePolicy=leader` (the default for backward
-      // compatibility) enqueues Leader work. `wakePolicy=none` persists the
-      // message as context without waking the Leader.
-      if (task.status === "active"
-        && actor !== "leader"
-        && wakePolicy !== "none") {
-        enqueueWork(
-          tx,
-          leaderMailbox(task.id),
-          actor === "operator" ? "operator-input" : "user-message",
-          now,
-          [messageRef(task.id, message.id)],
-          {
-            source: actor,
-            dedupeKey: `message:${task.id}:${message.id}`
-          }
-        );
-      }
-      return { task, message, actor };
-    });
-    if (result.actor !== "leader") {
-      notifyMailbox(
-        options.runtime,
-        result.task.status === "active"
-          ? leaderMailbox(result.task.id)
-          : taskMailbox(result.task.id),
-        result.task.id
-      );
-    }
+    const result = sendTaskMessageCommand(store, parsed.positionals[0], body, wakePolicy, options);
     return `Sent message ${result.message.id} to ${result.task.id}\n`;
   }
   if (command === "list") {
@@ -2103,6 +2058,36 @@ function taskMessageCommand(
   throw usageError(command === undefined
     ? "Task message command is required."
     : `Unknown command: task message ${command}`);
+}
+
+/** CLI and authenticated user Surface share the same message and mailbox
+ * transaction. Talking to Leader does not impersonate Leader authority. */
+export function sendTaskMessageCommand(
+  store: TaskWorkflowStore, taskId: string, body: string,
+  wakePolicy: "leader" | "none" | undefined, options: TaskCommandOptions = {}
+) {
+  if (!body.trim()) throw usageError("Message body is required.");
+  const now = clock(options);
+  const result = store.transaction((tx) => {
+    const task = requireTask(tx, taskId);
+    assertTaskOpen(task);
+    const actor = taskActor(tx, options, task.id);
+    const message = actor === "leader"
+      ? appendMessage(tx, task.id, body, "role-result", { type: "role", roleName: LEADER_ROLE }, now)
+      : actor === "operator"
+        ? appendMessage(tx, task.id, body, "operator", { type: "operator" }, now, { wakePolicy })
+        : appendMessage(tx, task.id, body, "user", { type: "user" }, now, { wakePolicy });
+    if (task.status === "active" && actor !== "leader" && wakePolicy !== "none") {
+      enqueueWork(tx, leaderMailbox(task.id), actor === "operator" ? "operator-input" : "user-message",
+        now, [messageRef(task.id, message.id)], { source: actor, dedupeKey: `message:${task.id}:${message.id}` });
+    }
+    return { task, message, actor };
+  });
+  if (result.actor !== "leader") {
+    notifyMailbox(options.runtime, result.task.status === "active"
+      ? leaderMailbox(result.task.id) : taskMailbox(result.task.id), result.task.id);
+  }
+  return result;
 }
 
 function updateMessage(
