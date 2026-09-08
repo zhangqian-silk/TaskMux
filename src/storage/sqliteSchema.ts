@@ -992,6 +992,13 @@ CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
     //
     // Sessions keep their own recorded component, so a Session started before
     // this migration continues against exactly the implementation it began on.
+    //
+    // Every persisted effective snapshot must be reached, not only the ones on
+    // Session sets: `validateEffectiveLaunchSnapshot` demands schemaVersion 4,
+    // and the upgrade verifier replays it over Turns, WorkItem ExecutionLanes
+    // and ReviewRound ExecutionLanes too. A Home holding any of those would
+    // otherwise fail the upgrade and roll back. The list below is the
+    // verifier's own reachable set, not a scan for fields that look similar.
     sql: `
 UPDATE configured_agents SET payload = json_set(payload,
   '$.schemaVersion', 3,
@@ -1026,7 +1033,7 @@ UPDATE global_role_session_sets SET payload = json_set(payload, '$.sessions', js
       WHEN 'claude' THEN 'claude-code-cli'
       ELSE 'unknown-acp-agent' END))
   FROM json_each(payload, '$.sessions')
-)));
+))) WHERE json_type(payload, '$.sessions') = 'object';
 UPDATE global_role_session_sets SET payload = json_set(payload, '$.history', json((
   SELECT json_group_object(key, json_set(value, '$.effective.schemaVersion', 4,
     '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
@@ -1043,7 +1050,7 @@ UPDATE role_session_sets SET payload = json_set(payload, '$.sessions', json((
       WHEN 'claude' THEN 'claude-code-cli'
       ELSE 'unknown-acp-agent' END))
   FROM json_each(payload, '$.sessions')
-)));
+))) WHERE json_type(payload, '$.sessions') = 'object';
 UPDATE role_session_sets SET payload = json_set(payload, '$.history', json((
   SELECT json_group_array(json_set(value, '$.effective.schemaVersion', 4,
     '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
@@ -1052,6 +1059,47 @@ UPDATE role_session_sets SET payload = json_set(payload, '$.history', json((
       ELSE 'unknown-acp-agent' END))
   FROM json_each(payload, '$.history')
 ))) WHERE json_type(payload, '$.history') = 'array';
+
+-- A Turn records the launch it actually ran on, one snapshot per row.
+UPDATE turns SET payload = json_set(payload,
+  '$.effective.schemaVersion', 4,
+  '$.effective.component', CASE json_extract(payload, '$.effective.adapterId')
+    WHEN 'codex' THEN 'codex-cli'
+    WHEN 'claude' THEN 'claude-code-cli'
+    ELSE 'unknown-acp-agent' END)
+WHERE json_type(payload, '$.effective') = 'object';
+
+-- ExecutionLane launch facts are frozen per Lane, inside an array of Groups
+-- that each hold an array of Lanes. A Lane that was never dispatched has no
+-- effective at all, and must keep that absence: json_set would otherwise
+-- create a partial snapshot the Lane validator rejects as incomplete.
+UPDATE work_items SET payload = json_set(payload, '$.executionGroups', json((
+  SELECT json_group_array(json_set(grp.value, '$.lanes', json((
+    SELECT json_group_array(CASE
+      WHEN json_type(lane.value, '$.effective') = 'object'
+      THEN json_set(lane.value, '$.effective.schemaVersion', 4,
+        '$.effective.component', CASE json_extract(lane.value, '$.effective.adapterId')
+          WHEN 'codex' THEN 'codex-cli'
+          WHEN 'claude' THEN 'claude-code-cli'
+          ELSE 'unknown-acp-agent' END)
+      ELSE lane.value END)
+    FROM json_each(grp.value, '$.lanes') AS lane
+  ))))
+  FROM json_each(payload, '$.executionGroups') AS grp
+))) WHERE json_type(payload, '$.executionGroups') = 'array';
+
+-- A ReviewRound holds at most one Group, so only the Lane array nests here.
+UPDATE review_rounds SET payload = json_set(payload, '$.executionGroup.lanes', json((
+  SELECT json_group_array(CASE
+    WHEN json_type(lane.value, '$.effective') = 'object'
+    THEN json_set(lane.value, '$.effective.schemaVersion', 4,
+      '$.effective.component', CASE json_extract(lane.value, '$.effective.adapterId')
+        WHEN 'codex' THEN 'codex-cli'
+        WHEN 'claude' THEN 'claude-code-cli'
+        ELSE 'unknown-acp-agent' END)
+    ELSE lane.value END)
+  FROM json_each(payload, '$.executionGroup.lanes') AS lane
+))) WHERE json_type(payload, '$.executionGroup.lanes') = 'array';
 `
   }
 ]);

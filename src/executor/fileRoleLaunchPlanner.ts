@@ -397,6 +397,17 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     if (configured.adapterId !== binding.adapterId) {
       throw new Error(`Configured Agent adapter changed: ${input.agentId}.`);
     }
+    // The command below comes from the Agent record while the product identity
+    // stamped onto this Session comes from the pinned snapshot. Checking only
+    // the adapter lets those disagree whenever two products share a plan, which
+    // is exactly the ACP case: the launch would run the newly configured
+    // executable and label it with the product the Session was pinned to. The
+    // update path refuses this change on a referenced Agent, so reaching here
+    // means the record was altered some other way — still not something to
+    // launch through.
+    if (configured.component !== binding.component) {
+      throw new Error(`Configured Agent execution component changed: ${input.agentId}.`);
+    }
 
     const agent = configuredAgentToDefinition(configured);
     const agentSourceEnvironment = input.environment ?? this.#agentEnvironment;

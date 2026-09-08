@@ -44,7 +44,7 @@ import {
   validateArtifact, validateLocalResource, validateEnvironmentPreparation,
   type Artifact, type LocalResource, type EnvironmentPreparation
 } from "../resources/projectResource.js";
-import type { ConfiguredAgent } from "../agent/agent.js";
+import { validateConfiguredAgent, type ConfiguredAgent } from "../agent/agent.js";
 import { validateTaskBrief, type TaskBrief } from "../brief/taskBrief.js";
 import type { MailboxTarget, WorkMailbox } from "../coordination/workMailbox.js";
 import {
@@ -92,7 +92,7 @@ import {
   validateDurableJob,
   type DurableJob
 } from "../job/durableJob.js";
-import type { GlobalRole, TaskRole } from "../role/role.js";
+import { validateGlobalRole, validateTaskRole, type GlobalRole, type TaskRole } from "../role/role.js";
 import type { LeaderFailure } from "../scheduler/leaderFailure.js";
 import type { PendingWakeup } from "../scheduler/pendingWakeup.js";
 import { validateTaskWake, type TaskWake } from "../scheduler/taskWake.js";
@@ -737,6 +737,13 @@ export class SqliteTaskStore implements TaskStore {
     const record = this.#parse<T>(payload);
     if (table === "task_records") validateTask(record as Task);
     if (table === "work_items") validateWorkItem(record as WorkItem);
+    // Agents and Roles carry the execution component, and their validators
+    // refuse a record that lost it. Reading them unchecked defeated that: a
+    // component-less row reached display and rendered `undefined` as if it
+    // were a product, and reached launch as a binding nothing had vetted.
+    if (table === "configured_agents") validateConfiguredAgent(record as ConfiguredAgent);
+    if (table === "task_roles") validateTaskRole(record as TaskRole);
+    if (table === "global_roles") validateGlobalRole(record as GlobalRole);
     return record;
   }
 

@@ -92,14 +92,19 @@ export type RoleAgentSwitchEvent = {
   };
 };
 
+/**
+ * The Agent argument is the stored record, not a hand-picked pair of fields.
+ * `component` is required for exactly that reason: an Agent registered as the
+ * Claude Agent SDK that reached a Role binding as `unknown-acp-agent` would be
+ * silently demoted, and an optional parameter makes that a quiet default
+ * instead of a compile error at the call site that forgot it.
+ */
 export function createRoleAgentBinding(
-  agent: { id: string; adapterId: string; component?: string },
+  agent: { id: string; adapterId: string; component: string },
   config?: RoleAgentConfig
 ): RoleAgentBinding {
   const agentId = requireSafeIdentity(agent.id, "Role Agent id");
   const adapterId = requireSupportedAdapterId(agent.adapterId);
-  // An Agent record predating the component axis names only its plan; that
-  // resolves to the plan's default, which for ACP is the unidentified entry.
   const component = resolveAgentExecutionComponent(adapterId, agent.component);
   const defaults = defaultRoleAgentConfig(adapterId);
   const effectiveConfig = config === undefined
@@ -467,6 +472,12 @@ function validateRoleOwner<T extends GlobalRole | TaskRole>(role: T): T {
 function validateRoleAgentBinding(binding: RoleAgentBinding): RoleAgentBinding {
   const agentId = requireSafeIdentity(binding.agentId, "Role Agent id");
   const adapterId = requireSupportedAdapterId(binding.adapterId);
+  // Storage 10 backfilled every stored binding, so a missing component here is
+  // a corrupt record rather than an old one. Defaulting it would invent a
+  // product identity for data that never lost one.
+  if (binding.component === undefined) {
+    throw new Error(`Role Agent binding is missing its execution component: ${agentId}.`);
+  }
   const component = resolveAgentExecutionComponent(adapterId, binding.component);
   if (adapterIdForExecutionComponent(component) !== adapterId) {
     throw new Error(`Role Agent binding execution component is inconsistent: ${agentId}.`);
@@ -532,9 +543,10 @@ function cloneBindings(bindings: Record<string, RoleAgentBinding>): Record<strin
 function cloneBinding(binding: RoleAgentBinding): RoleAgentBinding {
   return {
     agentId: binding.agentId,
-    // A binding stored before the component axis existed carries none, and its
-    // plan supplies the answer — unidentified for ACP, never a guessed product.
-    component: resolveAgentExecutionComponent(binding.adapterId, binding.component),
+    // Copied, never re-derived. Cloning is not the place to decide what an
+    // absent component means: validation above already refuses that record,
+    // and resolving here would hide the refusal behind a plausible default.
+    component: binding.component,
     adapterId: binding.adapterId,
     config: cloneJson(binding.config)
   };

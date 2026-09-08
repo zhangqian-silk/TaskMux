@@ -6,6 +6,7 @@ import { isAgentAdapterId, supportedAgentAdapterIds } from "../agent/adapterCata
 import {
   adapterIdForExecutionComponent,
   agentExecutionComponentLabel,
+  defaultExecutionComponentForAdapter,
   executionComponentsForAdapter,
   isAgentExecutionComponentId,
   supportedAgentExecutionComponentIds,
@@ -182,7 +183,15 @@ function updateAgent(args: string[], store: AgentCommandStore): string {
   const command = parsed.one("--command")?.trim();
   if (command !== undefined && command.length === 0) throw usageError("--command is required.");
   const patch: ConfiguredAgentPatch = {
-    ...(adapterId === undefined ? {} : { adapterId }),
+    // Naming a plan alone re-derives the component from it. The stored one
+    // belongs to the plan being left — keeping it would submit a pair the
+    // Agent validator rejects, which is how `--adapter` alone became
+    // unusable even for an Agent nothing references. The plan's default is
+    // the honest answer: for ACP it is the unidentified entry, never a
+    // product guessed from the command.
+    ...(adapterId === undefined
+      ? {}
+      : { adapterId, component: defaultExecutionComponentForAdapter(adapterId) }),
     // Changing the component can move the Agent onto its plan, which is the one
     // way the two stay consistent without asking the operator to restate both.
     ...(component === undefined
@@ -223,19 +232,34 @@ function updateAgent(args: string[], store: AgentCommandStore): string {
         + "Stop the affected Role session first to apply it to a fresh session instead."
       );
     }
-    if (changes.adapter) {
+    // A component change is refused on a referenced Agent for the same reason
+    // an adapter change is, and the reason is not symmetry: the product identity
+    // is copied into Role bindings and frozen into every Session snapshot at
+    // launch. Rewriting only the Agent leaves those copies asserting the old
+    // product while the new command runs, so a Session resumes against one
+    // product under another's name. Rewriting the copies instead would relabel
+    // history that really did run the old product. Neither is correctable here,
+    // so the change is refused and the operator binds a new Agent explicitly —
+    // which leaves existing Sessions pinned to what they actually ran.
+    const identityChange = changes.adapter
+      ? { axis: "adapter", target: "adapter" }
+      : changes.component ? { axis: "execution component", target: "component" } : null;
+    if (identityChange !== null) {
       const profile = findAgentProfileReference(tx, id);
       if (profile !== null) {
         throw usageError(
-          `Agent ${id} adapter cannot change because Agent Profile ${profile.id} references it. `
+          `Agent ${id} ${identityChange.axis} cannot change because Agent Profile `
+          + `${profile.id} references it. `
           + "Update that explicit Profile or create a new Agent ID instead."
         );
       }
       const binding = findRoleBindingReference(tx, id);
       if (binding !== null) {
         throw usageError(
-          `Agent ${id} adapter cannot change because ${describeReference(binding)} references it. `
-          + "Create a new Agent ID with the target adapter and bind the Role to it instead."
+          `Agent ${id} ${identityChange.axis} cannot change because `
+          + `${describeReference(binding)} references it. `
+          + `Create a new Agent ID with the target ${identityChange.target} and bind the Role `
+          + "to it instead."
         );
       }
     }

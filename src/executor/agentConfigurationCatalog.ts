@@ -475,9 +475,61 @@ function validateCatalog(
     adapterId: agent.adapterId,
     ...(typeof value.cliVersion === "string"
       ? { cliVersion: text(value.cliVersion, "CLI version") } : {}),
+    // Carried through rather than dropped. This is the only record of what the
+    // Agent on the other end actually agreed to, and for a plan whose products
+    // are interchangeable it is the one fact that tells them apart. Rebuilding
+    // the catalog without it silently erased the probe's answer on both the
+    // live path and the cache read-back, leaving every consumer unable to
+    // distinguish "negotiated nothing" from "never asked".
+    ...(value.handshake === undefined
+      ? {}
+      : { handshake: validateHandshake(value.handshake) }),
     models,
     fields,
     warnings
+  };
+}
+
+/**
+ * A handshake observation, kept in whichever of its three states it arrived in.
+ *
+ * Absence is meaningful and is preserved by the caller: it means no live
+ * connection produced this catalog. The two present states are distinguished
+ * here rather than merged, because `unsupported` ("this plan negotiates
+ * nothing") and an `observed` result with empty capabilities ("the Agent
+ * answered, and advertised none") are different answers that would otherwise
+ * be indistinguishable. An unrecognised status is rejected instead of being
+ * coerced into either one.
+ */
+function validateHandshake(value: unknown): AgentHandshakeObservation {
+  if (!record(value)) throw new Error("Agent handshake observation is invalid.");
+  if (value.status === "unsupported") {
+    return {
+      status: "unsupported",
+      reason: text(value.reason, "handshake reason")
+    };
+  }
+  if (value.status !== "observed") {
+    throw new Error(`Agent handshake status is unsupported: ${String(value.status)}.`);
+  }
+  if (!Number.isSafeInteger(value.protocolVersion)) {
+    throw new Error("Agent handshake protocol version is invalid.");
+  }
+  const capabilities = array(value.capabilities, "handshake capabilities")
+    .map((capability) => text(capability, "handshake capability"));
+  unique(capabilities, "handshake capability");
+  const authMethods = array(value.authMethods, "handshake authentication methods")
+    .map((method) => text(method, "handshake authentication method"));
+  unique(authMethods, "handshake authentication method");
+  return {
+    status: "observed",
+    protocolVersion: value.protocolVersion as number,
+    // `unknown` is a real answer here — the Agent connected but did not name
+    // itself — so it is stored as given and never replaced by a guess.
+    agentName: text(value.agentName, "handshake Agent name"),
+    agentVersion: text(value.agentVersion, "handshake Agent version"),
+    capabilities: [...capabilities].sort(),
+    authMethods: [...authMethods].sort()
   };
 }
 

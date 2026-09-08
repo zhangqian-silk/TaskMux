@@ -2831,7 +2831,7 @@ function bindTaskRole(
     }, "desired Agent binding update");
     const agent = requireAgent(tx, args[2]);
     const binding = role.agentBindings[agent.id]
-      ?? createRoleAgentBinding({ id: agent.id, adapterId: agent.adapterId });
+      ?? createRoleAgentBinding(agent);
     const bound = updateRole(role, {
       agentBindings: { ...role.agentBindings, [agent.id]: binding }
     }, now);
@@ -7251,7 +7251,7 @@ function createTaskRole(
     throw dataError(`No Agent is configured for Task role: ${roleName}.`);
   }
   const agent = requireAgent(store, agentId);
-  const binding = createRoleAgentBinding({ id: agent.id, adapterId: agent.adapterId });
+  const binding = createRoleAgentBinding(agent);
   return createRole(task.id, roleName, [binding], agent.id, workspace, now);
 }
 
@@ -7316,7 +7316,7 @@ function resolveTaskRoleAgentBindingAdd(
   } else {
     if (explicitAgentId === undefined) return undefined;
     const agent = requireAgent(store, explicitAgentId);
-    binding = createRoleAgentBinding({ id: agent.id, adapterId: agent.adapterId });
+    binding = createRoleAgentBinding(agent);
   }
   if (hasAgentConfigOptions(parsed)) {
     binding = patchRoleAgentBinding(binding, parsed);
@@ -7352,7 +7352,7 @@ function resolveTaskRoleAgentBindingUpdate(
     if (!changesAgentConfig) return undefined;
     const agent = requireAgent(store, targetAgentId);
     binding = role.agentBindings[targetAgentId]
-      ?? createRoleAgentBinding({ id: agent.id, adapterId: agent.adapterId });
+      ?? createRoleAgentBinding(agent);
   }
   if (changesAgentConfig) {
     binding = patchRoleAgentBinding(binding, parsed);

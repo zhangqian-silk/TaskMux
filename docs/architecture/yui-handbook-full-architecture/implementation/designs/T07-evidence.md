@@ -234,6 +234,13 @@ archive 或启动后续 Task。
 基线 `e0fcd244fe659e155a50265747641d683ae3b9ee`。本节只记录本 WorkItem 的
 改动，不改写前六节的裁定。
 
+本节为 turn-10 返工稿。turn-8 候选
+`e8466d2f3a22da80818941cbd99085d3780fb25a` 被 message-10 以四项确定缺陷
+驳回：迁移 10 漏掉 `turns.payload.effective` 与两处 ExecutionLane（真实
+v9 Home 升级必失败回滚）、Role 创建／切换丢弃 component、component 变更
+错绑、`handshake` 被 `validateCatalog` 丢弃。四项均已修复，且每一项都先在
+改动前的构建上复现缺陷再验证消失；旧候选与审查记录保留。
+
 ### 7.1 为什么加一个轴而不是改名
 
 `adapterId` 混装了两件事：产品是谁，以及 Yui 用什么协议／载体连上去。
@@ -284,8 +291,33 @@ storage **9 → 10** `agent-execution-component`（`introducedIn=0.15.8`），
 事实贴确定标签。配置变更只影响**新** Session；旧 Session 由自己的 effective
 快照固定，`component` 进入连续性快照正是为此。
 
-`catalogFingerprint` 补入 `component`：否则同一 Home 上两个 ACP 产品会共用
-同一条能力缓存。
+迁移覆盖面以**升级校验器实际重放的校验器清单**为准，共 8 张表：
+`configured_agents`、`task_roles`、`global_roles`、`role_session_sets`、
+`global_role_session_sets`（`sessions` 与两种形状的 `history`）、`turns`、
+`work_items.executionGroups[].lanes[]`、`review_rounds.executionGroup.lanes[]`。
+`turns` 与两处 Lane 是 message-10 指出的遗漏：`validateEffectiveLaunchSnapshot`
+要求 `schemaVersion 4`，任何存有 Turn 历史的真实 v9 Home 都会因此升级失败并回滚。
+未派发的 Lane 没有 `effective`，必须保持缺席。`context_snapshots` 由摘要锁定，
+`AgentProfile` 与 `TaskFinalReviewContract` 不带 component，三者均不迁移。
+
+**变更与拒绝**：`component` 与 `adapter` 同属身份轴。被 Role 绑定或 Profile
+引用的 Agent **拒绝**变更任一者，提示新建 Agent 显式绑定；未被引用的可自由
+变更。仅给 `--adapter` 时 component 按新方案重解（ACP 得
+`unknown-acp-agent`）。schema 10 之后 loader 不再把缺失 component 当历史
+兼容：`ConfiguredAgent` 与 `RoleAgentBinding` 各自在读取时拒绝该记录；
+而构造函数仍允许省略参数——操作者只声明方案是受支持的请求，与读取已写入的
+损坏记录是两回事。
+
+`catalogFingerprint` 补入 `component`。**更正**：先前称"否则两个 ACP 产品会
+共用同一条能力缓存"是错的——该指纹本就含 `command` 与 `baseArgs`，两个产品
+只要可执行文件不同就已分属不同缓存条目（在改动前的构建上实测，缓存目录确为
+两条）。`component` 的真实作用是覆盖命令相同而产品声明不同的情形，并让缓存
+条目按产品身份显式失效，而不是修一个原本不存在的串用缺陷。
+
+`handshake` 由 `validateCatalog` 校验并**保留**（此前被重建对象丢弃，
+live 与缓存回读两条路径都取不到）。三态显式区分：`unsupported`（该方案
+不协商）、`observed`（已协商，能力可为空）、缺席（从未尝试）；
+无法识别的 status 拒绝而非放行。
 
 ### 7.4 协议事实更正
 
@@ -307,32 +339,103 @@ protocolVersion／能力／authMethods；缺失值显式为 `unknown`，不留�
 全部使用一次性 Home、绝对 launcher、`env -i` 清除继承 YUI 环境；
 **零真实模型、零凭据、零外部资源**。临时夹具已删除，未新增永久历史回归测试。
 
-**红／绿（行为级，非"文件不存在"）**：同一份探针分别在基线构建与本改动上
-运行。基线 **4/4 通过**（缺陷存在），本改动 **4/4 失败**（缺陷消失）。
-其中关键一条是 `roleSessionMayContinue(generic, sdk)`：基线返回 `true`
-（同方案同工作区，Session 会静默切换到另一个产品），改动后返回 `false`。
-另有专项夹具 **10/10** 覆盖四条验收线。
+验证方法统一为：**先在改动前的构建上复现缺陷，再在改动后的构建上以同一串
+命令确认缺陷消失**。下文一律以"断言通过／断言失败"直述，不把失败的断言
+写成通过的验收。
 
-**真实 v9 Home 原地升级**（不是模拟删账本行）：用基线构建创建 Home 并写入
-记录，再由本改动执行 `upgrade`：
+**（1）迁移 10 —— 真实 v9 Home 原地升级**
+
+夹具用**基线构建自己的工厂函数**写入 3 个 Agent（含命令字面为
+`claude-agent-acp` 的旧 ACP 绑定）、1 个全局 Role（对象形 history）、
+2 个 Task Role、经 `resolveEffectiveLaunch → createTurn → saveTurn`
+的 2 条真实 Turn、2 组 Task Session（数组形 history），以及 1 个含
+双 Lane ExecutionGroup 的 WorkItem（两条 Lane 分属不同连接方案）。
+不是"删账本行"的模拟。
+
+改动前：`upgrade` **退出码 5**，
+`Effective launch snapshot must use schemaVersion 4`，Home 从备份回滚，
+复现了复审所述失败。改动后同一夹具：
 
 ```text
 Storage upgraded through 9->10 agent-execution-component.
-legacy-acp cmd=claude-agent-acp schema=3 component=unknown-acp-agent
-my-codex   cmd=codex            schema=3 component=codex-cli
-migrations 1,2,3,4,5,6,7,8,9,10
+TURN turn-1  sv=4 acp/unknown-acp-agent      TURN turn-2  sv=4 codex/codex-cli
+SESS  live+hist ×3 组（数组形与对象形 history 各自覆盖）  sv=4
+LANE work-item-1 acp-worker sv=4 acp/unknown-acp-agent
+LANE work-item-1 codex-worker sv=4 codex/codex-cli
+AGENT legacy-acp acp/unknown-acp-agent cmd=claude-agent-acp
 ```
 
-命令字面为 `claude-agent-acp` 的旧绑定**保持 `unknown-acp-agent`**，没有被
-猜成 Claude Agent SDK；Codex 正确回填；升级后 `doctor` 全绿
-（`storage schema ok current=10 latest=10`），旧行为未回归。
+应迁移的表由 `upgradeOrchestrator.validateCurrentStore` 实际重放的校验器
+清单确定，不是按字段名扫描用户数据；`context_snapshots` 摘要锁定、
+`AgentProfile`／`TaskFinalReviewContract` 不带 component，均**未**编造迁移。
+未派发的 Lane 保持无 `effective`（`json_set` 会造出被 Lane 校验器判为残缺的
+半快照）。命令字面为 `claude-agent-acp` 的旧绑定**保持
+`unknown-acp-agent`**。升级后 `doctor` 全绿
+（`storage schema ok current=10 latest=10`，`agents=3 tasks=1 roles=2
+globalRoles=1`），重跑幂等；专用差分器比对升级前后 8 张表 12 行：
+**非 component 差异 0**。
 
-**通用产品复用**：同一份代码、同一条命令注册两个 ACP 产品，列表分别显示
-`claude-agent-sdk` 与 `unknown-acp-agent`，用户自定的实例 id
-（`sdk-agent`／`legacy-acp`）原样保留，未被改名为产品名。
+**（2）Role 创建／切换保留 component —— 真实 CLI**
 
-**常规验证**：`npm run build`、`npm run lint` 通过；`npm run test:core`
-**81/81**（约 4.4 秒），规模未变。
+经真实 `yui` 可执行文件而非构造对象：`config agent add sdk-agent
+--component claude-agent-sdk` → `task create` → `task role add`。
+改动前，Agent 记录为 `claude-agent-sdk`，而 `leader` 与 `sdk-worker`
+两条绑定均被降级为 `unknown-acp-agent`（复现）；改动后同一串命令，
+两条绑定均为 `claude-agent-sdk`。`task role bind` 切换路径同样覆盖：
+三个不同产品（`claude-agent-sdk`／`unknown-acp-agent`／`codex-cli`）
+各自如实落库，通用 ACP Agent 未被命令字符串猜成产品。
+`createRoleAgentBinding` 的参数由 `component?` 收紧为必填，
+使遗漏调用点成为编译错误而非静默默认。
+
+**（3）component 变更：引用中拒绝，未引用可改**
+
+真实 CLI 矩阵（退出码为实测值）：
+
+| 操作 | 结果 |
+| --- | --- |
+| 被 Role 引用的 Agent 改 component | **拒绝**，退出码 2，库内 Agent 与绑定均未变 |
+| 被 Role 引用的 Agent 改 adapter | 拒绝，退出码 2（原有行为未回归） |
+| 未被引用的 Agent 仅 `--adapter` 切换 | 成功，退出码 0，component 按新方案重解 |
+| 未被引用的 Agent 改 component | 成功，退出码 0 |
+| 被引用 Agent 的非身份变更（`--arg`） | 成功，退出码 0 |
+
+改动前，前者静默成功——Agent 变为 `unknown-acp-agent` 而两条 Role 绑定
+仍宣称 `claude-agent-sdk`（复现）；`--adapter` 单独使用则因保留旧
+component 而报
+`component codex-cli is reached over the codex connection plan, not claude`，
+连未被引用的 Agent 也无法换方案（复现）。现改为：引用中一律拒绝并提示
+新建 Agent 显式绑定，旧 Session 由自己的 effective 快照固定不变；
+`--adapter` 单独使用时按新方案重解 component（ACP 得
+`unknown-acp-agent`，不从命令猜产品）。
+`fileRoleLaunchPlanner.#compile` 增加 component 一致性检查，
+使"新命令配旧产品标签"在启动前即失败。
+
+**（4）loader 不再把缺失 component 当历史兼容**
+
+schema 10 之后，缺 component 的记录是损坏而非陈旧。在真实升级后的 Home 上
+剥掉字段实测：改动前 `config agent show` 照常输出且
+`Component: undefined (undefined)`；现在 Agent 与 Role 绑定各自以自己的
+消息拒绝（`Agent is missing its execution component`／
+`Role Agent binding is missing its execution component`），
+仅剥绑定时 Agent 仍可正常读取，健康 Home 无误报，`test:core` 未因此失败。
+构造函数允许省略参数是另一回事（操作者只报方案是受支持的请求），
+两者已分开处理。
+
+**（5）handshake 贯通 —— 真实 `CatalogService.resolve` 与缓存回读**
+
+注入 discovery 以免联网，其后的校验、缓存落盘、指纹、缓存回读全是发布代码；
+共 11 条断言。改动前 **6 条失败**（live 与缓存回读均取不到 handshake、
+`unsupported` 被抹去、非法 status 被原样放行）；改动后 **11 条全部通过**：
+live 与 cache 两条路径取到的 handshake 逐字节相同，`unsupported`
+与"已观测但能力为空"保持可区分，"从未尝试"仍为缺席第三态，
+无法识别的 status 被拒绝并降级为 fallback。
+
+**缓存条目更正**：见 7.3。"两个 ACP 产品会共用同一条缓存"的原说法有误——
+在**改动前**的构建上实测，命令不同即已分属两条缓存条目（该断言在改动前后
+均通过，因此它证明的是原说法有误，不是本次修复的成果）。
+
+**常规验证**：`npm run build`、`npm run lint`（`tsc --noEmit`）通过；
+`npm run test:core` **81/81 通过、0 失败**，规模未变。
 
 ### 7.6 本 WorkItem 未验证项
 
@@ -345,6 +448,13 @@ migrations 1,2,3,4,5,6,7,8,9,10
    永久版本限制**写入代码。
 3. 组件轴不改变任何 codec 行为，因此未重新验证 Codex／Claude 的真实
    Provider 场景；`test:core` 通过只说明既有路径未回归。
+4. 上一候选（turn-8）的 7.5 曾把"本改动 4/4 **失败**"写成验收通过。
+   该表述已删除：那是断言失败，不是验收。本次全部证据改为直述实测退出码与
+   通过／失败条数，并且每一条都在改动前的构建上先行复现过缺陷。
+5. `review_rounds` 的 Lane 迁移由隔离 SQL 与真实升级校验器覆盖，
+   但夹具 Home 中没有 ReviewRound 行（WorkItem 组要求每条 Lane 都有
+   launch facts，未派发 Lane 的情形属于 review 组）；该路径**未经真实
+   ReviewRound 数据端到端验证**。
 
 ### 7.7 手册 HTML 未重新生成
 
