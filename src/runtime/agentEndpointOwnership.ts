@@ -1,4 +1,4 @@
-import { InstanceHost, type ImplementationRef } from "../kernel/instanceHost.js";
+import { InstanceHost, type ImplementationHandle, type ImplementationRef } from "../kernel/instanceHost.js";
 import {
   builtinAgentEndpointImplementation,
   requireBuiltinAgentEndpointImplementation
@@ -20,6 +20,9 @@ import type { AgentHostLaunchPayload } from "./launchBroker.js";
 export type AgentEndpointDrain = Readonly<{
   quiescent: boolean;
   references: number;
+  /** How long this stop actually waited, and whether the bound ran out first. */
+  waitedMs: number;
+  timedOut: boolean;
   sessions: readonly Readonly<{
     nativeSessionId: string;
     processInstanceId: string;
@@ -27,6 +30,8 @@ export type AgentEndpointDrain = Readonly<{
     cancellation: "not-requested" | "requested";
     /** An owned client exiting does not prove shared/native descendants stopped. */
     resources: "unknown";
+    /** Set once the Session asked to end but its client has not proven exit. */
+    releaseAwaitingExit: boolean;
     pending: readonly Readonly<{ attemptId: string; inputRef: string; status: string }>[];
   }>[];
 }>;
@@ -44,8 +49,19 @@ export type AgentEndpointLease = Readonly<{
   release(): Promise<void>;
 }>;
 
-/** One Session's hold, tracking the client it currently has attached. */
-type SessionHold = { current?: AgentEndpoint };
+/**
+ * One Session's hold. The reference is owned by the client that is actually
+ * running, not by the intent to stop it: `releaseRequested` records that the
+ * Session asked to end, and the reference is only handed back once the client
+ * proves it exited. That is what keeps a stop from reporting quiescence while a
+ * Provider is still attached.
+ */
+type SessionHold = {
+  handle: ImplementationHandle<AgentEndpointFactory>;
+  current?: AgentEndpoint;
+  releaseRequested: boolean;
+  settled: boolean;
+};
 
 /**
  * Process-local ownership of the Endpoint implementation this Agent Host is
@@ -81,6 +97,18 @@ export function createAgentEndpointOwner(
   };
 
   /**
+   * Hand the reference back only when the Session asked to end *and* its client
+   * is no longer running. A client that never proves exit keeps this hold, so
+   * the drain below reports a real dependency instead of an empty list.
+   */
+  const settle = async (holders: Set<SessionHold>, holder: SessionHold): Promise<void> => {
+    if (holder.settled || !holder.releaseRequested || holder.current !== undefined) return;
+    holder.settled = true;
+    holders.delete(holder);
+    await holder.handle.release();
+  };
+
+  /**
    * Pin the implementation for one Session. A pinned reference from the durable
    * Session must name this exact code; a mismatch is an explicit inability to
    * resume, never a silent start on a different generation.
@@ -93,64 +121,54 @@ export function createAgentEndpointOwner(
     // One entry per Session hold, reporting the client it currently has. A
     // Session may reattach a replacement client for the same conversation; that
     // succession is one hold, not two, so a drain never double-counts it.
-    const holder: SessionHold = {};
+    const holder: SessionHold = { handle, releaseRequested: false, settled: false };
     holders.add(holder);
     const track = async (opened: Promise<OpenedAgentEndpoint>): Promise<OpenedAgentEndpoint> => {
       const result = await opened;
       holder.current = result.session;
+      // Only a resolved exit proves the client stopped. An exit that never
+      // settles, or that fails, leaves this hold in place on purpose: the drain
+      // must be able to say what is still running.
       void result.session.waitForExit().then(
-        () => { if (holder.current === result.session) holder.current = undefined; },
+        () => {
+          if (holder.current !== result.session) return;
+          holder.current = undefined;
+          void settle(holders, holder).catch(() => undefined);
+        },
         () => {}
       );
       return result;
     };
-    let released = false;
+    const start = (
+      call: (value: AgentEndpointFactory) => Promise<OpenedAgentEndpoint>
+    ): Promise<OpenedAgentEndpoint> => {
+      // An acquired handle keeps its captured opener even after the generation is
+      // disposed, so a released lease must refuse to start new work rather than
+      // run on code the Session has already given up.
+      if (holder.releaseRequested) {
+        return Promise.reject(new Error("Session Endpoint lease is released; it cannot start new work."));
+      }
+      return track(call(handle.value));
+    };
     return Object.freeze({
       implementation: handle.implementation,
-      open: (payload) => track(handle.value.open(payload)),
-      resume: (payload) => track(handle.value.resume(payload)),
+      open: (payload) => start((value) => value.open(payload)),
+      resume: (payload) => start((value) => value.resume(payload)),
       release: async () => {
-        if (released) return;
-        released = true;
-        holders.delete(holder);
-        await handle.release();
+        // Idempotent, and never blocking: a client that has not exited keeps the
+        // reference, and `stop` is what bounds and reports that wait. A hold that
+        // never opened a client (a failed start) owes nothing and settles here.
+        holder.releaseRequested = true;
+        await settle(holders, holder);
       }
     });
   };
 
-  /**
-   * Ordinary stop: no new independent acquisition, while an already-acquired
-   * Session ends bounded. Resolves with the drain facts once every reference is
-   * released, or with what is still in use when the wait runs out.
-   */
-  const stop = async (adapterId: string, timeoutMs = 0): Promise<AgentEndpointDrain> => {
-    const ref = attached.get(builtinAgentEndpointImplementation(adapterId).id);
-    if (ref === undefined) return Object.freeze({ quiescent: true, references: 0, sessions: [] });
-    // A disposer failure still ends acquisition; the drain facts below, not the
-    // settle reason, decide whether this is actually quiescent.
-    const drained = host.detach(ref).then(() => undefined, () => undefined);
-    if (timeoutMs > 0) {
-      // The timer must keep the process alive for the bounded window, or a
-      // caller with nothing else pending would exit before reporting what is
-      // still in use. Cleared as soon as the drain settles, so a released
-      // implementation never delays shutdown until the deadline.
-      let expire: NodeJS.Timeout | undefined;
-      try {
-        await Promise.race([
-          drained,
-          new Promise<void>((resolve) => { expire = setTimeout(resolve, timeoutMs); })
-        ]);
-      } finally {
-        if (expire !== undefined) clearTimeout(expire);
-      }
-    } else {
-      await Promise.resolve();
-    }
-    return inspect(adapterId);
-  };
-
   /** Actual reference and request records, never a status label. */
-  const inspect = (adapterId: string): AgentEndpointDrain => {
+  const inspectWith = (
+    adapterId: string,
+    waited: Readonly<{ waitedMs: number; timedOut: boolean }>
+  ): AgentEndpointDrain => {
     const current = builtinAgentEndpointImplementation(adapterId);
     const instances = host.inspect(current.id);
     const references = instances.reduce((total, instance) => total + instance.references, 0);
@@ -166,6 +184,7 @@ export function createAgentEndpointOwner(
         attachment: state.attachment,
         cancellation: state.cancellation,
         resources: state.resources,
+        releaseAwaitingExit: holder.releaseRequested,
         pending: Object.freeze(state.submissions
           .filter((submission) => submission.disposition.status === "pending"
             || submission.disposition.status === "unknown")
@@ -178,13 +197,55 @@ export function createAgentEndpointOwner(
     });
     return Object.freeze({
       // Quiescent means nothing holds the implementation and no owned client is
-      // still attached. A disposed instance reports no references, so an
-      // unreleased Session or a live client keeps this false.
+      // still attached. Holds are dropped by proven exit, so an unreleased
+      // Session or a client that never exited keeps this false.
       quiescent: references === 0
         && sessions.every((session) => session.attachment === "exited" && session.pending.length === 0),
       references,
+      waitedMs: waited.waitedMs,
+      timedOut: waited.timedOut,
       sessions: Object.freeze(sessions)
     });
+  };
+
+  const inspect = (adapterId: string): AgentEndpointDrain =>
+    inspectWith(adapterId, { waitedMs: 0, timedOut: false });
+
+  /**
+   * Ordinary stop: no new independent acquisition, while an already-acquired
+   * Session ends bounded. Resolves with the drain facts once every reference is
+   * released, or with what is still in use when the wait runs out.
+   */
+  const stop = async (adapterId: string, timeoutMs = 0): Promise<AgentEndpointDrain> => {
+    const ref = attached.get(builtinAgentEndpointImplementation(adapterId).id);
+    if (ref === undefined) {
+      return Object.freeze({
+        quiescent: true, references: 0, waitedMs: 0, timedOut: false, sessions: []
+      });
+    }
+    // A disposer failure still ends acquisition; the drain facts below, not the
+    // settle reason, decide whether this is actually quiescent.
+    const drained = host.detach(ref).then(() => true, () => true);
+    const startedAt = Date.now();
+    let timedOut = false;
+    if (timeoutMs > 0) {
+      // The timer must keep the process alive for the bounded window, or a
+      // caller with nothing else pending would exit before reporting what is
+      // still in use. Cleared as soon as the drain settles, so a released
+      // implementation never delays shutdown until the deadline.
+      let expire: NodeJS.Timeout | undefined;
+      try {
+        timedOut = !await Promise.race([
+          drained,
+          new Promise<boolean>((resolve) => { expire = setTimeout(() => resolve(false), timeoutMs); })
+        ]);
+      } finally {
+        if (expire !== undefined) clearTimeout(expire);
+      }
+    } else {
+      await Promise.resolve();
+    }
+    return inspectWith(adapterId, { waitedMs: Date.now() - startedAt, timedOut });
   };
 
   return Object.freeze({ pin, stop, inspect, close: () => host.close() });

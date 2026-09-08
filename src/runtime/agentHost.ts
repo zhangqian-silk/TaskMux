@@ -1256,8 +1256,10 @@ export async function runAgentHost(input: Readonly<{
     for (const [signal, handler] of handlers) process.removeListener(signal, handler);
     if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
     humanConsole?.close();
+    // Ask the client to exit, then hand back the Session's hold. The reference
+    // is only actually returned once the client proves it exited, so the bounded
+    // stop below waits on the real dependency instead of an assumed one.
     session?.detach();
-    // The Session is really over, so its hold on the implementation ends here.
     const adapterId = endpointAdapterId;
     await endpointLease?.release();
     endpointLease = undefined;
@@ -1268,6 +1270,10 @@ export async function runAgentHost(input: Readonly<{
       // Endpoint does not own, and it never reports quiescence it cannot prove.
       const drain = await endpointOwner.stop(adapterId, ENDPOINT_DRAIN_TIMEOUT_MS);
       if (!drain.quiescent) {
+        const detail = `Endpoint stop ${drain.timedOut ? "timed out" : "returned"} after ${drain.waitedMs}ms`
+          + ` (bound ${ENDPOINT_DRAIN_TIMEOUT_MS}ms); ${drain.references} reference(s) and `
+          + `${drain.sessions.reduce((total, held) => total + held.pending.length, 0)} pending effect(s) `
+          + "may still be in use. Owned client resources are unknown.";
         updateSnapshot(hostSnapshot(snapshot.state, {
           ...definedFields({
             adapterId,
@@ -1275,10 +1281,12 @@ export async function runAgentHost(input: Readonly<{
             conversationId: snapshot.conversationId
           }),
           ...authorityFields(),
-          detail: `Endpoint stop requested; ${drain.references} reference(s) and `
-            + `${drain.sessions.reduce((total, held) => total + held.pending.length, 0)} pending effect(s) `
-            + "may still be in use. Owned client resources are unknown."
+          detail
         }));
+        // The snapshot is about to stop being reachable, and a stop this process
+        // could not prove quiescent must remain diagnosable afterwards. Written
+        // to the Host's own stream, which its pane and logs retain.
+        process.stderr.write(`${detail}\n`);
       }
     }
     await endpointOwner.close().catch(() => undefined);

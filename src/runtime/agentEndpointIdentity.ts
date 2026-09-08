@@ -1,41 +1,53 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import type { ImplementationRef } from "../kernel/instanceHost.js";
+import { detectRunningRelease } from "../release/runtimeRelease.js";
 
 /**
- * The modules whose bytes decide how a managed Endpoint actually behaves. A
- * generation names this exact code, so replacing these files in place cannot
- * keep claiming the previous generation's content is unchanged.
+ * The generation of the Endpoint code this process is actually executing.
  *
- * Adapter selection, transport codecs and the driver live here. Deliberately
- * excluded: the surrounding CLI, storage and the Controller, which upgrade on
- * their own axes and must not rotate every live Session's Endpoint identity.
+ * Resolved once, at module load, from the immutable release the running module
+ * belongs to — the same idiom the Controller, the handover candidate and the CLI
+ * Home fence already use. A release directory is content-addressed
+ * (`<version>-<packageDigest>`) and byte-verified on install, so its digest
+ * covers every shipped file rather than a hand-picked few, and cannot drift
+ * under a live process: publishing a new release writes a new directory instead
+ * of mutating this one.
+ *
+ * Resolving at load rather than on first use is the point. A digest computed
+ * lazily would read whatever is on disk when the first Session happens to pin,
+ * and could label already-loaded code A with the identity of a newer B.
+ *
+ * A development checkout has no immutable release, and mutable files have no
+ * honest generation: editing a module in place would keep claiming the previous
+ * bytes. So a checkout gets a digest of its loaded Endpoint modules, explicitly
+ * marked `checkout-`, which never compares equal to a release generation. It is
+ * a development identity and is not claimed to be reproducible from a release.
  */
-const ENDPOINT_IMPLEMENTATION_MODULES = Object.freeze([
+const ENDPOINT_CHECKOUT_MODULES = Object.freeze([
   "agentEndpoint.js",
   "agentEndpointIdentity.js",
   "structuredProviderHost.js",
   "codexAppServerRuntime.js"
 ]);
 
-/** Digest of the running Endpoint code. Computed once per process: these files
- * are already loaded, so re-reading them later would report a build that this
- * process is not executing. */
-let endpointCodeDigest: string | undefined;
-
-function agentEndpointCodeDigest(): string {
-  if (endpointCodeDigest !== undefined) return endpointCodeDigest;
+function resolveEndpointGeneration(): string {
+  const running = detectRunningRelease(fileURLToPath(import.meta.url));
+  // The release digest already covers these modules' bytes, so an installed
+  // release needs no separate file list to be exact.
+  if (running !== null) return running.manifest.packageDigest.slice(0, 32);
   const hash = createHash("sha256");
-  for (const module of ENDPOINT_IMPLEMENTATION_MODULES) {
-    // A module that cannot be read is a broken installation, not a reason to
-    // fall back to an identity that would silently match a different build.
-    const bytes = readFileSync(new URL(module, import.meta.url));
-    hash.update(module).update("\0").update(bytes).update("\0");
+  for (const module of ENDPOINT_CHECKOUT_MODULES) {
+    // An unreadable module is a broken installation, not a reason to fall back
+    // to an identity that would silently match a different build.
+    hash.update(module).update("\0").update(readFileSync(new URL(module, import.meta.url))).update("\0");
   }
-  endpointCodeDigest = hash.digest("hex").slice(0, 32);
-  return endpointCodeDigest;
+  return `checkout-${hash.digest("hex").slice(0, 23)}`;
 }
+
+const ENDPOINT_GENERATION = resolveEndpointGeneration();
 
 /** Execution implementation revision, independent from the surrounding CLI release. */
 export function builtinAgentEndpointImplementation(adapterId: string): ImplementationRef {
@@ -44,7 +56,7 @@ export function builtinAgentEndpointImplementation(adapterId: string): Implement
   }
   return Object.freeze({
     id: `yui.agent-endpoint.${adapterId}`,
-    generation: agentEndpointCodeDigest()
+    generation: ENDPOINT_GENERATION
   });
 }
 

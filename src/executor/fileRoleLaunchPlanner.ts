@@ -67,7 +67,7 @@ import {
 import { managedRuntimeAdmission } from "../runtime/agentDriver.js";
 import {
   builtinAgentEndpointImplementation,
-  requireBuiltinAgentEndpointImplementation
+  validateAgentEndpointImplementation
 } from "../runtime/agentEndpointIdentity.js";
 import type {
   AgentHostProviderControl,
@@ -351,8 +351,17 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const existingSession = owner.scope === "task"
       ? this.store.getTaskRoleSessionSet(owner.taskId, role.name)?.sessions[input.agentId]
       : this.store.getGlobalRoleSessionSet(role.name)?.sessions[input.agentId];
+    // A resume carries the Session's recorded generation forward unchanged. This
+    // planner runs in the Controller, which after an upgrade is already the new
+    // code, so it cannot speak for the still-running Agent Host that owns the
+    // Session: rejecting here would end live Sessions on Controller upgrade,
+    // while rewriting to current code would silently move a Session onto code it
+    // never started on. The Host that actually executes the implementation makes
+    // the decision — a reused live Host accepts its own generation, and a newly
+    // started Host running different code fails closed
+    // (`agentEndpointOwnership.pin` -> `requireBuiltinAgentEndpointImplementation`).
     const endpointImplementation = input.mode === "resume"
-      ? requireBuiltinAgentEndpointImplementation(binding.adapterId, existingSession!.endpointImplementation)
+      ? validateAgentEndpointImplementation(existingSession!.endpointImplementation)
       : builtinAgentEndpointImplementation(binding.adapterId);
     const configured = this.store.getConfiguredAgent(input.agentId);
     if (configured === null) throw new Error(`Configured Agent not found: ${input.agentId}.`);
