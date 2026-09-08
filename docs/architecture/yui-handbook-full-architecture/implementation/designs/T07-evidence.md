@@ -878,3 +878,54 @@ model／effort／权限的 Session 副作用失败时不发 prompt、不换值�
 收尾：`npm run lint` 与 `npm run build` 干净，`npm test` 81/81 通过
 （未新增永久回归测试），临时夹具与临时测试在交付前删除。
 手册 HTML 由 Leader 重新生成，本节只更新 Markdown。
+
+## 11. turn-16 配置链最终复审与采用
+
+代码候选 `c12e22a6a729c11db67c29aa55a767a1da16c820` 已由原独立审查者
+复核三项返修及直接影响，均关闭，未发现本修复引入的重大问题。
+Leader 另以实际 Session 类和内存协议对端复现三种情形：
+模型重置 effort 后补设成功；新模型才提供的 effort 能正确选择；
+后续设置把模型重置时明确失败。实际 CatalogService 的 live 和 cache
+读回均保留延迟枚举说明与握手事实。未调用模型或读取凭据。
+
+Leader 还用真实 storage 10 代码创建含 ACP Role 和已完成 Turn 的一次性
+Home，再由候选升级到 11：旧 `default`、未设置的 model／effort、
+组件身份和原始输出均保留；旧 reader 拒读新版。测试 Home 和升级备份
+已经清理。此前两次 Claude ACP 真实模型验证仍仅属于 §8，不重复执行，
+也不作为本次新增配置效果的真实 Provider 验收。
+
+`integration-4` 完成依赖准备、lint 和目标引用 CAS 快进。
+集成后 `make install-local`（含 build）通过；在清除继承 YUI 环境的
+临时 Home 内，一次运行全部三个 `test/core/*.test.js` 文件：
+**81/81 通过，0 跳过，测试阶段约 4.30 秒**。临时检查不进入永久 suite。
+手册 Markdown、HTML、Manifest 与检查报告在收尾时同步。
+
+### 当前配置入口
+
+Agent 注册仍只持有组件、可执行程序、启动参数和环境来源；model、effort、
+权限策略由 Role 运行配置持有，不复制成第二套独立可写默认值。
+以下展示的是新版本命令形式，不表示本 Task 已安装或切换共享配置：
+
+```text
+yui config agent add claude-sdk --component claude-agent-sdk --command claude-agent-acp
+yui task role add <task> sdk-worker --agent claude-sdk --model <model-id> --effort <effort-id> --permission-strategy bypass
+yui task role update <task> sdk-worker --clear-model --clear-effort --permission-strategy default
+```
+
+`config role` 的同名运行选项及 Profile／Task Role 绑定使用相同配置规则。
+模型和 effort 的值必须是对端 Session 实际提供的值；普通能力查询仅
+initialize，不通过隐式新建 Session 来填充枚举，因此可先输入自定义值，
+在启动／恢复时确认，不支持则不发送 prompt。
+
+权限语义明确分开：
+
+- `default` 不请求改变对端 mode，Yui 的 permission-request 回答仍保守拒绝；
+  旧配置升级后不自动成为 bypass。
+- 显式 `bypass` 只映射到已识别组件声明、且对端实际提供的免确认 mode；
+  不是修改 API 认证，也不是绕过 Yui 的 Task／workspace 权限边界。
+- `configured` 使用用户明确指定、对端提供的 mode id。
+
+现代 config-options 响应以完整状态确认所有显式期望。
+旧式 mode-only 接口没有返回配置状态时仅记录 `acknowledged`，不制造
+`observed` 值。未接通的客户端交互授权、未知产品的特殊选项，以及所有
+产品的完整功能等价性不在本轮完成声明内。
