@@ -466,3 +466,105 @@ live 与 cache 两条路径取到的 handshake 逐字节相同，`unsupported`
 `tools/check_docs.py --write-manifest --typecheck --write-result` 通过
 （`typescript: passed`，`errors: []`）——该校验核对包完整性与 Markdown 结构，
 不比对 HTML 与 Markdown 的正文差异。取得 pandoc 后重新生成即可消除该滞后。
+
+## 8. turn-11：集成、复审与已授权 Claude ACP 真实验证
+
+本节记录用户追加要求后的交付，不把此前无模型探测或 Worker 夹具升级为
+真实证据。用户在原 Leader 会话明确要求按组件／协议划分修改并运行
+Claude ACP 真实测试；该授权与第三方 API、模型及隔离边界记录在
+task-19 message-7，Operator 的 message-6 要求按这一具体授权接续。
+真实验证只使用 Claude，不继承其他 Task 授权，也没有使用 Kimi 资源。
+
+### 8.1 修复与最终代码候选
+
+`e8466d2` 的四项审查问题由原 Worker 在 `6e7cac6` 修复。
+原独立审查者复核完整修复及直接关系，四项均关闭，未发现本修复引入的
+重大问题。其内存 SQLite 验证覆盖 Turn、WorkItem Lane、Review Lane，
+确认未派发 Lane 不会被制造出 effective，也不会被聚合为 JSON 字符串。
+
+Leader 另外使用真实 storage 9 构建创建带已完成 Turn 和 Role 的一次性
+Home，再使用候选执行 9 → 10 升级：原 Turn 输出逐字保留，Role 和 Turn
+均获得正确组件，旧 reader 拒读新版。原先同一场景的失败已消除。
+
+`integration-3` 通过显式依赖准备、lint 后，以 CAS 快进至
+`6e7cac6236daa379b49b8ceb6e312a78166c9067`。
+本 checkout 的 `make install-local`（含 build）成功；清除继承的 YUI
+变量、使用临时 Home，完整 `node --test test/core/*.test.js` 对应的三个
+文件一次执行，**81/81 通过，0 跳过**（测试阶段约 4.28 秒）。
+手册 HTML／Manifest 在 Leader 收尾时重新生成，消除 §7.7 的历史滞后。
+
+### 8.2 固定版本、配置来源和测试范围
+
+| 项目 | 实际值 |
+| --- | --- |
+| Yui 代码 | `6e7cac6236daa379b49b8ceb6e312a78166c9067` |
+| 配置的执行组件 | `claude-agent-sdk` |
+| 连接方案 | `acp`，ACP v1，stdio |
+| ACP 实现包 | `@agentclientprotocol/claude-agent-acp` `0.75.1` |
+| SDK | `@anthropic-ai/claude-agent-sdk` `0.3.257` |
+| SDK 捆绑的运行组件 | Claude Code `2.1.257` |
+| 用户既有模型选择 | `opus[1m]` |
+| 用户既有 Opus 路由映射 | `model_hub/es1_orange_o50` |
+| 两次实际选择回报 | 均为 `opus[1m]` |
+
+依赖只安装在 Task main 的临时 `output` 工具目录，没有全局安装。
+认证使用用户现有 Claude settings 的 API 环境项；在测试前只比较了
+进程与该配置中的 API 地址／凭据一致性，没有输出密钥。测试子进程使用
+空的独立 HOME、CLAUDE_CONFIG_DIR、TMPDIR 和工作目录；没有复制共享
+hooks、插件、历史 Session 或 OAuth 登录。
+API 环境值只在进程内传递，没有写进 Yui Agent 配置或证据文档。
+
+受控启动包装器调用已安装包公开的 `runAcp`，只通过该包的
+`_meta.claudeCode.options` 配置 Session：固定标题、固定既有模型、
+`settingSources: []`、`tools: []`、`maxTurns: 1` 和短测试 system prompt。
+未修改已安装的 ACP／SDK 代码，也没有伪造任何 Provider 输出。
+固定标题用于避免 ACP 包默认的额外小模型标题生成；原生 transcript
+确实保存了测试标题。没有执行模型回退或更换网关。
+
+这验证的是明确配置的 SDK 接入路径，不是默认 Claude Code CLI
+全部功能或全部配置等价性。因为禁用了工具，本次不验证编码工具权限交互。
+
+### 8.3 实际结果与归档链
+
+日期：2026-09-08；以下时间均为 UTC。
+两次请求使用同一原生 Session：
+`ca8ecadf-cb8d-4ece-9a61-4ef1900f01d9`。
+
+| 隔离 Turn | 行为 | 接受／终态观测时间 | 原 Turn 结果 |
+| --- | --- | --- | --- |
+| `task-1/turn-1` | 新建会话，要求记住并输出指定标记 | `07:08:08.984Z` | completed，输出精确为 `T07-CLAUDE-ACP-CEDAR-914` |
+| `task-1/turn-2` | 第一进程退出后 `session/load` 原 Session，要求回忆标记 | `07:08:12.347Z` | completed，输出精确为同一标记 |
+
+执行链为：实际 Agent 配置与编译器 → 原 AgentEndpoint／ACP codec →
+上述受控启动的真实 ACP 包 → SDK／捆绑运行组件 → 既有第三方 API →
+原 `publishStructuredProviderAccepted`／`publishStructuredProviderTerminal` →
+真实隔离 Controller RPC → 原 `FileSchedulerStoreAdapter` fold → SQLite。
+两个结果不是由夹具构造的 terminal，也没有直接向数据库填充输出。
+关闭并重新打开 Store 后，两个原 Turn 均保留完整输出和
+`component: claude-agent-sdk`；ACP 的 `nativeTurnId` 保持缺失，没有伪造。
+
+测试显式创建隔离 Task／Role 并调用编译器与 Endpoint；Controller 仅服务
+真实 observation RPC 和生产 fold，没有启动自动调度。因此本次不声称
+完整 Scheduler／AgentHost 自动派发或模型实际读取 Yui Context 的端到端验收。
+这些与此前的受控完整链路夹具是不同的证据范围。
+
+### 8.4 用量、清理与剩余边界
+
+只提交了 **两个真实主输入**。原生 transcript 记录两个 assistant 消息，
+回报模型标签均为 `claude-opus-5`，input/output tokens 分别为
+`261/23` 和 `344/23`，没有 tool call、WebSearch 或 WebFetch。
+这些是路由返回的标签和计数，不独立证明网关后端模型权重身份。
+ACP 的两次结果分别回报费用 USD `0.00188` 和 `0.002295`；
+这是 Provider 报告，不是账单确认，不据此推断完整账户消费。
+
+两个自有 ACP 进程退出码均为 0，隔离 Controller 已关闭；
+进程检查未发现相关测试进程残留。测试 Home、原生测试历史、临时脚本和
+工具依赖在保留本节脱敏证据后清理，未影响共享 Home、认证或服务。
+前置夹具第一次因测试程序漏用 `saveActiveTurn` 而被 writer fence 拒绝，
+发生在任何模型输入之前；修正夹具后先通过本地对端，再进行上述真实请求。
+
+已真实覆盖：初始化、同模型新会话输出、跨进程恢复原 Session、第二 Turn、
+实际结果经 Controller 归档和 Store 重开读回。
+仍未真实覆盖：取消／物理静止、工具权限往返、原生并发输入竞态、
+长负载下的 pending／unknown、完整自动调度和共享配置等价性。
+不将本次两请求验证描述为全场景 E2E，也没有开展 Codex 或 Kimi 模型测试。
