@@ -182,16 +182,8 @@ function updateAgent(args: string[], store: AgentCommandStore): string {
   }
   const command = parsed.one("--command")?.trim();
   if (command !== undefined && command.length === 0) throw usageError("--command is required.");
-  const patch: ConfiguredAgentPatch = {
-    // Naming a plan alone re-derives the component from it. The stored one
-    // belongs to the plan being left — keeping it would submit a pair the
-    // Agent validator rejects, which is how `--adapter` alone became
-    // unusable even for an Agent nothing references. The plan's default is
-    // the honest answer: for ACP it is the unidentified entry, never a
-    // product guessed from the command.
-    ...(adapterId === undefined
-      ? {}
-      : { adapterId, component: defaultExecutionComponentForAdapter(adapterId) }),
+  const requestedPatch: ConfiguredAgentPatch = {
+    ...(adapterId === undefined ? {} : { adapterId }),
     // Changing the component can move the Agent onto its plan, which is the one
     // way the two stay consistent without asking the operator to restate both.
     ...(component === undefined
@@ -209,6 +201,14 @@ function updateAgent(args: string[], store: AgentCommandStore): string {
   const result = store.transaction((tx) => {
     const existing = tx.getConfiguredAgent(id);
     if (existing === null) return null;
+    // Derive a default only when actually leaving the stored plan. Restating
+    // the same plan must preserve an explicitly identified ACP component.
+    const patch: ConfiguredAgentPatch = {
+      ...requestedPatch,
+      ...(component === undefined && adapterId !== undefined && adapterId !== existing.adapterId
+        ? { component: defaultExecutionComponentForAdapter(adapterId) }
+        : {})
+    };
     const changes = actualAgentChanges(existing, patch);
     if (!changes.operational) {
       return { status: "unchanged" as const, agent: existing };

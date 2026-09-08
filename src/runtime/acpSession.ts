@@ -141,9 +141,8 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
   #unsentAdditionalDirectories: readonly string[] = [];
   /**
    * Bootstrap still owed to the model, cleared once a prompt has carried it.
-   * ACP offers no system prompt, so the first Turn's text is the only place a
-   * managed Session can state its own rules; sending it again on later Turns
-   * would repeat instructions the Conversation already holds.
+   * ACP offers no system prompt, so the first prompt on each connection
+   * carries the manifest pointer. Later Turns on that connection do not repeat it.
    */
   #pendingBootstrap: string | undefined;
   /**
@@ -223,12 +222,10 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
         input.component ?? "unknown-acp-agent"
       );
     }
-    // Only a new Conversation is owed the bootstrap. `session/load` replays a
-    // Conversation that already carries it, so resending would repeat rules the
-    // model has already been given.
-    if (input.nativeSessionId === undefined) {
-      session.#pendingBootstrap = input.sessionBootstrap;
-    }
+    // A restored Conversation may have disconnected before its first prompt.
+    // Repeat the short manifest pointer on attachment rather than assuming it
+    // was delivered or adding persistent acknowledgement state.
+    session.#pendingBootstrap = input.sessionBootstrap;
     return session;
   }
 
