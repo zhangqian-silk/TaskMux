@@ -6,6 +6,8 @@ import { checkGrant, recordGrantUse } from "../grant/capabilityGrant.js";
 import { requireIdentity, requireText, requireTimestamp } from "../domain/validation.js";
 import { validateProject } from "../repository/project.js";
 import { updateRole, type TaskRole } from "../role/role.js";
+import { saveTaskRoleUpdate } from "../role/taskRoleUpdate.js";
+import type { TaskEventPayload } from "../event/taskEvent.js";
 import { assertRoleRuntimeMutationAllowed } from "../commands/roleRuntimeGuard.js";
 import { assertProviderConversationReplaceable, currentProviderConversation } from "../runtime/providerRuntimeIdentity.js";
 import { projectProviderContinuations } from "../runtime/runtimeContinuationProjection.js";
@@ -146,17 +148,21 @@ export function createProjectResources(store: TaskStore, now: () => Date = () =>
   };
   return {
     resolveExecutionEnvironment,
-    bindEnvironment(taskId: string, roleName: string, preparationId: string | null): TaskRole {
+    bindEnvironment(
+      taskId: string, roleName: string, preparationId: string | null,
+      source: TaskEventPayload = { source: "environment.bind" }
+    ): TaskRole {
       return store.transaction((tx) => {
         openTask(taskId);
         const role = tx.getRole(taskId, roleName);
         if (!role) throw new Error(`Role not found: ${taskId}/${roleName}.`);
         assertRoleRuntimeMutationAllowed(tx, { scope: "task", taskId, roleName }, "environment binding");
         const executionEnvironment = preparationId === null ? null : resolveExecutionEnvironment(taskId, preparationId);
-        const updated = updateRole(role, { executionEnvironment }, now());
+        const timestamp = now();
+        const updated = updateRole(role, { executionEnvironment }, timestamp);
         // Desired configuration only: active native Sessions retain their
         // immutable actual snapshot until explicitly ended.
-        tx.saveRole(taskId, updated);
+        saveTaskRoleUpdate(tx, role, updated, timestamp, source);
         return updated;
       });
     },

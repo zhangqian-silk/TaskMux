@@ -1,4 +1,5 @@
 import type { ConfiguredAgent } from "../agent/agent.js";
+import { roleLaunchEventPayload, saveTaskRoleUpdate } from "../role/taskRoleUpdate.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createTurnInput } from "../context/turnInputContract.js";
@@ -2606,27 +2607,16 @@ function updateTaskRole(
     if (changesLaunchContext) {
       validateConfiguredRoleSkills(options.yuiHome, next.skills ?? []);
     }
-    tx.saveRole(task.id, next);
     if (changesEnvironment) {
-      createProjectResources(tx, () => now).bindEnvironment(
-        task.id,
-        role.name,
-        parsed.has("--managed-environment") ? null : parsed.one("--environment")!
-      );
-      next = requireRole(tx, task.id, role.name);
+      next = updateRole(next, {
+        executionEnvironment: parsed.has("--managed-environment")
+          ? null
+          : createProjectResources(tx, () => now).resolveExecutionEnvironment(task.id, parsed.one("--environment")!)
+      }, now);
     }
-    enqueueWork(tx, taskMailbox(task.id), "role-updated", now, [taskRef(task.id)]);
-    recordTaskEvent(
-      tx,
-      task.id,
-      "role.updated",
-      {
-        ...roleLaunchEventPayload(next, tx.getTaskRoleSessionSet(task.id, next.name)),
-        previous: JSON.stringify(role),
-        current: JSON.stringify(next)
-      },
-      now
-    );
+    saveTaskRoleUpdate(tx, role, next, now, {
+      source: "task.role.update", actor: taskActor(tx, options, task.id)
+    });
     return next;
   });
   notifyMailbox(options.runtime, taskMailbox(updated.taskId), updated.taskId);
@@ -7327,27 +7317,6 @@ function recordTaskEventRecord(
 function truncateEventNote(note: string): string {
   const normalized = note.trim();
   return normalized.length <= 280 ? normalized : `${normalized.slice(0, 279)}…`;
-}
-
-function roleLaunchEventPayload(
-  role: Role,
-  sessions: TaskRoleSessionSet | null
-): TaskEventPayload {
-  const effective = sessions?.sessions[sessions.activeAgentId]?.effective;
-  return {
-    desiredRevision: String(role.launchRevision),
-    defaultAccess: role.defaultAccess,
-    effectiveRevision: effective === undefined
-      ? "none"
-      : String(effective.sourceDesiredRevision),
-    profileAccess: effective?.profileAccess ?? "none",
-    effectivePermission: effective?.permission.strategy ?? "none",
-    desiredDrift: effective === undefined
-      ? "not-started"
-      : effective.sourceDesiredRevision === role.launchRevision
-        ? "none"
-        : "pending-next-launch"
-  };
 }
 
 function turnLaunchEventPayload(run: Turn): TaskEventPayload {

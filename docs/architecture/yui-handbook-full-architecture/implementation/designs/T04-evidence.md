@@ -351,3 +351,16 @@ history Session、detached continuation 均阻止释放，exact quiescent 后允
 保留，环境绑定迁移由独立开发时的 7 顺延为 9；普通旧数据仍不自动绑定。
 代码从最新主线仅移入本次环境提交，避免重复包含已经 squash 合入的 T04
 历史。此集成未运行真实模型、升级共享 Home 或重启服务。
+
+### Task 21：环境修改入口一致性
+
+在 `4a205d8` 基线上补齐 `environment.bind` 遗漏的修改历史和通知。
+能力与 CLI Role update 复用同一保存逻辑：Role、含来源及前后值的
+`role.updated`、Task mailbox 同事务提交，入口在提交后通知 runtime。
+CLI 同时修改其他 Role 字段和环境时，只保存一次 Role 和一次完整事件。
+认证能力事件还保留可信 actorId 和 requestId，不新建请求账本。
+
+原授权、生命周期 guard、显式环境选择和 Session effective 不变。
+临时 SQLite 证据覆盖真实能力入口、CLI 混合更新、通知次数、失败回滚、
+跨 Task/empty 拒绝与 effective 保持；不请求真实 Provider，不改存储版本。
+专项交付前清理，精确提交和最终接受以 Task 记录为准。
