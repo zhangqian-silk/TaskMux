@@ -50,7 +50,12 @@ export function renderTaskSurface(container, data, t, locale, actions) {
       message.value = "";
       chat.dataset.unsent = "false";
       send.disabled = false;
-    } catch {
+    } catch (error) {
+      if (error.disposition === "not-submitted") {
+        sent.textContent = say("Not submitted: ", "未提交：") + error.message;
+        send.disabled = false;
+        return;
+      }
       sent.textContent = say("Unknown submission outcome. Reload and inspect saved messages before sending again · ",
         "提交结果未知。请重新加载并检查已保存消息，不要盲目重发 · ") + requestId;
     }
@@ -68,11 +73,13 @@ export function renderTaskSurface(container, data, t, locale, actions) {
   const title = node("input", "");
   title.value = task.title;
   title.required = true;
+  title.disabled = task.status === "archived";
   title.maxLength = 500;
   label.append(title);
   form.addEventListener("input", () => { form.dataset.unsent = "true"; });
   const save = node("button", "record-open", say("Save", "保存"));
   save.type = "submit";
+  save.disabled = task.status === "archived";
   const feedback = node("p", "muted", say("Not submitted", "未提交"));
   feedback.setAttribute("role", "status");
   form.append(label, save, feedback);
@@ -89,7 +96,12 @@ export function renderTaskSurface(container, data, t, locale, actions) {
       title.value = receipt.record.title;
       form.dataset.unsent = "false";
       save.disabled = false;
-    } catch {
+    } catch (error) {
+      if (error.disposition === "not-submitted") {
+        feedback.textContent = say("Not saved: ", "未保存：") + error.message;
+        save.disabled = false;
+        return;
+      }
       // Local mutation IDs correlate requests; they are not a deduplication
       // ledger. A lost response must never automatically replay a write.
       feedback.textContent = say("Unknown save outcome. Reload this page to read current facts before submitting again. Request: ",
@@ -205,6 +217,64 @@ export function renderTaskSurface(container, data, t, locale, actions) {
   refs.append(node("p", "muted", say("Reads do not acknowledge messages. Omitted records can be located with the CLI domain query and inspected by reference.",
     "读取不确认消息。被省略的记录可经 CLI 领域查询定位后按引用读取。")));
   scaffold.append(refs);
+  const panels = node("details", "record-card");
+  panels.append(node("summary", "", say("Capability panels", "能力面板")));
+  const panelBody = node("div", "section-body");
+  panels.append(panelBody);
+  let loadingPanels = false;
+  panels.addEventListener("toggle", async () => {
+    if (!panels.open || loadingPanels) return;
+    loadingPanels = true;
+    panelBody.textContent = say("Reading current contributions…", "读取当前贡献…");
+    try {
+      const current = await actions.panels(task.id);
+      clear(panelBody);
+      panelBody.append(node("small", "muted", current.observedAt));
+      if (!current.panels.length) panelBody.append(node("p", "muted", say("No visible panels", "暂无可见面板")));
+      current.panels.forEach((item) => {
+        const card = node("article", "record-card");
+        const panel = item.panel;
+        card.append(node("strong", "", panel.title), node("small", "muted", item.capability + " · " + item.provider.id));
+        if (item.unavailable) card.append(node("p", "muted", item.unavailable));
+        else if (panel.kind === "text") card.append(node("p", "", panel.text));
+        else if (panel.kind === "link") {
+          const url = new URL(panel.href);
+          if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) {
+            const link = node("a", "", panel.title);
+            link.href = url.href;
+            link.rel = "noopener noreferrer";
+            card.append(link);
+          }
+        } else if (panel.kind === "data" && panel.renderer === "json") {
+          const label = node("label", "", say("Query input (JSON)", "查询输入（JSON）"));
+          const input = node("textarea", "");
+          input.value = JSON.stringify({ taskId: task.id });
+          label.append(input);
+          const contract = node("details", "");
+          contract.append(node("summary", "", say("Input schema", "输入结构")));
+          contract.append(node("pre", "surface-json", JSON.stringify(item.inputSchema, null, 2)));
+          const read = node("button", "record-open", say("Read", "读取"));
+          read.type = "button";
+          const output = node("pre", "surface-json");
+          read.addEventListener("click", async () => {
+            if (read.disabled) return;
+            read.disabled = true;
+            try {
+              const result = await actions.readPanel(task.id, {
+                capability: item.capability, contractVersion: item.contractVersion, provider: item.provider
+              }, JSON.parse(input.value));
+              output.textContent = JSON.stringify(result, null, 2);
+            } catch (error) { output.textContent = say("Panel unavailable: ", "面板不可用：") + error.message; }
+            finally { read.disabled = false; }
+          });
+          card.append(label, contract, read, output);
+        }
+        panelBody.append(card);
+      });
+    } catch (error) { panelBody.textContent = say("Panels unavailable: ", "面板不可用：") + error.message; }
+    finally { loadingPanels = false; }
+  });
+  scaffold.append(panels);
   container.append(scaffold);
 }
 `;

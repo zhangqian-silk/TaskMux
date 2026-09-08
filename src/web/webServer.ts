@@ -10,6 +10,9 @@ import WebSocket, { WebSocketServer } from "ws";
 
 import { usageError } from "../errors/cliError.js";
 import type { WebTaskSurface } from "./webTaskSurface.js";
+import { WebRequestRejected } from "./webMutation.js";
+import type { SurfaceContributionRef, SurfacePanelContribution } from "../surface/surfaceContributions.js";
+import type { CapabilityResult } from "../kernel/capabilityRegistry.js";
 import { DASHBOARD_HTML, findWebAsset, type WebAsset } from "./assets/assetManifest.js";
 import {
   buildWebDashboardSnapshot,
@@ -22,6 +25,7 @@ const MAX_TERMINAL_MESSAGE_BYTES = 64 * 1024;
 const MAX_TERMINAL_BUFFERED_BYTES = 1024 * 1024;
 
 export type WebServerOptions = Readonly<{ host: string; port: number }>;
+export type YuiWebServer = Server & Readonly<{ closeTerminals(): void }>;
 
 export type WebInputAnswer =
   | Readonly<{ choiceKey: string }>
@@ -53,6 +57,10 @@ export type WebTerminalConnection = Readonly<{
 }>;
 
 export type WebServerDependencies = Readonly<{
+  panels?: Readonly<{
+    list(taskId: string): readonly SurfacePanelContribution[];
+    read(taskId: string, ref: SurfaceContributionRef, input: unknown): Promise<CapabilityResult>;
+  }>;
   surface?: WebTaskSurface;
   now?: () => Date;
   token?: string;
@@ -94,7 +102,7 @@ export function parseWebCommandOptions(args: readonly string[]): WebServerOption
 export function createYuiWebServer(
   store: WebDashboardStore,
   dependencies: WebServerDependencies = {}
-): Server {
+): YuiWebServer {
   const now = dependencies.now ?? (() => new Date());
   const token = dependencies.token ?? randomBytes(24).toString("base64url");
   const webSocketServer = new WebSocketServer({
@@ -127,18 +135,22 @@ export function createYuiWebServer(
       token
     );
   });
-  server.on("close", () => {
+  let terminalsClosed = false;
+  const closeTerminals = () => {
+    if (terminalsClosed) return;
+    terminalsClosed = true;
     for (const socket of webSocketServer.clients) socket.terminate();
     webSocketServer.close();
-  });
-  return server;
+  };
+  server.on("close", closeTerminals);
+  return Object.assign(server, { closeTerminals });
 }
 
 export async function startYuiWebServer(
   store: WebDashboardStore,
   options: WebServerOptions,
   dependencies: WebServerDependencies = {}
-): Promise<Server> {
+): Promise<YuiWebServer> {
   const server = createYuiWebServer(store, dependencies);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -161,27 +173,55 @@ async function handleHttpRequest(
   setSecurityHeaders(response);
   const method = request.method ?? "GET";
   if (!isLoopbackHost(headerValue(request, "host"))) {
-    sendJson(response, 403, { error: "Invalid Host." }, method === "HEAD");
+    sendJson(response, 403, { error: "Invalid Host.", disposition: "not-submitted" }, method === "HEAD");
     return;
   }
   let pathname: string;
   try {
     pathname = new URL(request.url ?? "/", "http://localhost").pathname;
   } catch {
-    sendJson(response, 400, { error: "Invalid URL." }, method === "HEAD");
+    sendJson(response, 400, { error: "Invalid URL.", disposition: "not-submitted" }, method === "HEAD");
     return;
   }
 
   // The loopback page token is the actual user ingress. A request body cannot
   // select Operator/Leader authority; all API reads use this boundary too.
   if (pathname.startsWith("/api/") && !tokenMatches(headerValue(request, "x-yui-web-token"), token)) {
-    sendJson(response, 403, { error: "Invalid Yui web token." }, method === "HEAD");
+    sendJson(response, 403, { error: "Invalid Yui web token.", disposition: "not-submitted" }, method === "HEAD");
+    return;
+  }
+  const panelTarget = /^\/api\/tasks\/([^/]+)\/panels$/.exec(pathname);
+  if (panelTarget && dependencies.panels) {
+    try {
+      const taskId = decodeURIComponent(panelTarget[1]);
+      if (method === "GET") {
+        sendJson(response, 200, { panels: dependencies.panels.list(taskId), observedAt: now().toISOString() }, false);
+      } else if (method === "POST") {
+        const body = await readMutationBody(request);
+        if (!body || typeof body !== "object" || Array.isArray(body)
+          || Object.keys(body).some((key) => !["ref","input"].includes(key))
+          || !("ref" in body) || !("input" in body)) throw new WebRequestRejected("Expected panel ref and input.");
+        const ref = body.ref as SurfaceContributionRef;
+        if (!ref || typeof ref !== "object" || typeof ref.capability !== "string"
+          || typeof ref.contractVersion !== "string" || !ref.provider
+          || typeof ref.provider.id !== "string" || typeof ref.provider.generation !== "string") {
+          throw new WebRequestRejected("Invalid panel reference.");
+        }
+        const result = await dependencies.panels.read(taskId, ref, body.input);
+        sendJson(response, 200, { result, observedAt: now().toISOString() }, false);
+      } else sendJson(response, 405, { error: "Method not allowed.", disposition: "not-submitted" }, false);
+    } catch (error) {
+      sendJson(response, 409, { error: error instanceof Error ? error.message : "Panel unavailable.",
+        disposition: "not-submitted" }, false);
+    }
     return;
   }
   const surfaceTarget = /^\/api\/tasks\/([^/]+)\/(context|delta|inspect|metadata|messages)$/.exec(pathname);
   if (surfaceTarget && dependencies.surface) {
     try {
-      const taskId = decodeURIComponent(surfaceTarget[1]);
+      let taskId: string;
+      try { taskId = decodeURIComponent(surfaceTarget[1]); }
+      catch { throw new WebRequestRejected("Invalid Task URL encoding."); }
       const action = surfaceTarget[2];
       const query = new URL(request.url!, "http://localhost").searchParams;
       let value: unknown;
@@ -198,26 +238,27 @@ async function handleHttpRequest(
           ...(query.has("digest") ? { digest: query.get("digest")! } : {})
         });
       } else if (method === "POST" && action === "messages") {
-        const body = await readJsonBody(request);
+        const body = await readMutationBody(request);
         if (typeof body !== "object" || body === null || Array.isArray(body)
           || Object.keys(body).some((key) => !["body", "requestId"].includes(key))
           || !("requestId" in body) || typeof body.requestId !== "string" || !body.requestId.trim()
-          || !("body" in body) || typeof body.body !== "string") throw new Error("Expected body and requestId only.");
+          || !("body" in body) || typeof body.body !== "string") throw new WebRequestRejected("Expected body and requestId only.");
         value = { ...dependencies.surface.message(taskId, body.body), requestId: body.requestId };
       } else if (method === "POST" && action === "metadata") {
-        const body = await readJsonBody(request);
+        const body = await readMutationBody(request);
         if (typeof body !== "object" || body === null || Array.isArray(body)
           || Object.keys(body).some((key) => !["patch", "requestId"].includes(key))
           || !("requestId" in body) || typeof body.requestId !== "string" || !body.requestId.trim()
-          || !("patch" in body)) throw new Error("Expected patch and requestId only.");
+          || !("patch" in body)) throw new WebRequestRejected("Expected patch and requestId only.");
         value = { ...dependencies.surface.update(taskId, body.patch), requestId: body.requestId };
       } else {
-        sendJson(response, 405, { error: "Method not allowed." }, false);
+        sendJson(response, 405, { error: "Method not allowed.", disposition: "not-submitted" }, false);
         return;
       }
       sendJson(response, 200, value, false);
     } catch (error) {
-      sendJson(response, 409, { error: error instanceof Error ? error.message : "Surface unavailable." }, false);
+      sendJson(response, 409, { error: error instanceof Error ? error.message : "Surface unavailable.",
+        disposition: error instanceof WebRequestRejected ? "not-submitted" : "unknown" }, false);
     }
     return;
   }
@@ -272,7 +313,7 @@ async function handleHttpRequest(
       answer = parseWebInputAnswer(await readJsonBody(request));
     } catch (error) {
       sendJson(response, 400, {
-        error: error instanceof Error ? error.message : "Invalid input answer."
+        error: error instanceof Error ? error.message : "Invalid input answer.", disposition: "not-submitted"
       }, false);
       return;
     }
@@ -284,14 +325,15 @@ async function handleHttpRequest(
       sendJson(response, 200, { request: answered }, false);
     } catch (error) {
       sendJson(response, 409, {
-        error: error instanceof Error ? error.message : "Unable to answer input request."
+        error: error instanceof Error ? error.message : "Unable to answer input request.",
+        disposition: error instanceof WebRequestRejected ? "not-submitted" : "unknown"
       }, false);
     }
     return;
   }
 
   response.setHeader("allow", "GET, HEAD");
-  sendJson(response, 405, { error: "Method not allowed." }, method === "HEAD");
+  sendJson(response, 405, { error: "Method not allowed.", disposition: "not-submitted" }, method === "HEAD");
 }
 
 async function handleTerminalUpgrade(
@@ -499,6 +541,11 @@ function parseWebInputAnswer(value: unknown): WebInputAnswer {
     return { text: answer.text.trim() };
   }
   throw new Error("Exactly one non-empty choiceKey or text is required.");
+}
+
+async function readMutationBody(request: IncomingMessage): Promise<unknown> {
+  try { return await readJsonBody(request); }
+  catch (error) { throw new WebRequestRejected(error instanceof Error ? error.message : "Invalid request body."); }
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {

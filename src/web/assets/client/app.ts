@@ -128,28 +128,16 @@ function detailActions() {
     answerInput: answerInput,
     openTerminal: openTerminal,
     inspect: inspectRecord,
-    sendMessage: async function (taskId, body, requestId) {
-      const key = taskId + "/messages";
-      if (submittedRequests.has(key)) throw new Error("An earlier submission is unresolved.");
-      submittedRequests.add(key);
-      const receipt = await requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/messages", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ body, requestId })
-      });
-      submittedRequests.delete(key);
-      return receipt;
-    },
-    updateTask: async function (taskId, patch, requestId) {
-      const key = taskId + "/metadata";
-      if (submittedRequests.has(key)) throw new Error("Read current facts before another submission.");
-      submittedRequests.add(key);
-      const receipt = await requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/metadata", {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ patch, requestId })
-        });
-      submittedRequests.delete(key);
-      return receipt;
-    }
+    sendMessage: (taskId, body, requestId) => submitMutation(taskId + "/messages",
+      "/api/tasks/" + encodeURIComponent(taskId) + "/messages", { body, requestId }),
+    updateTask: (taskId, patch, requestId) => submitMutation(taskId + "/metadata",
+      "/api/tasks/" + encodeURIComponent(taskId) + "/metadata", { patch, requestId }),
+    panels: (taskId) => requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/panels",
+      { signal: AbortSignal.timeout(3000) }),
+    readPanel: (taskId, ref, input) => requestJson("/api/tasks/" + encodeURIComponent(taskId) + "/panels", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ref, input }),
+      signal: AbortSignal.timeout(3000)
+    })
   };
 }
 
@@ -310,13 +298,30 @@ async function requestJson(path, options) {
   });
   if (!response.ok) {
     let message = "HTTP " + response.status;
+    let disposition = "unknown";
     try {
       const body = await response.json();
       if (body && body.error) message = body.error;
+      if (body && body.disposition === "not-submitted") disposition = "not-submitted";
     } catch {}
-    throw new Error(message);
+    throw Object.assign(new Error(message), { disposition });
   }
   return response.json();
+}
+
+async function submitMutation(key, path, body) {
+  if (submittedRequests.has(key)) throw new Error("An earlier submission is unresolved; read current facts.");
+  submittedRequests.add(key);
+  try {
+    const receipt = await requestJson(path, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+    });
+    submittedRequests.delete(key);
+    return receipt;
+  } catch (error) {
+    if (error.disposition === "not-submitted") submittedRequests.delete(key);
+    throw error;
+  }
 }
 
 async function loadTaskDetail(taskId, showLoading) {
@@ -417,26 +422,17 @@ async function answerInput(input, answer) {
   if (!state.detail) return;
   const taskId = state.detail.task.id;
   const key = taskId + "/input/" + input.id;
-  if (submittedRequests.has(key)) return;
-  submittedRequests.add(key);
   try {
-    await requestJson(
+    await submitMutation(key,
       "/api/tasks/" + encodeURIComponent(taskId)
         + "/inputs/" + encodeURIComponent(input.id) + "/answer",
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-yui-web-token": token
-        },
-        body: JSON.stringify(answer)
-      }
+      answer
     );
     showToast(i18n.t("input.answered"));
     submittedRequests.delete(key);
     await refreshDashboard({ quiet: true });
-  } catch {
-    showToast(i18n.getLocale().startsWith("zh")
+  } catch (error) {
+    showToast(error.disposition === "not-submitted" ? error.message : i18n.getLocale().startsWith("zh")
       ? "回答结果未知；请刷新检查原问题，不要盲目重发。"
       : "Answer outcome unknown; refresh the original question before resubmitting.");
   }

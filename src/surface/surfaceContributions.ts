@@ -1,6 +1,6 @@
 import type { TrustedCallContext } from "../kernel/callAuthority.js";
 import type {
-  CapabilityDescriptor, CapabilityRegistry
+  CapabilityDescriptor, CapabilityRegistry, CapabilityResult
 } from "../kernel/capabilityRegistry.js";
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 
@@ -27,6 +27,7 @@ export type SurfaceCommandContribution = SurfaceContributionRef & Readonly<{
 }>;
 export type SurfacePanelContribution = SurfaceContributionRef & Readonly<{
   panel: SurfacePanelDescriptor;
+  inputSchema: CapabilityDescriptor["inputSchema"];
   unavailable?: string;
 }>;
 
@@ -49,9 +50,29 @@ export class SurfaceContributions {
       const panel: SurfacePanelDescriptor | undefined = entry.surfaces?.panel
         ?? (entry.effect === "query" ? { kind: "data", title: entry.summary, renderer: "json" } : undefined);
       return panel ? [{
-        ...reference(entry), panel,
+        ...reference(entry), panel, inputSchema: entry.inputSchema,
         ...(entry.unavailable === undefined ? {} : { unavailable: entry.unavailable })
       }] : [];
+    });
+  }
+
+  /** Query entry used by the Controller-owned Web server. Resolve the current
+   * descriptor and exact generation again; the browser never supplies code. */
+  readPanel(context: TrustedCallContext, selected: SurfaceContributionRef, input: unknown): Promise<CapabilityResult> {
+    const resolved = this.registry.describe(context, {
+      name: selected.capability, contractVersion: selected.contractVersion, providerId: selected.provider.id
+    });
+    if (resolved.kind !== "value") return Promise.resolve(resolved);
+    const descriptor = resolved.value as CapabilityDescriptor;
+    if (descriptor.provider.generation !== selected.provider.generation || descriptor.effect !== "query") {
+      return Promise.resolve({ kind:"unavailable", effect:"none", operations:[],
+        detail:"Panel changed or is not a query. Reload current panels." });
+    }
+    const panel = descriptor.surfaces?.panel;
+    if (panel !== undefined && panel.kind !== "data") return Promise.resolve({ ...resolved, value: panel });
+    return this.registry.call(context, {
+      name: descriptor.name, contractVersion: descriptor.contractVersion,
+      providerId: descriptor.provider.id, input
     });
   }
 }

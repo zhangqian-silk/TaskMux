@@ -2,6 +2,8 @@
 
 Task：task-18。基线：`97ad88849c9a496230b134d2955f5f23e96deaa3`。
 精确交付 commit 和完成裁定以 Task 记录为准。本变更不包含发布授权。
+用户随后明确要求由 T06 直接补齐生产 Web 面板和准确错误反馈，Draft planning
+继续留给 T08。下述当前实现已包含这两项；早期审查记录保留为历史证据。
 
 ## 交付与唯一事实来源
 
@@ -18,17 +20,22 @@ Web Task 主视图采用 T03 的紧凑 Context，优先展示要求、目标、�
 | `POST .../messages` | `sendTaskMessageCommand`，CLI `task message send` 使用同一个 Message/Mailbox 事务 |
 | `POST .../inputs/:input/answer` | 原 `task input answer` handler，未新增问题或回答状态 |
 | `capability commands/panels` | 原受管 `capability.search` dispatcher 的描述投影 |
+| `GET/POST .../panels` | Controller 的原 Registry/Host；受权目录、精确 Provider/generation，只读调用 |
 
 本地修改回执返回原记录、记录版本及请求关联 ID。请求 ID 不被冒充为本地
 修改的幂等账本：响应丢失时显示 unknown，页面不自动重发。进行中的重复
 点击被阻止；重连只读事实，不重放写入。消息的 queued 仅说明已为 Leader
 排队，不证明 Provider 接受或目标完成。Job 的外部操作身份、效果与终态仍
 由 T01/T02 的原 Job 记录负责；Surface 不创建替代操作记录或恢复流程。
+输入解析或 Store-only 事务回调失败且原错误在回滚后返回时，明确标为
+`not-submitted`；提交/回滚基础设施错误、提交后通知故障、响应丢失仍保留
+unknown。已知拒绝显示原因并允许用户修正后重新提交，不自动重试；已归档
+任务的标题输入和保存控件禁用。消息、标题及回答复用同一反馈合同。
 
 ## 身份与对话目标
 
 所有 HTTP API 使用实际本地页面 token；请求正文不能指定 actor、caller
-或 Role。Web 用户进程直接使用现有本地用户 typed 入口，不冒充受管 Session。
+或 Role。Controller 内的 Web 用户入口使用原本地用户 typed handler，不冒充受管 Session。
 从 managed Session 启动用户 Web ingress 被拒绝；原 capability RPC 的
 native Session 鉴权、跨 Task 限制和权限检查不变。
 
@@ -54,13 +61,27 @@ native Session 鉴权、跨 Task 限制和权限检查不变。
 - 注册校验在原 Registry 的原子发布前进行。贡献描述每次从当前受权目录
   派生，不维护独立实例表；实际调用继续走现有 `capability call`，
   生命周期沿原 Registry/Host。缺少专用面板不影响已保存结果。
-- **Web 动态面板尚未装配，不是临时不可用。** 首轮候选的注入端口只有
-  隔离夹具消费者，真实 `yui web` 未构造它。正式审查后移除了没有生产
-  消费者的 `callCommand`/`loadPanel`/`createSurfaceContributionPort`、
-  Web `/panels` 协议、超时分支及相关页面控件。保留已接通的 CLI
-  `capability commands/panels` 描述查询和描述校验。SDK 激活由 T09 负责；
-  Web 调用协议应在实际受信任装配方接入时按真实需要实现，不预留调用框架。
-  此决定取代 task-18 message-2 中的调用端口提议。
+- **Web 面板现在有生产装配方。** `startFileTaskControllerRuntime` 将 HTTP
+  监听器和面板读取绑定到自己已有的 Kernel Registry/Host。内建 Task、
+  Context、Artifact 等只读能力无需测试注入即可显示和读取。贡献描述由
+  同一受权目录读取，停用/卸载及旧 generation 会在新查询时重新判断。
+  面板只呈现文本、受控链接及 JSON，不执行任意前端代码。
+- Web query context 只在 Controller 内部、HTTP token 验证后签发；
+  受管 capability RPC 的 `scope:user` 仍被拒绝，不能用 JSON 伪造上下文。
+  query-only 权限也在 Registry 每次调用/委派时检查，面板不能调用写能力。
+  这是实际用户入口的独立凭据来源，不是伪造 Operator/Leader。
+
+### 运行方式
+
+`yui web --port <port>` 通过现有私有 Controller 控制 socket 请求启动一个
+loopback HTTP 监听器；它要求匹配当前构建的 Controller 已在运行，不自动
+启动 Controller/Agent，也不在旧 Controller 不支持时回退到第二个 Host。
+CLI 保持前台等待，Ctrl-C 仅停止自己的监听器；`yui web --status` 查询
+当前监听器，`yui web --stop` 根据精确监听器 id 停止它，不停止 Controller
+或 Agent。每个 Home 一个监听器，可供多个浏览器页面使用。
+Controller 关闭时同时释放其监听器；监听器及 id 仅属进程资源，不保存为
+第二份 Task 状态。旧 Controller 需在受授权维护窗口切换到新构建，本次未
+升级或重启共享实例。
 
 没有新增数据库字段、迁移、确认阶段、后台重试或自动评审策略。
 既有 CLI 命令及可读输出保留；不强制所有内部调用 JSON 化。
@@ -108,7 +129,9 @@ Reviewer 独立构建、lint、核心 81/81、HTTP/SQLite 检查通过，报告�
   当前快照读取；没有改变 delta 服务自身的合同。
 
 两项均由 Task-main 局部修正，不创建 Repair WorkItem，不集成上游。
-修正候选仍须经同一 Claude Reviewer 复核后才能重新完成 Task。
+`review-round-2 / turn-5`（Claude opus/max）复核 `43bb4bb2…` 后关闭两项
+P2，Leader 曾接受该冻结候选。此阶段没有生产 Web 面板，不能据此宣称
+最终架构的面板能力已经齐备；后续用户补齐要求见下节。
 
 修正验证：`make install-local`、`npm run build`、`npm run lint` 通过；
 `npm run test:core` 81/81，测试阶段约 4.39 秒。临时
@@ -136,6 +159,42 @@ Reviewer 标明未复现首轮浏览器、未跑 live Controller 的 contributio
 命令往返、未运行真实 Provider：这些证据边界保留，不用 Node 夹具冒充。
 其提及的既有 Markdown fenced-code 渲染风险也未在本轮改动，留给 Operator
 另行判断；不将其算作本候选新增缺陷。
+
+## 用户要求补齐 1/2：生产链路证据
+
+本轮不恢复原先未使用的调用框架，而是交付真实 Controller 装配：
+`yui web` → Controller HTTP listener → HTTP token → query-only context →
+原 Registry/Host → 原只读能力。当前用户修改仍走原 typed Store 操作；
+它们不是面板查询权限的隐式扩大。没有迁移、第二个 Host、用户自报 Role、
+自动重发或 SDK 实现的复制。
+
+临时 `t06-panels-check.mjs` 先在缺少受信任 Web 查询入口时失败，接通后通过：
+普通 user 声明拒绝、Web 上下文不可伪造、Task/Context 查询成功、写能力拒绝。
+临时 `t06-production-check.mjs` 启动真实生产 Controller factory，并以绝对
+本地 launcher 启动 `yui web`，没有给 Web 注入替代面板端口：
+
+- 内建面板直接可见、可查询；在同一个实际 Host 注册的受控贡献也可读取。
+- 拒绝伪造 actor、跨 Task 输入和将面板引用改成写能力；无 token 为 403。
+- Host detach 后旧查询不再执行，Registry disable 后目录不再列出贡献。
+- 原实例 disposer 执行一次；替换为同 id 的新 generation 后，旧引用明确拒绝，
+  新引用可查询。面板查询失败时核心 Context 仍可读取。
+- 已归档修改、非法 JSON 和空白标题明确返回 not-submitted，记录不变化。
+  提交后通知故障不会被错标为未提交，真实记录已保存。
+- `web --status` 可读当前 URL，`web --stop` 后原 Controller/Kernel 仍存活。
+
+真实 Browser Use 经上述生产链路验证：空白标题显示明确拒绝原因，修改
+输入后无需重载即可保存；内建面板读取真实 Task 值；网络断开产生 unknown，
+重连后保持锁定而不重发；归档编辑控件禁用。400px/1280px 页面无横向溢出。
+测试发现普通领域校验也可能抛出 Error 而非 CliError，因此采用回滚边界
+证明是否提交，而不按异常类名猜测效果。
+关闭专项先复现了打开浏览器终端时 Web stop 被阻塞，再验证显式释放 WebSocket
+后监听器及时关闭、恰好释放一个自有假终端连接；没有停止真实 Provider。
+`make install-local`、build、lint 和核心 81/81 通过，最终核心测试阶段约 4.43 秒。
+
+这些证据只使用隔离 Home、独立 Controller、合成 Task 和受控贡献，不启动
+Provider。SDK 外部包激活仍由 T09 负责；本轮验证的是其应消费的实际
+Surface/Registry 接入，而非声称已集成尚未合并的 SDK。临时脚本不进入
+永久测试，最终候选继续交由 Claude 正式复核。
 
 ## 剩余边界
 

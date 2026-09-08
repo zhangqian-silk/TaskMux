@@ -1125,9 +1125,9 @@ export const ROOT_COMMAND = buildNode({
     { name: "doctor", summary: "Check Yui dependencies and file state." },
     {
       name: "web",
-      summary: "Serve the local Task and Agent control room.",
-      usage: "yui web [--host <loopback>] [--port <port>]",
-      options: ["--host", "--port"]
+      summary: "Serve the control room using the running Controller's capability Host.",
+      usage: "yui web [--host <loopback>] [--port <port>] | --status | --stop",
+      options: ["--host", "--port", "--status", "--stop"]
     },
     {
       name: "controller",
