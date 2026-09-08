@@ -1,4 +1,5 @@
 import type { ConfiguredAgent } from "../agent/agent.js";
+import { roleLaunchEventPayload, saveTaskRoleUpdate } from "../role/taskRoleUpdate.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createTurnInput } from "../context/turnInputContract.js";
@@ -548,8 +549,11 @@ export function previewTaskRoleAgentConfigurationMutation(
     }
     const parsed = parseRoleOptions(tail, new Map([
       ...roleOptionSpecs({ update: true, includeAgent: true }),
-      ["--profile", "value" as const]
+      ["--profile", "value" as const],
+      ["--environment", "value" as const],
+      ["--managed-environment", "flag" as const]
     ]), usage);
+    validateTaskRoleEnvironmentOptions(parsed, usage);
     if (parsed.has("--agent") && (parsed.one("--agent")?.trim().length ?? 0) === 0) {
       throw usageError("--agent is required.", usage);
     }
@@ -1997,52 +2001,7 @@ function taskMessageCommand(
     } else {
       throw usageError(`--wake-policy must be 'leader' or 'none': ${wakePolicyRaw}.`);
     }
-    const now = clock(options);
-    const result = store.transaction((tx) => {
-      const task = requireTask(tx, parsed.positionals[0]);
-      assertTaskOpen(task);
-      const actor = taskActor(tx, options, task.id);
-      const message = actor === "leader"
-        ? appendMessage(
-            tx,
-            task.id,
-            body,
-            "role-result",
-            { type: "role", roleName: LEADER_ROLE },
-            now
-          )
-        : actor === "operator"
-          ? appendMessage(tx, task.id, body, "operator", { type: "operator" }, now, { wakePolicy })
-          : appendMessage(tx, task.id, body, "user", { type: "user" }, now, { wakePolicy });
-      // Issue 05: only `wakePolicy=leader` (the default for backward
-      // compatibility) enqueues Leader work. `wakePolicy=none` persists the
-      // message as context without waking the Leader.
-      if (task.status === "active"
-        && actor !== "leader"
-        && wakePolicy !== "none") {
-        enqueueWork(
-          tx,
-          leaderMailbox(task.id),
-          actor === "operator" ? "operator-input" : "user-message",
-          now,
-          [messageRef(task.id, message.id)],
-          {
-            source: actor,
-            dedupeKey: `message:${task.id}:${message.id}`
-          }
-        );
-      }
-      return { task, message, actor };
-    });
-    if (result.actor !== "leader") {
-      notifyMailbox(
-        options.runtime,
-        result.task.status === "active"
-          ? leaderMailbox(result.task.id)
-          : taskMailbox(result.task.id),
-        result.task.id
-      );
-    }
+    const result = sendTaskMessageCommand(store, parsed.positionals[0], body, wakePolicy, options);
     return `Sent message ${result.message.id} to ${result.task.id}\n`;
   }
   if (command === "list") {
@@ -2099,6 +2058,36 @@ function taskMessageCommand(
   throw usageError(command === undefined
     ? "Task message command is required."
     : `Unknown command: task message ${command}`);
+}
+
+/** CLI and authenticated user Surface share the same message and mailbox
+ * transaction. Talking to Leader does not impersonate Leader authority. */
+export function sendTaskMessageCommand(
+  store: TaskWorkflowStore, taskId: string, body: string,
+  wakePolicy: "leader" | "none" | undefined, options: TaskCommandOptions = {}
+) {
+  if (!body.trim()) throw usageError("Message body is required.");
+  const now = clock(options);
+  const result = store.transaction((tx) => {
+    const task = requireTask(tx, taskId);
+    assertTaskOpen(task);
+    const actor = taskActor(tx, options, task.id);
+    const message = actor === "leader"
+      ? appendMessage(tx, task.id, body, "role-result", { type: "role", roleName: LEADER_ROLE }, now)
+      : actor === "operator"
+        ? appendMessage(tx, task.id, body, "operator", { type: "operator" }, now, { wakePolicy })
+        : appendMessage(tx, task.id, body, "user", { type: "user" }, now, { wakePolicy });
+    if (task.status === "active" && actor !== "leader" && wakePolicy !== "none") {
+      enqueueWork(tx, leaderMailbox(task.id), actor === "operator" ? "operator-input" : "user-message",
+        now, [messageRef(task.id, message.id)], { source: actor, dedupeKey: `message:${task.id}:${message.id}` });
+    }
+    return { task, message, actor };
+  });
+  if (result.actor !== "leader") {
+    notifyMailbox(options.runtime, result.task.status === "active"
+      ? leaderMailbox(result.task.id) : taskMailbox(result.task.id), result.task.id);
+  }
+  return result;
 }
 
 function updateMessage(
@@ -2545,8 +2534,11 @@ function updateTaskRole(
   }
   const parsed = parseRoleOptions(tail, new Map([
     ...roleOptionSpecs({ update: true, includeAgent: true }),
-    ["--profile", "value" as const]
+    ["--profile", "value" as const],
+    ["--environment", "value" as const],
+    ["--managed-environment", "flag" as const]
   ]), usage);
+  validateTaskRoleEnvironmentOptions(parsed, usage);
   if (parsed.has("--agent") && (parsed.one("--agent")?.trim().length ?? 0) === 0) {
     throw usageError("--agent is required.", usage);
   }
@@ -2559,7 +2551,9 @@ function updateTaskRole(
     assertTaskOpen(task);
     taskActor(tx, options, task.id);
     const role = requireRole(tx, task.id, roleName);
-    const changesLaunchContext = hasRoleLaunchContextOptions(parsed) || parsed.has("--profile");
+    const changesEnvironment = parsed.has("--environment") || parsed.has("--managed-environment");
+    const changesLaunchContext = hasRoleLaunchContextOptions(parsed) || parsed.has("--profile")
+      || changesEnvironment;
     const changesAgentConfig = hasAgentConfigOptions(parsed);
     if (changesLaunchContext || changesAgentConfig) {
       assertRoleRuntimeMutationAllowed(tx, {
@@ -2589,7 +2583,7 @@ function updateTaskRole(
           [bindingUpdate.agentId]: bindingUpdate.binding
         }
       }, now);
-    const next = updateRole(withBinding, {
+    let next = updateRole(withBinding, {
       ...roleProfilePatch(parsed)
     }, now);
     if (bindingUpdate !== undefined) {
@@ -2598,19 +2592,16 @@ function updateTaskRole(
     if (changesLaunchContext) {
       validateConfiguredRoleSkills(options.yuiHome, next.skills ?? []);
     }
-    tx.saveRole(task.id, next);
-    enqueueWork(tx, taskMailbox(task.id), "role-updated", now, [taskRef(task.id)]);
-    recordTaskEvent(
-      tx,
-      task.id,
-      "role.updated",
-      {
-        ...roleLaunchEventPayload(next, tx.getTaskRoleSessionSet(task.id, next.name)),
-        previous: JSON.stringify(role),
-        current: JSON.stringify(next)
-      },
-      now
-    );
+    if (changesEnvironment) {
+      next = updateRole(next, {
+        executionEnvironment: parsed.has("--managed-environment")
+          ? null
+          : createProjectResources(tx, () => now).resolveExecutionEnvironment(task.id, parsed.one("--environment")!)
+      }, now);
+    }
+    saveTaskRoleUpdate(tx, role, next, now, {
+      source: "task.role.update", actor: taskActor(tx, options, task.id)
+    });
     return next;
   });
   notifyMailbox(options.runtime, taskMailbox(updated.taskId), updated.taskId);
@@ -2619,6 +2610,18 @@ function updateTaskRole(
     kind: "task",
     sessions
   }), { role: updated, sessions });
+}
+
+function validateTaskRoleEnvironmentOptions(
+  parsed: ReturnType<typeof parseRoleOptions>,
+  usage: string
+): void {
+  if (parsed.has("--environment") && parsed.has("--managed-environment")) {
+    throw usageError("--environment and --managed-environment are mutually exclusive.", usage);
+  }
+  if (parsed.has("--environment") && (parsed.one("--environment")?.trim().length ?? 0) === 0) {
+    throw usageError("--environment requires an adopted preparation id.", usage);
+  }
 }
 
 function removeTaskRole(
@@ -7299,27 +7302,6 @@ function recordTaskEventRecord(
 function truncateEventNote(note: string): string {
   const normalized = note.trim();
   return normalized.length <= 280 ? normalized : `${normalized.slice(0, 279)}…`;
-}
-
-function roleLaunchEventPayload(
-  role: Role,
-  sessions: TaskRoleSessionSet | null
-): TaskEventPayload {
-  const effective = sessions?.sessions[sessions.activeAgentId]?.effective;
-  return {
-    desiredRevision: String(role.launchRevision),
-    defaultAccess: role.defaultAccess,
-    effectiveRevision: effective === undefined
-      ? "none"
-      : String(effective.sourceDesiredRevision),
-    profileAccess: effective?.profileAccess ?? "none",
-    effectivePermission: effective?.permission.strategy ?? "none",
-    desiredDrift: effective === undefined
-      ? "not-started"
-      : effective.sourceDesiredRevision === role.launchRevision
-        ? "none"
-        : "pending-next-launch"
-  };
 }
 
 function turnLaunchEventPayload(run: Turn): TaskEventPayload {

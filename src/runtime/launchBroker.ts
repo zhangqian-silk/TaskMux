@@ -8,6 +8,7 @@ import { AGENT_HOST_LAUNCH_TICKET_TTL_MS } from "./runtimeDeadlines.js";
 import type { CodexThreadOptions } from "./codexAppServerRuntime.js";
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 import { validateAgentEndpointImplementation } from "./agentEndpointIdentity.js";
+import { validateExecutionEnvironmentSnapshot, type ExecutionEnvironmentSnapshot } from "../resources/projectResource.js";
 
 export type AgentHostLaunchPayload = Readonly<{
   schemaVersion: 2;
@@ -15,6 +16,7 @@ export type AgentHostLaunchPayload = Readonly<{
   args: readonly string[];
   environment: Readonly<Record<string, string>>;
   cwd: string;
+  executionEnvironment?: ExecutionEnvironmentSnapshot;
   childLifecycle: "persistent" | "per-turn";
   startMode: "provider" | "idle";
   providerControl?: AgentHostProviderControl;
@@ -127,6 +129,14 @@ function validatePayload(payload: AgentHostLaunchPayload): AgentHostLaunchPayloa
     text(key, "environment key");
     if (typeof value !== "string" || value.includes("\0")) {
       throw new Error("Agent Host launch environment value is invalid.");
+    }
+  }
+  if (payload.executionEnvironment !== undefined) {
+    const adopted = validateExecutionEnvironmentSnapshot(payload.executionEnvironment);
+    if (payload.environment.YUI_SESSION_SCOPE !== "task"
+      || payload.environment.YUI_TASK_ID !== adopted.taskId
+      || payload.cwd !== adopted.directory.path) {
+      throw new Error("Agent Host execution environment does not match its Task and cwd.");
     }
   }
   if (payload.childLifecycle !== "persistent" && payload.childLifecycle !== "per-turn") {

@@ -2843,6 +2843,15 @@ yui task context inspect &lt;task&gt; --store &lt;store&gt; --ref &lt;id&gt; --d
 <p>同步 <code>origin/master</code> 至 <code>36bf511</code>（含 <code>c655cc6</code>），保留主线以 Session／Process 身份 替代启动 generation 的设计。Endpoint cancel、迟到 steer 结算及 pending 投递路径改用当前身份合同；未恢复已移除的 activation／generation 状态， 也未重新引入自动 synthesis。</p>
 <p>主线迁移 4 <code>session-and-process-identity</code> 和迁移 5 <code>project-resource-artifacts</code> 原样保留；本任务尚未发布的 Endpoint 迁移顺延为 6， <code>introducedIn=0.15.8</code>。因此上文的 3→4 是独立分支验证时的编号， 最终集成合同为 3→4→5→6。内存 SQLite 验证升级后保留原生身份、模型快照及当前／历史 Session， 正确移除旧运行身份并写入 Endpoint 实现引用。</p>
 <p>集成后的独立只读审查未发现阻断问题；不以合并或发布授权代替真实模型 验证授权，未重复调用 Provider，也未操作共享 Controller／App Server。 build、lint 与集成后核心测试 81/81 通过（测试阶段 4.37 秒）； 数量变化来自主线移除旧 generation 回归，并非跳过失败测试。</p>
+<h3 id="doc-implementation-designs-T04-evidence-md--采用环境执行集成2026-09-07">采用环境执行集成（2026-09-07）</h3>
+<p>在 <code>129801f</code> 对应主线内容上补齐 T04×T05：<code>task role update --environment</code> 或认证能力 <code>environment.bind</code> 显式选择已经 adopted 的目录 preparation。 <code>--managed-environment</code>／null 明确清除选择。绑定只改变 Role desired， Session／Turn effective 冻结 preparation、environmentRef、目录身份与访问 限制；原生 Session 不能因 desired 改动而切换环境。</p>
+<p>启动规划、Host 原生启动／恢复及每次 Yui 输入检查现行采用、资源意图、 grant 原 reservation 和 path/device/inode。Codex Thread 与 Claude 子进程 使用选定目录作为 cwd，不自动附加原 managed Git 根；Yui 的原 managed workspace 继续承载控制上下文和 Git 所有权，不被改写成第二份资源记录。 目录被替换、released 或授权撤销时明确拒绝，不回退或自动重新 adopt。</p>
+<p>release 检查精确 Session／Turn 环境引用，复用原 Provider 未结算输入及 continuation 投影：Host ended 不等于 native quiescent。复审指出的 “Host 已退出而输入 accepted/unknown 仍可释放”路径已纳入释放检查。</p>
+<p>中央 migration 7 <code>adopted-agent-execution-environment</code>（目标 0.15.8） 为可选绑定合同，已有 migration 1–6 不变。有效 v6 隔离 SQLite 迁移后 旧 Role 和已 adopted preparation 保持原值，没有隐式选择；普通旧格式 读取明确要求升级。</p>
+<p>隔离证据使用真实 Store、Adapter compiler、Endpoint 和本地假 Provider， 不请求真实模型：Codex 协议 Thread cwd 与子进程 cwd 一致；Claude 子进程 cwd 一致；两个协议完成输入并在 detach/resume 后继续使用原环境， 即使 Role desired 已解绑。目录替换拒绝、grant 撤销拒绝、同一采用不重复 消耗 grant、跨 Task／Global 绑定拒绝、CLI 原子回滚和释放检查均有临时证据。</p>
+<p>边界：empty 没有原生 cwd，拒绝选择并提示 scratch；read 环境仅允许显式 Codex read-only/never，Claude 不伪造文件系统只读能力；write 保持既有 原生权限，是 trusted-local 而非强沙箱。此集成不控制桌面端等外部原生 客户端直接发出的后续输入，不接入远程环境或凭据解析器。</p>
+<p>最终 build、lint、核心 81/81 通过（4.33 秒），没有新增永久专项测试。 独立复审通过；释放回归使用实际资源服务／Provider Binding／continuation 投影与轻量 Store 替身，验证 ended Host、无 turnId 的未结算输入、 history Session、detached continuation 均阻止释放，exact quiescent 后允许 释放。该项不冒充 SQLite 集成；启动／恢复和迁移另使用真实隔离 SQLite。 未运行真实模型、未升级共享 Home、未发布或重启共享服务。</p>
+<p>2026-09-08 PR 集成同步至 <code>97ad888</code>（T03 #316）。主线迁移 1–8 原样 保留，环境绑定迁移由独立开发时的 7 顺延为 9；普通旧数据仍不自动绑定。 代码从最新主线仅移入本次环境提交，避免重复包含已经 squash 合入的 T04 历史。此集成未运行真实模型、升级共享 Home 或重启服务。</p>
 </article><article id="doc-implementation-designs-T05-evidence-md"><div class="source"><a href="implementation/designs/T05-evidence.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T05-evidence-md--t05-资源环境与固定成果交接">T05 资源、环境与固定成果交接</h1>
 <p>Task：task-17；基线：<code>b7d07394f68ac48a56bc8d03b6d91bf23be98051</code>。 日期：2026-09-07。精确交付提交、独立 Review 和接受状态以 Task 持久记录为准； 本报告不表示远端合并、共享环境升级或最终验收。</p>
 <h2 id="doc-implementation-designs-T05-evidence-md--实际交付与唯一所有者">1. 实际交付与唯一所有者</h2>
@@ -2929,7 +2938,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>本次冻结的是资源端口，不声称并行分支已接通：</p>
 <ul>
 <li>T03 负责将 ArtifactRef 接到其 Candidate/Acceptance 和通用 Context 中。 当前 Project catalog 保留 Git 结构和已有 Task Project 绑定； 本次不发明第二套非 Git Project/Task 关联账本。</li>
-<li>T04 消费采用后的 environmentRef，并在实际 Session/Turn 快照中记录。 现有原生 launcher 仍使用它已有的 managed workspace；未替换它的 cwd、 停止证明或凭据传递。</li>
+<li>T04 消费采用后的 environmentRef，并在实际 Session/Turn 快照中记录。 本报告的资源端口交付时原生 launcher 尚未消费它；后续连接实现及验证见 <a href="#doc-implementation-designs-T04-evidence-md">T04 实现证据</a>的“采用环境执行集成”。</li>
 <li>空环境 prepare/adopt 已独立验证，不表示现有原生 Runtime 已能无 cwd 启动。 T03/T08 的通用 Activation 应消费此空采用事实，而不凭目录存在猜测采用。</li>
 <li>S22 的副本、重试、综合选择属于 T04；T05 只保证独立目录与资源冲突边界。 外部 Provider/连接插件、credentials resolver、SDK 与热加载仍由 T09+ 实施。</li>
 </ul>

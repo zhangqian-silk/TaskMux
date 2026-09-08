@@ -32,6 +32,8 @@ Host 是实际实例和引用生命周期的唯一权威。Controller 重启后�
 明确采用一个 writable 环境。scratch 是独立目录所有权，**不是 OS 沙箱**；
 用户目录还需要 T05 的具体 Resource grant。每次新动作复核采用记录、Task
 当前状态、目录 identity、资源意图及现行 Resource grant。
+环境复核与主线原生执行使用同一 `resolveExecutionEnvironment`，要求现行 grant
+包含该 preparation 的采用记录。撤权后仅签发一个新 grant 不会隐式重新采用旧环境。
 
 SDK 的实际构建、候选和活实例引用会阻止公开 `environment.release`。
 先停用并排空；T05 仍不会删除用户目录，也不会强删非空 scratch。
@@ -259,13 +261,18 @@ build/validate/activate 保留现有 reservation 行为；已有历史 key 不�
 
 ## 采用与迁移
 
-本分支中央链为 8→9 `plugin-validation-evidence`（不可变验证报告），再追加
-9→10 `plugin-enable-intent`（用户选择），最低支持仍为 1。旧验证和 Task 保持
-原样，新意图表为空：旧报告不证明旧用户的启用/停用选择，因此不推测回填。
-没有其他兼容版本轴或自动修复。应用持久结构变更走原显式 upgrade/update
-与备份机制。本分支与主线的迁移编号冲突需在合入时协调，不能覆盖已有迁移；
-采用本源码不等于授权升级共享 Home、重启 Controller 或执行插件。
+合入主线时保留原 1–9，其中 9 是 `adopted-agent-execution-environment`；
+追加 9→10 `plugin-validation-evidence`（不可变验证报告），再追加
+10→11 `plugin-enable-intent`（用户选择），当前存储版本为 11，最低支持仍为 1。
+旧 Task/Artifact/环境配置保持原样，新插件表不推测回填启用意图。
+应用持久结构变更走原显式 upgrade/update 与备份机制。
 
-T06 可以消费既有 CapabilityDescriptor，不需要复制 SDK Host；
-T07 的 ACP/Endpoint 注册、T04 原生 Session 的 environmentRef 消费、
-Project/global scope 提升及完整热插拔均不在本合同内。
+本 Task 未发布独立候选中的插件迁移曾编号为 9、10；它们与主线同编号具有不同
+含义。若保留了那种开发 Home，应保留其匹配 binary；不能按相同数字把分叉账本
+当作正式前向历史升级，也不提供启发式修复。采用本源码不等于授权升级共享 Home、
+重启 Controller 或执行插件。
+
+主线 T06 沿同一个 Registry 将能力投影为命令和默认 JSON 查询面板，不复制
+SDK Host；Web 查询身份不因此获得 plugin:manage。主线原生 Session 的环境选择
+与本 SDK 继续共享 T05 环境 owner，释放前同时保护原生执行引用与插件引用。
+T07 的 ACP/Endpoint 注册、Project/global scope 提升及完整热插拔不在本合同内。

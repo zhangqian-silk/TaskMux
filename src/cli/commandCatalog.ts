@@ -681,8 +681,8 @@ const taskChildren: readonly NodeInput[] = [
       {
         name: "update",
         summary: "Update a Task Role; Agent settings target the named or active binding without switching it.",
-        usage: "yui task role update <task> <role> [--profile <id>] [--agent <id>] [Role and Agent settings]",
-        options: ["--profile", "--agent", ...roleProfileOptions, ...roleAgentOptions,
+        usage: "yui task role update <task> <role> [--profile <id>] [--agent <id>] [--environment <preparation-id> | --managed-environment] [Role and Agent settings]",
+        options: ["--profile", "--agent", "--environment", "--managed-environment", ...roleProfileOptions, ...roleAgentOptions,
           ...roleProfileClearOptions, ...roleAgentClearOptions, "--yes"],
         optionValues: roleAgentOptionValues
       },
@@ -1125,9 +1125,9 @@ export const ROOT_COMMAND = buildNode({
     { name: "doctor", summary: "Check Yui dependencies and file state." },
     {
       name: "web",
-      summary: "Serve the local Task and Agent control room.",
-      usage: "yui web [--host <loopback>] [--port <port>]",
-      options: ["--host", "--port"]
+      summary: "Serve the control room using the running Controller's capability Host.",
+      usage: "yui web [--host <loopback>] [--port <port>] | --status | --stop",
+      options: ["--host", "--port", "--status", "--stop"]
     },
     {
       name: "controller",
@@ -1507,9 +1507,11 @@ export const ROOT_COMMAND = buildNode({
     {
       name: "capability",
       summary: "Discover and call authorized capabilities through the Controller.",
-      sections: [{ id: "entry", title: "Commands", entries: ["search", "describe", "call"] }],
+      sections: [{ id: "entry", title: "Commands", entries: ["search", "commands", "panels", "describe", "call"] }],
       children: [
         { name: "search", summary: "Search the current authorized directory.", usage: "yui capability search [query] --task <id>" },
+        { name: "commands", summary: "List current command names, help and capability mappings; invoke via capability call.", usage: "yui capability commands --task <id>" },
+        { name: "panels", summary: "List authorized text/link or query-only JSON panel descriptors.", usage: "yui capability panels --task <id>" },
         { name: "describe", summary: "Describe one contract or report Provider ambiguity.", usage: "yui capability describe <name> --task <id> [--provider <id>] [--version <version>]" },
         { name: "call", summary: "Invoke one implementation under the current managed identity.", usage: "yui capability call <name> --task <id> --input <json> [--provider <id>] [--version <version>] [--request-id <id>]" }
       ]

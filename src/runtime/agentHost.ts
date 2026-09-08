@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createConnection, createServer, type Server } from "node:net";
 import { createInterface } from "node:readline";
+import { assertAgentExecutionEnvironment } from "./executionEnvironment.js";
 
 import {
   callController,
@@ -418,6 +419,7 @@ export async function runAgentHost(input: Readonly<{
       if (delayMs !== 0) await delay(delayMs);
       if (hostStopRequested) return;
       try {
+        assertAgentExecutionEnvironment(input.home, reconnectPayload);
         const started = await endpoints.resume(reconnectPayload);
         session = started.session;
         sessionPayload = currentPayload;
@@ -627,6 +629,7 @@ export async function runAgentHost(input: Readonly<{
           activeTurnAttemptId = providerControl.ownedTurn.attemptId;
           activeNativeTurnId = providerControl.ownedTurn.turnId;
         }
+        assertAgentExecutionEnvironment(input.home, next);
         const started = await (providerControl.mode === "new" ? endpoints.open(next) : endpoints.resume(next));
         session = started.session;
         sessionPayload = next;
@@ -853,6 +856,7 @@ export async function runAgentHost(input: Readonly<{
     let providerAccepted = false;
     let transportAccepted = false;
     try {
+      assertAgentExecutionEnvironment(input.home, activeTurnPayload);
       const receipt = endpointReceipt(await session.submit({
         ...request.turn,
         inputRef: request.turnId ?? request.turn.attemptId
@@ -981,6 +985,7 @@ export async function runAgentHost(input: Readonly<{
       throw new Error("Agent Host rejected a stale Provider writer fence.");
     }
     try {
+      assertAgentExecutionEnvironment(input.home, sessionPayload);
       const receipt = endpointReceipt(await session.steer({
         ...request.turn,
         inputRef: request.turn.attemptId

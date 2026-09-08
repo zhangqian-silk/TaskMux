@@ -89,6 +89,11 @@ import {
 import { authorizeJobStart } from "./jobControl.js";
 import { createKernelPorts } from "../kernel/kernelPorts.js";
 import { createCapabilityDispatcher } from "./capabilityBridge.js";
+import { createControllerWeb } from "../web/controllerWeb.js";
+import { createWebTaskSurface } from "../web/webTaskSurface.js";
+import { SurfaceContributions } from "../surface/surfaceContributions.js";
+import { TmuxWebTerminalService } from "../web/tmuxWebTerminal.js";
+import { FileTaskWorkflowRuntime } from "./clientRuntime.js";
 import { FileRuntimeEventInbox } from "./runtimeEventInbox.js";
 import { AgentRuntimeObserver } from "./agentRuntimeObserver.js";
 import {
@@ -504,6 +509,31 @@ export async function startFileTaskControllerRuntime(
   const kernel = createKernelPorts(store, createLinuxProcessPort(), (taskId) => {
     runningRuntime?.signal(`task:${taskId}`);
   });
+  const webWorkflow = new FileTaskWorkflowRuntime(home, store, schedulerStore, planner, tmux, workspacePreparer, {
+    environment: options.environment ?? process.env, onError: options.onError
+  });
+  const webSurface = createWebTaskSurface(store, { runtime: {
+    notifyStateChanged: (taskId) => runningRuntime?.signal(`task:${taskId}`),
+    notifyMailboxChanged: (target) => {
+      if (target.kind === "role") runningRuntime?.signal(`role:${target.taskId}/${target.roleName}`);
+      else if (target.kind === "task") runningRuntime?.signal(`task:${target.taskId}`);
+    },
+    reconcileTask: (taskId) => runningRuntime?.signal(`task:${taskId}`)
+  }, yuiHome: home });
+  const surfaces = new SurfaceContributions(kernel.capabilities.registry);
+  const web = createControllerWeb(store, {
+    surface: webSurface,
+    answerInput: async ({ taskId, inputId, answer }) => webSurface.answer(taskId, inputId, answer),
+    panels: {
+      list: (taskId) => surfaces.listPanels(kernel.capabilities.authenticateWebQuery(taskId)),
+      read: (taskId, ref, input) => surfaces.readPanel(kernel.capabilities.authenticateWebQuery(taskId), ref, input)
+    },
+    terminal: new TmuxWebTerminalService({
+      yuiHome: home, tmuxBin: resolveTmuxBin(store.getConfig().tmuxBin), tmux,
+      prepareGlobalRole: (roleName) => webWorkflow.prepareGlobalRoleEnter(roleName),
+      environment: options.environment ?? process.env, onError: options.onError
+    })
+  });
   const jobSupervisor = new DurableJobSupervisor({
     store: schedulerStore,
     process: kernel.runner,
@@ -553,7 +583,8 @@ export async function startFileTaskControllerRuntime(
     home,
     schedulerStore,
     delivery,
-    lifecycleDispatcher,
+    (method, params) => method === "web.start" || method === "web.stop" || method === "web.status"
+      ? web.dispatch(method, params) : lifecycleDispatcher(method, params),
     {
       intervalMs: options.intervalMs
         ?? reconciliationIntervalMilliseconds(store.getConfig().reconciliationIntervalSeconds),
@@ -630,6 +661,7 @@ export async function startFileTaskControllerRuntime(
   let resourceClose: Promise<void> | undefined;
   const closeResources = (): Promise<void> => {
     resourceClose ??= Promise.all([
+      web.close(),
       kernel.close(),
       asyncStoreClient?.close() ?? Promise.resolve(),
       inventoryClient?.close() ?? Promise.resolve()

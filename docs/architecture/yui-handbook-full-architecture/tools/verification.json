@@ -4,12 +4,12 @@
   "yui_runtime_tests": "not-run",
   "checks": {
     "markdown_documents": 52,
-    "relative_links": 117,
+    "relative_links": 118,
     "standalone_prose": "checked",
     "code_fences": "checked",
     "offline_html": {
       "articles": 52,
-      "anchors": 543,
+      "anchors": 544,
       "remote_assets": 0
     },
     "complete_architecture_diagram": {

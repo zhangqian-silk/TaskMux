@@ -1,6 +1,7 @@
 import type { TrustedCallContext } from "./callAuthority.js";
 import { InstanceHost, type ImplementationRef } from "./instanceHost.js";
 import { capabilitySchemaError, checkCapabilitySchema, type CapabilitySchema } from "./capabilitySchema.js";
+import { checkSurfaceDescriptors, type SurfaceDescriptors } from "../surface/surfaceContributions.js";
 
 export type CapabilityEffect = "query" | "local-mutation" | "external-operation";
 export type CapabilityScope = Readonly<{ kind: "global" } | { kind: "project" | "task"; id: string }>;
@@ -17,6 +18,7 @@ export type CapabilityDescriptor = Readonly<{
   scope: CapabilityScope;
   required?: readonly Readonly<{ name: string; contractVersion: string }>[];
   unavailable?: string;
+  surfaces?: SurfaceDescriptors;
 }>;
 export type CapabilityCall = Readonly<{
   name: string;
@@ -319,6 +321,7 @@ export class CapabilityRegistry {
       names.add(key);
       checkCapabilitySchema(entry.inputSchema);
       checkCapabilitySchema(entry.outputSchema);
+      checkSurfaceDescriptors(entry);
       for (const dependency of entry.required ?? []) {
         if (!dependency.name?.trim() || !dependency.contractVersion?.trim()) throw new Error("Invalid required capability.");
       }

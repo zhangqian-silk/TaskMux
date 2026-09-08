@@ -8,11 +8,12 @@ Task：task-20。精确基线：
 
 ## 当前结果与采用（累计交付汇总）
 
-最近已验证的代码基准为 `c08ebf7e21d010645782d0c66187eab60f52e5bc`：
-build/lint 与 core **82/82** 通过。正式 Claude `review-round-3/turn-9`
-（effective `claude/opus/max`）独立确认 82/82、10 项隔离探针及真实 v8→v10
-升级通过，接受代码，仅指出本文累计汇总的文档准确性问题；本次校正不改代码。
-最终交付 head 与文档复核裁定以 Task 记录为准。
+独立 Task 的最终接受基准为 `66fd46fe9cf6f4ce0245f2258c79abfd56f12363`
+（运行代码与 `c08ebf7` 相同）：正式 Claude `review-round-4/turn-11`
+（effective `claude/opus/max`）接受、零 P1/P2，独立 build/lint/core **82/82**
+及授权探针通过。此前 Round 3 的真实 v8→v10 验证属于当时的独立分支编号。
+用户随后明确请求创建并合并 PR；发布前与主线 `c432ad7` 合流的编号和证据
+见文末“发布前主线集成”。最终发布 head/PR/合并事实以 Task Publication 记录为准。
 
 以下是累计交付合同；后面的分阶段证据标明各自提交，历史 81/81 不代表当前
 门禁，也不能被回写成当时尚不存在的 82/82。
@@ -31,12 +32,14 @@ Registry 或 Store。
 用户的启用/停用选择也已持久化，与 Host 实际实例分开；只读视图区分 desired、
 actual 和排空引用。合法激活失败保留期望选择与原实例，非法/未获权请求不写意图。
 
-当前分支中央存储链包含两步：8→9 `plugin-validation-evidence` 新增不可变报告表，
-9→10 `plugin-enable-intent` 新增持久选择表，当前版本为 **10**，最低支持仍为 1。
+集成后的中央链保留主线 1–9（9 为 `adopted-agent-execution-environment`），
+追加 9→10 `plugin-validation-evidence` 和 10→11 `plugin-enable-intent`；
+当前版本为 **11**，最低支持仍为 1。只顺延本 Task 未发布的两项迁移，
+未覆盖主线既有条目。后文独立开发阶段的 8→9→10 是历史编号，不是当前升级路径。
 沿用 T05 环境与 CapabilityGrant 记录，不增加长期开发状态机、可写运行中状态、
-自动恢复、签名市场或 OS 沙箱。Operator 集成 T06/T07/T09 时须将这两步一并纳入
-尚未发布迁移的连续编号协调，不能只按新增 v9 处理，不能重写已发布迁移，
-也不能以本交付为授权升级共享 Home。
+自动恢复、签名市场或 OS 沙箱。两项插件迁移已在此次合流中一并纳入连续链；
+不能把曾保留的分叉开发 Home 按相同版本数字强行升级，也不能以代码交付为授权
+升级共享 Home。
 
 SDK 权限仍由 global Operator 管理。可执行的 build/validate/activate/call
 分别要求精确 pluginId、源码/产物摘要、environmentRef、trust、phase 的现行
@@ -44,10 +47,11 @@ grant，并按真实尝试消费次数。因为 trusted-local 不能限制直接
 执行 grant 必须允许 irreversible 能力上限；none/reversible 不冒充本机执行
 授信。manifest scope/permissions 和 adopted 目录本身都不授予它。
 
-T06 可沿既有 CapabilityDescriptor 消费能力；嵌套调用现在同时受父
-requiredPermissions 和 effect 上限约束。未复制 T07 ACP/Endpoint。
-T04 原生 Session 的 environmentRef 消费、T10 Leader 自扩展、Project/global
-提升、T11 全面热插拔和自动升级不在本次实现内。
+已合流的 T06 沿既有 CapabilityDescriptor 消费能力；嵌套调用同时受父
+requiredPermissions 和 effect 上限约束，Web 查询身份不能直接管理插件。
+原生 Session 的 environmentRef 消费来自主线，SDK 与其共享环境 owner，
+不是本 Task 另建实现。T10 Leader 自扩展、T07 ACP/Endpoint、Project/global
+提升、T11 全面热插拔和自动升级不在本 Task 新增范围内。
 
 ## 首轮开发证据（faf09fb 历史记录）
 
@@ -244,3 +248,32 @@ P2，以及作者运行环境说明缺口。Leader 完整读取原报告后作�
 Claude 复核；精确 ReviewRound/Turn、candidate 和最终裁定由 Task 记录保存，
 本节不预先宣称复核通过。所有原停止线不变，未同步上游、发布或使用真实资源
 作为测试对象。
+
+## 发布前主线集成
+
+用户在独立 Task 完成后明确请求创建并合并 PR。本次以主线
+`c432ad719e17d3b615829db9d2ec0a9115697220` 合流，不改变 Task 的原始基线记录。
+保留主线 `adopted-agent-execution-environment` migration 9，将本 Task 尚未发布的
+两项迁移顺延到 10（validation）与 11（intent）。当前正式链为 1–11，
+原主线前九项的名称、SQL/校验及既有历史均不重写。
+
+保留 T06 的 Web 查询身份、Surface 描述校验和 environment.bind；环境释放同时
+经过插件引用保护及主线原生 Session/Turn/Job 引用保护。SDK 环境复核改用主线已有
+`resolveExecutionEnvironment`，避免通过 idempotent adopt 绕过现行采用凭据：
+临时红证据确认，原 resource grant 撤销后新发未采用的 grant 被原生入口拒绝，
+但旧 SDK scan 仍放行；统一 owner 后同一请求被拒绝且不消费新 grant。
+
+集成候选本地 `make install-local`、build/lint/core **82/82** 通过（core 约 4.36s）。
+临时 `output/t09-pr-integration.mjs` 两项检查通过：
+
+- 实际 T06/T09 认证入口组合：插件投影为命令/默认查询面板，Web 只读身份不能
+  activate，伪造 user JSON 不得到 Web 身份；旧面板 generation 不能读取新实例。
+  停用前插件引用、停用后模拟的原生 Session 引用均能阻止环境释放；
+  这里只使用元数据 Session 夹具，不运行真实 Provider。
+- 从精确主线构建真实 v9 loader，创建 Task、Artifact、采用环境与 Role 绑定；
+  普通新 loader 先拒绝，显式升级/备份到 v11 后，前九项 ledger、所有上述记录
+  逐值保持，两项新增迁移精确为 10/11；旧 loader 拒读新 Home。
+
+这是合流后的 Leader 检查，不把独立候选上的 Claude 审查冒称覆盖本次合流。
+临时检查交付前移除，不增加永久异常矩阵；正式 CI 另对 PR head 运行原门禁。
+未升级共享 Home、重启共享服务或调用真实模型/生产资源作为测试对象。

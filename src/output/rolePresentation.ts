@@ -40,6 +40,14 @@ export function renderRoleDetails(
     `  Kind             ${input.kind}`,
     `  Active Agent     ${role.activeAgentId}`,
     `  Workspace        ${role.workspace}`,
+    ...("taskId" in role ? [
+      `  Desired environment ${role.executionEnvironment === undefined
+        ? "managed workspace"
+        : `${role.executionEnvironment.environmentRef}; ${role.executionEnvironment.directory.path}; ${role.executionEnvironment.access}`}`,
+      `  Session environment ${effective === undefined ? "not started"
+        : effective.executionEnvironment === undefined ? "managed workspace"
+          : `${effective.executionEnvironment.environmentRef}; ${effective.executionEnvironment.directory.path}; ${effective.executionEnvironment.access}`}`
+    ] : []),
     `  Desired launch   r${role.launchRevision}; Profile intent=${role.defaultAccess}`,
     `  Effective launch ${effective === undefined
       ? "not started"

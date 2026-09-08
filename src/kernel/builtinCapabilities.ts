@@ -92,6 +92,12 @@ const definitions: readonly Omit<CapabilityDescriptor, "contractVersion" | "prov
     inputSchema: object({ taskId: text, preparationId: text }), outputSchema: recordOutput
   },
   {
+    name: "environment.bind", summary: "Select an adopted environment for a Role's next native Session; null restores managed workspace. Active Sessions keep their environment.",
+    effect: "local-mutation", requiredPermissions: ["task:manage"], source: "ProjectResources.bindEnvironment",
+    inputSchema: object({ taskId: text, roleName: text, preparationId: { anyOf: [text, { const: null }] } }),
+    outputSchema: recordOutput
+  },
+  {
     name: "environment.release", summary: "Release exact preparation; adopted resources need actual quiescence evidence. Never deletes user directories.",
     effect: "local-mutation", requiredPermissions: ["task:manage"], source: "ProjectResources.release",
     inputSchema: object({ taskId: text, preparationId: text, quiescence: text }, ["taskId", "preparationId"]), outputSchema: recordOutput
@@ -223,9 +229,8 @@ export const BUILTIN_CAPABILITIES: readonly CapabilityDescriptor[] = definitions
   ...entry, contractVersion: "1", provider, scope: { kind: "global" as const }
 }));
 
-/** Authenticated managed bridge. Socket possession/scope JSON is not a grant.
- * A future user/Web ingress must provide its own verified identity adapter;
- * this one deliberately accepts only the existing managed credentials. */
+/** One registry with separate managed credentials and in-process Web query
+ * issuance. Socket possession or caller-scope JSON never issues a Web context. */
 export function createBuiltinCapabilities(
   host: InstanceHost,
   store: TaskStore,
@@ -236,7 +241,14 @@ export function createBuiltinCapabilities(
   const authority = createJobCallAuthority(store);
   const resources = createProjectResources(store);
   const callers = new WeakMap<TrustedCallContext, DurableJobCaller>();
+  // Issued only by the Controller's in-process, token-authenticated Web root.
+  // This is not accepted by the managed RPC credential adapter.
+  const webQueries = new WeakSet<TrustedCallContext>();
   const current = (context: TrustedCallContext) => {
+    if (webQueries.has(context)) {
+      requireTask(store, context.targetId);
+      return { scope: "user" } as const;
+    }
     authority.authorize(context, context.targetId);
     const caller = callers.get(context);
     if (!caller) throw new Error("Untrusted capability ingress.");
@@ -279,6 +291,14 @@ export function createBuiltinCapabilities(
       if (name === "artifact.list") return store.listArtifacts(taskId).map(artifactSummary);
       if (name === "environment.prepare") return resources.prepare(taskId, params.plan as EnvironmentPlan);
       if (name === "environment.adopt") return resources.adopt(taskId, params.preparationId as string);
+      if (name === "environment.bind") {
+        const role = resources.bindEnvironment(taskId, params.roleName as string,
+          params.preparationId as string | null, {
+            source: name, actorId: invocation.context.actorId, requestId: invocation.requestId!
+          });
+        signal(taskId);
+        return role;
+      }
       if (name === "environment.release") {
         plugins.assertEnvironmentUnused(taskId, params.preparationId as string);
         return resources.release(taskId, params.preparationId as string,
@@ -329,6 +349,9 @@ export function createBuiltinCapabilities(
   const registry = new CapabilityRegistry(host, (context, descriptor, input) => {
     const caller = current(context);
     const task = requireTask(store, context.targetId);
+    if (caller.scope === "user" && descriptor !== undefined && descriptor.effect !== "query") {
+      throw new Error("Web panels may only query capabilities.");
+    }
     if (typeof input === "object" && input !== null && "taskId" in input && input.taskId !== task.id) {
       throw new Error("Capability target is outside the authenticated Task.");
     }
@@ -347,6 +370,12 @@ export function createBuiltinCapabilities(
   const plugins = createPluginService(store, host, registry);
   return {
     registry,
+    authenticateWebQuery(taskId: string): TrustedCallContext {
+      requireTask(store, taskId);
+      const context = Object.freeze({ actorId: "local-web-user", targetId: taskId });
+      webQueries.add(context);
+      return context;
+    },
     authenticate(caller: DurableJobCaller, taskId: string): TrustedCallContext {
       const credential = Object.freeze({ ...caller });
       const context = authority.authenticate(credential, taskId);
@@ -363,6 +392,7 @@ function requireTask(store: TaskStore, taskId: string) {
 }
 
 function callerEnvironment(caller: DurableJobCaller): NodeJS.ProcessEnv {
+  if (caller.scope === "user") return {};
   return {
     YUI_SESSION_SCOPE: caller.scope, YUI_TASK_ID: caller.taskId,
     YUI_ROLE: caller.role, YUI_AGENT_ID: caller.agentId,

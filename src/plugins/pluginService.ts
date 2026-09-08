@@ -84,9 +84,10 @@ export function createPluginService(store: TaskStore, host: InstanceHost, regist
     if (!prepared || prepared.disposition !== "adopted" || !prepared.directory || prepared.access !== "write") {
       throw new Error("Plugin development/execution requires an adopted writable T05 environment.");
     }
-    // Reuses T05's current identity, resource intent and grant checks. Adoption
-    // of the same record does not consume another resource use.
-    return resources.adopt(taskId, preparationId);
+    // Reuse the same current-adoption proof as native execution, including
+    // the resource grant reservation. A new grant alone is not re-adoption.
+    resources.resolveExecutionEnvironment(taskId, preparationId);
+    return prepared;
   };
   const packageDirectory = (taskId: string, preparationId: string, directory: string) => {
     const env = environment(taskId, preparationId);

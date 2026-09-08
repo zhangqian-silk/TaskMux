@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { assertExecutionEnvironmentCurrent } from "../runtime/executionEnvironment.js";
 
 import type { DurableJob } from "../job/durableJob.js";
 import type { MailboxEntityRef } from "../coordination/workMailbox.js";
@@ -1233,6 +1234,13 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         );
       }
       const currentTurn = binding.turn;
+      if (session.effective.executionEnvironment !== undefined) {
+        assertExecutionEnvironmentCurrent(store, input.taskId, session.effective.executionEnvironment);
+      }
+      if (input.turnId !== undefined
+        && !isDeepStrictEqual(active?.effective.executionEnvironment, session.effective.executionEnvironment)) {
+        throw new AgentHostProviderTurnFenceError("Turn and native Session execution environments differ; start a new Session.");
+      }
       const exactReplay = currentTurn !== null
         && currentTurn.turnId === input.turnId
         && currentTurn.attemptId === input.attemptId

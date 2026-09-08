@@ -2,6 +2,7 @@ export const VIEW_SCRIPT = `
 // Page composition: sidebar lists, overview, and the task detail scaffold.
 // All reusable widgets and cards come from components.js.
 import { clear, node } from "/assets/js/dom.js";
+import { renderTaskSurface } from "/assets/js/task-surface.js";
 import { byNewest, formatDateTime } from "/assets/js/format.js";
 import {
   anchorSection,
@@ -265,6 +266,7 @@ function turnFilterRow(sortedTurns, t, onChange) {
 }
 
 export function renderTaskDetail(detail, data, t, locale, actions) {
+  if (data.core) return renderTaskSurface(detail, data, t, locale, actions);
   actions = actions || {};
   clear(detail);
   const task = data.task;

@@ -128,8 +128,8 @@ Operator 必须协调 T03/T04/T05 的未发布迁移编号，使合并后的链�
   当前 Project catalog 保留 Git 结构和已有 Task Project 绑定；
   本次不发明第二套非 Git Project/Task 关联账本。
 - T04 消费采用后的 environmentRef，并在实际 Session/Turn 快照中记录。
-  现有原生 launcher 仍使用它已有的 managed workspace；未替换它的 cwd、
-  停止证明或凭据传递。
+  本报告的资源端口交付时原生 launcher 尚未消费它；后续连接实现及验证见
+  [T04 实现证据](T04-evidence.md)的“采用环境执行集成”。
 - 空环境 prepare/adopt 已独立验证，不表示现有原生 Runtime 已能无 cwd 启动。
   T03/T08 的通用 Activation 应消费此空采用事实，而不凭目录存在猜测采用。
 - S22 的副本、重试、综合选择属于 T04；T05 只保证独立目录与资源冲突边界。
