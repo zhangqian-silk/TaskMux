@@ -1,5 +1,5 @@
 import { validateTaskRecordReference } from "../task/taskRecordReference.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 
 export const TASK_MESSAGE_KINDS = ["user", "operator", "role-result", "system"] as const;
 
@@ -22,19 +22,19 @@ export type TaskMessage = {
    * Machine-readable wake policy for user/operator messages (Issue 05).
    * - `leader`: the message is a directive that should wake the Leader.
    * - `none`: the message is informational context only; it must not wake
-   *   the Leader or create a Leader Turn.
+   *   the Leader or create a Leader AgentRun.
    * Absent on older messages and on role-result/system messages, which keep
    * their existing routing.
    */
   wakePolicy?: "leader" | "none";
-  turnId?: string;
+  runId?: string;
   resultRef?: Readonly<{ type: "agent-run-result"; runId: string }>;
   workItemId?: string;
   createdAt: string;
 };
 
 export type TaskMessageContext = Readonly<{
-  turnId?: string;
+  runId?: string;
   resultRef?: Readonly<{ type: "agent-run-result"; runId: string }>;
   workItemId?: string;
   wakePolicy?: "leader" | "none";
@@ -65,9 +65,9 @@ export function createTaskMessage(
     ...(context.wakePolicy === undefined
       ? {}
       : { wakePolicy: context.wakePolicy }),
-    ...(context.turnId === undefined
+    ...(context.runId === undefined
       ? {}
-      : { turnId: requireSafeIdentity(context.turnId, "Message Turn id") }),
+      : { runId: requireSafeIdentity(context.runId, "Message AgentRun id") }),
     ...(context.resultRef === undefined ? {} : { resultRef: { ...context.resultRef } }),
     ...(context.workItemId === undefined
       ? {}
@@ -85,16 +85,16 @@ export function taskMessageAuthorLabel(author: TaskMessageAuthor): string {
 /** A role-result reference never duplicates the execution's report body. */
 export function expandTaskMessageResult(
   message: TaskMessage,
-  getTurn: (taskId: string, turnId: string) => Turn | null
+  getRun: (taskId: string, runId: string) => AgentRun | null
 ) {
   if (message.resultRef === undefined) return message;
-  const turn = getTurn(message.taskId, message.resultRef.runId);
-  if (turn === null || turn.taskId !== message.taskId
-    || message.author.type !== "role" || turn.roleName !== message.author.roleName
-    || turn.status === "active" || turn.result === undefined) {
+  const run = getRun(message.taskId, message.resultRef.runId);
+  if (run === null || run.taskId !== message.taskId
+    || message.author.type !== "role" || run.roleName !== message.author.roleName
+    || run.status === "active" || run.result === undefined) {
     throw new Error(`Result Message has no matching terminal execution: ${message.id}.`);
   }
-  return { ...message, result: turn.result };
+  return { ...message, result: run.result };
 }
 
 /** Replace only the mutable content of a Draft user/operator Message. */
@@ -133,12 +133,12 @@ export function validateTaskMessage(message: TaskMessage): void {
     && message.kind !== "operator") {
     throw new Error("Message wakePolicy is only valid for user/operator messages.");
   }
-  if (message.turnId !== undefined) requireSafeIdentity(message.turnId, "Message Turn id");
+  if (message.runId !== undefined) requireSafeIdentity(message.runId, "Message AgentRun id");
   if (message.resultRef !== undefined) {
     if (message.kind !== "role-result" || message.resultRef.type !== "agent-run-result") {
       throw new Error("Execution result references require a role-result Message.");
     }
-    validateTaskRecordReference({ taskId: message.taskId, localId: message.resultRef.runId }, "turn");
+    validateTaskRecordReference({ taskId: message.taskId, localId: message.resultRef.runId }, "run");
   }
   if (message.workItemId !== undefined) {
     validateTaskRecordReference({
@@ -146,8 +146,8 @@ export function validateTaskMessage(message: TaskMessage): void {
       localId: message.workItemId
     }, "workItem");
   }
-  if (message.turnId !== undefined) {
-    validateTaskRecordReference({ taskId: message.taskId, localId: message.turnId }, "turn");
+  if (message.runId !== undefined) {
+    validateTaskRecordReference({ taskId: message.taskId, localId: message.runId }, "run");
   }
   if (typeof message.createdAt !== "string" || Number.isNaN(Date.parse(message.createdAt))) {
     throw new Error("Message createdAt is invalid.");

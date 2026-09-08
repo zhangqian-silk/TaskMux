@@ -32,7 +32,7 @@ export type UpdatePreflight = Readonly<
 export type UpdateBlockerIdentity = Readonly<{
   taskId?: string;
   roleName?: string;
-  turnId?: string;
+  runId?: string;
   nativeSessionId?: string;
   reason: string;
 }>;

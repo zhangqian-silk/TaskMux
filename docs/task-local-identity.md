@@ -5,7 +5,7 @@ Task owns an independent, monotonically increasing sequence for every record
 family:
 
 - WorkItem
-- Turn
+- AgentRun
 - ReviewRound
 - ChangeSet
 - IntegrationAttempt
@@ -22,7 +22,7 @@ advances that aggregate high-water mark under the storage process lock.
 
 Candidate identity is narrower: `candidate-N` is a WorkItem-local sequence.
 Every Candidate stores its `taskId` and `workItemId`, in addition to the source
-Turn when one exists.
+AgentRun when one exists.
 
 ## Reference contract
 
@@ -37,13 +37,13 @@ JSON, mailbox, Controller, Hook, receipt, Web, and error paths retain the Task
 scope. Context-free commands reject a bare local ID instead of searching all
 Tasks, even if that ID currently happens to be unique.
 
-A managed Task session may use `work-item-1` or `turn-1` because its
+A managed Task session may use `work-item-1` or `run-1` because its
 `YUI_TASK_ID` is explicit. A command that already receives the Task as another
 argument may also use a subordinate local ID. Outside those two cases, use the
 qualified form. Delivery receipts use the same provenance, for example:
 
 ```text
-turn:task-7/turn-1
+run:task-7/run-1
 input-request:task-7/input-1
 ```
 
@@ -58,5 +58,5 @@ boundary and the migration phase of `yui update`; every valid Home at or above
 the CLI's minimum supported storage version can advance directly to current.
 
 This boundary keeps Task-local references, Role desired configuration, and
-immutable Turn/RoleSession effective snapshots under one unambiguous runtime
+immutable AgentRun/RoleSession effective snapshots under one unambiguous runtime
 contract while the append-only migration chain preserves supported history.

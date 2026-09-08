@@ -14,7 +14,7 @@ export type TaskRemoteDeliveryStore = Pick<
   | "listEvents"
   | "listPublicationReferences"
   | "listManagedWorkspaces"
-  | "listTurns"
+  | "listRuns"
 >;
 
 export type TaskRemoteDeliveryProof = Readonly<{
@@ -68,7 +68,7 @@ export function projectTaskRemoteDeliveryFromStore(
     events: store.listEvents(task.id),
     publications: store.listPublicationReferences(task.id),
     managedWorkspaces: store.listManagedWorkspaces(task.id),
-    turns: store.listTurns(task.id),
+    runs: store.listRuns(task.id),
     currentCandidate
   });
 }
@@ -84,7 +84,7 @@ export function createTaskRemoteDeliveryProof(
     events: store.listEvents(task.id),
     publications,
     managedWorkspaces: store.listManagedWorkspaces(task.id),
-    turns: store.listTurns(task.id),
+    runs: store.listRuns(task.id),
     currentCandidate
   });
   return {

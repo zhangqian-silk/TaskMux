@@ -24,7 +24,7 @@ call 在开始时 acquire Provider，到结果与必要回执保存后 release�
 
 ## 4. 长期 Session
 
-Session 取得 Endpoint 和实际持有的状态型依赖。新 Turn 在同一 Session 默认仍使用这组实现。新 Session 使用当前 Provider，配置与来源分别记录。
+Session 取得 Endpoint 和实际持有的状态型依赖。新 AgentRun 在同一 Session 默认仍使用这组实现。新 Session 使用当前 Provider，配置与来源分别记录。
 
 不要求通用 live handover。负责人可以等待、显式取消或在适当时机新建 Session。Session 结束后旧实例引用归零即可清理；空闲但仍明确续用的 Session 可以继续持有。
 
@@ -46,7 +46,7 @@ Session 取得 Endpoint 和实际持有的状态型依赖。新 Turn 在同一 S
 
 用可阻塞的工具实例 A 启动一次调用，再启用 B。证明 A 返回原结果、B 处理新调用，A 完全释放后才 dispose。模拟 B 注册失败，A 仍可用。
 
-再用长期 Session A 启动及结束一个 Turn，启用 B 后在同一 Session 发下一 Turn，确认仍由 A 处理；新建 Session 使用 B。测试在旧 Session 内通过稳定桥调用一个新短工具，证明两种更新边界相互独立。
+再用长期 Session A 启动及结束一个 AgentRun，启用 B 后在同一 Session 发下一 AgentRun，确认仍由 A 处理；新建 Session 使用 B。测试在旧 Session 内通过稳定桥调用一个新短工具，证明两种更新边界相互独立。
 
 最后停止旧会话并清理代码，验证历史 Candidate 可读。撤回 grant 后旧句柄不能继续发新的受控副作用。
 

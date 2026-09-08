@@ -27,7 +27,7 @@ export type ReviewScope = "work-item" | "task";
 
 /**
  * Objective lineage of a delta-recheck Task-final ReviewRound. The Reviewer's
- * judgment remains solely in the exact Turn result.
+ * judgment remains solely in the exact AgentRun result.
  */
 export type DeltaRecheckRecord = Readonly<{
   schemaVersion: 1;
@@ -64,7 +64,7 @@ export type ReviewRound = {
   workItemId?: string;
   candidateId?: string;
   reviewerRoleName: string;
-  reviewerTurnId?: string;
+  reviewerRunId?: string;
   reviewBaseCommit: string;
   /** WorkItem review by default; `task` reviews the complete frozen Task. */
   scope?: ReviewScope;
@@ -201,13 +201,13 @@ export function attachReviewRoundWorkspace(
 
 export function startReviewRound(
   round: ReviewRound,
-  reviewerTurnId: string
+  reviewerRunId: string
 ): ReviewRound {
   validateReviewRound(round);
   if (round.status !== "pending"
     && !(round.status === "running"
       && round.executionGroup !== undefined
-      && round.reviewerTurnId === undefined)) {
+      && round.reviewerRunId === undefined)) {
     throw new Error(`ReviewRound cannot start from ${round.status}: ${round.id}.`);
   }
   if (round.workspace === undefined) {
@@ -215,7 +215,7 @@ export function startReviewRound(
   }
   return validateReviewRound({
     ...round,
-    reviewerTurnId: requireIdentity(reviewerTurnId, "Reviewer Turn id"),
+    reviewerRunId: requireIdentity(reviewerRunId, "Reviewer AgentRun id"),
     status: "running"
   });
 }
@@ -257,7 +257,7 @@ export function finishReviewRound(
 
 /**
  * Retry a failed review execution attempt under the same semantic Round
- * identity. Turn history remains the attempt trail; the Round itself returns
+ * identity. AgentRun history remains the attempt trail; the Round itself returns
  * to pending so infrastructure retries do not manufacture a new semantic
  * ReviewRound or duplicate findings.
  */
@@ -312,7 +312,7 @@ export function retryReviewRound(
     // Producer attempt untouched. A pre-main retry reopens failed Lanes only.
     ...(round.executionGroup === undefined
       ? {}
-      : { executionGroup: round.reviewerTurnId === undefined
+      : { executionGroup: round.reviewerRunId === undefined
         ? retryFailedExecutionLanes(round.executionGroup, now)
         : round.executionGroup }),
     requestedBy: validateReviewRequestSource(requestedBy),
@@ -334,21 +334,21 @@ export function retryTaskReviewRound(
   return retryReviewRound(round, requestedBy, now);
 }
 
-/** A failed producer attempt leaves its logical Lane open for another Turn. */
+/** A failed producer attempt leaves its logical Lane open for another AgentRun. */
 export function retryRunningReviewExecutionLane(
   round: ReviewRound,
   executionLaneId: string,
-  turnId: string
+  runId: string
 ): ReviewRound {
   validateReviewRound(round);
   if (round.status !== "running" || round.executionGroup === undefined) {
     throw new Error(`ReviewRound ${round.id} has no running ExecutionGroup.`);
   }
   const lane = round.executionGroup.lanes.find(({ id }) => id === executionLaneId);
-  if (lane === undefined || lane.disposition !== "open" || lane.currentTurnId !== turnId) {
+  if (lane === undefined || lane.disposition !== "open" || lane.currentRunId !== runId) {
     throw new Error(
       `Review retry does not target the current failed Lane attempt: `
-      + `${round.executionGroup.id}/${executionLaneId}/${turnId}.`
+      + `${round.executionGroup.id}/${executionLaneId}/${runId}.`
     );
   }
   return round;
@@ -429,7 +429,7 @@ export function validateReviewRound(round: ReviewRound): ReviewRound {
     "workItemId",
     "candidateId",
     "reviewerRoleName",
-    "reviewerTurnId",
+    "reviewerRunId",
     "reviewBaseCommit",
     "scope",
     "taskCandidate",
@@ -496,18 +496,18 @@ export function validateReviewRound(round: ReviewRound): ReviewRound {
     }
     validateDeltaRecheckRecord(round.deltaRecheck);
   }
-  if (round.reviewerTurnId !== undefined) {
+  if (round.reviewerRunId !== undefined) {
     validateTaskRecordReference({
       taskId: round.taskId,
-      localId: round.reviewerTurnId
-    }, "turn");
+      localId: round.reviewerRunId
+    }, "run");
   }
   if (round.workspace !== undefined) validateReviewWorkspace(round, round.workspace);
   requireTimestamp(round.createdAt, "ReviewRound createdAt");
   const terminal = round.status === "completed" || round.status === "failed";
   if (terminal) {
-    if (round.status === "completed" && round.reviewerTurnId === undefined) {
-      throw new Error("A completed ReviewRound requires its exact main Reviewer Turn.");
+    if (round.status === "completed" && round.reviewerRunId === undefined) {
+      throw new Error("A completed ReviewRound requires its exact main Reviewer AgentRun.");
     }
     if (round.status === "completed" && round.failure !== undefined) {
       throw new Error("A completed ReviewRound cannot carry failure metadata.");
@@ -525,9 +525,9 @@ export function validateReviewRound(round: ReviewRound): ReviewRound {
     throw new Error("A running ReviewRound requires its main Reviewer workspace.");
   }
   if (round.status === "running"
-    && round.reviewerTurnId === undefined
+    && round.reviewerRunId === undefined
     && round.executionGroup === undefined) {
-    throw new Error("A running ReviewRound requires a direct Reviewer Turn or replicated Group.");
+    throw new Error("A running ReviewRound requires a direct Reviewer AgentRun or replicated Group.");
   }
   if (round.workspaceDisposition !== undefined) {
     if (!terminal || round.workspace === undefined) {

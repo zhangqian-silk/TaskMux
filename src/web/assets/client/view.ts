@@ -24,7 +24,7 @@ import {
   reviewCard,
   richText,
   roleCard,
-  turnCard,
+  runCard,
   sectionHead,
   taskCard,
   translatedStatus,
@@ -183,7 +183,7 @@ export function renderOverview(detail, state, t, locale, onSelect) {
   wrap.append(inbox);
 
   // Tasks whose Task-first projection says they need attention: blocked,
-  // recovering, or in an attention state. This replaces the raw stalled-Turn
+  // recovering, or in an attention state. This replaces the raw stalled-AgentRun
   // count with the derived execution status.
   const attentionTasks = (state.tasks || []).filter(function (task) {
     const status = task.executionStatus;
@@ -233,23 +233,23 @@ export function renderError(container, message) {
   container.append(node("div", "error", message));
 }
 
-const TURN_PAGE_SIZE = 12;
+const RUN_PAGE_SIZE = 12;
 const LIST_PAGE_SIZE = 10;
-const TURN_FILTERS = ["all", "active", "completed", "failed"];
+const RUN_FILTERS = ["all", "active", "completed", "failed"];
 
-function turnFilterRow(sortedTurns, t, onChange) {
-  const row = node("div", "filter-row turn-filter");
+function runFilterRow(sortedRuns, t, onChange) {
+  const row = node("div", "filter-row run-filter");
   const buttons = [];
-  TURN_FILTERS.forEach(function (status) {
+  RUN_FILTERS.forEach(function (status) {
     const count = status === "all"
-      ? sortedTurns.length
-      : sortedTurns.filter(function (turn) { return turn.status === status; }).length;
+      ? sortedRuns.length
+      : sortedRuns.filter(function (run) { return run.status === status; }).length;
     if (status !== "all" && count === 0) return;
     const btn = node("button", "filter-chip");
     btn.type = "button";
     btn.dataset.status = status;
     if (status !== "all") btn.append(node("span", "filter-dot " + status));
-    btn.append(document.createTextNode(status === "all" ? t("status.all") : t("turn." + status)));
+    btn.append(document.createTextNode(status === "all" ? t("status.all") : t("run." + status)));
     btn.append(node("span", "filter-count", String(count)));
     btn.addEventListener("click", function () { onChange(status); });
     buttons.push({ status: status, element: btn });
@@ -379,23 +379,23 @@ export function renderTaskDetail(detail, data, t, locale, actions) {
       attentionBody));
   }
 
-  const stalledTurns = data.runtimeHealth && data.runtimeHealth.needsAttentionTurns
-    ? data.runtimeHealth.needsAttentionTurns
+  const stalledRuns = data.runtimeHealth && data.runtimeHealth.needsAttentionRuns
+    ? data.runtimeHealth.needsAttentionRuns
     : [];
-  if (stalledTurns.length) {
+  if (stalledRuns.length) {
     const runtimeHealthBody = node("div", "section-body");
-    stalledTurns.forEach(function (turn) {
+    stalledRuns.forEach(function (run) {
       const card = node("article", "record-card");
       card.append(
-        node("strong", "", turn.roleName + " · " + turn.turnId),
-        node("p", "record-copy", (turn.kind || "workflow-not-progressing") + " · " + (turn.classification || "truly-stalled")),
-        node("small", "", t("detail.lastProgress") + " · " + formatDateTime(turn.progressAt, locale))
+        node("strong", "", run.roleName + " · " + run.runId),
+        node("p", "record-copy", (run.kind || "workflow-not-progressing") + " · " + (run.classification || "truly-stalled")),
+        node("small", "", t("detail.lastProgress") + " · " + formatDateTime(run.progressAt, locale))
       );
       runtimeHealthBody.append(card);
     });
     scaffold.append(anchorSection(
       "detail-health",
-      sectionHead(t("detail.runtimeHealth"), { count: stalledTurns.length }),
+      sectionHead(t("detail.runtimeHealth"), { count: stalledRuns.length }),
       runtimeHealthBody
     ));
   }
@@ -440,35 +440,35 @@ export function renderTaskDetail(detail, data, t, locale, actions) {
     sectionHead(t("detail.workItems"), { count: data.workItems.length }),
     workBody));
 
-  // 5. Turns (anchor #detail-exec) — execution grid with status filter + paging
+  // 5. AgentRuns (anchor #detail-exec) — execution grid with status filter + paging
   const execWrap = node("div", "section-body");
-  const execBody = node("div", "turn-grid");
-  const sortedTurns = data.turns.slice().sort(byNewest);
-  if (!sortedTurns.length) {
-    execBody.append(emptyRow(t, "empty.turns"));
+  const execBody = node("div", "run-grid");
+  const sortedRuns = data.runs.slice().sort(byNewest);
+  if (!sortedRuns.length) {
+    execBody.append(emptyRow(t, "empty.runs"));
     execWrap.append(execBody);
   } else {
-    let activeTurnFilter = "all";
-    const filter = turnFilterRow(sortedTurns, t, function (status) {
-      activeTurnFilter = status;
+    let activeRunFilter = "all";
+    const filter = runFilterRow(sortedRuns, t, function (status) {
+      activeRunFilter = status;
       filter.sync(status);
-      renderTurnGrid();
+      renderRunGrid();
     });
-    function renderTurnGrid() {
+    function renderRunGrid() {
       clear(execBody);
-      const visible = activeTurnFilter === "all"
-        ? sortedTurns
-        : sortedTurns.filter(function (turn) { return turn.status === activeTurnFilter; });
-      pagedList(execBody, visible, TURN_PAGE_SIZE, function (turn) {
-        return turnCard(turn, t, locale);
+      const visible = activeRunFilter === "all"
+        ? sortedRuns
+        : sortedRuns.filter(function (run) { return run.status === activeRunFilter; });
+      pagedList(execBody, visible, RUN_PAGE_SIZE, function (run) {
+        return runCard(run, t, locale);
       }, t);
     }
-    filter.sync(activeTurnFilter);
+    filter.sync(activeRunFilter);
     execWrap.append(filter.row, execBody);
-    renderTurnGrid();
+    renderRunGrid();
   }
   scaffold.append(anchorSection("detail-exec",
-    sectionHead(t("detail.execution"), { count: data.turns.length }),
+    sectionHead(t("detail.execution"), { count: data.runs.length }),
     execWrap));
 
   // 5b. Reviews (anchor #detail-reviews) — review rounds for completed candidates
@@ -524,7 +524,10 @@ export function renderTaskDetail(detail, data, t, locale, actions) {
     messagesBody.append(emptyRow(t));
   } else {
     pagedList(messagesBody, data.messages.slice().sort(byNewest), LIST_PAGE_SIZE, function (message) {
-      return messageCard(message, t, locale);
+      const source = message.resultRef && data.runs.find(function (run) {
+        return run.id === message.resultRef.runId && run.roleName === message.author.roleName;
+      });
+      return messageCard(message, t, locale, source && source.result);
     }, t);
   }
   scaffold.append(anchorSection("detail-messages",

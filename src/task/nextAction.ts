@@ -8,9 +8,9 @@ import {
   governingWorkItemDeliveries,
   workItemDeliverySettled
 } from "../integration/deliveryObligation.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { ReviewRound, TaskReviewCandidate } from "../review/reviewRound.js";
-import { isCompletedTaskReviewEvidenceFromTurns } from "../review/reviewAcceptance.js";
+import { isCompletedTaskReviewEvidenceFromRuns } from "../review/reviewAcceptance.js";
 import {
   actionableExecutionLaneRecoveries,
   type ActionableExecutionLaneRecovery,
@@ -108,12 +108,12 @@ export type NextActionFacts = Readonly<{
   reviewRounds: readonly ReviewRound[];
   reviewConfig: ReviewConfig | null;
   openInputRequests: readonly InputRequest[];
-  activeTurns: readonly Turn[];
-  /** Recent Leader Turns (any status), newest last; consumed by the semantic budget. */
-  leaderTurns: readonly Turn[];
-  /** Exact Review Turns needed to validate structural Review completion. */
+  activeRuns: readonly AgentRun[];
+  /** Recent Leader AgentRuns (any status), newest last; consumed by the semantic budget. */
+  leaderRuns: readonly AgentRun[];
+  /** Exact Review AgentRuns needed to validate structural Review completion. */
   reviewOutcomeEvidence?: Readonly<{
-    turns: readonly Turn[];
+    runs: readonly AgentRun[];
   }>;
   /** Current unresolved Lane health supplied by canonical Task read surfaces. */
   executionGroups?: readonly ExecutionGroupHealthSummary[];
@@ -177,19 +177,19 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
   }
 
   const laneRecovery = actionableExecutionLaneRecoveries(facts.executionGroups ?? [])
-    .find(hasExactTurn);
+    .find(hasExactRun);
   if (laneRecovery !== undefined) {
     return buildExecutionLaneRecoveryAction(facts, laneRecovery);
   }
 
-  const activeLeader = facts.activeTurns.find((run) => run.roleName === "leader");
+  const activeLeader = facts.activeRuns.find((run) => run.roleName === "leader");
   if (activeLeader !== undefined) {
     return buildAction(facts, {
       kind: "wait-for-owned-execution",
-      reason: `Leader Turn ${activeLeader.id} is active; the protocol position is being executed.`,
-      refs: [ref("turn", activeLeader.id)],
+      reason: `Leader AgentRun ${activeLeader.id} is active; the protocol position is being executed.`,
+      refs: [ref("run", activeLeader.id)],
       preconditions: [
-        { fact: "Leader Turn is active", satisfied: true, ref: ref("turn", activeLeader.id) }
+        { fact: "Leader AgentRun is active", satisfied: true, ref: ref("run", activeLeader.id) }
       ]
     });
   }
@@ -256,25 +256,25 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
     if (activeReview !== undefined) {
       const reviewRef = ref("review-round", activeReview.id);
       if (activeReview.status === "running") {
-        if (activeReview.reviewerTurnId === undefined
+        if (activeReview.reviewerRunId === undefined
           && activeReview.executionGroup === undefined) {
           return buildAction(facts, {
             kind: "repair-protocol-inconsistency",
-            reason: `ReviewRound ${activeReview.id} is running but has no Reviewer Turn.`,
+            reason: `ReviewRound ${activeReview.id} is running but has no Reviewer AgentRun.`,
             refs: [reviewRef],
             conflicts: [reviewRef],
             preconditions: [
-              { fact: "Running ReviewRound has an exact Reviewer Turn", satisfied: false, ref: reviewRef }
+              { fact: "Running ReviewRound has an exact Reviewer AgentRun", satisfied: false, ref: reviewRef }
             ]
           });
         }
-        const reviewRun = activeReviewRoundRun(activeReview, facts.activeTurns);
+        const reviewRun = activeReviewRoundRun(activeReview, facts.activeRuns);
         if (reviewRun === undefined) {
-          if (activeReview.executionGroup !== undefined && activeReview.reviewerTurnId === undefined
-            && !reviewGroupNeedsDispatch(activeReview, facts.activeTurns)) {
+          if (activeReview.executionGroup !== undefined && activeReview.reviewerRunId === undefined
+            && !reviewGroupNeedsDispatch(activeReview, facts.activeRuns)) {
             return synthesisSelectionAction(facts, "review", activeReview.id);
           }
-          if (reviewGroupNeedsDispatch(activeReview, facts.activeTurns)) {
+          if (reviewGroupNeedsDispatch(activeReview, facts.activeRuns)) {
             return buildAction(facts, {
               kind: "resume-review",
               reason: `ReviewRound ${activeReview.id} has Review Producer Lanes ready for dispatch or retry.`,
@@ -287,12 +287,12 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
                 + reviewLaneRoleOptions(activeReview)
             });
           }
-          const runRef = activeReview.reviewerTurnId === undefined
+          const runRef = activeReview.reviewerRunId === undefined
             ? reviewRef
-            : ref("turn", activeReview.reviewerTurnId);
+            : ref("run", activeReview.reviewerRunId);
           return buildAction(facts, {
             kind: "repair-protocol-inconsistency",
-            reason: `ReviewRound ${activeReview.id} has no active Producer or main Reviewer Turn.`,
+            reason: `ReviewRound ${activeReview.id} has no active Producer or main Reviewer AgentRun.`,
             refs: [reviewRef, runRef],
             conflicts: [reviewRef, runRef],
             preconditions: [
@@ -302,23 +302,23 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
         }
         return buildAction(facts, {
           kind: "wait-for-owned-execution",
-          reason: `Reviewer Turn ${reviewRun.id} is evaluating Candidate ${candidateReady.id}/${candidate?.id ?? "unknown"}.`,
-          refs: [reviewRef, ref("turn", reviewRun.id)],
+          reason: `Reviewer AgentRun ${reviewRun.id} is evaluating Candidate ${candidateReady.id}/${candidate?.id ?? "unknown"}.`,
+          refs: [reviewRef, ref("run", reviewRun.id)],
           preconditions: [
             { fact: "ReviewRound is running", satisfied: true, ref: reviewRef },
-            { fact: "Reviewer Turn is active", satisfied: true, ref: ref("turn", reviewRun.id) }
+            { fact: "Reviewer AgentRun is active", satisfied: true, ref: ref("run", reviewRun.id) }
           ]
         });
       }
-      if (activeReview.reviewerTurnId !== undefined) {
-        const runRef = ref("turn", activeReview.reviewerTurnId);
+      if (activeReview.reviewerRunId !== undefined) {
+        const runRef = ref("run", activeReview.reviewerRunId);
         return buildAction(facts, {
           kind: "repair-protocol-inconsistency",
-          reason: `Pending ReviewRound ${activeReview.id} already references Reviewer Turn ${activeReview.reviewerTurnId}.`,
+          reason: `Pending ReviewRound ${activeReview.id} already references Reviewer AgentRun ${activeReview.reviewerRunId}.`,
           refs: [reviewRef, runRef],
           conflicts: [reviewRef, runRef],
           preconditions: [
-            { fact: "Pending ReviewRound has no Reviewer Turn", satisfied: false, ref: runRef }
+            { fact: "Pending ReviewRound has no Reviewer AgentRun", satisfied: false, ref: runRef }
           ]
         });
       }
@@ -328,7 +328,7 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
         refs: [reviewRef],
         preconditions: [
           { fact: "ReviewRound is pending", satisfied: true, ref: reviewRef },
-          { fact: "Reviewer Turn exists", satisfied: false }
+          { fact: "Reviewer AgentRun exists", satisfied: false }
         ],
         recommendedCommand:
           `yui task work review ${task.id}/${candidateReady.id}`
@@ -395,18 +395,18 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
     });
   }
 
-  // Turn purpose owns routing. Review Turns remain attached to their exact
+  // AgentRun purpose owns routing. Review AgentRuns remain attached to their exact
   // ReviewRound branches below instead of being mistaken for Worker delivery.
-  const activeDelegatedExecutions = facts.activeTurns.filter((run) => (
+  const activeDelegatedExecutions = facts.activeRuns.filter((run) => (
     run.purpose === "execution" && run.roleName !== "leader"
   ));
   if (activeDelegatedExecutions.length > 0) {
     return buildAction(facts, {
       kind: "wait-for-owned-execution",
-      reason: `${activeDelegatedExecutions.length} delegated execution Turn(s) are active; wait for their completion.`,
-      refs: activeDelegatedExecutions.map((run) => ref("turn", run.id)),
+      reason: `${activeDelegatedExecutions.length} delegated execution AgentRun(s) are active; wait for their completion.`,
+      refs: activeDelegatedExecutions.map((run) => ref("run", run.id)),
       preconditions: activeDelegatedExecutions.map((run) => (
-        { fact: `Execution Turn ${run.id} is active`, satisfied: true, ref: ref("turn", run.id) }
+        { fact: `Execution AgentRun ${run.id} is active`, satisfied: true, ref: ref("run", run.id) }
       ))
     });
   }
@@ -431,7 +431,7 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
     const item = openWork.item;
     const group = currentWorkItemExecutionGroup(item);
     if (item.status === "open" && group !== undefined
-      && !facts.activeTurns.some((turn) => turn.sourceExecutionGroupId === group.id)) {
+      && !facts.activeRuns.some((run) => run.sourceExecutionGroupId === group.id)) {
       return synthesisSelectionAction(facts, "work", item.id);
     }
     const refs = [ref("work-item", item.id)];
@@ -526,15 +526,15 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
   const failedFinal = latestTaskFinalReview(facts.reviewRounds, finalReviewContract);
   if (finalReviewRequired
     && failedFinal?.status === "failed") {
-    const reviewerTurn = failedFinal.reviewerTurnId === undefined
+    const reviewerRun = failedFinal.reviewerRunId === undefined
       ? undefined
-      : facts.reviewOutcomeEvidence?.turns.find(
-          ({ id }) => id === failedFinal.reviewerTurnId
+      : facts.reviewOutcomeEvidence?.runs.find(
+          ({ id }) => id === failedFinal.reviewerRunId
         );
-    const sameRoundCommand = failedFinal.reviewerTurnId === undefined
+    const sameRoundCommand = failedFinal.reviewerRunId === undefined
       ? `yui task review retry ${task.id}/${failedFinal.id}`
-      : reviewerTurn?.status === "failed"
-        ? `yui task turn retry ${task.id}/${reviewerTurn.id}`
+      : reviewerRun?.status === "failed"
+        ? `yui task run retry ${task.id}/${reviewerRun.id}`
         : undefined;
     return buildAction(facts, {
       kind: "resume-review",
@@ -543,11 +543,11 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
       }.`,
       refs: [
         ref("review-round", failedFinal.id),
-        ...(reviewerTurn?.status === "failed" ? [ref("turn", reviewerTurn.id)] : [])
+        ...(reviewerRun?.status === "failed" ? [ref("run", reviewerRun.id)] : [])
       ],
       preconditions: [
         {
-          fact: "Task-final Review has one exact completed Reviewer Turn",
+          fact: "Task-final Review has one exact completed Reviewer AgentRun",
           satisfied: false,
           ref: ref("review-round", failedFinal.id)
         }
@@ -557,19 +557,19 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
   }
   if (finalReviewRequired
     && failedFinal?.status === "completed"
-    && !isCompletedTaskReviewEvidenceFromTurns(
+    && !isCompletedTaskReviewEvidenceFromRuns(
       failedFinal,
-      facts.reviewOutcomeEvidence?.turns ?? []
+      facts.reviewOutcomeEvidence?.runs ?? []
     )) {
     return buildAction(facts, {
       kind: "repair-protocol-inconsistency",
       reason:
-        `Task-final Review ${failedFinal.id} is completed without one exact completed main Reviewer Turn.`,
+        `Task-final Review ${failedFinal.id} is completed without one exact completed main Reviewer AgentRun.`,
       refs: [ref("review-round", failedFinal.id)],
       conflicts: [ref("review-round", failedFinal.id)],
       preconditions: [
         {
-          fact: "ReviewRound and exact main Reviewer Turn agree",
+          fact: "ReviewRound and exact main Reviewer AgentRun agree",
           satisfied: false,
           ref: ref("review-round", failedFinal.id)
         }
@@ -581,25 +581,25 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
     && (activeFinal.status === "pending" || activeFinal.status === "running")) {
     const reviewRef = ref("review-round", activeFinal.id);
     if (activeFinal.status === "running") {
-      if (activeFinal.reviewerTurnId === undefined
+      if (activeFinal.reviewerRunId === undefined
         && activeFinal.executionGroup === undefined) {
         return buildAction(facts, {
           kind: "repair-protocol-inconsistency",
-          reason: `Task-final ReviewRound ${activeFinal.id} is running but has no Reviewer Turn.`,
+          reason: `Task-final ReviewRound ${activeFinal.id} is running but has no Reviewer AgentRun.`,
           refs: [reviewRef],
           conflicts: [reviewRef],
           preconditions: [
-            { fact: "Running Task-final ReviewRound has an exact Reviewer Turn", satisfied: false, ref: reviewRef }
+            { fact: "Running Task-final ReviewRound has an exact Reviewer AgentRun", satisfied: false, ref: reviewRef }
           ]
         });
       }
-      const reviewRun = activeReviewRoundRun(activeFinal, facts.activeTurns);
+      const reviewRun = activeReviewRoundRun(activeFinal, facts.activeRuns);
       if (reviewRun === undefined) {
-        if (activeFinal.executionGroup !== undefined && activeFinal.reviewerTurnId === undefined
-          && !reviewGroupNeedsDispatch(activeFinal, facts.activeTurns)) {
+        if (activeFinal.executionGroup !== undefined && activeFinal.reviewerRunId === undefined
+          && !reviewGroupNeedsDispatch(activeFinal, facts.activeRuns)) {
           return synthesisSelectionAction(facts, "review", activeFinal.id);
         }
-        if (reviewGroupNeedsDispatch(activeFinal, facts.activeTurns)) {
+        if (reviewGroupNeedsDispatch(activeFinal, facts.activeRuns)) {
           return buildAction(facts, {
             kind: "resume-review",
             reason: `Task-final ReviewRound ${activeFinal.id} has Review Producer Lanes ready for dispatch or retry.`,
@@ -612,12 +612,12 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
               + reviewLaneRoleOptions(activeFinal)
           });
         }
-        const runRef = activeFinal.reviewerTurnId === undefined
+        const runRef = activeFinal.reviewerRunId === undefined
           ? reviewRef
-          : ref("turn", activeFinal.reviewerTurnId);
+          : ref("run", activeFinal.reviewerRunId);
         return buildAction(facts, {
           kind: "repair-protocol-inconsistency",
-          reason: `Task-final ReviewRound ${activeFinal.id} has no active Producer or main Reviewer Turn.`,
+          reason: `Task-final ReviewRound ${activeFinal.id} has no active Producer or main Reviewer AgentRun.`,
           refs: [reviewRef, runRef],
           conflicts: [reviewRef, runRef],
           preconditions: [
@@ -627,11 +627,11 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
       }
       return buildAction(facts, {
         kind: "wait-for-owned-execution",
-        reason: `Reviewer Turn ${reviewRun.id} is executing frozen Task-final Review ${activeFinal.id}; this Review does not globally pause Leader decisions on newer facts.`,
-        refs: [reviewRef, ref("turn", reviewRun.id)],
+        reason: `Reviewer AgentRun ${reviewRun.id} is executing frozen Task-final Review ${activeFinal.id}; this Review does not globally pause Leader decisions on newer facts.`,
+        refs: [reviewRef, ref("run", reviewRun.id)],
         preconditions: [
           { fact: "Task-final ReviewRound is running", satisfied: true, ref: reviewRef },
-          { fact: "Reviewer Turn is active", satisfied: true, ref: ref("turn", reviewRun.id) }
+          { fact: "Reviewer AgentRun is active", satisfied: true, ref: ref("run", reviewRun.id) }
         ],
         alternatives: [
           {
@@ -650,15 +650,15 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
           "Leader decides whether the current facts justify waiting, continuing development, direct review, or another Reviewer."
       });
     }
-    if (activeFinal.reviewerTurnId !== undefined) {
-      const runRef = ref("turn", activeFinal.reviewerTurnId);
+    if (activeFinal.reviewerRunId !== undefined) {
+      const runRef = ref("run", activeFinal.reviewerRunId);
       return buildAction(facts, {
         kind: "repair-protocol-inconsistency",
-        reason: `Pending Task-final ReviewRound ${activeFinal.id} already references Reviewer Turn ${activeFinal.reviewerTurnId}.`,
+        reason: `Pending Task-final ReviewRound ${activeFinal.id} already references Reviewer AgentRun ${activeFinal.reviewerRunId}.`,
         refs: [reviewRef, runRef],
         conflicts: [reviewRef, runRef],
         preconditions: [
-          { fact: "Pending Task-final ReviewRound has no Reviewer Turn", satisfied: false, ref: runRef }
+          { fact: "Pending Task-final ReviewRound has no Reviewer AgentRun", satisfied: false, ref: runRef }
         ]
       });
     }
@@ -668,7 +668,7 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
       refs: [reviewRef],
       preconditions: [
         { fact: "Task-final ReviewRound is pending", satisfied: true, ref: reviewRef },
-        { fact: "Reviewer Turn exists", satisfied: false }
+        { fact: "Reviewer AgentRun exists", satisfied: false }
       ],
       recommendedCommand:
         `yui task review request ${task.id} --role ${activeFinal.reviewerRoleName}`
@@ -756,17 +756,17 @@ function synthesisSelectionAction(
     preconditions: [],
     recommendedCommand: subject === "work"
       ? `yui task work show ${facts.task.id}/${id}`
-      : `yui task review synthesize ${facts.task.id}/${id} --source-turn <task>/<turn>`,
-    judgmentRequired: "Inspect original results and any existing main Turn. Retry a failed main Turn or explicitly select synthesis sources; Core does not enforce a success count or voting rule."
+      : `yui task review synthesize ${facts.task.id}/${id} --source-run <task>/<run>`,
+    judgmentRequired: "Inspect original results and any existing main AgentRun. Retry a failed main AgentRun or explicitly select synthesis sources; Core does not enforce a success count or voting rule."
   });
 }
 
-type NextActionLaneRecovery = ActionableExecutionLaneRecovery & Readonly<{ turnId: string }>;
+type NextActionLaneRecovery = ActionableExecutionLaneRecovery & Readonly<{ runId: string }>;
 
-function hasExactTurn(
+function hasExactRun(
   lane: ActionableExecutionLaneRecovery
 ): lane is NextActionLaneRecovery {
-  return lane.turnId !== undefined;
+  return lane.runId !== undefined;
 }
 
 function buildExecutionLaneRecoveryAction(
@@ -776,17 +776,17 @@ function buildExecutionLaneRecoveryAction(
   const refs = [
     ref("execution-group", lane.groupId),
     ref("execution-lane", lane.laneId),
-    ref("turn", lane.turnId)
+    ref("run", lane.runId)
   ];
   return buildAction(facts, {
     kind: "retry-execution-lane",
-    reason: `Execution Lane ${lane.laneId} is durably failed; retry only exact Turn ${lane.turnId} and retain sibling results.`,
+    reason: `Execution Lane ${lane.laneId} is durably failed; retry only exact AgentRun ${lane.runId} and retain sibling results.`,
     refs,
     preconditions: [
       { fact: "Execution Lane is failed and unresolved", satisfied: true, ref: refs[1] },
-      { fact: "Exact failed Turn is retained", satisfied: true, ref: refs[2] }
+      { fact: "Exact failed AgentRun is retained", satisfied: true, ref: refs[2] }
     ],
-    recommendedCommand: `yui task turn retry ${facts.task.id}/${lane.turnId}`
+    recommendedCommand: `yui task run retry ${facts.task.id}/${lane.runId}`
   });
 }
 
@@ -864,17 +864,17 @@ function latestActiveWorkItemReview(
     ));
 }
 
-function activeReviewRoundRun(round: ReviewRound, activeTurns: readonly Turn[]): Turn | undefined {
-  if (round.reviewerTurnId !== undefined) {
-    const main = activeTurns.find((run) => (
-      run.id === round.reviewerTurnId && run.roleName === round.reviewerRoleName
+function activeReviewRoundRun(round: ReviewRound, activeRuns: readonly AgentRun[]): AgentRun | undefined {
+  if (round.reviewerRunId !== undefined) {
+    const main = activeRuns.find((run) => (
+      run.id === round.reviewerRunId && run.roleName === round.reviewerRoleName
     ));
     if (main !== undefined) return main;
   }
   for (const lane of round.executionGroup?.lanes ?? []) {
-    if (lane.disposition !== "open" || lane.currentTurnId === undefined) continue;
-    const run = activeTurns.find((candidate) => (
-      candidate.id === lane.currentTurnId && candidate.roleName === lane.roleName
+    if (lane.disposition !== "open" || lane.currentRunId === undefined) continue;
+    const run = activeRuns.find((candidate) => (
+      candidate.id === lane.currentRunId && candidate.roleName === lane.roleName
     ));
     if (run !== undefined) return run;
   }
@@ -889,45 +889,45 @@ function reviewLaneRoleOptions(round: ReviewRound): string {
 
 function reviewGroupNeedsDispatch(
   round: ReviewRound,
-  turns: readonly Turn[]
+  runs: readonly AgentRun[]
 ): boolean {
   return round.executionGroup?.lanes.some((lane) => (
     lane.disposition === "open"
-    && (lane.currentTurnId === undefined
-      || turns.find(({ id }) => id === lane.currentTurnId)?.status === "failed")
+    && (lane.currentRunId === undefined
+      || runs.find(({ id }) => id === lane.currentRunId)?.status === "failed")
   )) === true;
 }
 
 function reviewRoundConflict(
   round: ReviewRound,
-  activeTurns: readonly Turn[]
+  activeRuns: readonly AgentRun[]
 ): Inconsistency | null {
   const reviewRef = ref("review-round", round.id);
   if (round.status === "running") {
-    if (round.reviewerTurnId === undefined && round.executionGroup === undefined) {
+    if (round.reviewerRunId === undefined && round.executionGroup === undefined) {
       return {
         reason: `ReviewRound ${round.id} is running but has no execution unit.`,
         conflicts: [reviewRef]
       };
     }
-    if (activeReviewRoundRun(round, activeTurns) === undefined) {
-      if (round.reviewerTurnId === undefined && round.executionGroup !== undefined) return null;
-      const runRef = ref("turn", round.reviewerTurnId!);
+    if (activeReviewRoundRun(round, activeRuns) === undefined) {
+      if (round.reviewerRunId === undefined && round.executionGroup !== undefined) return null;
+      const runRef = ref("run", round.reviewerRunId!);
       return {
-        reason: `ReviewRound ${round.id} references Reviewer Turn ${round.reviewerTurnId}, but that Turn is not active.`,
+        reason: `ReviewRound ${round.id} references Reviewer AgentRun ${round.reviewerRunId}, but that AgentRun is not active.`,
         conflicts: [reviewRef, runRef]
       };
     }
   }
   if (round.status === "pending") {
-    const launchedTurnId = round.reviewerTurnId
+    const launchedRunId = round.reviewerRunId
       ?? round.executionGroup?.lanes.find(
-        (lane) => lane.currentTurnId !== undefined
-      )?.currentTurnId;
-    if (launchedTurnId !== undefined) {
-      const runRef = ref("turn", launchedTurnId);
+        (lane) => lane.currentRunId !== undefined
+      )?.currentRunId;
+    if (launchedRunId !== undefined) {
+      const runRef = ref("run", launchedRunId);
       return {
-        reason: `Pending ReviewRound ${round.id} already references Reviewer Turn ${launchedTurnId}.`,
+        reason: `Pending ReviewRound ${round.id} already references Reviewer AgentRun ${launchedRunId}.`,
         conflicts: [reviewRef, runRef]
       };
     }
@@ -1036,9 +1036,9 @@ function hasValidFinalReview(facts: NextActionFacts): boolean {
         contract
       ))
     ));
-  if (final === undefined || !isCompletedTaskReviewEvidenceFromTurns(
+  if (final === undefined || !isCompletedTaskReviewEvidenceFromRuns(
     final,
-    facts.reviewOutcomeEvidence?.turns ?? []
+    facts.reviewOutcomeEvidence?.runs ?? []
   )) return false;
   return final.taskCandidate !== undefined;
 }
@@ -1075,7 +1075,7 @@ function detectProtocolInconsistency(facts: NextActionFacts): Inconsistency | nu
   }
 
   for (const round of facts.reviewRounds) {
-    const reviewConflict = reviewRoundConflict(round, facts.activeTurns);
+    const reviewConflict = reviewRoundConflict(round, facts.activeRuns);
     if (reviewConflict !== null) return reviewConflict;
   }
 

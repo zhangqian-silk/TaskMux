@@ -12,7 +12,7 @@ import {
   type EnqueueIntegrationQueueResult
 } from "../integration/integrationQueueService.js";
 import type { IntegrationQueueEntry } from "../integration/integrationQueueEntry.js";
-import { taskLocalActor } from "./taskActor.js";
+import { assertTaskDeliveryAuthority as taskLocalActor } from "./taskActor.js";
 import { parseRepeatable } from "./taskIntegrationCommands.js";
 import { resolveTaskRecordReference } from "../task/taskRecordReference.js";
 import type { TaskIntegrationCommandOptions } from "./taskIntegrationCommands.js";

@@ -52,7 +52,7 @@ export type RuntimeObservationAuthority =
 export type RuntimeObservationFence = Readonly<{
   taskId?: string;
   roleName: string;
-  turnId?: string;
+  runId?: string;
   agentId: string;
   /** Open, namespaced Driver identity; never a closed provider union. */
   driverId: string;
@@ -73,12 +73,12 @@ export type RuntimeUsageSnapshot = Readonly<{
   reasoningTokens?: number;
 }>;
 
-export type RuntimeTurnFailure = Readonly<{
+export type RuntimeRunFailure = Readonly<{
   /** Complete standardized fact; never a recovery decision. */
   error: StandardAgentError;
   lastOutput?: string;
-  /** Exact Provider evidence that this error irrecoverably covers the Yui Turn. */
-  turnTerminal?: boolean;
+  /** Exact Provider evidence that this error irrecoverably covers the Yui AgentRun. */
+  runTerminal?: boolean;
 }>;
 
 export type RuntimeObservationPayload = Readonly<{
@@ -94,7 +94,7 @@ export type RuntimeObservationPayload = Readonly<{
   sourceId?: string;
   observerStatus?: "healthy" | "degraded" | "unavailable";
   observerDetail?: string;
-  failure?: RuntimeTurnFailure;
+  failure?: RuntimeRunFailure;
   /** Provider-visible input only; never reasoning or tool activity. */
   input?: string;
   /** Exact final Agent result text; Core treats it as opaque transport. */
@@ -188,8 +188,8 @@ const AUTHORITIES: readonly RuntimeObservationAuthority[] = [
 ];
 
 /** Provider Turn facts always carry native Turn identity. `turnId` is only an
- * optional correlation when that Turn was started for a Yui Turn. */
-const TURN_SCOPED: ReadonlySet<RuntimeObservationKind> = new Set([
+ * optional correlation when that AgentRun was started for a Yui AgentRun. */
+const RUN_SCOPED: ReadonlySet<RuntimeObservationKind> = new Set([
   "turn.accepted",
   "turn.waiting",
   "turn.completed",
@@ -238,10 +238,10 @@ export function createRuntimeObservation(input: RuntimeObservation): RuntimeObse
     throw new Error(`${input.kind} requires provider-structured or controller authority.`);
   }
   const fence = normalizeFence(input.fence);
-  if (TURN_SCOPED.has(input.kind) && fence.nativeSessionId === undefined) {
+  if (RUN_SCOPED.has(input.kind) && fence.nativeSessionId === undefined) {
     throw new Error(`${input.kind} requires nativeSessionId.`);
   }
-  if (TURN_SCOPED.has(input.kind) && fence.nativeTurnId === undefined
+  if (RUN_SCOPED.has(input.kind) && fence.nativeTurnId === undefined
     && fence.receiptId === undefined) {
     throw new Error(`${input.kind} requires a native Turn or exact receipt identity.`);
   }
@@ -286,7 +286,7 @@ export function runtimeObservationFenceMatches(
   for (const field of [
     "taskId",
     "roleName",
-    "turnId",
+    "runId",
     "agentId",
     "driverId",
     "conversationId",
@@ -302,20 +302,20 @@ export function runtimeObservationFenceMatches(
 }
 
 /**
- * Matches observations that belong to one durable Turn/Runtime Session.
+ * Matches observations that belong to one durable AgentRun/Runtime Session.
  * A provider may advance its native Turn while background subagents from an
- * earlier Turn are still active and later mailbox activations use their own
+ * earlier AgentRun are still active and later mailbox activations use their own
  * exactly-once receipt, so nativeTurnId and receiptId are intentionally
  * excluded. Exact acceptance still validates both fields before persistence.
  */
-export function runtimeObservationTurnFenceMatches(
+export function runtimeObservationRunFenceMatches(
   expected: RuntimeObservationFence,
   actual: RuntimeObservationFence
 ): boolean {
   for (const field of [
     "taskId",
     "roleName",
-    "turnId",
+    "runId",
     "agentId",
     "driverId",
     "nativeSessionId"
@@ -337,7 +337,7 @@ export function runtimeObservationTaskEventPayload(
     agentId: observation.fence.agentId,
     driverId: observation.fence.driverId,
     ...(observation.fence.taskId === undefined ? {} : { taskId: observation.fence.taskId }),
-    ...(observation.fence.turnId === undefined ? {} : { turnId: observation.fence.turnId }),
+    ...(observation.fence.runId === undefined ? {} : { runId: observation.fence.runId }),
     ...(observation.fence.nativeSessionId === undefined
       ? {}
       : { nativeSessionId: observation.fence.nativeSessionId }),
@@ -362,14 +362,14 @@ export function runtimeObservationFromTaskEvent(
 /**
  * Runtime observation events are compacted by operation identity: a terminal
  * operation replaces its matching start. Any retained exact start therefore
- * represents Provider-owned work that is still active for this Turn.
+ * represents Provider-owned work that is still active for this AgentRun.
  */
-export function turnHasActiveRuntimeOperations(
+export function runHasActiveRuntimeOperations(
   events: readonly TaskEvent[],
   owner: Readonly<{
     taskId: string;
     roleName: string;
-    turnId: string;
+    runId: string;
     agentId: string;
   }>
 ): boolean {
@@ -378,7 +378,7 @@ export function turnHasActiveRuntimeOperations(
     return observation?.kind === "operation.started"
       && observation.fence.taskId === owner.taskId
       && observation.fence.roleName === owner.roleName
-      && observation.fence.turnId === owner.turnId
+      && observation.fence.runId === owner.runId
       && observation.fence.agentId === owner.agentId;
   });
 }
@@ -387,7 +387,7 @@ function normalizeFence(input: RuntimeObservationFence): RuntimeObservationFence
   return Object.freeze({
     ...(input.taskId === undefined ? {} : { taskId: requireIdentity(input.taskId, "Task id") }),
     roleName: requireIdentity(input.roleName, "Role name"),
-    ...(input.turnId === undefined ? {} : { turnId: requireIdentity(input.turnId, "Turn id") }),
+    ...(input.runId === undefined ? {} : { runId: requireIdentity(input.runId, "AgentRun id") }),
     agentId: requireIdentity(input.agentId, "Agent id"),
     driverId: requireDriverId(input.driverId),
     ...(input.nativeSessionId === undefined
@@ -430,7 +430,7 @@ function normalizePayload(
     && input.reason !== "user"
     && input.reason !== "permission"
     && input.reason !== "external") {
-    throw new Error("turn.waiting requires a supported reason.");
+    throw new Error("run.waiting requires a supported reason.");
   }
   if (kind === "turn.waiting") requireIdentity(input.waitId, "Runtime wait id");
   if (kind.startsWith("operation.")) {
@@ -460,7 +460,7 @@ function normalizePayload(
     ? undefined
     : normalizeObserverSource(input.observerSource);
   if (kind === "turn.failed" && input.failure === undefined) {
-    throw new Error("turn.failed requires normalized failure evidence.");
+    throw new Error("run.failed requires normalized failure evidence.");
   }
   if (input.resultTransportDiagnostic !== undefined && kind !== "turn.completed") {
     throw new Error("Only turn.completed may carry a result transport diagnostic.");
@@ -552,13 +552,13 @@ function normalizePayload(
     ...(input.input === undefined ? {} : { input: requireText(input.input, "Provider-visible input") }),
     ...(input.output === undefined
       ? {}
-      : { output: requireResultText(input.output, "Runtime Turn output") }),
+      : { output: requireResultText(input.output, "Runtime AgentRun output") }),
     ...(input.resultTransportDiagnostic === undefined
       ? {}
       : {
           resultTransportDiagnostic: requireText(
             input.resultTransportDiagnostic,
-            "Runtime Turn result diagnostic"
+            "Runtime AgentRun result diagnostic"
           )
         }),
     ...(input.summary === undefined ? {} : { summary: requireText(input.summary, "Runtime summary") }),
@@ -631,7 +631,7 @@ export function runtimeObservationSemanticKey(input: Readonly<{
       input.kind,
       input.payload?.outcome ?? input.payload?.failure?.error.code ?? "terminal",
       input.kind === "continuation.settled" ? input.payload?.resultRef ?? "none" : "none",
-      input.kind === "turn.failed" && input.payload?.failure?.turnTerminal === true
+      input.kind === "turn.failed" && input.payload?.failure?.runTerminal === true
         ? "turn-terminal-failure"
         : "turn-terminal"
     ].join(":");
@@ -685,7 +685,7 @@ function normalizeObserverSource(input: AgentRuntimeObserverSource): AgentRuntim
   });
 }
 
-function normalizeFailure(input: RuntimeTurnFailure): RuntimeTurnFailure {
+function normalizeFailure(input: RuntimeRunFailure): RuntimeRunFailure {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("Runtime failure evidence must be an object.");
   }
@@ -697,9 +697,9 @@ function normalizeFailure(input: RuntimeTurnFailure): RuntimeTurnFailure {
     ...(input.lastOutput === undefined
       ? {}
       : { lastOutput: requireText(input.lastOutput, "Runtime failure last output") }),
-    ...(input.turnTerminal === undefined
+    ...(input.runTerminal === undefined
       ? {}
-      : { turnTerminal: requireBoolean(input.turnTerminal, "Runtime failure turnTerminal") })
+      : { runTerminal: requireBoolean(input.runTerminal, "Runtime failure turnTerminal") })
   });
 }
 

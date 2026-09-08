@@ -14,7 +14,7 @@
 
 Session 启动时就提供 Yui CLI 或 describe／call 桥，以及 plugin.create／validate／activate。这个入口由可信内建提供，不能要求 Agent 先安装它才能安装第一个插件。
 
-目录变化后，后续桥调用读取当前可见能力。原生工具 schema、系统提示和 Endpoint 不要求被热改。即使模型只在下一 Turn 得知新工具，也可以继续同一 Task，不重启整个 Controller。
+目录变化后，后续桥调用读取当前可见能力。原生工具 schema、系统提示和 Endpoint 不要求被热改。即使模型只在下一 AgentRun 得知新工具，也可以继续同一 Task，不重启整个 Controller。
 
 ## 3. 首个实现场景
 

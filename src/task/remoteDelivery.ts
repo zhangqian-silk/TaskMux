@@ -1,5 +1,5 @@
 import type { TaskEvent } from "../event/taskEvent.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { ManagedWorkspace } from "../worktree/managedWorkspace.js";
 import type { PublicationReference } from "./publicationReference.js";
 import type { Task } from "./task.js";
@@ -71,7 +71,7 @@ export type TaskRemoteDeliveryFacts = Readonly<{
   events: readonly TaskEvent[];
   publications: readonly PublicationReference[];
   managedWorkspaces: readonly ManagedWorkspace[];
-  turns: readonly Turn[];
+  runs: readonly AgentRun[];
   currentCandidate?: TaskRemoteDeliveryCandidate | null;
 }>;
 
@@ -256,15 +256,15 @@ function projectBaseCommits(
   for (const entry of current?.entries ?? []) {
     if (!result.has(entry.projectId)) result.set(entry.projectId, entry.baseCommit);
   }
-  const taskTurns = facts.turns
-    .filter((turn) => (
-      turn.workspace?.owner.type === "task"
-      && turn.workspace.owner.taskId === facts.task.id
+  const taskRuns = facts.runs
+    .filter((run) => (
+      run.workspace?.owner.type === "task"
+      && run.workspace.owner.taskId === facts.task.id
     ))
     .slice()
     .sort(compareCreated);
-  for (const turn of taskTurns) {
-    for (const entry of turn.workspace?.entries ?? []) {
+  for (const run of taskRuns) {
+    for (const entry of run.workspace?.entries ?? []) {
       if (!result.has(entry.projectId)) result.set(entry.projectId, entry.baseCommit);
     }
   }

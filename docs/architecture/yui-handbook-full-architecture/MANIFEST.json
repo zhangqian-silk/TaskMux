@@ -13,23 +13,23 @@
     },
     {
       "path": "architecture/01-overview.md",
-      "bytes": 21747,
-      "sha256": "b948e9922a517ea56b6d35ffa9976c0b015bd03e5fa3b48141137e36c7113c52"
+      "bytes": 21767,
+      "sha256": "eb4720c108fa794a058b0cea26b576cddfc861f92fc754da6dcc8b6d37166501"
     },
     {
       "path": "architecture/02-authority-and-interaction.md",
-      "bytes": 6201,
-      "sha256": "223a204eabab26830e9a42a3a1a1e025ba01641375b06b08616e51e6e108fb6e"
+      "bytes": 6217,
+      "sha256": "15ac9209db13f7e0ec7900b22795e453b72701b9cf1fa67f2d176a74d4ea3213"
     },
     {
       "path": "architecture/03-state-and-configuration.md",
-      "bytes": 9398,
-      "sha256": "7f9ff6c50c51312c7617178bad43f6195186a2b1b0918c854a7d4c0c834bb773"
+      "bytes": 9422,
+      "sha256": "5f5f6107325f1487a3b432b6e76230ec54175102bead3e88c74ec002f171fadb"
     },
     {
       "path": "architecture/04-runtime-and-replacement.md",
-      "bytes": 7153,
-      "sha256": "4b178003dccb3297305cfc2ab885558f993dcd607ecea5001d99ba23f58b3b7c"
+      "bytes": 7185,
+      "sha256": "cdf3f1c3b36ada1b71ad8e915852ee42cdaa683ca5c2d273f07c1a11ed57637b"
     },
     {
       "path": "architecture/05-capabilities-and-resources.md",
@@ -38,13 +38,18 @@
     },
     {
       "path": "architecture/06-working-flows.md",
-      "bytes": 6778,
-      "sha256": "8ade6b517b2bc37db89b9ae4ffb4c1321fc6e7ce81d0845310494766bd67640a"
+      "bytes": 6808,
+      "sha256": "64bd487445abce1b75b571b66da7eef403c81d15423ad7117d7acdbc3ad65ef1"
+    },
+    {
+      "path": "architecture/07-session-run-contract.md",
+      "bytes": 11628,
+      "sha256": "8e38218ae7cf3bb7e7ab3f21b2be4c8be5eb99eabf52489d7f01c03fab78f140"
     },
     {
       "path": "contracts/README.md",
-      "bytes": 2647,
-      "sha256": "a84fc9c949710cb9aeb177c9f826ad75c3feef7648840fbbea176ed16b887162"
+      "bytes": 2672,
+      "sha256": "0edbd398f876d807a4365604b7b5fd089d92e0fefca3d5787ea690431da38b3b"
     },
     {
       "path": "contracts/capabilities.json",
@@ -53,13 +58,13 @@
     },
     {
       "path": "contracts/examples.ts",
-      "bytes": 4221,
-      "sha256": "1e44093500983e695379481dfac0cd6500a97f9984a28e7b2a6b4e089ea668fa"
+      "bytes": 4251,
+      "sha256": "d49404c6d2f621100e691834d84453a06385848b17a7456fd5e5eae968f8fd99"
     },
     {
       "path": "contracts/model.ts",
-      "bytes": 12298,
-      "sha256": "08e86c202e90fd643ae38c9c4072b1316753f54298a834d284c6eab87801b7d6"
+      "bytes": 12683,
+      "sha256": "ab46d98b0aa90eb60e5ae725a29d0e7998fe81d0b15696792f180ca1396f1119"
     },
     {
       "path": "full-architecture.html",
@@ -68,8 +73,8 @@
     },
     {
       "path": "implementation/README.md",
-      "bytes": 4025,
-      "sha256": "703fcef1ac7050626a685fababb7324259f3bbc73833d863c5a9b65bc4f918c3"
+      "bytes": 4029,
+      "sha256": "66d824e2a4a75af4f7ddaf921f2165824c8976901072177be6192942fafe2420"
     },
     {
       "path": "implementation/designs/T00-current-baseline.md",
@@ -93,8 +98,8 @@
     },
     {
       "path": "implementation/designs/T01-kernel-host.md",
-      "bytes": 3576,
-      "sha256": "18da985463d9f5ad8aa75557414c3e7834f5a922e9771a8bfc01a1921f3b9547"
+      "bytes": 3584,
+      "sha256": "2c5ede5d415e91117ffd16295109e1f6549db1861af724285cdd862431fc4e11"
     },
     {
       "path": "implementation/designs/T02-capability-entry.md",
@@ -108,23 +113,23 @@
     },
     {
       "path": "implementation/designs/T03-evidence.md",
-      "bytes": 13452,
-      "sha256": "eae518db46e7810e5b8a8f9825be47a268b09e8e2a967297a068b2b96baab885"
+      "bytes": 14615,
+      "sha256": "bf78f6266cb9d08e851b4476f031abd7ded22e20adae9b8728ad45111ea7903f"
     },
     {
       "path": "implementation/designs/T03-task-context.md",
-      "bytes": 4690,
-      "sha256": "b68331a0632f509b3c61c69a890a01e7ba7f75487514e990a3d4f093712ca2dc"
+      "bytes": 4713,
+      "sha256": "16c83348faa1288f3aac169067684d7e50e6d8f46ede4c4930fd1d73a295a985"
     },
     {
       "path": "implementation/designs/T04-agent-endpoint.md",
-      "bytes": 4250,
-      "sha256": "fbefd578c7a5d3749d4fbad493dacb482b38ea9d1a96216f42966d4963f7332c"
+      "bytes": 4266,
+      "sha256": "65d12880a2cf4764bbda96a9b4d94c972063eb9ce82cbab41c73b4bf544997a2"
     },
     {
       "path": "implementation/designs/T04-evidence.md",
-      "bytes": 22861,
-      "sha256": "d50aee23e2b674cd243be24041fb0f9082a5b800bb6cdfce1eca557d77a28ba8"
+      "bytes": 23685,
+      "sha256": "caf473929708a987f723869606d01b3a228b12842042ca53e2c7029aa1f5293c"
     },
     {
       "path": "implementation/designs/T05-evidence.md",
@@ -137,19 +142,24 @@
       "sha256": "a2732458af23de26fed7cc91492a2b6a2470ad36729b5f930066fee8ea7064d3"
     },
     {
+      "path": "implementation/designs/T06-evidence.md",
+      "bytes": 14291,
+      "sha256": "f0c9f333ce58daab4ca7922984910fa783d39afef7287f8c47858a5d91c0bddf"
+    },
+    {
       "path": "implementation/designs/T06-surface.md",
-      "bytes": 3107,
-      "sha256": "522b7238c15feb6ad305dcc81ce6e0cc6da1da20999061be6fe6f3a357c893ba"
+      "bytes": 3111,
+      "sha256": "d7eacbc4e5edc49fbe74c3a0428f470fc08a3dfc2ded0c3320b5355c630e99d3"
     },
     {
       "path": "implementation/designs/T07-acp-agent.md",
-      "bytes": 2832,
-      "sha256": "e4203a45dcbc2ec658591732fc876e8e2c837dd817f84c68ae0547b5d77f940d"
+      "bytes": 2844,
+      "sha256": "29425b28996168e1eb4421ecac1f7d3369ec3664d8771d9ab044d040474a7290"
     },
     {
       "path": "implementation/designs/T08-draft-leader.md",
-      "bytes": 3510,
-      "sha256": "cd2659dafab28d3404fb441dd55db7bd73a2196e951f2db0211e71b0e0f3ab1a"
+      "bytes": 3724,
+      "sha256": "47ac833474765fb07a4dc5c6c53cfae98d8003b82d5dc053ecf2976966e63412"
     },
     {
       "path": "implementation/designs/T09-plugin-sdk.md",
@@ -158,13 +168,13 @@
     },
     {
       "path": "implementation/designs/T10-self-extension.md",
-      "bytes": 3579,
-      "sha256": "0834f0a39269c74f691a0c69fefe51d0d38bd2c56f71ddb7c868d01ae225d5ec"
+      "bytes": 3583,
+      "sha256": "c2a165e46d8639580fedefab12e8444dcdf119ad06f03c91a6e9f535cd791e56"
     },
     {
       "path": "implementation/designs/T11-hot-reload.md",
-      "bytes": 3748,
-      "sha256": "827b3cab37824e7f619936ff710c4506be03492a3cc9a1c9eed02539907e1bf8"
+      "bytes": 3760,
+      "sha256": "d9dd9248f8235491575a106e0957c5856172861c470e75609befe63ed01b7118"
     },
     {
       "path": "implementation/task-index.json",
@@ -193,8 +203,8 @@
     },
     {
       "path": "implementation/tasks/T04-agent-endpoint.md",
-      "bytes": 1851,
-      "sha256": "0297eb17c21e4f18da03675fa93969f48c012b8875a3df4a72ff46699345652b"
+      "bytes": 1859,
+      "sha256": "7841aa4a33472205c895bca6262c4565a8218fd4d12f239f5ffd63b5682ec5da"
     },
     {
       "path": "implementation/tasks/T05-project-resource.md",
@@ -208,13 +218,13 @@
     },
     {
       "path": "implementation/tasks/T07-acp-agent.md",
-      "bytes": 1437,
-      "sha256": "84b8acda67af173079d0d1fbcd2a1d0dbfea89bac5f5d3b1082085d67e8b8155"
+      "bytes": 1445,
+      "sha256": "154c3b9337f756d3efc230e40ed376edba34142eead0e47975cf6527a9b0f00b"
     },
     {
       "path": "implementation/tasks/T08-draft-leader.md",
-      "bytes": 1458,
-      "sha256": "050a60ba8b4f3ecfa734cab54ca466eecef71844fd0e647881b8a2beef081b8a"
+      "bytes": 1470,
+      "sha256": "28e02363e8dadd93ca2af31b6c214fcf8253eca6e601f879638439cc32630358"
     },
     {
       "path": "implementation/tasks/T09-plugin-sdk.md",
@@ -228,73 +238,73 @@
     },
     {
       "path": "implementation/tasks/T11-hot-reload.md",
-      "bytes": 1465,
-      "sha256": "fb2e75a11c1aef4e6905a8a35d79bf45901dc482b5361912729ee857bdf47fad"
+      "bytes": 1469,
+      "sha256": "b1725d09b3eb269bd47801e9baf0053a76adcaa9d6563fe366283503a1aebcd1"
     },
     {
       "path": "index.html",
-      "bytes": 522150,
-      "sha256": "cbc329e70f9d6e51c2e201842acf186431b49d1c03b44eb745d50d0165b3595d"
+      "bytes": 557573,
+      "sha256": "699f0dc5b63088dd545587846fa39fd8250626ca2d3882f5f370cf9fd8538d66"
     },
     {
       "path": "modules/01-kernel.md",
-      "bytes": 5263,
-      "sha256": "98804a22c9a58d017c8419afa0e3573e21ec1c1c40cbc6b6b6b7f8366efe4a3a"
+      "bytes": 5267,
+      "sha256": "8ea1bdc67880f70f4d226388e770c5176865adf84fb0a1660ea895ad93887c5c"
     },
     {
       "path": "modules/02-task.md",
-      "bytes": 7989,
-      "sha256": "192ff9b4f2f37b1cd18210a28cc1917142fd549ddda9a3e1c42e45269a356396"
+      "bytes": 8029,
+      "sha256": "234e20b8c8d1d4e27b03718c2638394764996d69fa0eae87c2caf3a671d40618"
     },
     {
       "path": "modules/03-agent-context.md",
-      "bytes": 6197,
-      "sha256": "f25d4f1a3e51f91e963a929adfa54715841d40a1c618462c9e9e937bd93dd14f"
+      "bytes": 6209,
+      "sha256": "bcde8b9d263163ae4308cb925aff20d2c3e7d93d1e2ed2db9ff727d8aca2f78e"
     },
     {
       "path": "modules/04-execution-runtime.md",
-      "bytes": 5643,
-      "sha256": "bc0dd5f7977ab5d33d174ff287daeead57c5dd0f18998ce608d1b70fc1b34cde"
+      "bytes": 6064,
+      "sha256": "4fdba4efab8ab7020b3a9b758c059124e7649ea76ea9a8af6753fc6115fc17e6"
     },
     {
       "path": "modules/05-project-resource.md",
-      "bytes": 5714,
-      "sha256": "bf29fdb4f98b028bef0f749dcdde68fae3386cd0326d01ed323ad25d4358a838"
+      "bytes": 5726,
+      "sha256": "1f77b32b5ea769bb87055d4d8e65024455a24dd930cc74916bf83115c147814a"
     },
     {
       "path": "modules/06-plugin-capability.md",
-      "bytes": 5634,
-      "sha256": "6b06ad45439e76f525942f5a0108027d8615ad5c18261d38b3ee8dc039a2ec7d"
+      "bytes": 5642,
+      "sha256": "36dedc0611e55ce72628c122ea29aa7529b90d7542e0bfdeb4ed527bf376d766"
     },
     {
       "path": "modules/07-surface.md",
-      "bytes": 3952,
-      "sha256": "90c820c8ec06aa089af63a6ab38e7338dd8cda24585bf27e52d184777585139a"
+      "bytes": 3960,
+      "sha256": "36d8c01732bdd3d571acb1592f5bdd9f8df97865d574713f5c94269cb40cd37e"
     },
     {
       "path": "modules/README.md",
-      "bytes": 3145,
-      "sha256": "5b67a32463e2735ca63410afc9240d254e30ea42b163007a14bec3c41797138c"
+      "bytes": 3149,
+      "sha256": "330363c2fd038ae9d718574be1fdcab276c5b264b71230c043fd9db59eefe88d"
     },
     {
       "path": "reference/acceptance-scenarios.md",
-      "bytes": 19092,
-      "sha256": "fe6a988058ac472f00943242fef5ff09ced37c77e6971d863db9f739d00be7c0"
+      "bytes": 19164,
+      "sha256": "7bd01702f0da6249df0a465d6582ba5cdca4708e7ef78e22858c7307f4236854"
     },
     {
       "path": "reference/glossary.md",
-      "bytes": 3441,
-      "sha256": "c962a7a2f4272660c181f86ee75a5829e2bc15f66adcc8b4a0abdae08cc0f0df"
+      "bytes": 3457,
+      "sha256": "1268192585ba809f97bd68517e01235e7db39e2283b6c8f089bd84a0de2bb1ee"
     },
     {
       "path": "reference/implementation-principles.md",
-      "bytes": 2379,
-      "sha256": "d1a502d42aca2d464f276c8af2c84c6c2028e651bc8ea311ae3b433de16cfcad"
+      "bytes": 2383,
+      "sha256": "611ed80b35f1f45067993eed1c841953e662386bf6b052bb89ae047bb2812df1"
     },
     {
       "path": "reference/role-guidance.md",
-      "bytes": 2826,
-      "sha256": "d5bac681cac5b987a65a334a7024816d4171346b49cc9520e3aee577c09b1dfa"
+      "bytes": 2830,
+      "sha256": "1af949e290d65adff8274a1d38f4edcadc7d8b3059515b1b79e52265b7c75fd0"
     },
     {
       "path": "reference/scenarios.json",

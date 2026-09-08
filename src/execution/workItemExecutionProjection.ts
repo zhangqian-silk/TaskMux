@@ -1,5 +1,5 @@
 import type { TaskRoleSessionSet } from "../executor/agentExecutor.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import {
   governingWorkItemCandidate,
   currentWorkItemExecutionGroup,
@@ -11,7 +11,7 @@ import type {
   WorkItemExecutionLane
 } from "./workItemExecution.js";
 import type { TaskStore } from "../storage/taskStore.js";
-import { synthesisSourceTurnIds } from "../context/turnContextPack.js";
+import { synthesisSourceRunIds } from "../context/runContextPack.js";
 
 export type WorkItemLaneProjectedStatus =
   | "running"
@@ -20,7 +20,7 @@ export type WorkItemLaneProjectedStatus =
   | "failed"
   | "unknown";
 
-export type WorkItemTurnProjectedStatus =
+export type WorkItemRunProjectedStatus =
   | "not-started"
   | "running"
   | "succeeded"
@@ -51,7 +51,7 @@ export type WorkItemExecutionProjection = Readonly<{
     status: WorkItemSynthesisStatus;
     successfulLaneCount: number;
   }>;
-  mainTurn: WorkItemMainTurnProjection;
+  mainRun: WorkItemMainRunProjection;
   candidate: WorkItemCandidateSourceProjection;
   nextAction: WorkItemExecutionNextAction;
 }>;
@@ -61,33 +61,35 @@ export type WorkItemLaneProjection = Readonly<{
   ordinal: number;
   roleName: string;
   status: WorkItemLaneProjectedStatus;
-  currentTurnId?: string;
-  successfulTurnId?: string;
+  currentRunId?: string;
+  successfulRunId?: string;
   session: "active" | "ended" | "unobserved";
-  retryTurnId?: string;
-  settleTurnId?: string;
+  retryRunId?: string;
+  settleRunId?: string;
   observation: "observed" | "unobserved";
+  delivery?: import("../runtime/providerRuntimeIdentity.js").ProviderTurnStatus | "unobserved";
 }>;
 
-export type WorkItemMainTurnProjection = Readonly<{
-  status: WorkItemTurnProjectedStatus;
+export type WorkItemMainRunProjection = Readonly<{
+  status: WorkItemRunProjectedStatus;
   roleName?: string;
-  turnId?: string;
+  runId?: string;
   sourceExecutionGroupId?: string;
   session: "active" | "ended" | "unobserved";
-  retryTurnId?: string;
+  retryRunId?: string;
   observation: "observed" | "unobserved";
+  delivery?: import("../runtime/providerRuntimeIdentity.js").ProviderTurnStatus | "unobserved";
 }>;
 
 export type WorkItemCandidateSourceProjection = Readonly<{
   status: "none" | "observed" | "unknown";
   candidateId?: string;
-  sourceType?: "direct" | "turn";
-  mainTurnId?: string;
+  sourceType?: "direct" | "run";
+  mainRunId?: string;
   sourceExecutionGroupId?: string;
-  successfulLaneTurns: readonly Readonly<{
+  successfulLaneRuns: readonly Readonly<{
     laneId: string;
-    successfulTurnId: string;
+    successfulRunId: string;
   }>[];
   observation: "observed" | "unobserved";
 }>;
@@ -111,18 +113,18 @@ export type WorkItemExecutionNextAction = Readonly<{
 
 export function projectWorkItemExecution(
   item: WorkItem,
-  turns: readonly Turn[],
+  runs: readonly AgentRun[],
   sessionSets: readonly TaskRoleSessionSet[] = [],
   sourceStore?: Pick<TaskStore, "getContextSnapshot">
 ): WorkItemExecutionProjection {
   const group = currentWorkItemExecutionGroup(item);
-  const relevantTurns = turns.filter((turn) => turn.workItemId === item.id);
+  const relevantRuns = runs.filter((run) => run.workItemId === item.id);
   const sessionsByRole = new Map(sessionSets.map((set) => [set.owner.roleName, set]));
   const lanes = group === undefined
     ? []
     : [...group.lanes]
       .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
-      .map((lane) => projectLane(item, group, lane, relevantTurns, sessionsByRole));
+      .map((lane) => projectLane(item, group, lane, relevantRuns, sessionsByRole));
   const laneCounts = Object.freeze({
     running: lanes.filter(({ status }) => status === "running").length,
     succeeded: lanes.filter(({ status }) => status === "succeeded").length,
@@ -130,9 +132,9 @@ export function projectWorkItemExecution(
     failed: lanes.filter(({ status }) => status === "failed").length,
     unknown: lanes.filter(({ status }) => status === "unknown").length
   });
-  const mainTurn = projectMainTurn(item, group, relevantTurns, sessionsByRole);
-  const synthesis = projectSynthesis(group, lanes, mainTurn);
-  const candidate = projectCandidate(item, group, relevantTurns, mainTurn, sourceStore);
+  const mainRun = projectMainRun(item, group, relevantRuns, sessionsByRole);
+  const synthesis = projectSynthesis(group, lanes, mainRun);
+  const candidate = projectCandidate(item, group, relevantRuns, mainRun, sourceStore);
   return Object.freeze({
     schemaVersion: 1,
     shape: group === undefined ? "direct" : "replicated",
@@ -140,9 +142,9 @@ export function projectWorkItemExecution(
     lanes: Object.freeze(lanes),
     laneCounts,
     synthesis,
-    mainTurn,
+    mainRun,
     candidate,
-    nextAction: projectNextAction(item, lanes, synthesis, mainTurn, candidate)
+    nextAction: projectNextAction(item, lanes, synthesis, mainRun, candidate)
   });
 }
 
@@ -150,12 +152,12 @@ function projectLane(
   item: WorkItem,
   group: WorkItemExecutionGroup,
   lane: WorkItemExecutionLane,
-  turns: readonly Turn[],
+  runs: readonly AgentRun[],
   sessionsByRole: ReadonlyMap<string, TaskRoleSessionSet>
 ): WorkItemLaneProjection {
-  const current = lane.currentTurnId === undefined
+  const current = lane.currentRunId === undefined
     ? undefined
-    : turns.find(({ id }) => id === lane.currentTurnId);
+    : runs.find(({ id }) => id === lane.currentRunId);
   const exact = current !== undefined
     && current.taskId === item.taskId
     && current.workItemId === item.id
@@ -163,7 +165,7 @@ function projectLane(
     && current.executionLaneId === lane.id
     && current.roleName === lane.roleName;
   const session = exact
-    ? turnSessionStatus(current, sessionsByRole.get(lane.roleName))
+    ? runSessionStatus(current, sessionsByRole.get(lane.roleName))
     : "unobserved";
   if (lane.disposition === "failed") {
     return Object.freeze({
@@ -171,14 +173,14 @@ function projectLane(
       ordinal: lane.ordinal,
       roleName: lane.roleName,
       status: "failed",
-      ...(lane.currentTurnId === undefined ? {} : { currentTurnId: lane.currentTurnId }),
+      ...(lane.currentRunId === undefined ? {} : { currentRunId: lane.currentRunId }),
       session,
       observation: exact ? "observed" : "unobserved"
     });
   }
   if (lane.disposition === "succeeded") {
     const producerObserved = exact
-      && lane.successfulTurnId === current.id
+      && lane.successfulRunId === current.id
       && current.status === "completed"
       && current.result !== undefined;
     return Object.freeze({
@@ -186,8 +188,8 @@ function projectLane(
       ordinal: lane.ordinal,
       roleName: lane.roleName,
       status: producerObserved ? "succeeded" : "unknown",
-      ...(lane.currentTurnId === undefined ? {} : { currentTurnId: lane.currentTurnId }),
-      ...(lane.successfulTurnId === undefined ? {} : { successfulTurnId: lane.successfulTurnId }),
+      ...(lane.currentRunId === undefined ? {} : { currentRunId: lane.currentRunId }),
+      ...(lane.successfulRunId === undefined ? {} : { successfulRunId: lane.successfulRunId }),
       session,
       observation: producerObserved ? "observed" : "unobserved"
     });
@@ -198,7 +200,7 @@ function projectLane(
       ordinal: lane.ordinal,
       roleName: lane.roleName,
       status: "unknown",
-      ...(lane.currentTurnId === undefined ? {} : { currentTurnId: lane.currentTurnId }),
+      ...(lane.currentRunId === undefined ? {} : { currentRunId: lane.currentRunId }),
       session: "unobserved",
       observation: "unobserved"
     });
@@ -209,10 +211,10 @@ function projectLane(
       ordinal: lane.ordinal,
       roleName: lane.roleName,
       status: "needs-attention",
-      currentTurnId: current.id,
+      currentRunId: current.id,
       session,
-      retryTurnId: current.id,
-      settleTurnId: current.id,
+      retryRunId: current.id,
+      settleRunId: current.id,
       observation: "observed"
     });
   }
@@ -222,7 +224,8 @@ function projectLane(
       ordinal: lane.ordinal,
       roleName: lane.roleName,
       status: session === "ended" ? "needs-attention" : "running",
-      currentTurnId: current.id,
+      currentRunId: current.id,
+      delivery: observedAdmission(current, sessionsByRole.get(lane.roleName)),
       session,
       observation: "observed"
     });
@@ -232,27 +235,27 @@ function projectLane(
     ordinal: lane.ordinal,
     roleName: lane.roleName,
     status: "unknown",
-    currentTurnId: current.id,
+    currentRunId: current.id,
     session,
     observation: "unobserved"
   });
 }
 
-function projectMainTurn(
+function projectMainRun(
   item: WorkItem,
   group: WorkItemExecutionGroup | undefined,
-  turns: readonly Turn[],
+  runs: readonly AgentRun[],
   sessionsByRole: ReadonlyMap<string, TaskRoleSessionSet>
-): WorkItemMainTurnProjection {
-  const candidates = turns.filter((turn) => (
-    turn.purpose === "execution"
-    && turn.roleName === item.assignee
-    && turn.executionGroupId === undefined
-    && turn.executionLaneId === undefined
-    && turn.sourceExecutionGroupId === group?.id
-  )).sort(compareTurns);
-  const turn = candidates.at(-1);
-  if (turn === undefined) {
+): WorkItemMainRunProjection {
+  const candidates = runs.filter((run) => (
+    run.purpose === "execution"
+    && run.roleName === item.assignee
+    && run.executionGroupId === undefined
+    && run.executionLaneId === undefined
+    && run.sourceExecutionGroupId === group?.id
+  )).sort(compareRuns);
+  const run = candidates.at(-1);
+  if (run === undefined) {
     return Object.freeze({
       status: "not-started",
       ...(item.assignee === undefined ? {} : { roleName: item.assignee }),
@@ -261,41 +264,42 @@ function projectMainTurn(
       observation: "unobserved"
     });
   }
-  const session = turnSessionStatus(turn, sessionsByRole.get(turn.roleName));
+  const session = runSessionStatus(run, sessionsByRole.get(run.roleName));
   const base = {
-    roleName: turn.roleName,
-    turnId: turn.id,
-    ...(turn.sourceExecutionGroupId === undefined
+    roleName: run.roleName,
+    runId: run.id,
+    ...(run.sourceExecutionGroupId === undefined
       ? {}
-      : { sourceExecutionGroupId: turn.sourceExecutionGroupId }),
+      : { sourceExecutionGroupId: run.sourceExecutionGroupId }),
     session
   };
-  if (turn.status === "failed") {
+  if (run.status === "failed") {
     return Object.freeze({
       ...base,
       status: "needs-attention",
-      retryTurnId: turn.id,
+      retryRunId: run.id,
       observation: "observed"
     });
   }
-  if (turn.status === "active") {
+  if (run.status === "active") {
     return Object.freeze({
       ...base,
+      delivery: observedAdmission(run, sessionsByRole.get(run.roleName)),
       status: session === "ended" ? "needs-attention" : "running",
       observation: "observed"
     });
   }
   return Object.freeze({
     ...base,
-    status: turn.result === undefined ? "unknown" : "succeeded",
-    observation: turn.result === undefined ? "unobserved" : "observed"
+    status: run.result === undefined ? "unknown" : "succeeded",
+    observation: run.result === undefined ? "unobserved" : "observed"
   });
 }
 
 function projectSynthesis(
   group: WorkItemExecutionGroup | undefined,
   lanes: readonly WorkItemLaneProjection[],
-  mainTurn: WorkItemMainTurnProjection
+  mainRun: WorkItemMainRunProjection
 ): WorkItemExecutionProjection["synthesis"] {
   if (group === undefined) {
     return Object.freeze({
@@ -305,13 +309,13 @@ function projectSynthesis(
   }
   const successfulLaneCount = group.lanes.filter(({ disposition }) => disposition === "succeeded").length;
   let status: WorkItemSynthesisStatus;
-  if (mainTurn.status === "not-started") {
+  if (mainRun.status === "not-started") {
     status = "awaiting-selection";
-  } else if (mainTurn.status === "running") {
+  } else if (mainRun.status === "running") {
     status = "main-running";
-  } else if (mainTurn.status === "needs-attention") {
+  } else if (mainRun.status === "needs-attention") {
     status = "main-needs-attention";
-  } else if (mainTurn.status === "succeeded") {
+  } else if (mainRun.status === "succeeded") {
     status = "complete";
   } else {
     status = "unknown";
@@ -325,15 +329,15 @@ function projectSynthesis(
 function projectCandidate(
   item: WorkItem,
   group: WorkItemExecutionGroup | undefined,
-  turns: readonly Turn[],
-  mainTurn: WorkItemMainTurnProjection,
+  runs: readonly AgentRun[],
+  mainRun: WorkItemMainRunProjection,
   sourceStore?: Pick<TaskStore, "getContextSnapshot">
 ): WorkItemCandidateSourceProjection {
   const candidate = governingWorkItemCandidate(item);
   if (candidate === undefined) {
     return Object.freeze({
       status: "none",
-      successfulLaneTurns: Object.freeze([]),
+      successfulLaneRuns: Object.freeze([]),
       observation: "observed"
     });
   }
@@ -341,33 +345,33 @@ function projectCandidate(
     const valid = group === undefined && item.assignee === undefined;
     return candidateProjection(candidate, valid ? "observed" : "unknown", [], valid);
   }
-  const sourceTurnId = candidate.source.turnId;
-  const sourceTurn = turns.find(({ id }) => id === sourceTurnId);
-  const laneTurns = group === undefined || sourceStore === undefined || sourceTurn === undefined
+  const sourceRunId = candidate.source.runId;
+  const sourceRun = runs.find(({ id }) => id === sourceRunId);
+  const laneRuns = group === undefined || sourceStore === undefined || sourceRun === undefined
     ? []
-    : synthesisSourceTurnIds(sourceStore, sourceTurn).flatMap((id) => {
-      const selected = turns.find((turn) => turn.id === id);
+    : synthesisSourceRunIds(sourceStore, sourceRun).flatMap((id) => {
+      const selected = runs.find((run) => run.id === id);
       return selected?.executionLaneId === undefined ? [] : [{
-        laneId: selected.executionLaneId, successfulTurnId: selected.id
+        laneId: selected.executionLaneId, successfulRunId: selected.id
       }];
     });
-  const valid = sourceTurn !== undefined
-    && sourceTurn.id === mainTurn.turnId
-    && sourceTurn.status === "completed"
-    && sourceTurn.result !== undefined
-    && sourceTurn.executionGroupId === undefined
-    && sourceTurn.executionLaneId === undefined
-    && sourceTurn.sourceExecutionGroupId === group?.id
+  const valid = sourceRun !== undefined
+    && sourceRun.id === mainRun.runId
+    && sourceRun.status === "completed"
+    && sourceRun.result !== undefined
+    && sourceRun.executionGroupId === undefined
+    && sourceRun.executionLaneId === undefined
+    && sourceRun.sourceExecutionGroupId === group?.id
     && candidate.executionLaneId === undefined
     && candidate.executionGroupId === undefined
-    && (group === undefined || laneTurns.length > 0);
-  return candidateProjection(candidate, valid ? "observed" : "unknown", laneTurns, valid, group?.id);
+    && (group === undefined || laneRuns.length > 0);
+  return candidateProjection(candidate, valid ? "observed" : "unknown", laneRuns, valid, group?.id);
 }
 
 function candidateProjection(
   candidate: WorkItemCandidate,
   status: "observed" | "unknown",
-  successfulLaneTurns: readonly Readonly<{ laneId: string; successfulTurnId: string }>[],
+  successfulLaneRuns: readonly Readonly<{ laneId: string; successfulRunId: string }>[],
   observed: boolean,
   sourceExecutionGroupId?: string
 ): WorkItemCandidateSourceProjection {
@@ -375,9 +379,9 @@ function candidateProjection(
     status,
     candidateId: candidate.id,
     sourceType: candidate.source.type,
-    ...(candidate.source.type === "turn" ? { mainTurnId: candidate.source.turnId } : {}),
+    ...(candidate.source.type === "run" ? { mainRunId: candidate.source.runId } : {}),
     ...(sourceExecutionGroupId === undefined ? {} : { sourceExecutionGroupId }),
-    successfulLaneTurns: Object.freeze(successfulLaneTurns),
+    successfulLaneRuns: Object.freeze(successfulLaneRuns),
     observation: observed ? "observed" : "unobserved"
   });
 }
@@ -386,7 +390,7 @@ function projectNextAction(
   item: WorkItem,
   lanes: readonly WorkItemLaneProjection[],
   synthesis: WorkItemExecutionProjection["synthesis"],
-  mainTurn: WorkItemMainTurnProjection,
+  mainRun: WorkItemMainRunProjection,
   candidate: WorkItemCandidateSourceProjection
 ): WorkItemExecutionNextAction {
   if (["accepted", "retired"].includes(item.status)) return action("none", [], []);
@@ -400,9 +404,9 @@ function projectNextAction(
       .filter(({ status }) => status === "unknown")
       .map(({ laneId }) => laneId));
   }
-  const recoveries = lanes.filter(({ retryTurnId }) => retryTurnId !== undefined);
+  const recoveries = lanes.filter(({ retryRunId }) => retryRunId !== undefined);
   if (recoveries.length > 0) {
-    return action("retry-or-settle-lanes", ["leader"], recoveries.map(({ retryTurnId }) => retryTurnId!));
+    return action("retry-or-settle-lanes", ["leader"], recoveries.map(({ retryRunId }) => retryRunId!));
   }
   const activeLanes = lanes.filter(({ status }) => status === "running");
   if (activeLanes.length > 0) {
@@ -411,19 +415,19 @@ function projectNextAction(
   if (synthesis.status === "awaiting-selection") {
     return action("select-synthesis-sources", ["leader"], [item.id]);
   }
-  if (mainTurn.status === "running") {
-    return action("wait-for-main", mainTurn.roleName === undefined ? [] : [mainTurn.roleName], mainTurn.turnId === undefined ? [] : [mainTurn.turnId]);
+  if (mainRun.status === "running") {
+    return action("wait-for-main", mainRun.roleName === undefined ? [] : [mainRun.roleName], mainRun.runId === undefined ? [] : [mainRun.runId]);
   }
-  if (mainTurn.status === "needs-attention") {
-    return mainTurn.retryTurnId === undefined
-      ? action("inspect-unknown", ["leader"], mainTurn.turnId === undefined ? [] : [mainTurn.turnId])
-      : action("retry-main", ["leader"], [mainTurn.retryTurnId]);
+  if (mainRun.status === "needs-attention") {
+    return mainRun.retryRunId === undefined
+      ? action("inspect-unknown", ["leader"], mainRun.runId === undefined ? [] : [mainRun.runId])
+      : action("retry-main", ["leader"], [mainRun.retryRunId]);
   }
-  if (mainTurn.status === "succeeded" && item.status === "open") {
-    return action("submit-candidate", ["leader"], [mainTurn.turnId!]);
+  if (mainRun.status === "succeeded" && item.status === "open") {
+    return action("submit-candidate", ["leader"], [mainRun.runId!]);
   }
-  if (mainTurn.status === "unknown" || synthesis.status === "unknown") {
-    return action("inspect-unknown", ["leader"], mainTurn.turnId === undefined ? [item.id] : [mainTurn.turnId]);
+  if (mainRun.status === "unknown" || synthesis.status === "unknown") {
+    return action("inspect-unknown", ["leader"], mainRun.runId === undefined ? [item.id] : [mainRun.runId]);
   }
   if (item.status === "open") {
     return action("dispatch-work", ["leader"], [item.id]);
@@ -443,13 +447,18 @@ function action(
   });
 }
 
-function turnSessionStatus(
-  turn: Turn,
+function runSessionStatus(
+  run: AgentRun,
   set: TaskRoleSessionSet | undefined
 ): "active" | "ended" | "unobserved" {
-  return set?.sessions[turn.effective.agentId]?.status ?? "unobserved";
+  return set?.sessions[run.effective.agentId]?.status ?? "unobserved";
 }
 
-function compareTurns(left: Turn, right: Turn): number {
+function observedAdmission(run: AgentRun, sessions: TaskRoleSessionSet | undefined) {
+  const native = sessions?.providerBinding?.run;
+  return native?.runId === run.id ? native.status : "unobserved" as const;
+}
+
+function compareRuns(left: AgentRun, right: AgentRun): number {
   return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
 }

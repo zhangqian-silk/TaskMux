@@ -151,7 +151,7 @@ Yui Tools 是这些公开入口的总称。CLI 命令、类型明确的内建调
 
 Execution 通过 AgentEndpoint 使用不同 Agent。产品、协议和传输是内部接口分工，只组合实际支持的路径。资源工具负责自己的外部动作与实际环境，不要求所有 Task 都使用 Git 或工作目录。
 
-执行层不选择下一 WorkItem，不因失败次数自动换模型，不解析 Review 后建立修复拓扑，也不从原生 Turn 结束推断 Task 完成。
+执行层不选择下一 WorkItem，不因失败次数自动换模型，不解析 Review 后建立修复拓扑，也不从原生 AgentRun 结束推断 Task 完成。
 
 ### 4.5 Minimal Kernel：共同事实与执行基础
 
@@ -174,7 +174,7 @@ Global／Project／Task 表示配置范围和可见性，不构成三套运行�
 | Kernel | Minimal Kernel；支撑 Plugin Fabric | 事务、身份、授权、必要操作事实、唯一实例宿主 | Task 方案、业务恢复、结果质量 |
 | Task | Capability Plane | Task、Brief、Decision、WorkItem、Candidate、Review 关联、验收 | 运行模型、安排工作顺序 |
 | Agent & Context | Intelligence 的配置支持；Capability 的角色与读取入口 | Role 当前配置、消息、问题、Context 读视图 | 另设调度大脑、持有第二份任务状态 |
-| Execution & Runtime | Execution Plane；在 Capability 层暴露控制操作 | 执行请求、Turn、Session 必要引用、Endpoint 和结果采集 | 决定重试策略或 Task 完成 |
+| Execution & Runtime | Execution Plane；在 Capability 层暴露控制操作 | 执行请求、AgentRun、Session 必要引用、Endpoint 和结果采集 | 决定重试策略或 Task 完成 |
 | Project & Resource | Capability 与 Execution Plane | 项目知识、资源引用、环境归属、产物保存、具体动作 | Task 领域分类、通用资源工作流 |
 | Plugin & Capability | Capability Plane 与 Plugin Fabric | 包与启用配置、能力契约、目录、发现与注册 | 第二套宿主、任意扩权 |
 | Surface | Experience Plane | CLI／Web 输入、展示、查询和操作映射 | 私有业务状态、独立恢复策略 |
@@ -198,7 +198,7 @@ Global／Project／Task 表示配置范围和可见性，不构成三套运行�
                    |                ▼               ▼
              +-----+------------------------------------+
              |       持久化工作事实 · 唯一事实来源        |
-             | Task / Role / Message / Turn / Artifact  |
+             | Task / Role / Message / AgentRun / Artifact  |
              +---------------------+--------------------+
                                    |
                             变化通知 / Wake
@@ -209,7 +209,7 @@ Global／Project／Task 表示配置范围和可见性，不构成三套运行�
 连接、进程句柄、缓存 ──→ 临时运行状态，可丢弃或重建
 ```
 
-Task、Role、Message、Turn 和 Artifact 等各有明确写入入口，共用同一持久化基础。Context 只组合读取，Surface 的展示只消费这些读结果，不反向生成新的业务状态。
+Task、Role、Message、AgentRun 和 Artifact 等各有明确写入入口，共用同一持久化基础。Context 只组合读取，Surface 的展示只消费这些读结果，不反向生成新的业务状态。
 
 “只读 Context”不代表 Agent 或 Web 永远不能写。写入经显式原子操作发生，而不是通过修改视图完成。Context 中附带的运行观察也不意味着 Context 成为监控或恢复决策者。
 
@@ -230,7 +230,7 @@ Task、Role、Message、Turn 和 Artifact 等各有明确写入入口，共用�
 
 ## 8. 实现依赖与装配
 
-Kernel 不依赖具体 Agent、领域资源或 Task 工作方法。Task 模块依赖存储和授权端口；Context 读取公开查询接口；Execution 保存自己的 Turn 证据并经公开能力关联任务；Runtime 与资源插件不直接写 Task 私有表。
+Kernel 不依赖具体 Agent、领域资源或 Task 工作方法。Task 模块依赖存储和授权端口；Context 读取公开查询接口；Execution 保存自己的 AgentRun 证据并经公开能力关联任务；Runtime 与资源插件不直接写 Task 私有表。
 
 一个装配入口知道内建实现并将其注册到宿主。其他模块依赖公开接口，允许普通的类型明确调用，不要求网络化。Agent 调用 Yui Tools 形成工作闭环，但不意味着源代码的 import 依赖必须形成环。
 

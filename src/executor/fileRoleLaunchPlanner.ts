@@ -169,11 +169,11 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     }
     const role = this.store.getRole(input.taskId, input.roleName);
     if (role === null) throw new Error(`Role not found: ${input.taskId}/${input.roleName}.`);
-    const activeTurn = this.store.getActiveTurn(task.id, role.name);
-    if (input.turnId !== undefined && activeTurn?.id !== input.turnId) {
-      throw new Error(`Role Turn is no longer current: ${input.turnId}.`);
+    const activeRun = this.store.getActiveRun(task.id, role.name);
+    if (input.runId !== undefined && activeRun?.id !== input.runId) {
+      throw new Error(`Role AgentRun is no longer current: ${input.runId}.`);
     }
-    const runWorkspace = activeTurn?.workspace;
+    const runWorkspace = activeRun?.workspace;
     const main = this.store.getTaskWorkspace(task.id);
     // Quick Win (EXE-04/EXE-08): classify workspace preflight failures so
     // split-brain state is never reported as a transient Provider failure.
@@ -181,7 +181,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       this.store,
       task,
       input.roleName,
-      activeTurn === null ? null : { id: activeTurn.id, workspace: activeTurn.workspace },
+      activeRun === null ? null : { id: activeRun.id, workspace: activeRun.workspace },
       this.#inspectWorkspacePhysicalState
     );
     if (preflight !== null) {
@@ -191,8 +191,8 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       item.assignee === role.name
       && !["accepted", "retired"].includes(item.status)
     );
-    // A Turn snapshot is authoritative for the live launch. In particular,
-    // a Reviewer Turn must launch from its ReviewRound-owned workspace rather
+    // A AgentRun snapshot is authoritative for the live launch. In particular,
+    // a Reviewer AgentRun must launch from its ReviewRound-owned workspace rather
     // than falling back to the WorkItem Develop workspace.  Without an
     // active snapshot, resolve the normal Role/WorkItem assignment.
     const workspace = runWorkspace !== undefined
@@ -219,8 +219,8 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         && isolatedWorkItem !== null
         && (isolatedWorkItem.assignee === undefined || isolatedWorkItem.assignee === role.name)
         && !["accepted", "retired"].includes(isolatedWorkItem.status)
-        && (activeTurn === null
-          || activeTurn.workItemId === workspace.owner.workItemId)
+        && (activeRun === null
+          || activeRun.workItemId === workspace.owner.workItemId)
         && sameWorkspaceProjects(workspace, task.projectBindings.map(({ projectId }) => projectId))
         && sameWritableProjects(workspace, isolatedWorkItem.writeProjectIds);
       const runScoped = runWorkspace !== undefined
@@ -231,29 +231,29 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         )
         && (runWorkspace.owner.type === "task"
           || (runWorkspace.owner.type === "work-item"
-            && runWorkspace.owner.workItemId === activeTurn?.workItemId)
+            && runWorkspace.owner.workItemId === activeRun?.workItemId)
           || (runWorkspace.owner.type === "review-round"
-            && activeTurn?.purpose === "review"
-            && runWorkspace.owner.reviewRoundId === activeTurn.reviewRoundId)
+            && activeRun?.purpose === "review"
+            && runWorkspace.owner.reviewRoundId === activeRun.reviewRoundId)
           || (runWorkspace.owner.type === "execution-lane"
-            && runWorkspace.owner.executionGroupId === activeTurn?.executionGroupId
-            && runWorkspace.owner.executionLaneId === activeTurn?.executionLaneId
-            && ((runWorkspace.owner.purpose === "review" && activeTurn?.purpose === "review")
-              || (runWorkspace.owner.purpose === "execution" && activeTurn?.purpose === "execution"))));
+            && runWorkspace.owner.executionGroupId === activeRun?.executionGroupId
+            && runWorkspace.owner.executionLaneId === activeRun?.executionLaneId
+            && ((runWorkspace.owner.purpose === "review" && activeRun?.purpose === "review")
+              || (runWorkspace.owner.purpose === "execution" && activeRun?.purpose === "execution"))));
       if (!runScoped && !sharedMain && !isolated) {
         throw new Error(`Role workspace is not ready: ${input.taskId}/${input.roleName}.`);
       }
     }
     const sessionSet = this.store.getTaskRoleSessionSet(task.id, role.name);
-    const resolvedEffective = activeTurn?.effective
+    const resolvedEffective = activeRun?.effective
       ?? activeLiveRoleAgentSession(sessionSet)?.effective
       ?? resolveTaskRoleEffectiveLaunch(this.store, role);
     if (input.effective !== undefined
       && !isDeepStrictEqual(resolvedEffective, input.effective)) {
-      throw new Error(`Role launch effective Turn snapshot changed: ${input.taskId}/${input.roleName}.`);
+      throw new Error(`Role launch effective AgentRun snapshot changed: ${input.taskId}/${input.roleName}.`);
     }
-    if (activeTurn !== null && input.effective === undefined) {
-      throw new Error(`Role launch is missing the effective Turn snapshot: ${input.taskId}/${input.roleName}.`);
+    if (activeRun !== null && input.effective === undefined) {
+      throw new Error(`Role launch is missing the effective AgentRun snapshot: ${input.taskId}/${input.roleName}.`);
     }
     const effective = input.effective ?? resolvedEffective;
     const existing = sessionSet?.sessions[effective.agentId];
@@ -290,7 +290,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       runWorkspace,
       effective,
       {
-        purpose: activeTurn?.purpose ?? "execution"
+        purpose: activeRun?.purpose ?? "execution"
       }
     );
   }
@@ -332,7 +332,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       adapterId: string;
       mode: RoleSessionLaunchMode;
       nativeSessionId?: string;
-      turnId?: string;
+      runId?: string;
       runtimeIsolation?: TaskRuntimeIsolationDescriptor;
       environment?: Readonly<Record<string, string>>;
     }>,
@@ -386,7 +386,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     }
     const agentWorkspace = effective.executionEnvironment?.directory.path
       ?? nativeAgentWorkspace(effective.workspace);
-    if (adapter.id === "codex" && (owner.scope !== "task" || input.turnId === undefined)) {
+    if (adapter.id === "codex" && (owner.scope !== "task" || input.runId === undefined)) {
       const codexConfig = inspectCodexLaunchConfig({
         environment: launchEnvironment,
         workspace: agentWorkspace,
@@ -440,29 +440,29 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       sessionManifestDigest: bootstrap.manifest.digest,
       sessionCliPath: bootstrap.sessionCliPath
     };
-    const managedRun = owner.scope === "task" && input.turnId !== undefined
-      ? this.store.getTurn(owner.taskId, input.turnId)
+    const managedRun = owner.scope === "task" && input.runId !== undefined
+      ? this.store.getRun(owner.taskId, input.runId)
       : null;
     const driver = builtinAgentDriverRegistry().require(
       builtinDriverIdForAdapter(configured.adapterId)
     );
-    if (owner.scope === "task" && input.turnId !== undefined) {
+    if (owner.scope === "task" && input.runId !== undefined) {
       const admission = managedRuntimeAdmission(driver.capabilities);
       if (!admission.admitted) {
         throw new Error(
-          `Agent Driver ${driver.id} cannot host managed Turns; missing capabilities: `
+          `Agent Driver ${driver.id} cannot host managed AgentRuns; missing capabilities: `
           + admission.missing.join(", ")
         );
       }
     }
     const roleConfig = binding.config.adapterId === "claude"
       && owner.scope === "task"
-      && input.turnId !== undefined
+      && input.runId !== undefined
       ? managedClaudeControlPlaneConfig(
           binding.config,
           owner.taskId,
           managedRun?.workItemId,
-          input.turnId
+          input.runId
         )
       : binding.config;
     const effectiveConfig = withNativeProjectDirectories(
@@ -487,14 +487,14 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     }
     // A previous attempt may have persisted a preallocated/discovered ID
     // before its receipt was committed. Reuse that fixed session rather than
-    // allocating a second native session for the same durable Turn.
+    // allocating a second native session for the same durable AgentRun.
     const resumeNativeSessionId = input.mode === "resume"
       ? requireText(input.nativeSessionId, "Native session id")
       : knownNativeSessionId;
     const launchMode: RoleSessionLaunchMode = resumeNativeSessionId === undefined
       ? "new"
       : "resume";
-    const managedControl = owner.scope === "task" && input.turnId !== undefined;
+    const managedControl = owner.scope === "task";
     const preallocatedNativeSessionId = binding.adapterId === "claude"
       && resumeNativeSessionId === undefined
       ? requireText(
@@ -544,17 +544,14 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     }
     if (binding.adapterId === "codex") {
       // Interactive Task sessions may use notify for presentation.
-      // Managed Turns receive lifecycle facts through their ordinary App Server
-      // subscription, avoiding a second Hook channel for the same Turn.
-      if (owner.scope === "task" && input.turnId === undefined) {
-        args = addCodexSessionNotify(args, launchMode, this.#cliPath);
-      }
+      // Managed AgentRuns receive lifecycle facts through their ordinary App Server
+      // subscription, avoiding a second Hook channel for the same AgentRun.
       // Managed Codex Turns use disposable proxy clients against the shared
       // native App Server. Their Session Manifest points at the Yui Skills;
       // no Yui Hook config is installed.
-      if (owner.scope === "task" && input.turnId !== undefined) {
+      if (owner.scope === "task" && input.runId !== undefined) {
         if (managedRun === null || managedRun.status !== "active") {
-          throw new Error(`Managed Codex Turn is no longer active: ${input.turnId}.`);
+          throw new Error(`Managed Codex Turn is no longer active: ${input.runId}.`);
         }
       }
       session = launchMode === "resume"
@@ -573,16 +570,16 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     }
     const managedClaudeRun = binding.adapterId === "claude"
       && owner.scope === "task"
-      && input.turnId !== undefined;
+      && input.runId !== undefined;
     if (managedClaudeRun && (managedRun === null || managedRun.status !== "active")) {
-      throw new Error(`Managed Claude Turn is no longer active: ${input.turnId}.`);
+      throw new Error(`Managed Claude Turn is no longer active: ${input.runId}.`);
     }
 
-    // Session lifecycle and Turn submission are separate atomic operations.
+    // Session lifecycle and AgentRun submission are separate atomic operations.
     // Planning only starts or restores the exact native Session; delivery
-    // submits the Turn input after that Session fact is durable.
-    if (managedControl && (managedRun === null || managedRun.status !== "active")) {
-      throw new Error(`Managed Turn is no longer active: ${input.turnId}.`);
+    // submits the AgentRun input after that Session fact is durable.
+    if (managedControl && input.runId !== undefined && (managedRun === null || managedRun.status !== "active")) {
+      throw new Error(`Managed AgentRun is no longer active: ${input.runId}.`);
     }
     const providerAuthority = managedControl
       ? this.#providerAuthorityForLaunch(
@@ -591,8 +588,8 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
           input.mode
         )
       : undefined;
-    const providerOwnedTurn = managedControl && input.mode === "resume"
-      ? this.#providerOwnedTurnForLaunch(owner.taskId, role.name, input.turnId!)
+    const providerOwnedRun = managedControl && input.mode === "resume" && input.runId !== undefined
+      ? this.#providerOwnedRunForLaunch(owner.taskId, role.name, input.runId!)
       : undefined;
     const providerNativeSessionId = binding.adapterId === "claude"
       ? preallocatedNativeSessionId
@@ -606,6 +603,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             transport: managedCompiled!.transport,
             endpointImplementation,
             kind: "restore",
+            sessionOnly: input.runId === undefined,
             mode: "resume",
             nativeSessionId: requireText(
               providerNativeSessionId,
@@ -615,7 +613,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             ...(managedCompiled!.codexThread === undefined
               ? {}
               : { codexThread: managedCompiled!.codexThread }),
-            ...(providerOwnedTurn === undefined ? {} : { ownedTurn: providerOwnedTurn }),
+            ...(providerOwnedRun === undefined ? {} : { ownedRun: providerOwnedRun }),
             authority: providerAuthority!
           }
         : {
@@ -624,6 +622,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             transport: managedCompiled!.transport,
             endpointImplementation,
             kind: "start",
+            sessionOnly: input.runId === undefined,
             mode: "new",
             ...(providerNativeSessionId === undefined
               ? {}
@@ -667,10 +666,10 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
                   }
                 : {})
             }),
-        // No Turn is exported into the Session environment. A native pane
-        // outlives its Turn, so a Turn id frozen here would be stale for every
-        // later Turn. The Agent Host sets it explicitly per spawned Provider
-        // Turn, and every durable decision reads the active Turn from state.
+        // No AgentRun is exported into the Session environment. A native pane
+        // outlives its AgentRun, so a AgentRun id frozen here would be stale for every
+        // later AgentRun. The Agent Host sets it explicitly per spawned Provider
+        // AgentRun, and every durable decision reads the active AgentRun from state.
         ...(session === null
           ? {}
           : { YUI_NATIVE_SESSION_ID: session.nativeSessionId })
@@ -739,20 +738,20 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     throw new Error(`Provider writer authority is unknown: ${taskId}/${roleName}.`);
   }
 
-  #providerOwnedTurnForLaunch(
+  #providerOwnedRunForLaunch(
     taskId: string,
     roleName: string,
-    turnId: string
+    runId: string
   ): ProviderOwnedTurn | undefined {
     const binding = this.store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding;
     if (binding === null || binding === undefined
-      || binding.turn?.turnId !== turnId) return undefined;
-    const turn = binding.turn;
-    if (turn === null || turn.status !== "accepted") return undefined;
-    if (turn.nativeTurnId === undefined) {
+      || binding.run?.runId !== runId) return undefined;
+    const run = binding.run;
+    if (run === null || run.status !== "accepted") return undefined;
+    if (run.nativeTurnId === undefined) {
       throw new Error(`Active Provider Turn has no native identity: ${taskId}/${roleName}.`);
     }
-    return { attemptId: turn.attemptId, turnId: turn.nativeTurnId };
+    return { attemptId: run.attemptId, turnId: run.nativeTurnId };
   }
 
   #applyWorkspaceScope(
@@ -931,11 +930,11 @@ function managedClaudeControlPlaneConfig(
   config: ClaudeAgentConfig,
   taskId: string,
   workItemId: string | undefined,
-  turnId: string
+  runId: string
 ): ClaudeAgentConfig {
   if (config.permission.strategy !== "configured") return config;
   const managed = [
-    `Bash(yui task turn context ${taskId}/${turnId}:*)`,
+    `Bash(yui task run context ${taskId}/${runId}:*)`,
     `Bash(yui --json task context ${taskId})`,
     `Bash(yui --json task work list ${taskId})`,
     ...(workItemId === undefined
@@ -1018,27 +1017,6 @@ function patchEnvironment(
 }
 
 /**
- * Codex invokes this argv after each completed turn and appends one JSON
- * payload. JSON arrays are valid TOML arrays for the managed config override.
- */
-export function codexSessionNotifyConfig(cliPath: string): string {
-  return `notify=${JSON.stringify([process.execPath, cliPath, "internal", "session-notify"])}`;
-}
-
-function addCodexSessionNotify(
-  args: readonly string[],
-  mode: "new" | "resume",
-  cliPath: string
-): string[] {
-  const managed = ["--config", codexSessionNotifyConfig(cliPath)];
-  if (mode === "new") return [...args, ...managed];
-  if (args.length < 2 || args.at(-2) !== "resume") {
-    throw new Error("Codex resume launch shape is invalid.");
-  }
-  return [...args.slice(0, -2), ...managed, ...args.slice(-2)];
-}
-
-/**
  * Global Codex keeps its native TUI, but the TUI is only a client attachment
  * to the user's shared App Server. The daemon owns the Thread and its writer,
  * so Desktop can open the same Yui-created Thread without a second rollout
@@ -1078,7 +1056,7 @@ function codexShellEnvironmentConfig(
 /**
  * Codex 0.145 discovers lifecycle hooks from its effective config. Keep Yui's
  * two handlers invocation-local: this avoids mutating CODEX_HOME or the Task
- * workspace, while the exact launch environment supplies the durable Turn fence.
+ * workspace, while the exact launch environment supplies the durable AgentRun fence.
  */
 function codexLifecycleHooksConfig(cliPath: string): string {
   const command = [

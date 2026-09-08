@@ -624,19 +624,11 @@ function optionalTurnStatus(
 
 function classifyMutationError(error: unknown): CodexTurnAcceptance {
   if (error instanceof CodexAppServerRequestError) {
-    if (codexAppServerErrorIsBusy(error)) {
-      return { status: "busy", reason: error.message };
-    }
     if (["INVALID_PARAMS", "NOT_FOUND", "TURN_NOT_ACTIVE", -32602].includes(error.code)) {
       return { status: "not-accepted", reason: error.message };
     }
   }
   return { status: "unknown", reason: error instanceof Error ? error.message : String(error) };
-}
-
-function codexAppServerErrorIsBusy(error: CodexAppServerRequestError): boolean {
-  return /\b(active turn|turn (?:is )?(?:already )?(?:active|in progress|running)|already has an active)\b/iu
-    .test(error.message);
 }
 
 function isNotLoaded(error: unknown): boolean {

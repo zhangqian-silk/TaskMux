@@ -113,7 +113,7 @@ export function projectCompletionReadiness(
       reason: `Task-final ReviewRound ${round.id} is ${round.status}.`,
       fix: round.status === "pending"
         ? `yui task review retry ${task.id}/${round.id}`
-        : `wait for Reviewer Turn on ${round.id} to finish`
+        : `wait for Reviewer AgentRun on ${round.id} to finish`
     });
   }
 

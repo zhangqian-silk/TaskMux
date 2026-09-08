@@ -5,9 +5,9 @@ description: Lead one Yui Task from outcome through execution, review judgment, 
 
 # Yui Leader
 
-Follow `yui-runtime` first. For explicit dispatch, load the exact Turn Context
+Follow `yui-runtime` first. For explicit dispatch, load the exact AgentRun Context
 Pack and deltas. For direct user collaboration, read current Task context from
-your valid Leader Session; no active Turn or self-dispatch is required. Session
+your valid Leader Session; no active AgentRun or self-dispatch is required. Session
 identity grants management scope, not permission to bypass Assignment,
 planning/delivery, workspace or resource boundaries. Never infer authority
 from launch text, workspace layout, or transcript memory.
@@ -60,9 +60,9 @@ Choose the smallest useful executor:
 2. **Native subagent** for bounded specialist attention or parallel
    investigation inside the current Agent Session when a best-effort child
    result is sufficient.
-3. **Task Role Turn** when work needs independent durable ownership, a distinct
+3. **Task Role AgentRun** when work needs independent durable ownership, a distinct
    Agent/provider or credential set, a managed workspace, or a separately
-   recoverable Session and Turn lifecycle.
+   recoverable Session and AgentRun lifecycle.
 
 Create multiple WorkItems only when their requirements can make useful
 independent progress, normally in parallel, and the coordination and
@@ -107,7 +107,7 @@ decision support. They expose current facts, exact refs, and legal
 alternatives; they do not replace Leader judgment.
 
 Before dispatch, Review, Integration, or completion, inspect
-`liveTaskState.activeTurns` and `liveTaskState.activeTaskReviews` in the current
+`liveTaskState.activeRuns` and `liveTaskState.activeTaskReviews` in the current
 Context Pack. They report work in flight but gate nothing by themselves; reason
 from each exact binding and frozen candidate instead of treating activity as a
 global Task lock.
@@ -127,7 +127,7 @@ Maintain only context that changes future decisions:
   impact, risk, acceptance decision, or changed plan.
 - Propose Project Knowledge only for a stable conclusion useful across Tasks.
 
-Do not turn Messages, WorkItems, Decisions, or Milestones into a scheduler log
+Do not run Messages, WorkItems, Decisions, or Milestones into a scheduler log
 or transcript. Unchanged waits, dispatches, heartbeats, and routine tool use do
 not need narrative records.
 
@@ -161,8 +161,8 @@ yui task work accept <work-id> --summary "<explicit acceptance and evidence>"
 
 For a native child, keep the WorkItem roleless, mark it running, select the
 closest applicable Profile, pass its constraints in the brief, and use the
-provider's native child tools. Native children inherit the current Turn's
-authority and gain no Yui Role, Turn, Session, or broader workspace. Their
+provider's native child tools. Native children inherit the current AgentRun's
+authority and gain no Yui Role, AgentRun, Session, or broader workspace. Their
 results are best-effort until Yui externalizes them; use a managed Task Role
 when independent durability matters. Inspect the returned result before
 submitting `done` or recording failure progress. `done` creates a Candidate;
@@ -218,15 +218,15 @@ snapshotted `always` policy and any immutable Task-final Review contract.
 Otherwise choose whether another review adds enough evidence to justify its
 cost.
 
-Use direct Review by default: one main Reviewer Turn owns the authoritative
+Use direct Review by default: one main Reviewer AgentRun owns the authoritative
 result without an ExecutionGroup or Lane. Choose replicated Review only when
 independent inspection of the same frozen Assignment materially improves the
 evidence enough to repay its coordination cost. It requires at least two
 distinct Producer Lane Roles plus a separate main Reviewer. Producer results
 are durable evidence only; Core does not choose a success count or vote.
-Select the original source Turns explicitly with
-`task review synthesize <task>/<review-round> --source-turn <task>/<turn> ...`.
-For replicated WorkItems use `task work synthesize <task>/<work> --source-turn <task>/<turn> ...`.
+Select the original source AgentRuns explicitly with
+`task review synthesize <task>/<review-round> --source-run <task>/<run> ...`.
+For replicated WorkItems use `task work synthesize <task>/<work> --source-run <task>/<run> ...`.
 The main Agent receives those frozen sources, resolves disagreement through
 judgment, and submits one original result. Finishing or settling a Lane does
 not dispatch synthesis automatically. A Lane retry remains the same replica.
@@ -238,8 +238,8 @@ complete Review for every WorkItem. Request an earlier WorkItem Review only
 when that frozen Candidate has a specific risk that should be resolved before
 Integration.
 
-When a Worker or Reviewer result arrives, resolve its exact Turn and read the
-complete original `TurnResult.output` before starting new work or waiting
+When a Worker or Reviewer result arrives, resolve its exact AgentRun and read the
+complete original `AgentRunResult.output` before starting new work or waiting
 again. Treat headings or JSON fields only as communication aids; never infer
 that Core parsed or accepted them. Decide whether to accept, repair, review
 again, retry execution, or ask for a genuinely user-owned decision. Route
@@ -248,16 +248,16 @@ directly; create a Repair WorkItem only when the repair is itself a substantial
 independently owned requirement.
 
 A failed ReviewRound is an execution failure, not an automatic retry or repair
-wave. Inspect its exact Round, Turn, candidate, Core failure, and
+wave. Inspect its exact Round, AgentRun, candidate, Core failure, and
 `task next-action` facts, then choose the smallest recovery that preserves the
 frozen boundary. Do not invent a retry loop or silently replace the Reviewer
 Session. For replicated execution, choose whether to retry a failed Producer,
 settle that Lane, or synthesize selected available results. Retry a failed
-main synthesis through its exact Turn, preserving its selected source snapshot.
+main synthesis through its exact AgentRun, preserving its selected source snapshot.
 
 ## Accept, integrate, and complete
 
-A Worker or Reviewer Turn result is evidence, not acceptance. Inspect the
+A Worker or Reviewer AgentRun result is evidence, not acceptance. Inspect the
 result, diff, checks, and current Candidate before deciding.
 
 If a WorkItem result is insufficient, reject it with bounded feedback and
@@ -299,12 +299,12 @@ yui task complete <task-id> \
 Completion records the exact Project heads. Archive is a separate,
 user-authorized Operator action.
 
-## Finish every Leader Turn
+## Finish every Leader AgentRun
 
-Before ending the Turn:
+Before ending the AgentRun:
 
-1. Inspect the wake delta, resolve every referenced Worker or Reviewer Turn
-   with `yui task turn show`, read each original result in full, and make the
+1. Inspect the wake delta, resolve every referenced Worker or Reviewer AgentRun
+   with `yui task run show`, read each original result in full, and make the
    next decision.
 2. Persist actual WorkItem lifecycle and material Brief, Decision, Milestone,
    Message, or Knowledge changes.
@@ -316,10 +316,11 @@ Before ending the Turn:
 
 Do not claim completion only in prose when durable Task or WorkItem state still
 needs updating. Do not poll managed Roles or emit waiting Messages. Managed
-results wake a later Leader Turn; an unchanged active Task remains quiet.
+results enter a later Leader notification; that notification is not an implicit
+AgentRun and requires no separate execution report. An unchanged active Task remains quiet.
 
-For a runtime failure, inspect the exact `runtime.agent-error`, Turn, and
-Session facts. Retry the failed Turn on the same recoverable Session when useful.
+For a runtime failure, inspect the exact `runtime.agent-error`, AgentRun, and
+Session facts. Retry the failed AgentRun on the same recoverable Session when useful.
 Replace a Session only when the Driver proves it cannot continue. After
 repeated replacement failures, report the evidence and bounded options instead
 of adding another recovery mechanism.

@@ -534,7 +534,7 @@ const taskChildren: readonly NodeInput[] = [
     children: [
       {
         name: "request",
-        summary: "Pause the active Leader Turn and request user input.",
+        summary: "Pause the active Leader AgentRun and request user input.",
         usage: "yui task input request <task> --question <text> [--choice <key=label> ...] [--blocks <work-item:id|turn:id> ...] [--recommend <key> --timeout-seconds <seconds>]",
         options: ["--question", "--choice", "--blocks", "--recommend", "--timeout-seconds"]
       },
@@ -702,7 +702,7 @@ const taskChildren: readonly NodeInput[] = [
         children: [
           {
             name: "inspect",
-            summary: "Read the current Session, Host process, and Turn facts.",
+            summary: "Read the current Session, Host process, and AgentRun facts.",
             usage: "yui task role session inspect <task> <role>"
           },
           {
@@ -783,9 +783,9 @@ const taskChildren: readonly NodeInput[] = [
       },
       {
         name: "synthesize",
-        summary: "Dispatch synthesis over explicitly selected original Producer Turns.",
-        usage: "yui task work synthesize <task>/<work> --source-turn <task>/<turn> ...",
-        options: ["--source-turn"]
+        summary: "Dispatch synthesis over explicitly selected original Producer AgentRuns.",
+        usage: "yui task work synthesize <task>/<work> --source-run <task>/<run> ...",
+        options: ["--source-run"]
       },
       {
         name: "isolate",
@@ -816,7 +816,7 @@ const taskChildren: readonly NodeInput[] = [
         children: [
           {
             name: "retry",
-            summary: "Retry a failed Task-final ReviewRound that has no Reviewer Turn.",
+            summary: "Retry a failed Task-final ReviewRound that has no Reviewer AgentRun.",
             usage: "yui task work review retry <task>/<review-round>"
           },
           {
@@ -845,67 +845,67 @@ const taskChildren: readonly NodeInput[] = [
       },
       {
         name: "retire",
-        summary: "Retire a WorkItem and settle its exact Turns.",
+        summary: "Retire a WorkItem and settle its exact AgentRuns.",
         usage: "yui task work retire <work> --summary <text> [--replacement <work>]",
         options: ["--summary", "--replacement"]
       }
     ]
   },
   {
-    name: "turn",
-    summary: "Inspect and control Task Role Turns.",
+    name: "run",
+    summary: "Inspect and control Task Role AgentRuns.",
     sections: [{ id: "manage", title: "Commands", entries: ["list", "show", "retry", "settle", "context", "checkpoint", "retire"] }],
     children: [
-      { name: "list", summary: "List all Turns for a Task or one WorkItem.", usage: "yui task turn list <task|task/work>" },
+      { name: "list", summary: "List all AgentRuns for a Task or one WorkItem.", usage: "yui task run list <task|task/work>" },
       {
         name: "show",
-        summary: "Show one Turn and its retained audit evidence.",
-        usage: "yui task turn show <task>/<turn> [--json]"
+        summary: "Show one AgentRun and its retained audit evidence.",
+        usage: "yui task run show <task>/<run> [--json]"
       },
       {
         name: "retry",
-        summary: "Retry an exact failed execution or review Turn while preserving its semantic unit.",
-        usage: "yui task turn retry <task>/<turn>"
+        summary: "Retry an exact failed execution or review AgentRun while preserving its semantic unit.",
+        usage: "yui task run retry <task>/<run>"
       },
       {
         name: "settle",
-        summary: "Explicitly settle a failed WorkItem Lane or an obsolete stranded final Review Turn.",
-        usage: "yui task turn settle <task>/<turn>"
+        summary: "Explicitly settle a failed WorkItem Lane or an obsolete stranded final Review AgentRun.",
+        usage: "yui task run settle <task>/<run>"
       },
       {
         name: "context",
-        summary: "Load the exact authorized Turn context.",
-        usage: "yui task turn context <task>/<turn> [--json]",
+        summary: "Load the exact authorized AgentRun context.",
+        usage: "yui task run context <task>/<run> [--json]",
         executable: true,
         hidden: true,
         sections: [{ id: "load", title: "Commands", entries: ["expand", "delta"] }],
         children: [
           {
             name: "expand",
-            summary: "Expand one authorized Turn context reference.",
-            usage: "yui task turn context expand <task>/<turn> <ref-id> [--store <store>] [--mode full]",
+            summary: "Expand one authorized AgentRun context reference.",
+            usage: "yui task run context expand <task>/<run> <ref-id> [--store <store>] [--mode full]",
             options: ["--store", "--mode"]
           },
           {
             name: "delta",
-            summary: "Load authorized Turn context changes after a cursor.",
-            usage: "yui task turn context delta <task>/<turn> --after <cursor>",
+            summary: "Load authorized AgentRun context changes after a cursor.",
+            usage: "yui task run context delta <task>/<run> --after <cursor>",
             options: ["--after"]
           }
         ]
       },
       {
         name: "checkpoint",
-        summary: "Record durable progress for a long-running Turn.",
-        usage: "yui task turn checkpoint <turn> (--note <text>|--note-file <path|->)",
+        summary: "Record durable progress for a long-running AgentRun.",
+        usage: "yui task run checkpoint <run> (--note <text>|--note-file <path|->)",
         options: ["--note", "--note-file"],
         fileOptions: ["--note-file"],
         hidden: true
       },
       {
         name: "retire",
-        summary: "Retire an incorrect historical Turn without deleting its audit record.",
-        usage: "yui task turn retire <task>/<turn> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>]",
+        summary: "Retire an incorrect historical AgentRun without deleting its audit record.",
+        usage: "yui task run retire <task>/<run> --reason <text> [--expected-progress-at <timestamp>] [--agent-id <id>] [--adapter-id <id>] [--native-session-id <id>]",
         options: ["--reason", "--expected-progress-at", "--progress-at", "--agent-id", "--adapter-id", "--native-session-id"]
       }
     ]
@@ -917,9 +917,9 @@ const taskChildren: readonly NodeInput[] = [
     children: [
       {
         name: "synthesize",
-        summary: "Dispatch main Review over selected Producer Turns and the frozen candidate.",
-        usage: "yui task review synthesize <task>/<review-round> --source-turn <task>/<turn> ...",
-        options: ["--source-turn"]
+        summary: "Dispatch main Review over selected Producer AgentRuns and the frozen candidate.",
+        usage: "yui task review synthesize <task>/<review-round> --source-run <task>/<run> ...",
+        options: ["--source-run"]
       },
       {
         name: "request",
@@ -929,7 +929,7 @@ const taskChildren: readonly NodeInput[] = [
       },
       {
         name: "retry",
-        summary: "Retry a failed Task-final ReviewRound without a Reviewer Turn.",
+        summary: "Retry a failed Task-final ReviewRound without a Reviewer AgentRun.",
         usage: "yui task review retry <task>/<review-round>"
       }
     ]
@@ -1180,7 +1180,7 @@ export const ROOT_COMMAND = buildNode({
       children: [
         {
           name: "audit",
-          summary: "Report Turns, wakes, Sessions, Reviews, Integrations, and telemetry volume.",
+          summary: "Report AgentRuns, wakes, Sessions, Reviews, Integrations, and telemetry volume.",
           usage: "yui execution audit [--task <id>] [--since <iso>] [--until <iso>]",
           options: ["--task", "--since", "--until"]
         }
@@ -1501,10 +1501,10 @@ export const ROOT_COMMAND = buildNode({
     },
     {
       name: "task",
-      summary: "Manage Tasks, WorkItems, Turns, and integration.",
+      summary: "Manage Tasks, WorkItems, AgentRuns, and integration.",
       sections: [
         { id: "lifecycle", title: "Lifecycle", entries: ["create", "project", "base", "update", "activate", "execution", "complete", "cancel", "reopen", "retire", "list", "show", "context", "next-action", "remote-delivery", "archive", "replace", "reconcile", "upstream", "artifact"] },
-        { id: "collaboration", title: "Collaboration", entries: ["message", "input", "grant", "workflow", "publication", "work", "turn", "review", "integration", "role", "overlap", "change-set"] },
+        { id: "collaboration", title: "Collaboration", entries: ["message", "input", "grant", "workflow", "publication", "work", "run", "review", "integration", "role", "overlap", "change-set"] },
         { id: "knowledge", title: "Task Knowledge", entries: ["brief", "decision", "milestone", "event", "continuation", "wake"] }
       ],
       children: taskChildren
@@ -1547,8 +1547,8 @@ export const ROOT_COMMAND = buildNode({
       sections: [{ id: "manage", title: "Commands", entries: ["status", "prune", "read"] }],
       children: [
         { name: "status", summary: "Show sidecar health, row counts, and retention settings.", usage: "yui telemetry status" },
-        { name: "prune", summary: "Apply terminal retention and active-Turn caps.", usage: "yui telemetry prune [--task <id>] [--keep <n>] [--dry-run]" },
-        { name: "read", summary: "Page through retained progress rows or read a Turn aggregate.", usage: "yui telemetry read --task <id> [--turn <id>] [--aggregate] [--limit <n>] [--offset <n>]" }
+        { name: "prune", summary: "Apply terminal retention and active-AgentRun caps.", usage: "yui telemetry prune [--task <id>] [--keep <n>] [--dry-run]" },
+        { name: "read", summary: "Page through retained progress rows or read a AgentRun aggregate.", usage: "yui telemetry read --task <id> [--run <id>] [--aggregate] [--limit <n>] [--offset <n>]" }
       ]
     },
     {

@@ -17,12 +17,12 @@
 | Brief | 当前任务认知；普通编辑无需变成正式 Decision |
 | Decision | 值得保留重要选择及其原因的记录 |
 | WorkItem | 可以独立负责和验收的一项责任，不是内部操作步骤 |
-| Assignment | 一次实际委派的输入快照，可保存在 Turn 中 |
-| Turn | 一次 Agent 执行的输入、实际配置、结果及必要身份 |
-| Session | 可跨多个 Turn 使用的原生会话与有效配置 |
+| Assignment | 一次实际委派的输入快照，可保存在 AgentRun 中 |
+| AgentRun | 一次 Agent 执行的输入、实际配置、结果及必要身份 |
+| Session | 可跨多个 AgentRun 使用的原生会话与有效配置 |
 | Host | Yui 持有会话连接、进程附件和实现句柄的临时对象 |
 | Candidate | 明确提交给负责人判断的一版结果，不决定未来要求 |
-| Review | 对 Candidate 的 Reviewer Turn 引用；结果原文不重复保存 |
+| Review | 对 Candidate 的 Reviewer AgentRun 引用；结果原文不重复保存 |
 | Context | 由已有事实组成的工作读视图，不拥有第二份任务状态 |
 | Message | 持久化沟通内容及其来源、目标和引用 |
 | Wake | 提醒读取新事实的通知，不承担业务事实 |

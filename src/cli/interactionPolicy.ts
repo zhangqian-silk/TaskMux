@@ -27,7 +27,7 @@ export type SelectableEntity =
   | "integration-attempt"
   | "job"
   | "project"
-  | "turn"
+  | "run"
   | "task"
   | "decision"
   | "event"
@@ -541,14 +541,14 @@ export const INTERACTION_POLICIES: readonly InteractionPolicy[] = Object.freeze(
     confirmation: { action: "Retire Work Item", targetArgumentIndex: 3 }
   },
   {
-    commandPath: ["task", "turn", "list"],
+    commandPath: ["task", "run", "list"],
     selectors: [{ argumentIndex: 3, entity: "work-item", provider: "work-items", actionTarget: true }],
   },
   {
-    commandPath: ["task", "turn", "retry"],
+    commandPath: ["task", "run", "retry"],
     selectors: [{
       argumentIndex: 3,
-      entity: "turn",
+      entity: "run",
       provider: "turns",
       actionTarget: true
     }]

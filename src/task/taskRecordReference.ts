@@ -3,7 +3,7 @@ import { requireIdentity } from "../domain/validation.js";
 export const TASK_RECORD_ID_PREFIXES = {
   workItem: "work-item",
   contextSnapshot: "context-snapshot",
-  turn: "turn",
+  run: "run",
   reviewRound: "review-round",
   changeSet: "change-set",
   integrationAttempt: "integration",
@@ -37,8 +37,8 @@ export function formatTaskRecordReference(
   return `${reference.taskId}/${reference.localId}`;
 }
 
-export function formatTurnReceiptId(taskId: string, turnId: string): string {
-  return `turn:${formatTaskRecordReference(taskId, turnId, "turn")}`;
+export function formatRunReceiptId(taskId: string, runId: string): string {
+  return `turn:${formatTaskRecordReference(taskId, runId, "run")}`;
 }
 
 export function formatInputRequestReceiptId(taskId: string, requestId: string): string {
@@ -84,7 +84,8 @@ export function validateTaskRecordReference(
 ): TaskRecordReference {
   const taskId = requireIdentity(value.taskId, "Task id");
   const localId = requireIdentity(value.localId, `${TASK_RECORD_ID_PREFIXES[kind]} local id`);
-  const match = new RegExp(`^${TASK_RECORD_ID_PREFIXES[kind]}-([1-9]\\d*)$`).exec(localId);
+  const prefix = kind === "run" ? "(?:run|turn)" : TASK_RECORD_ID_PREFIXES[kind];
+  const match = new RegExp(`^${prefix}-([1-9]\\d*)$`).exec(localId);
   if (match === null || !Number.isSafeInteger(Number(match[1]))) {
     throw new Error(
       `${TASK_RECORD_ID_PREFIXES[kind]} local id is invalid: ${localId}.`

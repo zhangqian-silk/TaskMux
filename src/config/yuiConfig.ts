@@ -1,7 +1,7 @@
 import {
-  DEFAULT_TURN_CAP,
+  DEFAULT_RUN_CAP,
   DEFAULT_TERMINAL_KEEP,
-  MAX_TURN_CAP
+  MAX_RUN_CAP
 } from "../telemetry/telemetryConfig.js";
 import {
   DEFAULT_RUNTIME_HEALTH_POLICY,
@@ -122,14 +122,14 @@ export function resolveTelemetryTerminalKeep(value?: unknown): number {
   return value;
 }
 
-export function resolveTelemetryTurnCap(value?: unknown): number {
-  if (value === undefined || value === null) return DEFAULT_TURN_CAP;
+export function resolveTelemetryRunCap(value?: unknown): number {
+  if (value === undefined || value === null) return DEFAULT_RUN_CAP;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw new TypeError("telemetryTurnCap must be a positive integer.");
   }
-  if (value > MAX_TURN_CAP) {
+  if (value > MAX_RUN_CAP) {
     throw new TypeError(
-      `telemetryTurnCap must not exceed ${MAX_TURN_CAP.toLocaleString("en-US")} (retention cannot be disabled).`
+      `telemetryTurnCap must not exceed ${MAX_RUN_CAP.toLocaleString("en-US")} (retention cannot be disabled).`
     );
   }
   return value;
@@ -141,7 +141,7 @@ export const DEFAULT_CONTROLLER_TASK_CONCURRENCY = 4;
 export const MAX_CONTROLLER_TASK_CONCURRENCY = 32;
 export const DEFAULT_AGENT_LAUNCH_INACTIVITY_TIMEOUT_SECONDS = 300;
 export const DEFAULT_DELIVERY_TIMEOUT_SECONDS = 120;
-export const DEFAULT_LEADER_SEMANTIC_BUDGET_TURNS = 3;
+export const DEFAULT_LEADER_SEMANTIC_BUDGET_RUNS = 3;
 export const DEFAULT_TMUX_HISTORY_LIMIT = 100_000;
 
 export type RuntimeHealthConfig = Readonly<{
@@ -215,13 +215,13 @@ export function resolveDeliveryTimeoutSeconds(value?: unknown): number {
   );
 }
 
-export function resolveLeaderSemanticBudgetTurns(value?: unknown): number {
+export function resolveLeaderSemanticBudgetRuns(value?: unknown): number {
   return resolveBoundedPositiveInteger(
     value,
-    DEFAULT_LEADER_SEMANTIC_BUDGET_TURNS,
+    DEFAULT_LEADER_SEMANTIC_BUDGET_RUNS,
     1,
     20,
-    "leaderSemanticBudgetTurns"
+    "leaderSemanticBudgetRuns"
   );
 }
 

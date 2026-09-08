@@ -518,7 +518,7 @@ export function detachRoleAgentSessionHost<TSet extends RoleSessionSet>(
  * Turn fence; this transition merely makes the native Session available for a
  * subsequent input and remembers the provider Turn idempotently.
  */
-export function recordTaskRoleTurnBoundary(
+export function recordTaskRoleNativeTurnBoundary(
   set: TaskRoleSessionSet,
   input: Readonly<{
     agentId: string;

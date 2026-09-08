@@ -1,6 +1,6 @@
 export const TASK_SURFACE_SCRIPT = `
 import { node, clear } from "/assets/js/dom.js";
-import { anchorSection, sectionHead, richText, inputCard, roleCard, turnCard, pill } from "/assets/js/components.js";
+import { anchorSection, sectionHead, richText, inputCard, roleCard, runCard, pill } from "/assets/js/components.js";
 
 // All business facts below retain their Context reference. Expanded values
 // are current reads, not mutations of a historical Context snapshot.
@@ -144,6 +144,9 @@ export function renderTaskSurface(container, data, t, locale, actions) {
         const result = await actions.inspect(task.id, entry.ref);
         const content = node("pre", "surface-json", JSON.stringify(result.value, null, 2));
         card.append(content);
+        if (result.result?.output) card.append(richText(say("Original execution report", "原始执行报告"), result.result.output, t));
+        if (result.result?.diagnostic) card.append(richText(say("Execution diagnostic", "执行诊断"), result.result.diagnostic, t));
+        if (result.execution) card.append(node("pre", "surface-json", JSON.stringify(result.execution, null, 2)));
         expand.remove();
       } catch {
         expand.disabled = false;
@@ -182,21 +185,25 @@ export function renderTaskSurface(container, data, t, locale, actions) {
   records("role").forEach((entry) => {
     if (entry.omitted) { roles.append(recordCard(entry)); return; }
     const role = entry.value;
-    const active = values("turn").find((turn) => turn.roleName === role.name && turn.status === "active");
-    const incomplete = core.omitted.records > 0 || records("turn").some((entry) => entry.omitted);
+    const active = values("run").find((run) => run.roleName === role.name && run.status === "active");
+    const incomplete = core.omitted.records > 0 || records("run").some((entry) => entry.omitted);
     roles.append(roleCard({
-      ...role, status: active ? "running" : incomplete ? "unknown" : "idle",
+      ...role, status: active || incomplete ? "unknown" : "idle",
       effectiveLaunch: active ? active.effective : null,
       launchDrift: active && active.effective.sourceDesiredRevision !== role.launchRevision
     }, task, t, locale, actions));
     if (!active) roles.append(node("p", "muted", say(
-      "No active Turn in this read; Session activity is a separate observation.",
-      "此读取中没有活跃 Turn；Session 活动属于独立观察。")));
+      "No active AgentRun in this read; Session activity is a separate observation.",
+      "此读取中没有活跃 AgentRun；Session 活动属于独立观察。")));
   });
   scaffold.append(anchorSection("detail-roles", sectionHead(t("detail.roles")), roles));
   const execution = node("details", "record-card");
   execution.append(node("summary", "", say("Execution and observations", "展开执行与观察")));
-  records("turn").forEach((entry) => execution.append(entry.omitted ? recordCard(entry) : turnCard(entry.value, t, locale)));
+  execution.append(node("p", "muted", say(
+    "An open execution record is not proof of Agent activity. Native admission and Task progress are separate facts.",
+    "执行记录未结清不等于 Agent 正在工作；原生准入、运行观察与 Task 进展分别呈现。")));
+  records("run").forEach((entry) => execution.append(entry.omitted ? recordCard(entry)
+    : runCard({ ...entry.value, execution: entry.execution }, t, locale)));
   (core.observations || []).forEach((observation) => execution.append(node("p", "muted",
     observation.source + " · " + observation.status + " · " + observation.coverage + " · " + observation.observedAt)));
   const runtimeStatus = node("p", "muted", data.runtimeStatus + " · " + data.runtimeObservedAt);

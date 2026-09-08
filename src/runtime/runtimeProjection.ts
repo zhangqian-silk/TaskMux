@@ -2,7 +2,7 @@ import type { AgentRuntimeOperation, AgentRuntimeWaitReason } from "./agentDrive
 import {
   createRuntimeObservation,
   runtimeObservationFromTaskEvent,
-  runtimeObservationTurnFenceMatches,
+  runtimeObservationRunFenceMatches,
   type RuntimeObservation,
   type RuntimeObservationFence,
   type RuntimeUsageSnapshot
@@ -32,7 +32,7 @@ export type RuntimeProjection = Readonly<{
   fence: RuntimeObservationFence;
   host: "unknown" | "alive" | "exited";
   session: "unknown" | "started" | "ready" | "active" | "waiting" | "ended" | "failed";
-  turn: "none" | "accepted" | "waiting" | "completed" | "failed" | "cancelled" | "delivery-unknown";
+  run: "none" | "accepted" | "waiting" | "completed" | "failed" | "cancelled" | "delivery-unknown";
   conversation: "unknown" | "recoverable" | "unrecoverable";
   goal: "none" | "active" | "paused" | "blocked" | "usage-limited" | "budget-limited" | "complete";
   continuations: Readonly<Record<string, Readonly<{
@@ -117,7 +117,7 @@ export function createRuntimeProjection(
     fence: Object.freeze({ ...fence }),
     host: "unknown",
     session: "unknown",
-    turn: "none",
+    run: "none",
     conversation: "unknown",
     goal: "none",
     continuations: Object.freeze({}),
@@ -145,7 +145,7 @@ export function projectRuntimeTaskEvents(
   const observations = events
     .map(runtimeObservationFromTaskEvent)
     .filter((event): event is RuntimeObservation => (
-      event !== null && runtimeObservationTurnFenceMatches(fence, event.fence)
+      event !== null && runtimeObservationRunFenceMatches(fence, event.fence)
     ))
     .sort((left, right) => (
       left.receivedAt.localeCompare(right.receivedAt)
@@ -161,7 +161,7 @@ export function projectRuntimeObservation(
   raw: RuntimeObservation
 ): RuntimeProjection {
   const event = createRuntimeObservation(raw);
-  if (!runtimeObservationTurnFenceMatches(current.fence, event.fence)) {
+  if (!runtimeObservationRunFenceMatches(current.fence, event.fence)) {
     throw new Error("Runtime observation fence does not match the projection.");
   }
   const at = event.receivedAt;
@@ -182,18 +182,18 @@ export function projectRuntimeObservation(
     case "session.ended":
       return next(current, {
         session: "ended",
-        turn: terminalTurn(current.turn),
+        run: terminalRun(current.run),
         // A parent provider Session ending is independent from native child
-        // operations already observed under the Turn. Keep those children
+        // operations already observed under the AgentRun. Keep those children
         // visible until their own terminal facts arrive; host/session loss is
-        // health evidence, not proof that child work or the Yui Turn ended.
+        // health evidence, not proof that child work or the Yui AgentRun ended.
         operations: activeSubagentOperations(current.operations),
         stateSince: at
       });
     case "session.failed":
       return next(current, {
         session: "failed",
-        turn: current.turn === "none" ? "failed" : terminalTurn(current.turn, "failed"),
+        run: current.run === "none" ? "failed" : terminalRun(current.run, "failed"),
         operations: activeSubagentOperations(current.operations),
         stateSince: at
       });
@@ -202,7 +202,7 @@ export function projectRuntimeObservation(
       if (event.fence.receiptId?.startsWith("turn-input:") === true) return current;
       return withActivity(next(current, {
         session: "active",
-        turn: "accepted",
+        run: "accepted",
         waitingReason: undefined,
         waitId: undefined,
         stateSince: at
@@ -210,7 +210,7 @@ export function projectRuntimeObservation(
     case "turn.waiting":
       return next(current, {
         session: "waiting",
-        turn: "waiting",
+        run: "waiting",
         waitingReason: event.payload.reason,
         waitId: event.payload.waitId,
         stateSince: at
@@ -218,19 +218,19 @@ export function projectRuntimeObservation(
     case "turn.completed":
       return withActivity(next(current, {
         session: "ready",
-        turn: "completed",
+        run: "completed",
         waitingReason: undefined,
         waitId: undefined,
         // Tool operations belong to the completed native Turn. Provider-owned
         // background subagents may legitimately outlive it and wake later
-        // native Provider activity inside the same durable Yui Turn.
+        // native Provider activity inside the same durable Yui AgentRun.
         operations: activeSubagentOperations(current.operations),
         stateSince: at
       }), "provider", at);
     case "turn.failed":
       return withActivity(next(current, {
         session: "ready",
-        turn: "failed",
+        run: "failed",
         waitingReason: undefined,
         waitId: undefined,
         operations: Object.freeze({}),
@@ -239,7 +239,7 @@ export function projectRuntimeObservation(
     case "turn.cancelled":
       return withActivity(next(current, {
         session: "ready",
-        turn: "cancelled",
+        run: "cancelled",
         waitingReason: undefined,
         waitId: undefined,
         operations: Object.freeze({}),
@@ -252,7 +252,7 @@ export function projectRuntimeObservation(
         session: current.session === "ended" || current.session === "failed"
           ? current.session
           : "active",
-        turn: current.turn === "waiting" ? "accepted" : current.turn,
+        run: current.run === "waiting" ? "accepted" : current.run,
         waitingReason: undefined,
         waitId: undefined,
         operations: Object.freeze({
@@ -270,7 +270,7 @@ export function projectRuntimeObservation(
         session: current.session === "ended" || current.session === "failed"
           ? current.session
           : "active",
-        turn: current.turn === "waiting" ? "accepted" : current.turn,
+        run: current.run === "waiting" ? "accepted" : current.run,
         waitingReason: undefined,
         waitId: undefined,
         operations: Object.freeze(operations),
@@ -284,8 +284,8 @@ export function projectRuntimeObservation(
       const projected = next(current, {
         ...(usage === undefined ? {} : { usage: Object.freeze({ ...usage }) }),
         ...(lifecycleActivity ? {
-          session: current.turn === "waiting" ? "active" : current.session,
-          turn: current.turn === "waiting" ? "accepted" : current.turn,
+          session: current.run === "waiting" ? "active" : current.session,
+          run: current.run === "waiting" ? "accepted" : current.run,
           waitingReason: undefined,
           waitId: undefined
         } : {})
@@ -378,7 +378,7 @@ export function projectRuntimeObservation(
     }
     case "input.delivery-unknown":
       if (event.fence.receiptId?.startsWith("turn-input:") === true) return current;
-      return next(current, { turn: "delivery-unknown", stateSince: at });
+      return next(current, { run: "delivery-unknown", stateSince: at });
     case "native-work.snapshot":
       return next(current, {});
     default:
@@ -420,10 +420,10 @@ export function runtimeDisplayStatus(current: RuntimeProjection): RuntimeDisplay
   if (operation === "subagent") return "subagent-active";
   if (current.host === "exited" || current.session === "ended") return "stopped";
   if (operation !== null) return `${operation}-active`;
-  if (current.turn === "waiting") return `waiting-${current.waitingReason ?? "external"}`;
-  if (current.session === "ready" || current.turn === "completed"
-    || current.turn === "failed" || current.turn === "cancelled") return "ready";
-  if (current.turn === "accepted" || current.session === "active") {
+  if (current.run === "waiting") return `waiting-${current.waitingReason ?? "external"}`;
+  if (current.session === "ready" || current.run === "completed"
+    || current.run === "failed" || current.run === "cancelled") return "ready";
+  if (current.run === "accepted" || current.session === "active") {
     return current.activity.kind === "model" ? "model-active" : "active-quiet";
   }
   if (current.session === "started") return "awaiting-provider-acceptance";
@@ -434,7 +434,7 @@ export function runtimeDisplayStatus(current: RuntimeProjection): RuntimeDisplay
 /**
  * Classify one RuntimeProjection into the layered health state shared by CLI,
  * Web, and scheduler. The semantic progress timestamp is the same durable
- * fence the scheduler stall pass consumes (Turn creation plus Work/Review/
+ * fence the scheduler stall pass consumes (AgentRun creation plus Work/Review/
  * Integration checkpoints), so token/tool/CPU activity can never masquerade
  * as business progress.
  *
@@ -499,7 +499,7 @@ function classifyLayer(
   if (current.observer.status === "degraded" || current.observer.status === "unavailable") {
     return "diagnostic-needed";
   }
-  if (current.turn === "waiting") {
+  if (current.run === "waiting") {
     return `waiting-${current.waitingReason ?? "external"}` as RuntimeHealthLayer;
   }
   // No durable semantic progress past fifteen minutes: display only. The
@@ -507,11 +507,11 @@ function classifyLayer(
   if (semanticIdleMs >= policy.diagnosticAfterMs) return "diagnostic-needed";
   // A live turn with no recent structured activity is quiet, not dead.
   if (runtimeIdleMs >= policy.quietAfterMs) return "quiet";
-  if (current.turn === "accepted" || current.session === "active") return "active-quiet";
+  if (current.run === "accepted" || current.session === "active") return "active-quiet";
   if (current.session === "ready"
-    || current.turn === "completed"
-    || current.turn === "failed"
-    || current.turn === "cancelled") return "ready";
+    || current.run === "completed"
+    || current.run === "failed"
+    || current.run === "cancelled") return "ready";
   if (current.session === "started") return "awaiting-provider-acceptance";
   if (current.host === "alive") return "runtime-unobservable";
   return "starting";
@@ -525,7 +525,7 @@ function runtimeHealthReason(
     case "broken":
       return "the Agent Driver runtime is broken";
     case "stopped":
-      return "the Provider Activation ended while the Yui Turn remains active";
+      return "the Provider Activation ended while the Yui AgentRun remains active";
     case "subagent-active":
     case "tool-active":
     case "model-active":
@@ -544,9 +544,9 @@ function runtimeHealthReason(
     case "waiting-external":
       return `the Agent Driver is ${layer.replaceAll("-", " ")}`;
     case "ready":
-      return "the Provider turn ended while the Yui Turn is still active";
+      return "the Provider turn ended while the Yui AgentRun is still active";
     case "awaiting-provider-acceptance":
-      return "the submitted active Turn is awaiting Provider acceptance";
+      return "the submitted active AgentRun is awaiting Provider acceptance";
     case "runtime-unobservable":
       return "the host is present but the Agent Driver exposes no current runtime state";
     case "starting":
@@ -590,7 +590,7 @@ function next(
     ...activeNativeOperations.map(([id]) => `native-operation:${id}`)
   ];
   const attention = [
-    ...(copy.turn === "delivery-unknown" ? ["delivery-unknown"] : []),
+    ...(copy.run === "delivery-unknown" ? ["delivery-unknown"] : []),
     ...continuations.flatMap(([id, continuation]) => (
       continuation.identityConflict ? [`identity-conflict:${id}`]
         : continuation.observation === "unavailable" ? [`continuation-unresolved:${id}`]
@@ -610,7 +610,7 @@ function next(
     : (["unknown", "ended", "failed"].includes(copy.session) && waitingNative.length > 0)
       ? "reconciling"
       : "healthy";
-  const runActivity: RuntimeProjection["runActivity"] = copy.turn === "accepted"
+  const runActivity: RuntimeProjection["runActivity"] = copy.run === "accepted"
       || copy.session === "active"
     ? "running"
     : waitingNative.length > 0 || activeNativeOperations.length > 0 ? "waiting"
@@ -643,10 +643,10 @@ function activeSubagentOperations(
   ));
 }
 
-function terminalTurn(
-  current: RuntimeProjection["turn"],
+function terminalRun(
+  current: RuntimeProjection["run"],
   fallback: "failed" | "cancelled" = "cancelled"
-): RuntimeProjection["turn"] {
+): RuntimeProjection["run"] {
   return current === "completed" || current === "failed" || current === "cancelled"
     ? current
     : fallback;

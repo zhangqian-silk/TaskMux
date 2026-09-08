@@ -12,7 +12,7 @@ export type MailboxTarget =
 
 export type MailboxEntityType =
   | "task"
-  | "turn"
+  | "run"
   | "work-item"
   | "input"
   | "session"
@@ -22,7 +22,7 @@ export type MailboxEntityType =
 export type MailboxEntityRef =
   | Readonly<{ type: "task" | "session"; id: string }>
   | Readonly<{
-      type: "turn" | "work-item" | "input" | "message" | "event";
+      type: "run" | "work-item" | "input" | "message" | "event";
       taskId: string;
       id: string;
     }>;
@@ -441,7 +441,7 @@ function parseTarget(value: unknown): MailboxTarget {
 function parseRef(value: unknown, label: string): MailboxEntityRef {
   const ref = record(value, label);
   const types: readonly MailboxEntityType[] = [
-    "task", "turn", "work-item", "input", "session", "message", "event"
+    "task", "run", "work-item", "input", "session", "message", "event"
   ];
   if (!types.includes(ref.type as MailboxEntityType)) throw new Error(`${label} type is invalid`);
   if (ref.type === "task" || ref.type === "session") {
@@ -450,7 +450,7 @@ function parseRef(value: unknown, label: string): MailboxEntityRef {
   }
   exact(ref, ["type", "taskId", "id"], label);
   return copyRef({
-    type: ref.type as "turn" | "work-item" | "input" | "message" | "event",
+    type: ref.type as "run" | "work-item" | "input" | "message" | "event",
     taskId: requireString(ref.taskId, `${label} taskId`),
     id: requireString(ref.id, `${label} id`)
   });
@@ -500,10 +500,10 @@ function copyRef(ref: MailboxEntityRef): MailboxEntityRef {
 }
 
 function mailboxTaskRecordKind(
-  type: "turn" | "work-item" | "input" | "message" | "event"
+  type: "run" | "work-item" | "input" | "message" | "event"
 ): TaskRecordKind {
   switch (type) {
-    case "turn": return "turn";
+    case "run": return "run";
     case "work-item": return "workItem";
     case "input": return "inputRequest";
     case "message": return "message";

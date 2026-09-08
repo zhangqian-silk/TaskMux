@@ -6,7 +6,11 @@
 
 ## 1. 责任
 
-Execution 接受已明确请求的工作，建立 Turn，取得可用 Endpoint，收集输出并保存。它不对输出质量做判断，也不因为失败次数自动更换执行策略。
+Execution 接受已明确请求的工作，建立 AgentRun，取得可用 Endpoint，收集输出并保存。它不对输出质量做判断，也不因为失败次数自动更换执行策略。
+
+普通 Leader 通知和原生直聊不自动建立 AgentRun。消息批次在明确接受后结清，不依赖最终报告。
+Session 身份、执行记录与 native admission 分别判断；当前详细边界见
+[Session / AgentRun 合同](../architecture/07-session-run-contract.md)。
 
 Runtime 内部负责产品启动、协议交互和连接。上层只使用 AgentEndpoint，不直接解析 terminal 字符、Provider Hook 名字或 JSON 字段。
 
@@ -15,8 +19,8 @@ Runtime 内部负责产品启动、协议交互和连接。上层只使用 Agent
 | 对象 | 保存内容 | 生命周期 |
 |---|---|---|
 | 执行请求 | 目标、Role、输入、请求者 | 等待准入或被明确处置 |
-| Turn | 实际输入、配置、原生关联、输出／错误 | 一次执行事实 |
-| Session 引用 | 原生会话 ID、有效配置、实现引用、环境 | 可跨多个 Turn 续用 |
+| AgentRun | 实际输入、配置、原生关联、输出／错误 | 一次执行事实 |
+| Session 引用 | 原生会话 ID、有效配置、实现引用、环境 | 可跨多个 AgentRun 续用 |
 | Host | 连接、进程、事件订阅、实例句柄 | 临时运行对象，可重建 |
 | ExecutionGroup | 相同 Assignment 的副本及尝试引用 | 关联执行，不拥有工作流状态 |
 
@@ -26,13 +30,13 @@ Session 元数据可以持久化，实际对象不保存。Host 退出不自动�
 
 Endpoint 能打开或恢复会话、提交输入、检查事实、请求取消、可选 steer、读取事件并解除附件。每项操作的具体支持来自实际实现描述。
 
-提交结果包含 accepted、pending、not-submitted 或 unknown。accepted 的证据可以来自 Provider 确认或准确关联的终态；只有通信写入时明确标记证据较弱。内部可以分配本地 execution ID，但不把它命名为 Provider 返回的原生 Turn ID。
+提交结果包含 accepted、pending、not-submitted 或 unknown。accepted 的证据可以来自 Provider 确认或准确关联的终态；只有通信写入时保留 transport 证据，不确认业务输入已经接受。内部可以分配本地 execution ID，但不把它命名为 Provider 返回的 nativeTurnId。
 
-事件入口必须能关联到原请求、Session 及相应实现。重复事件不重复创建结果；迟到事件写入原 Turn，不完成后继 Turn。
+事件入口必须能关联到原请求、Session 及相应实现。重复事件不重复创建结果；迟到事件写入原 AgentRun，不完成后继 AgentRun。
 
 ## 4. 产品、协议与载体组合
 
-产品适配知道 binary、版本、认证配置和启动预设。协议适配知道 Session、Turn、事件和错误语义。载体知道打开与关闭何种连接。
+产品适配知道 binary、版本、认证配置和启动预设。协议适配知道 Session、AgentRun、事件和错误语义。载体知道打开与关闭何种连接。
 
 Endpoint 工厂只允许已声明兼容的组合。具体 CLI 是否支持 ACP、哪个版本或 native 连接，应在实现时探测验证。协议公共代码可以复用，但不同能力不被填成相同布尔值来掩盖差异。
 
@@ -40,7 +44,7 @@ Codex 与其 App Server 适配可同包；通用 ACP 实现可供多个产品使
 
 ## 5. 准入与并行
 
-已经提出的执行请求检查 Role 是否有 active Turn、配置是否可解析、所需环境是否可使用。暂时不可用返回事实或保留同一请求，避免创建重复工作。
+明确执行检查自己的 Assignment、配置及环境边界；原生提交检查 Session 可用性和准确 attempt。active AgentRun 不是 Leader 本地操作的通用权限门槛。暂时不可用返回事实或保留同一请求，避免创建重复工作。
 
 同一 Role 普通输入串行处理。不同 Role 可并行。多路执行共享一份 Assignment，每个副本有自己的尝试编号，重试不变成新副本。
 
@@ -54,7 +58,7 @@ Controller 重启后可以根据保存的原生身份检查当前状态。可以
 
 ## 7. 结果、取消与后台活动
 
-原生终态结束相应 Turn 并保存原始可见结果。Task 层再由 Leader 使用结果。
+原生终态结束相应 AgentRun 并保存原始可见结果。Task 层再由 Leader 使用结果。
 
 取消分为 request 和 confirmation。请求成功不等于所有后代进程和外部服务已停止。Agent 需要重用冲突资源时，查询相关活动或更换独立环境；无关活动不阻止任务其他部分推进。
 

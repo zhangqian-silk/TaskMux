@@ -6,11 +6,11 @@
 
 这些是目标接口，不是当前发布 SDK。接口展示哪些信息应有明确所有权，不要求建立相同名称的类、服务或数据库表。已有实现可通过无持久化双写的边界包装满足契约；实现并存的限制见 [T00 实施基线](../implementation/designs/T00-current-baseline.md)。
 
-TaskState 包含 draft／active／completed／cancelled／archived。`archive` 仅在 archived 时必需，引用先前结束事实；TypeScript 的可选字段不代替运行时关联校验。允许转换、归档前置和不可重开规则由 [Task 模块](../modules/02-task.md) 唯一定义。Turn 的 cancelled 与 Task 的 cancelled 不是同一事实。
+TaskState 包含 draft／active／completed／cancelled／archived。`archive` 仅在 archived 时必需，引用先前结束事实；TypeScript 的可选字段不代替运行时关联校验。允许转换、归档前置和不可重开规则由 [Task 模块](../modules/02-task.md) 唯一定义。AgentRun 以 failed/cancelled 来源保留取消证据，不自动取消 Task。
 
 ## 设计边界
 
-Task、Role、Turn 和 Candidate 是不同对象。Role 的当前配置可以更新，Session 和 Turn 记录实际使用的配置。Candidate 不引用一个可执行插件句柄；仅保留来源说明和结果引用。
+Task、Role、AgentRun 和 Candidate 是不同对象。Role 的当前配置可以更新，Session 和 AgentRun 记录实际使用的配置。Candidate 不引用一个可执行插件句柄；仅保留来源说明和结果引用。
 
 `revision` 用于记录并发更新；它不具有自动判断业务过期的含义。接受操作不要求所有来源的 revision 与当前状态相同。
 

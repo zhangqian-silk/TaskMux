@@ -141,14 +141,14 @@ function collectTaskStatuses(store: TaskStore): Map<string, string> {
 }
 
 /**
- * Workspace paths claimed by active durable Jobs. An active Turn still
+ * Workspace paths claimed by active durable Jobs. An active AgentRun still
  * holds its workspace even after the managed workspace record is gone, so
- * those paths stay protected until the Turn finishes.
+ * those paths stay protected until the AgentRun finishes.
  */
 function collectActiveWorkspaceOwnerPaths(store: TaskStore): string[] {
   const paths: string[] = [];
   for (const task of store.listTasks()) {
-    for (const run of store.listTurns(task.id)) {
+    for (const run of store.listRuns(task.id)) {
       if (run.status !== "active") continue;
       const workspace = run.workspace;
       if (workspace === undefined) continue;

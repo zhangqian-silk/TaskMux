@@ -62,6 +62,21 @@ export function taskLocalActor(
   return actor;
 }
 
+/** Planning conversations may save facts; delivery checks the immutable
+ * native Session authority, not the Task's newly activated status.
+ */
+export function assertTaskDeliveryAuthority(
+  store: ManagedCallerStore, environment: NodeJS.ProcessEnv | undefined, taskId: string
+): TaskCompletedBy {
+  const actor = taskLocalActor(store, environment, taskId);
+  if (actor !== "leader") return actor;
+  const caller = currentManagedRuntime(store, environment, taskId, LEADER_ROLE);
+  if (caller?.executionAuthority !== "delivery") {
+    throw usageError("This native Session has planning authority, not delivery authority. Use a delivery Session for this operation.");
+  }
+  return actor;
+}
+
 /**
  * Resolve the caller identity for Project-scoped authority. Project Knowledge
  * is an Operator-level authority: a managed Task Session (Leader/Reviewer/
@@ -90,7 +105,7 @@ export function projectActor(environment: NodeJS.ProcessEnv | undefined): Projec
 
 /**
  * Resolve the caller's Task, Role and native Session identity. The Controller
- * verifies it against durable state and supplies the current Turn. A Task
+ * verifies it against durable state and supplies the current AgentRun. A Task
  * caller cannot control another Task; an incomplete identity is not a user.
  */
 export function resolveJobCaller(
@@ -106,7 +121,7 @@ export function resolveJobCaller(
     }
     const role = env.YUI_ROLE;
     const nativeSessionId = env.CODEX_THREAD_ID ?? env.YUI_NATIVE_SESSION_ID;
-    // The Turn is deliberately absent: the Controller reads the current Turn
+    // The AgentRun is deliberately absent: the Controller reads the current AgentRun
     // for this Task Role from durable state when it authorizes the request.
     return {
       scope: "task",

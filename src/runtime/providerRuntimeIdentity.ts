@@ -19,7 +19,7 @@ export type ProviderGoalStatus =
   | "budget-limited"
   | "complete";
 
-/** Provider-native Session intent. It is independent from Turn and Task completion. */
+/** Provider-native Session intent. It is independent from AgentRun and Task completion. */
 export type ProviderGoal = Readonly<{
   status: ProviderGoalStatus;
   objective: string;
@@ -50,8 +50,8 @@ export type ProviderAuthority = Readonly<{
 }>;
 
 export type ProviderTurn = Readonly<{
-  /** Optional correlation for the durable Yui Turn record. */
-  turnId?: string;
+  /** Optional correlation for the durable Yui AgentRun record. */
+  runId?: string;
   attemptId: string;
   authorityEpoch: number;
   status: ProviderTurnStatus;
@@ -68,7 +68,7 @@ export type ProviderRuntimeBinding = Readonly<{
   currentConversationEpoch: number;
   conversations: readonly ProviderConversation[];
   authority: ProviderAuthority;
-  turn: ProviderTurn | null;
+  run: ProviderTurn | null;
   goal: ProviderGoal | null;
 }>;
 
@@ -97,7 +97,7 @@ export function createProviderRuntimeBinding(input: Readonly<{
       holderId: "controller",
       changedAt: startedAt
     },
-    turn: null,
+    run: null,
     goal: null
   });
 }
@@ -157,8 +157,8 @@ export function transferProviderAuthority(
     || binding.authority.owner !== input.expectedOwner) {
     throw new Error("Provider authority fence is stale.");
   }
-  if (providerTurnIsActive(binding.turn)) {
-    throw new Error("Provider authority cannot transfer while a Turn is unsettled.");
+  if (providerTurnIsActive(binding.run)) {
+    throw new Error("Provider authority cannot transfer while a AgentRun is unsettled.");
   }
   const changedAt = timestamp(input.changedAt, "Provider authority changedAt");
   if (Date.parse(changedAt) < Date.parse(binding.authority.changedAt)) {
@@ -189,7 +189,7 @@ export function transferProviderAuthority(
 export function beginProviderTurn(
   raw: ProviderRuntimeBinding,
   input: Readonly<{
-    turnId?: string;
+    runId?: string;
     attemptId: string;
     authorityEpoch: number;
     submittedAt: string;
@@ -197,13 +197,13 @@ export function beginProviderTurn(
 ): ProviderRuntimeBinding {
   const binding = validateProviderRuntimeBinding(raw);
   const attemptId = identity(input.attemptId, "Provider input attempt id");
-  const turnId = input.turnId === undefined ? undefined : identity(input.turnId, "Turn id");
-  const currentTurn = binding.turn;
-  if (currentTurn !== null
-    && currentTurn.turnId === turnId
-    && currentTurn.attemptId === attemptId
-    && currentTurn.authorityEpoch === input.authorityEpoch
-    && currentTurn.status === "submitting") {
+  const runId = input.runId === undefined ? undefined : identity(input.runId, "AgentRun id");
+  const currentRun = binding.run;
+  if (currentRun !== null
+    && currentRun.runId === runId
+    && currentRun.attemptId === attemptId
+    && currentRun.authorityEpoch === input.authorityEpoch
+    && currentRun.status === "submitting") {
     return binding;
   }
   if (binding.authority.epoch !== input.authorityEpoch
@@ -211,14 +211,14 @@ export function beginProviderTurn(
     || binding.authority.owner === "unknown") {
     throw new Error("Provider Turn authority fence is stale.");
   }
-  if (providerTurnIsActive(binding.turn)) {
-    throw new Error("Provider Conversation already has an unsettled Turn.");
+  if (providerTurnIsActive(binding.run)) {
+    throw new Error("Provider Conversation already has an unsettled AgentRun.");
   }
   const submittedAt = timestamp(input.submittedAt, "Provider Turn submittedAt");
   return validateProviderRuntimeBinding({
     ...binding,
-    turn: {
-      ...(turnId === undefined ? {} : { turnId }),
+    run: {
+      ...(runId === undefined ? {} : { runId }),
       attemptId,
       authorityEpoch: input.authorityEpoch,
       status: "submitting",
@@ -234,16 +234,16 @@ export function acceptProviderTurn(
 ): ProviderRuntimeBinding {
   const binding = validateProviderRuntimeBinding(raw);
   const attemptId = identity(input.attemptId, "Provider input attempt id");
-  const turn = binding.turn;
-  if (turn === null || turn.attemptId !== attemptId
-    || (turn.status !== "submitting" && turn.status !== "delivery-unknown")) {
+  const run = binding.run;
+  if (run === null || run.attemptId !== attemptId
+    || (run.status !== "submitting" && run.status !== "delivery-unknown")) {
     throw new Error("Provider Turn does not match an acceptable delivery state.");
   }
-  const acceptedAt = orderedTurnTimestamp(turn, input.acceptedAt, "Provider Turn acceptedAt");
+  const acceptedAt = orderedRunTimestamp(run, input.acceptedAt, "Provider Turn acceptedAt");
   return validateProviderRuntimeBinding({
     ...binding,
-    turn: {
-      ...turn,
+    run: {
+      ...run,
       status: "accepted",
       ...(input.nativeTurnId === undefined
         ? {}
@@ -258,12 +258,12 @@ export function markProviderTurnDeliveryUnknown(
   input: Readonly<{ attemptId: string; observedAt: string; reason: string }>
 ): ProviderRuntimeBinding {
   const binding = validateProviderRuntimeBinding(raw);
-  const turn = requireProviderTurn(binding, input.attemptId, "submitting");
-  const observedAt = orderedTurnTimestamp(turn, input.observedAt, "Provider Turn unknownAt");
+  const run = requireProviderTurn(binding, input.attemptId, "submitting");
+  const observedAt = orderedRunTimestamp(run, input.observedAt, "Provider Turn unknownAt");
   return validateProviderRuntimeBinding({
     ...binding,
-    turn: {
-      ...turn,
+    run: {
+      ...run,
       status: "delivery-unknown",
       terminalReason: identity(input.reason, "Provider Turn unknown reason"),
       updatedAt: observedAt
@@ -277,16 +277,16 @@ export function rejectProviderTurn(
   input: Readonly<{ attemptId: string; rejectedAt: string; reason: string }>
 ): ProviderRuntimeBinding {
   const binding = validateProviderRuntimeBinding(raw);
-  const turn = binding.turn;
-  if (turn === null || turn.attemptId !== identity(input.attemptId, "Provider input attempt id")
-    || (turn.status !== "submitting" && turn.status !== "delivery-unknown")) {
+  const run = binding.run;
+  if (run === null || run.attemptId !== identity(input.attemptId, "Provider input attempt id")
+    || (run.status !== "submitting" && run.status !== "delivery-unknown")) {
     throw new Error("Provider Turn does not match a rejectable delivery state.");
   }
-  const rejectedAt = orderedTurnTimestamp(turn, input.rejectedAt, "Provider Turn rejectedAt");
+  const rejectedAt = orderedRunTimestamp(run, input.rejectedAt, "Provider Turn rejectedAt");
   return validateProviderRuntimeBinding({
     ...binding,
-    turn: {
-      ...turn,
+    run: {
+      ...run,
       status: "rejected",
       terminalReason: identity(input.reason, "Provider Turn rejection reason"),
       updatedAt: rejectedAt
@@ -306,24 +306,24 @@ export function settleProviderTurnSubmission(
 ): ProviderRuntimeBinding {
   const binding = validateProviderRuntimeBinding(raw);
   const attemptId = identity(input.attemptId, "Provider input attempt id");
-  if (binding.turn?.attemptId !== attemptId) {
+  if (binding.run?.attemptId !== attemptId) {
     throw new Error("Provider Turn does not match a resolvable delivery state.");
   }
-  if (binding.turn.status === input.status) return binding;
+  if (binding.run.status === input.status) return binding;
   if (
-    binding.turn.status !== "submitting"
-    && !(binding.turn.status === "delivery-unknown" && input.status === "rejected")
+    binding.run.status !== "submitting"
+    && !(binding.run.status === "delivery-unknown" && input.status === "rejected")
   ) {
     throw new Error("Provider Turn does not match a resolvable delivery state.");
   }
   if (input.status === "deferred") {
     return validateProviderRuntimeBinding({
       ...binding,
-      turn: {
-        ...binding.turn,
+      run: {
+        ...binding.run,
         status: "deferred",
         terminalReason: identity(input.reason, "Provider admission deferral reason"),
-        updatedAt: orderedTurnTimestamp(binding.turn, input.resolvedAt, "Provider deferredAt")
+        updatedAt: orderedRunTimestamp(binding.run, input.resolvedAt, "Provider deferredAt")
       }
     });
   }
@@ -351,23 +351,23 @@ export function settleProviderTurn(
   }>
 ): ProviderRuntimeBinding {
   const binding = validateProviderRuntimeBinding(raw);
-  const turn = binding.turn;
+  const run = binding.run;
   const nativeTurnId = input.nativeTurnId === undefined
     ? undefined : identity(input.nativeTurnId, "Provider native Turn id");
-  if (turn === null
+  if (run === null
     || (input.attemptId === undefined
-      ? nativeTurnId === undefined || turn.nativeTurnId !== nativeTurnId
-      : turn.attemptId !== input.attemptId)
-    || (turn.nativeTurnId !== undefined && nativeTurnId !== undefined
-      && turn.nativeTurnId !== nativeTurnId)
-    || turn.status !== "accepted") {
-    throw new Error("Provider Turn settlement does not match the current Turn.");
+      ? nativeTurnId === undefined || run.nativeTurnId !== nativeTurnId
+      : run.attemptId !== input.attemptId)
+    || (run.nativeTurnId !== undefined && nativeTurnId !== undefined
+      && run.nativeTurnId !== nativeTurnId)
+    || run.status !== "accepted") {
+    throw new Error("Provider Turn settlement does not match the current AgentRun.");
   }
-  const settledAt = orderedTurnTimestamp(turn, input.settledAt, "Provider Turn settledAt");
+  const settledAt = orderedRunTimestamp(run, input.settledAt, "Provider Turn settledAt");
   return validateProviderRuntimeBinding({
     ...binding,
-    turn: {
-      ...turn,
+    run: {
+      ...run,
       ...(nativeTurnId === undefined ? {} : { nativeTurnId }),
       status: input.status,
       updatedAt: settledAt,
@@ -395,11 +395,11 @@ export function updateProviderConversationRecoverability(
 /** Shared pre-start and commit guard for explicit native Conversation replacement. */
 export function assertProviderConversationReplaceable(raw: ProviderRuntimeBinding): void {
   const binding = validateProviderRuntimeBinding(raw);
-  if (providerTurnIsActive(binding.turn)) {
+  if (providerTurnIsActive(binding.run)) {
     throw new Error(
       `Provider Conversation replacement cannot discard unsettled input attempt ${
-        binding.turn!.attemptId
-      } (${binding.turn!.status}). Resolve its actual outcome before selecting a new Conversation.`
+        binding.run!.attemptId
+      } (${binding.run!.status}). Resolve its actual outcome before selecting a new Conversation.`
     );
   }
 }
@@ -499,9 +499,9 @@ export function validateProviderRuntimeBinding(value: ProviderRuntimeBinding): P
   } else if (value.authority.holderId !== undefined) {
     throw new Error("Unowned or unknown Provider authority cannot name a holder.");
   }
-  if (!Object.hasOwn(value, "turn")) throw new Error("Provider Runtime Binding requires Turn state.");
-  if (value.turn !== null) {
-    validateProviderTurn(value.turn, value.authority.epoch);
+  if (!Object.hasOwn(value, "run")) throw new Error("Provider Runtime Binding requires AgentRun state.");
+  if (value.run !== null) {
+    validateProviderTurn(value.run, value.authority.epoch);
   }
   if (!Object.hasOwn(value, "goal")) throw new Error("Provider Runtime Binding requires Goal state.");
   if (value.goal !== null) validateProviderGoal(value.goal);
@@ -533,33 +533,33 @@ function validateProviderGoal(goal: ProviderGoal): ProviderGoal {
   return Object.freeze(normalized);
 }
 
-function validateProviderTurn(turn: ProviderTurn, currentAuthorityEpoch: number): void {
-  if (turn.turnId !== undefined) identity(turn.turnId, "Turn id");
-  identity(turn.attemptId, "Provider input attempt id");
-  integer(turn.authorityEpoch, 1, "Provider Turn authority epoch");
-  if (turn.authorityEpoch > currentAuthorityEpoch) {
+function validateProviderTurn(run: ProviderTurn, currentAuthorityEpoch: number): void {
+  if (run.runId !== undefined) identity(run.runId, "AgentRun id");
+  identity(run.attemptId, "Provider input attempt id");
+  integer(run.authorityEpoch, 1, "Provider Turn authority epoch");
+  if (run.authorityEpoch > currentAuthorityEpoch) {
     throw new Error("Provider Turn authority epoch is ahead of current authority.");
   }
   if (!["submitting", "accepted", "completed", "failed", "cancelled", "rejected", "deferred", "delivery-unknown"]
-    .includes(turn.status)) {
+    .includes(run.status)) {
     throw new Error("Provider Turn status is invalid.");
   }
-  timestamp(turn.submittedAt, "Provider Turn submittedAt");
-  timestamp(turn.updatedAt, "Provider Turn updatedAt");
-  if (Date.parse(turn.updatedAt) < Date.parse(turn.submittedAt)) {
+  timestamp(run.submittedAt, "Provider Turn submittedAt");
+  timestamp(run.updatedAt, "Provider Turn updatedAt");
+  if (Date.parse(run.updatedAt) < Date.parse(run.submittedAt)) {
     throw new Error("Provider Turn updatedAt is earlier than submittedAt.");
   }
-  const hasAcceptedIdentity = turn.status === "accepted"
-    || turn.status === "completed" || turn.status === "failed" || turn.status === "cancelled";
-  if (hasAcceptedIdentity && turn.nativeTurnId !== undefined) {
-    identity(turn.nativeTurnId, "Provider native Turn id");
-  } else if (!hasAcceptedIdentity && turn.nativeTurnId !== undefined) {
+  const hasAcceptedIdentity = run.status === "accepted"
+    || run.status === "completed" || run.status === "failed" || run.status === "cancelled";
+  if (hasAcceptedIdentity && run.nativeTurnId !== undefined) {
+    identity(run.nativeTurnId, "Provider native Turn id");
+  } else if (!hasAcceptedIdentity && run.nativeTurnId !== undefined) {
     throw new Error("Unaccepted Provider Turn cannot have a native Turn id.");
   }
 }
 
-export function managedProviderTurnId(turn: ProviderTurn | null | undefined): string | null {
-  return turn?.turnId ?? null;
+export function managedProviderTurnId(run: ProviderTurn | null | undefined): string | null {
+  return run?.runId ?? null;
 }
 
 function requireProviderTurn(
@@ -568,23 +568,23 @@ function requireProviderTurn(
   status: ProviderTurnStatus
 ): ProviderTurn {
   const id = identity(attemptId, "Provider input attempt id");
-  if (binding.turn === null || binding.turn.attemptId !== id || binding.turn.status !== status) {
+  if (binding.run === null || binding.run.attemptId !== id || binding.run.status !== status) {
     throw new Error("Provider Turn does not match the expected delivery state.");
   }
-  return binding.turn;
+  return binding.run;
 }
 
-function orderedTurnTimestamp(turn: ProviderTurn, value: string, label: string): string {
+function orderedRunTimestamp(run: ProviderTurn, value: string, label: string): string {
   const normalized = timestamp(value, label);
-  if (Date.parse(normalized) < Date.parse(turn.updatedAt)) {
+  if (Date.parse(normalized) < Date.parse(run.updatedAt)) {
     throw new Error(`${label} moved backwards.`);
   }
   return normalized;
 }
 
-function providerTurnIsActive(turn: ProviderTurn | null): boolean {
-  return turn !== null && ["submitting", "accepted", "delivery-unknown"]
-    .includes(turn.status);
+function providerTurnIsActive(run: ProviderTurn | null): boolean {
+  return run !== null && ["submitting", "accepted", "delivery-unknown"]
+    .includes(run.status);
 }
 
 function identity(value: string, label: string): string {

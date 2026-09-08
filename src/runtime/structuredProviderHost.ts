@@ -51,6 +51,15 @@ export type StructuredProviderTurnStarted = Readonly<{
   input?: string;
 }>;
 
+export type StructuredProviderInputObserved = Readonly<{
+  conversationId: string;
+  nativeSessionId: string;
+  nativeTurnId: string;
+  inputId: string;
+  input: string;
+  observedAt: string;
+}>;
+
 export type StructuredProviderTurnTerminal = Readonly<{
   conversationId: string;
   nativeSessionId: string;
@@ -151,6 +160,7 @@ export async function startStructuredProviderSession(
     onStarted?: (started: StructuredProviderTurnStarted) => void;
     onTerminal?: (terminal: StructuredProviderTurnTerminal) => void;
     onGoal?: (goal: StructuredProviderGoal | null) => void;
+    onInput?: (input: StructuredProviderInputObserved) => void;
     mirrorOutput?: (stream: "stdout" | "stderr", text: string) => void;
   }> = {}
 ): Promise<Readonly<{
@@ -184,6 +194,7 @@ export async function startStructuredProviderSession(
           input.onStarted,
           input.onTerminal,
           input.onGoal,
+          input.onInput,
           mirror
         );
       return Object.freeze({
@@ -547,7 +558,8 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     private readonly onTerminal:
       | ((terminal: StructuredProviderTurnTerminal) => void)
       | undefined,
-    private readonly onGoal: ((goal: StructuredProviderGoal | null) => void) | undefined
+    private readonly onGoal: ((goal: StructuredProviderGoal | null) => void) | undefined,
+    private readonly onInput: ((input: StructuredProviderInputObserved) => void) | undefined
   ) {}
 
   static async open(
@@ -559,6 +571,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     onStarted: ((started: StructuredProviderTurnStarted) => void) | undefined,
     onTerminal: ((terminal: StructuredProviderTurnTerminal) => void) | undefined,
     onGoal: ((goal: StructuredProviderGoal | null) => void) | undefined,
+    onInput: ((input: StructuredProviderInputObserved) => void) | undefined,
     mirror: (stream: "stdout" | "stderr", text: string) => void
   ): Promise<Readonly<{
     session: CodexStructuredProviderSession;
@@ -612,7 +625,8 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
       runtime,
       onStarted,
       onTerminal,
-      onGoal
+      onGoal,
+      onInput
     );
     session.#activeTurnId = resumedActiveTurnId;
     const ownedTurn = control.kind === "restore" ? control.ownedTurn : undefined;
@@ -679,6 +693,17 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
       const goal = codexGoalNotification({ method, params });
       if (goal !== undefined) {
         if (emit) this.onGoal?.(goal);
+        return undefined;
+      }
+      if (method === "item/completed") {
+        const item = object(params.item);
+        const nativeTurnId = optionalId(params.turnId);
+        const inputId = optionalId(item?.id);
+        const input = item === null ? undefined : codexTurnInput({ items: [item] });
+        if (emit && nativeTurnId !== undefined && inputId !== undefined && input !== undefined) {
+          this.onInput?.({ conversationId: this.conversationId, nativeSessionId: this.conversationId,
+            nativeTurnId, inputId, input, observedAt: new Date().toISOString() });
+        }
         return undefined;
       }
       if (method === "turn/started") {
@@ -921,7 +946,7 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
     turn: StructuredProviderTurnInput
   ): Promise<StructuredProviderTurnReceipt> {
     if (this.#activeAttemptId !== undefined) {
-      throw new ProviderTurnRejectedError(
+      throw new ProviderTurnBusyError(
         "Provider Conversation already has an unsettled Turn.",
         turn.attemptId
       );
@@ -947,10 +972,9 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
       );
     }
     // AgentHost is the sole writer to this dedicated stream-json process.
-    // A completed pipe write is the smallest reliable acceptance boundary;
-    // Claude's later `result` is the matching terminal for this serialized
-    // Turn. Requiring an echoed user-message creates a second, brittle
-    // protocol without improving delivery safety.
+    // A pipe write is transport evidence only. The later result establishes
+    // native acceptance and completion through this exact serialized local
+    // attempt, without inventing a provider execution id or echo protocol.
     return Object.freeze({
       attemptId: turn.attemptId,
       conversationId: this.conversationId,

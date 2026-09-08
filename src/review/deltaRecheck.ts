@@ -66,7 +66,7 @@ export async function assessDeltaRecheck(input: Readonly<{
 }>): Promise<DeltaRecheckAssessment> {
   const { repositoryPaths, previousRound, candidate, git } = input;
   if (previousRound.status !== "completed"
-    || previousRound.reviewerTurnId === undefined
+    || previousRound.reviewerRunId === undefined
     || (previousRound.scope ?? "work-item") !== "task") {
     return {
       kind: "ineligible",
@@ -197,8 +197,8 @@ export function buildDeltaRecheckDispatchContext(input: Readonly<{
     "  semantic change, evidence doubt). This is the safe default.",
     "Yui verified only the technical delta boundary; a Task-control Agent selected this mode.",
     `Previous accepted ReviewRound: ${previousRound.id}@${record.previousBaseCommit}`,
-    `Previous Reviewer Turn: ${previousRound.reviewerTurnId ?? "unavailable"}`,
-    "Read that exact source Turn's original result from the frozen Context Snapshot.",
+    `Previous Reviewer AgentRun: ${previousRound.reviewerRunId ?? "unavailable"}`,
+    "Read that exact source AgentRun's original result from the frozen Context Snapshot.",
     ...(round.taskCandidate?.projects.map((project) => {
       const previous = previousRound.taskCandidate?.projects
         .find((entry) => entry.projectId === project.projectId)?.commit;

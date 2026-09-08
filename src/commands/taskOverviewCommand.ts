@@ -4,10 +4,10 @@ import { usageError } from "../errors/cliError.js";
 import type { InputRequest } from "../input/inputRequest.js";
 import type { LeaderFailure } from "../scheduler/leaderFailure.js";
 import {
-  isRoleTurnStalled,
+  isRoleRunStalled,
   latestStallProgressAt
-} from "../scheduler/roleTurnStall.js";
-import type { Turn } from "../turn/turn.js";
+} from "../scheduler/roleRunStall.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { RoleAgentSession } from "../executor/agentExecutor.js";
 import { formatTimestamp } from "../output/timePresentation.js";
 import type { Task } from "../task/task.js";
@@ -35,7 +35,7 @@ export type TaskOverviewWorkCounts = Readonly<Record<WorkItemStatus, number> & {
 export type TaskOverviewLeader = Readonly<{
   role: "leader";
   /** Derived workflow/lifecycle presentation; never persisted on TaskRole. */
-  roleStatus: RoleAgentSession["status"] | "running" | "idle" | "missing";
+  roleStatus: RoleAgentSession["status"] | "running" | "idle" | "missing" | "unknown";
   summary: string | null;
   currentFocus: string | null;
   updatedAt: string | null;
@@ -43,18 +43,18 @@ export type TaskOverviewLeader = Readonly<{
   summaryStatus: "available" | "missing";
 }>;
 
-export type TaskOverviewRuntimeTurn = Readonly<{
+export type TaskOverviewRuntimeRun = Readonly<{
   id: string;
   roleName: string;
-  status: Turn["status"];
-  runtime: "starting" | "session-active";
+  status: AgentRun["status"];
+  runtime: import("../runtime/providerRuntimeIdentity.js").ProviderTurnStatus | "unobserved";
   createdAt: string;
   updatedAt: string;
 }>;
 
 export type TaskOverviewRuntime = Readonly<{
-  activeTurns: readonly TaskOverviewRuntimeTurn[];
-  activeTurnCount: number;
+  activeRuns: readonly TaskOverviewRuntimeRun[];
+  activeRunCount: number;
   pendingDeliveryCount: number;
 }>;
 
@@ -65,7 +65,7 @@ export type TaskOverviewAttention = Readonly<{
   owner: "operator";
   summary: string;
   updatedAt: string;
-  turnId?: string;
+  runId?: string;
   roleName?: string;
 }>;
 
@@ -77,7 +77,7 @@ export type TaskOverviewBlocker = Readonly<{
   owner: string;
   action: string;
   summary: string;
-  blockedRefs?: readonly Readonly<{ type: "work-item" | "turn"; taskId: string; id: string }>[];
+  blockedRefs?: readonly Readonly<{ type: "work-item" | "run"; taskId: string; id: string }>[];
 }>;
 
 export type TaskOverviewNext = Readonly<{
@@ -203,7 +203,7 @@ function buildTaskOverviewEntry(
   const workItems = store.listWorkItems(task.id);
   const inputRequests = store.listInputRequests(task.id);
   const openInputRequests = inputRequests.filter((request) => request.status === "open");
-  const turns = store.listTurns(task.id);
+  const runs = store.listRuns(task.id);
   const events = store.listEvents(task.id);
   const leaderFailure = store.getLeaderFailure(task.id);
   const leaderMailbox = store.getWorkMailbox({ kind: "role", taskId: task.id, roleName: "leader" });
@@ -215,9 +215,15 @@ function buildTaskOverviewEntry(
     const session = store.getRoleSession(task.id, role.name);
     return session === null ? [] : [{ roleName: role.name, ...session }];
   });
+  const providerRuns = new Map(roles.map((role) =>
+    [role.name, store.getTaskRoleSessionSet(task.id, role.name)?.providerBinding?.run]));
+  const runDelivery = Object.fromEntries(runs.map((run) => {
+    const native = providerRuns.get(run.roleName);
+    return [run.id, native?.runId === run.id ? native.status : "unobserved" as const];
+  }));
   const attention = collectAttention(
     task,
-    turns,
+    runs,
     events,
     leaderFailure
   );
@@ -226,9 +232,8 @@ function buildTaskOverviewEntry(
     role: "leader",
     roleStatus: leaderRole === null
       ? "missing"
-      : turns.some((run) => run.roleName === "leader" && run.status === "active")
-        ? "running"
-        : roleSessions.find((session) => session.roleName === "leader")?.status ?? "idle",
+      : providerRuns.get("leader")?.status === "accepted" ? "running"
+        : roleSessions.some((session) => session.roleName === "leader") ? "unknown" : "idle",
     summary: brief?.leaderSummary ?? null,
     currentFocus: brief?.currentFocus ?? null,
     updatedAt: brief?.updatedAt ?? null,
@@ -236,31 +241,28 @@ function buildTaskOverviewEntry(
     summaryStatus: brief === null ? "missing" : "available"
   };
   const counts = countWorkItems(workItems);
-  const runtimeTurns = turns
+  const runtimeRuns = runs
     .filter((run) => run.status === "active")
-    .map((run): TaskOverviewRuntimeTurn => ({
+    .map((run): TaskOverviewRuntimeRun => ({
       id: run.id,
       roleName: run.roleName,
       status: run.status,
-      runtime: roleSessions.some((session) => (
-        session.roleName === run.roleName
-        && session.agentId === run.effective.agentId
-        && session.status !== "ended"
-      )) ? "session-active" : "starting",
+      runtime: runDelivery[run.id],
       createdAt: run.createdAt,
       updatedAt: run.updatedAt
     }));
   const runtime: TaskOverviewRuntime = {
-    activeTurns: runtimeTurns,
-    activeTurnCount: runtimeTurns.length,
-    pendingDeliveryCount: runtimeTurns.filter((run) => run.runtime === "starting").length
+    activeRuns: runtimeRuns,
+    activeRunCount: runtimeRuns.length,
+    pendingDeliveryCount: runtimeRuns.filter((run) => run.runtime !== "accepted").length
   };
   // Fold the execution projection from the facts already read above instead of
   // reading the store a second time for the same unchanged revision.
   const execution = projectTaskExecutionFromFacts({
     task,
     roles,
-    turns,
+    runs,
+    runDelivery,
     workItems,
     inputRequests,
     reviewRounds,
@@ -323,7 +325,7 @@ function buildTaskOverviewEntry(
 
 function collectAttention(
   task: Task,
-  turns: readonly Turn[],
+  runs: readonly AgentRun[],
   events: readonly TaskEvent[],
   failure: LeaderFailure | null
 ): TaskOverviewAttention[] {
@@ -338,22 +340,22 @@ function collectAttention(
       updatedAt: failure.lastFailedAt
     });
   }
-  for (const turn of turns) {
+  for (const run of runs) {
     if (
-      turn.roleName !== "leader"
-      || turn.status !== "active"
-      || !isRoleTurnStalled(events, turn.id)
+      run.roleName !== "leader"
+      || run.status !== "active"
+      || !isRoleRunStalled(events, run.id)
     ) continue;
-    const progressAt = latestStallProgressAt(events, turn.id) ?? turn.updatedAt;
+    const progressAt = latestStallProgressAt(events, run.id) ?? run.updatedAt;
     items.push({
       kind: "leader-stalled",
-      id: `leader-stall:${turn.id}:${progressAt}`,
+      id: `leader-stall:${run.id}:${progressAt}`,
       status: "needs-attention",
       owner: "operator",
-      summary: `Turn ${turn.id} for ${turn.roleName} has no durable progress after ${progressAt}.`,
+      summary: `AgentRun ${run.id} for ${run.roleName} has no durable progress after ${progressAt}.`,
       updatedAt: progressAt,
-      turnId: turn.id,
-      roleName: turn.roleName
+      runId: run.id,
+      roleName: run.roleName
     });
   }
   return items.sort((left, right) => (

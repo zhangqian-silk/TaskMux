@@ -9,23 +9,23 @@ import {
 } from "./ports.js";
 import { formatTaskRecordReference } from "../task/taskRecordReference.js";
 import {
-  currentRoleTurnProgressAt,
+  currentRoleRunProgressAt,
   DEFAULT_WORKFLOW_STALL_CANDIDATE_AGE_MS
-} from "./roleTurnStall.js";
+} from "./roleRunStall.js";
 
 export type RoleLiveStatus = "present" | "absent";
 export type RoleLiveStatusSnapshot = ReadonlyMap<string, RoleLiveStatus>;
 
 /**
  * Lightweight liveness only. Pane/process loss is runtime-health evidence,
- * not an application-level outcome. The Turn stays active so native
+ * not an application-level outcome. The AgentRun stays active so native
  * child work or another observer can still contribute facts, while the stall
  * path raises bounded attention independently.
  * Process liveness is only a recovery signal. An absent pane/Host never proves
- * that the native Session or Turn ended; recover the same Session and
- * native identity when possible, otherwise preserve the active Turn.
+ * that the native Session or AgentRun ended; recover the same Session and
+ * native identity when possible, otherwise preserve the active AgentRun.
  */
-export async function reconcileExitedRoleTurns(
+export async function reconcileExitedRoleRuns(
   store: SchedulerStorePort,
   delivery: Pick<
     TmuxDeliveryPort,
@@ -33,7 +33,7 @@ export async function reconcileExitedRoleTurns(
   >,
   now: Date,
   selection?: SchedulerReconcileSelection,
-  excludedTurnRefs: ReadonlySet<string> = new Set(),
+  excludedRunRefs: ReadonlySet<string> = new Set(),
   liveStatuses?: Map<string, RoleLiveStatus>,
   resourceEvidence?: Map<string, SchedulerRoleResourceEvidence>,
   targetedInventory = selection !== undefined && !selection.full
@@ -41,7 +41,7 @@ export async function reconcileExitedRoleTurns(
   const failed: string[] = [];
   const candidates = selectedActiveSchedulerTasks(store, selection).flatMap((task) => (
     selectedSchedulerRoles(store, task.id, selection).flatMap((role) => {
-      const run = store.getActiveTurn(task.id, role.name);
+      const run = store.getActiveRun(task.id, role.name);
       if (run === null) return [];
       const session = store.getRoleSession(task.id, role.name, run.effective.agentId);
       return [{
@@ -54,7 +54,7 @@ export async function reconcileExitedRoleTurns(
           roleName: role.name,
           agentId: run.effective.agentId,
           adapterId: run.effective.adapterId,
-          turnId: run.id,
+          runId: run.id,
           progressAt: run.createdAt,
           ...(session?.nativeSessionId === undefined
             ? {}
@@ -65,10 +65,10 @@ export async function reconcileExitedRoleTurns(
   ));
   if (candidates.length === 0) return failed;
   const eligible = candidates.filter(({ task, run }) => (
-    !excludedTurnRefs.has(formatTaskRecordReference(task.id, run.id, "turn"))
+    !excludedRunRefs.has(formatTaskRecordReference(task.id, run.id, "run"))
   ));
   // Full reconciliation builds one complete provider inventory for every
-  // active Turn, including delivery-uncertain and completion-pending Turns.
+  // active AgentRun, including delivery-uncertain and completion-pending AgentRuns.
   // The stall phase reuses that snapshot so one full pass never probes the
   // same pane twice. When targetedInventory is true, a dirty pass instead
   // uses exact probes below; stall reconciliation intentionally does not run
@@ -89,10 +89,10 @@ export async function reconcileExitedRoleTurns(
                 ? [{
                     taskId: task.id,
                     roleName: role.name,
-                    turnId: run.id,
+                    runId: run.id,
                     agentId: run.effective.agentId,
                     adapterId: run.effective.adapterId,
-                    progressAt: currentRoleTurnProgressAt(
+                    progressAt: currentRoleRunProgressAt(
                       store,
                       task.id,
                       role.name,
@@ -116,7 +116,7 @@ export async function reconcileExitedRoleTurns(
         `${task.id}\0${role.name}` === key
       ));
       if (candidate !== undefined) {
-        // Keep only the exact Turn key. A task/role or bare-Turn fallback can
+        // Keep only the exact AgentRun key. A task/role or bare-AgentRun fallback can
         // bridge an asynchronous sample from a prior Session.
         resourceEvidence.set(`${key}\0${candidate.run.id}`, resource);
       }
@@ -132,7 +132,7 @@ export async function reconcileExitedRoleTurns(
         store.saveRoleHostExitObservation?.({
           taskId: task.id,
           roleName: role.name,
-          turnId: run.id,
+          runId: run.id,
           ...(session?.nativeSessionId === undefined
             ? {}
             : { nativeSessionId: session.nativeSessionId }),
@@ -149,7 +149,7 @@ export async function reconcileExitedRoleTurns(
         delivery.forgetPrepared?.({
           taskId: task.id,
           roleName: role.name,
-          turnId: run.id
+          runId: run.id
         });
         const recovered = await delivery.prepareRoleSession({
           taskId: task.id,
@@ -160,20 +160,20 @@ export async function reconcileExitedRoleTurns(
           workspace: run.effective.workspace.root,
           ...(run.workspace === undefined ? {} : { managedWorkspace: run.workspace }),
           mode: "resume",
-          turnId: run.id,
+          runId: run.id,
           nativeSessionId: session.nativeSessionId,
         });
-        store.saveRoleTurnPrepared({
+        store.saveRoleRunPrepared({
           task,
           role,
-          turn: run,
+          run: run,
           session: recovered.session ?? session,
           now
         });
         liveStatuses?.set(`${task.id}\0${role.name}`, "present");
       } catch {
         // Absence plus an inconclusive local recovery attempt is still not a
-        // native Session death proof. Keep the exact Turn active for the next
+        // native Session death proof. Keep the exact AgentRun active for the next
         // bounded recovery pass and expose the blocked axis separately.
         store.queueTaskProgress(task.id, "host-missing-native-resume-pending", now);
       }
@@ -181,7 +181,7 @@ export async function reconcileExitedRoleTurns(
   return failed;
 }
 
-type RoleTurnCandidate = Readonly<{
+type RoleRunCandidate = Readonly<{
   task: ReturnType<typeof selectedActiveSchedulerTasks>[number];
   role: ReturnType<typeof selectedSchedulerRoles>[number];
   inspection: Readonly<{
@@ -189,7 +189,7 @@ type RoleTurnCandidate = Readonly<{
     roleName: string;
     agentId: string;
     adapterId: string;
-    turnId: string;
+    runId: string;
     progressAt: string;
     nativeSessionId?: string;
   }>;
@@ -203,7 +203,7 @@ type RoleInventorySnapshot = Readonly<{
 
 async function inspectRoleStatuses(
   delivery: Pick<TmuxDeliveryPort, "inspectRole" | "inspectRoles">,
-  candidates: readonly RoleTurnCandidate[],
+  candidates: readonly RoleRunCandidate[],
   resourceInputs: readonly SchedulerRoleResourceInput[],
   targeted: boolean
 ): Promise<RoleInventorySnapshot> {

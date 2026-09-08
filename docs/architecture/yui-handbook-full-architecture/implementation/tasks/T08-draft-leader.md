@@ -10,7 +10,7 @@
 
 ## 责任范围
 
-- 按需创建 planning Session 和 Turn。
+- 按需创建 planning Session 和 AgentRun。
 - 提供 Brief／Decision／WorkItem 编辑及临时材料保存。
 - 实现安全资源采用、延后激活和兼容会话续用。
 
@@ -18,7 +18,7 @@
 
 1. 打通 Draft 对话和恢复。
 2. 实现激活采用边界。
-3. 验证空环境、当前 Turn 发起激活和配置不兼容。
+3. 验证空环境、当前 AgentRun 发起激活和配置不兼容。
 
 这些分工供 Leader 判断，不要求按步骤建立 WorkItem。紧密耦合的实现应由同一责任单元完成。
 
@@ -30,7 +30,7 @@
 ## 完成证据
 
 - Draft 中与 Leader 对话并更新事实，重开后仍可读。
-- 当前 planning Turn 发起激活不产生自等待。
+- 当前 planning AgentRun 发起激活不产生自等待。
 - 不兼容 Session 可以读取 Context 接手。
 
 验收场景：S01、S02、S27、S40。场景定义见[统一验收说明](../../reference/acceptance-scenarios.md)。

@@ -64,7 +64,7 @@ Task-local 插件默认只在该 Task 使用。提升到 Project／Global 是受
 
 Leader 可以在同一 Task 内反复修改和验证，不因为失败自动创建开发 Task。缺少授信或网络凭据时向 Operator／用户提出具体请求。Leader 本身不可用交 Operator；Operator 的问题由用户处理。
 
-稳定的 Yui CLI 或能力桥在启动时就可用，不让 Agent 先安装元工具才能安装第一个插件。若 Runtime 只能在下一 Turn 使用新信息，明确采用下一 Turn，不虚构当前模型已经收到更新。
+稳定的 Yui CLI 或能力桥在启动时就可用，不让 Agent 先安装元工具才能安装第一个插件。若 Runtime 只能在下一 AgentRun 使用新信息，明确采用下一 AgentRun，不虚构当前模型已经收到更新。
 
 ## 9. 代码与历史保留
 

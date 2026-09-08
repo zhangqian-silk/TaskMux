@@ -1,6 +1,6 @@
 import type { TaskEvent } from "../event/taskEvent.js";
 import type { TaskMessage } from "../message/message.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { Task } from "../task/task.js";
 import type { ReviewRound } from "../review/reviewRound.js";
 import { renderWakeReason } from "../scheduler/wakeReason.js";
@@ -43,8 +43,8 @@ export type WakeEnvelope = Readonly<{
   taskId: string;
   wakeId: string;
   fromCursor: string;
-  /** Existing Turns named by terminal events in the wake delta, in event order. */
-  referencedTurnIds: readonly string[];
+  /** Existing AgentRuns named by terminal events in the wake delta, in event order. */
+  referencedRunIds: readonly string[];
   totalBytes: number;
   text: string;
 }>;
@@ -54,7 +54,7 @@ export type WakeEnvelopeReader = Readonly<{
   getTask(taskId: string): Task | null;
   listEvents(taskId: string): readonly TaskEvent[];
   listMessages(taskId: string): readonly TaskMessage[];
-  listTurns(taskId: string): readonly Turn[];
+  listRuns(taskId: string): readonly AgentRun[];
   listReviewRounds(taskId: string): readonly ReviewRound[];
 }>;
 
@@ -71,19 +71,19 @@ export function buildTaskWakeEnvelope(
   const fromTime = Date.parse(request.fromCursor);
   const events = reader.listEvents(request.taskId);
   const deltaEvents = events.filter((record) => Date.parse(record.createdAt) > fromTime);
-  const turns = operationalTaskRecords(reader.listTurns(request.taskId), events, "turn");
-  const referencedTurnIds = referencedWakeTurnIds(turns, events, deltaEvents);
-  const changedTurnIds = new Set([
-    ...turns
+  const runs = operationalTaskRecords(reader.listRuns(request.taskId), events, "run");
+  const referencedRunIds = referencedWakeRunIds(runs, events, deltaEvents);
+  const changedRunIds = new Set([
+    ...runs
       .filter((record) => Date.parse(record.createdAt) > fromTime)
       .map(({ id }) => id),
-    ...referencedTurnIds
+    ...referencedRunIds
   ]);
   const counts = {
     events: deltaEvents.length,
     messages: operationalTaskRecords(reader.listMessages(request.taskId), events, "message")
       .filter((record) => Date.parse(record.createdAt) > fromTime).length,
-    turns: changedTurnIds.size
+    runs: changedRunIds.size
   };
   const activeReviews = reader.listReviewRounds(request.taskId).filter((round) => (
     (round.scope ?? "work-item") === "task"
@@ -103,19 +103,19 @@ export function buildTaskWakeEnvelope(
 
   const render = (
     reasonLimit: number,
-    resultTurnLimit: number,
+    resultRunLimit: number,
     reviewLimit: number
   ): string => {
     const reviewOrientation = renderReviewOrientation(reviewLimit);
     return [
       `Wake: ${request.wakeId} — delta since ${request.fromCursor}`,
       `  Reasons: ${renderReasons(request.reasons, reasonLimit)}`,
-      `  Changed: ${counts.events} events, ${counts.messages} messages, ${counts.turns} Turns`
+      `  Changed: ${counts.events} events, ${counts.messages} messages, ${counts.runs} AgentRuns`
         + ` → yui task wake show ${request.taskId} ${request.wakeId}`,
-      `  Result Turns: ${renderResultTurns(
+      `  Result AgentRuns: ${renderResultRuns(
         request.taskId,
-        referencedTurnIds,
-        resultTurnLimit
+        referencedRunIds,
+        resultRunLimit
       )}`,
       `  Active Task Reviews: ${activeReviews.length === 0
         ? "none"
@@ -129,15 +129,15 @@ export function buildTaskWakeEnvelope(
   };
 
   let reasonLimit = Math.min(REASON_DISPLAY_LIMIT, request.reasons.length);
-  let resultTurnLimit = Math.min(4, referencedTurnIds.length);
+  let resultRunLimit = Math.min(4, referencedRunIds.length);
   let reviewLimit = Math.min(3, activeReviews.length);
-  let body = render(reasonLimit, resultTurnLimit, reviewLimit);
+  let body = render(reasonLimit, resultRunLimit, reviewLimit);
   while (byteLength(body) + 1 > WAKE_ENVELOPE_HARD_BYTES) {
-    if (resultTurnLimit > 0) resultTurnLimit -= 1;
+    if (resultRunLimit > 0) resultRunLimit -= 1;
     else if (reasonLimit > 0) reasonLimit -= 1;
     else if (reviewLimit > 0) reviewLimit -= 1;
     else break;
-    body = render(reasonLimit, resultTurnLimit, reviewLimit);
+    body = render(reasonLimit, resultRunLimit, reviewLimit);
   }
   if (byteLength(body) + 1 > WAKE_ENVELOPE_HARD_BYTES) {
     body = fitUtf8([
@@ -152,24 +152,24 @@ export function buildTaskWakeEnvelope(
     taskId: request.taskId,
     wakeId: request.wakeId,
     fromCursor: request.fromCursor,
-    referencedTurnIds: Object.freeze(referencedTurnIds),
+    referencedRunIds: Object.freeze(referencedRunIds),
     totalBytes,
     text: `${body}\n`
   });
 }
 
-export function referencedWakeTurnIds(
-  turns: readonly Turn[],
+export function referencedWakeRunIds(
+  runs: readonly AgentRun[],
   allEvents: readonly TaskEvent[],
   terminalEvents: readonly TaskEvent[]
 ): readonly string[] {
   const turnsById = new Map(
-    operationalTaskRecords(turns, allEvents, "turn").map((turn) => [turn.id, turn])
+    operationalTaskRecords(runs, allEvents, "run").map((run) => [run.id, run])
   );
   return [...new Set(terminalEvents.flatMap((event) => {
-    if (!["turn.completed", "turn.failed", "turn.cancelled"].includes(event.type)) return [];
-    const turnId = event.payload.turnId;
-    return turnId !== undefined && turnsById.has(turnId) ? [turnId] : [];
+    if (!["run.completed", "run.failed", "run.cancelled"].includes(event.type)) return [];
+    const runId = event.payload.runId;
+    return runId !== undefined && turnsById.has(runId) ? [runId] : [];
   }))];
 }
 
@@ -181,16 +181,16 @@ function renderReasons(reasons: readonly string[], limit: number): string {
   return elided === 0 ? rendered : `${rendered}, … (+${elided} more)`;
 }
 
-function renderResultTurns(
+function renderResultRuns(
   taskId: string,
-  turnIds: readonly string[],
+  runIds: readonly string[],
   limit: number
 ): string {
-  if (turnIds.length === 0) return "none";
-  if (limit === 0) return `${turnIds.length} → inspect the wake delta`;
-  return `${turnIds.slice(0, limit)
-    .map((turnId) => `${turnId} → yui task turn show ${taskId}/${turnId}`)
-    .join(", ")}${turnIds.length > limit ? `, … (+${turnIds.length - limit})` : ""}`;
+  if (runIds.length === 0) return "none";
+  if (limit === 0) return `${runIds.length} → inspect the wake delta`;
+  return `${runIds.slice(0, limit)
+    .map((runId) => `${runId} → yui task run show ${taskId}/${runId}`)
+    .join(", ")}${runIds.length > limit ? `, … (+${runIds.length - limit})` : ""}`;
 }
 
 function fitUtf8(value: string, maxBytes: number): string {

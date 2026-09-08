@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import {
-  resolveTurnCap,
+  resolveRunCap,
   resolveTerminalKeep
 } from "./telemetryConfig.js";
 import { resolveTelemetryEnabled } from "../config/yuiConfig.js";
@@ -33,7 +33,7 @@ export function openSchedulerTelemetry(
   const store = new SqliteTelemetryStore(home, {
     mode,
     terminalKeep: resolveTerminalKeep(config.telemetryTerminalKeep),
-    turnCap: resolveTurnCap(config.telemetryTurnCap)
+    runCap: resolveRunCap(config.telemetryRunCap)
   });
   return { mode, sink: store, reader: store, retention: store };
 }

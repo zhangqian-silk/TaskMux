@@ -1166,14 +1166,14 @@ function parseUpdateBlockers(value: unknown): readonly UpdateBlockerIdentity[] |
     if (!isRecord(item) || typeof item.reason !== "string" || item.reason.length === 0) {
       return undefined;
     }
-    const optional = ["taskId", "roleName", "turnId", "nativeSessionId"] as const;
+    const optional = ["taskId", "roleName", "runId", "nativeSessionId"] as const;
     if (optional.some((key) => item[key] !== undefined && typeof item[key] !== "string")) {
       return undefined;
     }
     parsed.push({
       ...(typeof item.taskId === "string" ? { taskId: item.taskId } : {}),
       ...(typeof item.roleName === "string" ? { roleName: item.roleName } : {}),
-      ...(typeof item.turnId === "string" ? { turnId: item.turnId } : {}),
+      ...(typeof item.runId === "string" ? { runId: item.runId } : {}),
       ...(typeof item.nativeSessionId === "string"
         ? { nativeSessionId: item.nativeSessionId }
         : {}),

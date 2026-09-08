@@ -6,7 +6,7 @@ import {
   DEFAULT_CONTROLLER_TASK_CONCURRENCY,
   DEFAULT_DELIVERY_TIMEOUT_SECONDS,
   DEFAULT_LEADER_NEXT_ACTION_MODE,
-  DEFAULT_LEADER_SEMANTIC_BUDGET_TURNS,
+  DEFAULT_LEADER_SEMANTIC_BUDGET_RUNS,
   DEFAULT_RECONCILIATION_INTERVAL_SECONDS,
   DEFAULT_RESOURCES_GC_MODE,
   DEFAULT_RESOURCES_QUARANTINE_TTL_HOURS,
@@ -17,13 +17,13 @@ import {
   resolveControllerTaskConcurrency,
   resolveDeliveryTimeoutSeconds,
   resolveLeaderNextActionMode,
-  resolveLeaderSemanticBudgetTurns,
+  resolveLeaderSemanticBudgetRuns,
   resolveResourcesGcAutoQuarantine,
   resolveResourcesGcMode,
   resolveResourcesQuarantineTtlHours,
   resolveRuntimeHealth,
   resolveTelemetryEnabled,
-  resolveTelemetryTurnCap,
+  resolveTelemetryRunCap,
   resolveTelemetryTerminalKeep,
   resolveTmuxBin,
   resolveTmuxHistoryLimit,
@@ -163,12 +163,12 @@ export function effectiveConfigData(
       config.agentLaunchInactivityTimeoutSeconds
     ),
     deliveryTimeoutSeconds: resolveDeliveryTimeoutSeconds(config.deliveryTimeoutSeconds),
-    leaderSemanticBudgetTurns: resolveLeaderSemanticBudgetTurns(config.leaderSemanticBudgetTurns),
+    leaderSemanticBudgetRuns: resolveLeaderSemanticBudgetRuns(config.leaderSemanticBudgetRuns),
     tmuxBin: resolveTmuxBin(config.tmuxBin),
     tmuxHistoryLimit: resolveTmuxHistoryLimit(config.tmuxHistoryLimit),
     telemetryEnabled: resolveTelemetryEnabled(config.telemetryEnabled),
     telemetryTerminalKeep: resolveTelemetryTerminalKeep(config.telemetryTerminalKeep),
-    telemetryTurnCap: resolveTelemetryTurnCap(config.telemetryTurnCap),
+    telemetryRunCap: resolveTelemetryRunCap(config.telemetryRunCap),
     review: config.review === undefined
       ? null
       : {
@@ -370,25 +370,25 @@ const CONFIG_KEY_HANDLERS: readonly ConfigKeyHandler[] = [
     }
   },
   {
-    key: "leader-semantic-budget-turns",
+    key: "leader-semantic-budget-runs",
     showLabel: "Leader semantic budget",
-    showValue: (config) => `${resolveLeaderSemanticBudgetTurns(config.leaderSemanticBudgetTurns)} turns`,
+    showValue: (config) => `${resolveLeaderSemanticBudgetRuns(config.leaderSemanticBudgetRuns)} runs`,
     set(args, store) {
-      const usage = "Workflow config set usage: yui config workflow set leader-semantic-budget-turns <1-20>.";
+      const usage = "Workflow config set usage: yui config workflow set leader-semantic-budget-runs <1-20>.";
       if (args.length !== 1) throw usageError(usage);
-      const leaderSemanticBudgetTurns = validatedConfigValue(
-        () => resolveLeaderSemanticBudgetTurns(Number(args[0])),
+      const leaderSemanticBudgetRuns = validatedConfigValue(
+        () => resolveLeaderSemanticBudgetRuns(Number(args[0])),
         usage
       );
-      saveConfigKey(store, (config) => ({ ...config, leaderSemanticBudgetTurns }));
-      return `Leader semantic budget set to ${leaderSemanticBudgetTurns} turns\n`;
+      saveConfigKey(store, (config) => ({ ...config, leaderSemanticBudgetRuns }));
+      return `Leader semantic budget set to ${leaderSemanticBudgetRuns} runs\n`;
     },
     clear(store) {
       saveConfigKey(store, (config) => {
-        const { leaderSemanticBudgetTurns: _removed, ...rest } = config;
+        const { leaderSemanticBudgetRuns: _removed, ...rest } = config;
         return rest;
       });
-      return `Leader semantic budget reset to ${DEFAULT_LEADER_SEMANTIC_BUDGET_TURNS} turns\n`;
+      return `Leader semantic budget reset to ${DEFAULT_LEADER_SEMANTIC_BUDGET_RUNS} runs\n`;
     }
   },
   {
@@ -648,24 +648,24 @@ const CONFIG_KEY_HANDLERS: readonly ConfigKeyHandler[] = [
     }
   },
   {
-    key: "telemetry-turn-cap",
-    showLabel: "Telemetry Turn cap",
-    showValue: (config) => String(resolveTelemetryTurnCap(config.telemetryTurnCap)),
+    key: "telemetry-run-cap",
+    showLabel: "Telemetry AgentRun cap",
+    showValue: (config) => String(resolveTelemetryRunCap(config.telemetryRunCap)),
     set(args, store) {
-      if (args.length !== 1) throw usageError("Tools config set usage: yui config tools set telemetry-turn-cap <n>.");
-      const telemetryTurnCap = validatedConfigValue(
-        () => resolveTelemetryTurnCap(Number(args[0])),
-        "Tools config set usage: yui config tools set telemetry-turn-cap <n>."
+      if (args.length !== 1) throw usageError("Tools config set usage: yui config tools set telemetry-run-cap <n>.");
+      const telemetryRunCap = validatedConfigValue(
+        () => resolveTelemetryRunCap(Number(args[0])),
+        "Tools config set usage: yui config tools set telemetry-run-cap <n>."
       );
-      saveConfigKey(store, (config) => ({ ...config, telemetryTurnCap }));
-      return `Telemetry Turn cap set to ${telemetryTurnCap}\n`;
+      saveConfigKey(store, (config) => ({ ...config, telemetryRunCap }));
+      return `Telemetry AgentRun cap set to ${telemetryRunCap}\n`;
     },
     clear(store) {
       saveConfigKey(store, (config) => {
-        const { telemetryTurnCap: _removed, ...rest } = config;
+        const { telemetryRunCap: _removed, ...rest } = config;
         return rest;
       });
-      return "Telemetry Turn cap reset to default\n";
+      return "Telemetry AgentRun cap reset to default\n";
     }
   },
   {

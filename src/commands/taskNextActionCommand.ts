@@ -17,7 +17,7 @@ import { operationalTaskRecords } from "../task/taskRecordRetirement.js";
 import {
   buildTaskExecutionProjection,
   type TaskExecutionProjection,
-  type TaskExecutionTurn
+  type TaskExecutionRun
 } from "../scheduler/taskExecutionProjection.js";
 import {
   projectReviewDecision,
@@ -31,7 +31,7 @@ import {
 
 type NextActionExecutionView = Readonly<Pick<
   TaskExecutionProjection,
-  "status" | "owner" | "action" | "reason" | "summary" | "activeTurns"
+  "status" | "owner" | "action" | "reason" | "summary" | "activeRuns"
 >>;
 
 /**
@@ -101,24 +101,24 @@ export function runTaskNextActionCommand(
       task,
       currentTaskReviewCandidate
     );
-    const operationalTurns = operationalTaskRecords(
-      reader.listTurns(taskId),
+    const operationalRuns = operationalTaskRecords(
+      reader.listRuns(taskId),
       events,
-      "turn"
+      "run"
     );
     const reviewRounds = reader.listReviewRounds(taskId);
     const reviewDecision = projectReviewDecision({
       store: reader,
       task,
       roles: reader.listRoles(taskId),
-      turns: operationalTurns,
+      runs: operationalRuns,
       rounds: reviewRounds,
       reviewConfig: reader.getReviewConfig(),
       currentCandidate: currentTaskReviewCandidate
     });
     const orchestration = projectTaskOrchestration({
       task,
-      turns: operationalTurns,
+      runs: operationalRuns,
       roleSessionSets: reader.listRoleSessionSets(taskId),
       workItems: reader.listWorkItems(taskId),
       changeSets: reader.listChangeSets(taskId),
@@ -185,10 +185,10 @@ function renderNextAction(
     `Next action: ${action.kind}`,
     `Reason: ${action.reason}`,
     `Execution view: ${execution.status}; owner/action=${execution.owner}/${execution.action}; reason=${execution.reason}; ${execution.summary}`,
-    `Active Turns (${execution.activeTurns.length}):`,
-    ...(execution.activeTurns.length === 0
+    `Active AgentRuns (${execution.activeRuns.length}):`,
+    ...(execution.activeRuns.length === 0
       ? ["  none"]
-      : execution.activeTurns.map((run) => `  ${renderActiveTurn(run)}`)),
+      : execution.activeRuns.map((run) => `  ${renderActiveRun(run)}`)),
     ...(action.refs.length === 0
       ? ["Refs: none"]
       : ["Refs:", ...action.refs.map((ref) => `  ${ref.kind}: ${ref.id}`)]),
@@ -276,7 +276,7 @@ function renderNextAction(
   return `${lines.join("\n")}\n`;
 }
 
-function renderActiveTurn(run: TaskExecutionTurn): string {
+function renderActiveRun(run: TaskExecutionRun): string {
   const subject = run.reviewRoundId === undefined
     ? run.workItemId === undefined ? "task" : `work-item=${run.workItemId}`
     : `review-round=${run.reviewRoundId}`;
@@ -299,6 +299,6 @@ function nextActionExecutionView(
     action: execution.action,
     reason: execution.reason,
     summary: execution.summary,
-    activeTurns: execution.activeTurns
+    activeRuns: execution.activeRuns
   };
 }

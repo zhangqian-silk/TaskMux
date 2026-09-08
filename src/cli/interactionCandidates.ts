@@ -156,12 +156,12 @@ export async function getSelectionCandidates(
       );
     case "turns": {
       const workItemId = dependencyValue(selector, args);
-      const turns = await listAllByTask(ports, "task.turn.list", "turns");
+      const runs = await listAllByTask(ports, "task.turn.list", "turns");
       return entities(
-        "turn",
-        workItemId === undefined ? "Select Turn" : `Select Turn: ${workItemId}`,
-        qualifyTaskRecords(turns.filter((turn) => workItemId === undefined
-          || matchesTaskRecordReference(turn, "workItemId", workItemId))),
+        "run",
+        workItemId === undefined ? "Select AgentRun" : `Select AgentRun: ${workItemId}`,
+        qualifyTaskRecords(runs.filter((run) => workItemId === undefined
+          || matchesTaskRecordReference(run, "workItemId", workItemId))),
         ["qualifiedId", "roleName", "status", "summary"]
       );
     }

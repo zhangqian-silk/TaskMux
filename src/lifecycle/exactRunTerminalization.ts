@@ -3,8 +3,8 @@ import { createTaskMessage } from "../message/message.js";
 import { enqueueWork } from "../coordination/workMailboxQueue.js";
 
 import {
-  captureRoleTurnDispatch,
-  settleRoleTurnDispatch
+  captureRoleRunDispatch,
+  settleRoleRunDispatch
 } from "../coordination/workMailboxQueue.js";
 import {
   finishReviewRound,
@@ -12,21 +12,21 @@ import {
   type ReviewRound
 } from "../review/reviewRound.js";
 import {
-  completeTurn,
-  failTurn,
-  type Turn,
-  type TurnSystemEvidence,
-  type TurnProviderResult
-} from "../turn/turn.js";
-import { boundedTurnFailureDiagnostic } from "../domain/agentResultTransport.js";
+  completeRun,
+  failRun,
+  type AgentRun,
+  type AgentRunSystemEvidence,
+  type AgentRunProviderResult
+} from "../agentRun/agentRun.js";
+import { boundedRunFailureDiagnostic } from "../domain/agentResultTransport.js";
 import {
   updateExecutionLane,
   updateWorkItemExecutionLane
 } from "../execution/workItemExecution.js";
 import { managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
 import {
-  latestTurnDurableProgressAt
-} from "../scheduler/roleTurnStall.js";
+  latestRunDurableProgressAt
+} from "../scheduler/roleRunStall.js";
 import { markTaskWakeConsumed } from "../scheduler/taskWake.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import {
@@ -42,84 +42,84 @@ export type ExactReviewRoundTerminalizationResult = Readonly<{
 
 /**
  * Validate every immutable identity and frozen Project head needed before a
- * review Turn can settle any mailbox or Round state. This is deliberately
+ * review AgentRun can settle any mailbox or Round state. This is deliberately
  * read-only: callers use it as the compare-and-swap fence immediately before
  * their aggregate mutation.
  */
-export function validateExactTurnReviewRound(
+export function validateExactRunReviewRound(
   store: TaskStore,
-  turn: Turn,
+  run: AgentRun,
   options: Readonly<{ allowTerminal?: boolean }> = {}
 ): ExactReviewRoundTerminalizationResult {
-  if (turn.purpose !== "review") return { disposition: "applied", round: null };
-  if (turn.reviewRoundId === undefined) {
+  if (run.purpose !== "review") return { disposition: "applied", round: null };
+  if (run.reviewRoundId === undefined) {
     return { disposition: "obsolete", round: null, reason: "review-round-missing" };
   }
-  const round = store.getReviewRound(turn.taskId, turn.reviewRoundId);
+  const round = store.getReviewRound(run.taskId, run.reviewRoundId);
   if (round === null) {
     return { disposition: "obsolete", round: null, reason: "review-round-missing" };
   }
-  if (!options.allowTerminal && turn.executionLaneId === undefined
+  if (!options.allowTerminal && run.executionLaneId === undefined
     && round.status !== "pending" && round.status !== "running") {
     return { disposition: "obsolete", round, reason: "review-round-terminal" };
   }
-  const lane = round.executionGroup?.lanes.find(({ id }) => id === turn.executionLaneId);
-  const exactReviewerTurn = round.reviewerTurnId === turn.id
-    || lane?.currentTurnId === turn.id;
-  const exactReviewerRole = round.reviewerRoleName === turn.roleName || lane?.roleName === turn.roleName;
-  if (!exactReviewerTurn
+  const lane = round.executionGroup?.lanes.find(({ id }) => id === run.executionLaneId);
+  const exactReviewerRun = round.reviewerRunId === run.id
+    || lane?.currentRunId === run.id;
+  const exactReviewerRole = round.reviewerRoleName === run.roleName || lane?.roleName === run.roleName;
+  if (!exactReviewerRun
     || !exactReviewerRole
-    || round.workItemId !== turn.workItemId
-    || round.reviewBaseCommit !== turn.effective.reviewBaseCommit) {
+    || round.workItemId !== run.workItemId
+    || round.reviewBaseCommit !== run.effective.reviewBaseCommit) {
     return { disposition: "obsolete", round, reason: "review-round-mismatch" };
   }
   const laneWorkspaceRoot = lane?.workspace?.root;
-  if (turn.workspace === undefined || round.workspace === undefined
-    || (laneWorkspaceRoot === undefined && !isDeepStrictEqual(turn.workspace, round.workspace))
-    || (laneWorkspaceRoot !== undefined && turn.workspace.root !== laneWorkspaceRoot)) {
+  if (run.workspace === undefined || round.workspace === undefined
+    || (laneWorkspaceRoot === undefined && !isDeepStrictEqual(run.workspace, round.workspace))
+    || (laneWorkspaceRoot !== undefined && run.workspace.root !== laneWorkspaceRoot)) {
     return { disposition: "obsolete", round, reason: "review-workspace-mismatch" };
   }
-  const storedWorkspace = turn.workspace.owner.type === "execution-lane"
-    ? store.getManagedWorkspace(turn.workspace.owner)
-    : store.getReviewRoundWorkspace(turn.taskId, round.id);
+  const storedWorkspace = run.workspace.owner.type === "execution-lane"
+    ? store.getManagedWorkspace(run.workspace.owner)
+    : store.getReviewRoundWorkspace(run.taskId, round.id);
   if (storedWorkspace === null
-    || (turn.workspace.owner.type !== "execution-lane"
+    || (run.workspace.owner.type !== "execution-lane"
       && !isDeepStrictEqual(storedWorkspace, round.workspace))
-    || !isDeepStrictEqual(storedWorkspace, turn.workspace)) {
+    || !isDeepStrictEqual(storedWorkspace, run.workspace)) {
     return { disposition: "obsolete", round, reason: "review-workspace-drift" };
   }
-  if (turn.workspace.owner.type !== "execution-lane") {
+  if (run.workspace.owner.type !== "execution-lane") {
     if (storedWorkspace.owner.type !== "review-round"
-      || storedWorkspace.owner.taskId !== turn.taskId
+      || storedWorkspace.owner.taskId !== run.taskId
       || storedWorkspace.owner.reviewRoundId !== round.id) {
       return { disposition: "obsolete", round, reason: "review-workspace-owner-mismatch" };
     }
   }
-  if (turn.workspace.owner.type === "execution-lane"
-    && (turn.workspace.owner.purpose !== "review"
-      || turn.workspace.owner.executionGroupId !== turn.executionGroupId
-      || turn.workspace.owner.executionLaneId !== turn.executionLaneId
-      || turn.workspace.owner.reviewRoundId !== round.id)) {
+  if (run.workspace.owner.type === "execution-lane"
+    && (run.workspace.owner.purpose !== "review"
+      || run.workspace.owner.executionGroupId !== run.executionGroupId
+      || run.workspace.owner.executionLaneId !== run.executionLaneId
+      || run.workspace.owner.reviewRoundId !== round.id)) {
     return { disposition: "obsolete", round, reason: "review-lane-workspace-owner-mismatch" };
   }
-  if (turn.workspace.owner.type === "execution-lane") {
+  if (run.workspace.owner.type === "execution-lane") {
     if (lane === undefined
-      || lane.currentTurnId !== turn.id
-      || lane.roleName !== turn.roleName
-      || lane.workspace?.root !== turn.workspace.root
-      || lane.workspace.writableProjectIds.length !== turn.workspace.entries.length
-      || turn.workspace.entries.some((entry) => (
+      || lane.currentRunId !== run.id
+      || lane.roleName !== run.roleName
+      || lane.workspace?.root !== run.workspace.root
+      || lane.workspace.writableProjectIds.length !== run.workspace.entries.length
+      || run.workspace.entries.some((entry) => (
         entry.access !== "write"
         || !lane.workspace!.writableProjectIds.includes(entry.projectId)
       ))) {
       return { disposition: "obsolete", round, reason: "review-lane-workspace-lineage-mismatch" };
     }
   }
-  const task = store.getTask(turn.taskId);
+  const task = store.getTask(run.taskId);
   const taskScope = (round.scope ?? "work-item") === "task";
   const item = taskScope || round.workItemId === undefined
     ? null
-    : store.getWorkItem(turn.taskId, round.workItemId);
+    : store.getWorkItem(run.taskId, round.workItemId);
   if (!taskScope && item === null) {
     return { disposition: "obsolete", round, reason: "review-work-item-missing" };
   }
@@ -169,38 +169,38 @@ export function validateExactTurnReviewRound(
 }
 
 /**
- * Atomically terminalizes the exact ReviewRound bound to a review Turn.
+ * Atomically terminalizes the exact ReviewRound bound to a review AgentRun.
  * The round must still be pending/running and its reviewer identity must match
- * the Turn exactly. This is the sole review-round convergence primitive shared
- * by the exact Turn terminalization path and the pre-delivery launch-failure
- * path: a failed review Turn must never leave its Round stranded.
+ * the AgentRun exactly. This is the sole review-round convergence primitive shared
+ * by the exact AgentRun terminalization path and the pre-delivery launch-failure
+ * path: a failed review AgentRun must never leave its Round stranded.
  */
-export function terminalizeExactTurnReviewRound(
+export function terminalizeExactRunReviewRound(
   store: TaskStore,
   input: Readonly<{
     taskId: string;
-    turn: Turn;
+    run: AgentRun;
     outcome: Readonly<{
       status: "completed";
       output: string;
     }> | Readonly<{
       status: "failed";
       diagnostic: string;
-      failureReason: import("../turn/turn.js").TurnFailureReason;
+      failureReason: import("../agentRun/agentRun.js").AgentRunFailureReason;
       output?: string;
     }>;
-    systemEvidence?: TurnSystemEvidence;
+    systemEvidence?: AgentRunSystemEvidence;
   }>,
   now: Date
 ): ExactReviewRoundTerminalizationResult {
-  const validation = validateExactTurnReviewRound(store, input.turn);
+  const validation = validateExactRunReviewRound(store, input.run);
   if (validation.disposition !== "applied" || validation.round === null) {
     return validation;
   }
   const reviewRound = validation.round;
-  if (input.turn.executionGroupId !== undefined
-    && input.turn.executionLaneId !== undefined) {
-    // Producer Turns own only their immutable Turn result. The unified Group
+  if (input.run.executionGroupId !== undefined
+    && input.run.executionLaneId !== undefined) {
+    // Producer AgentRuns own only their immutable AgentRun result. The unified Group
     // is advanced after that result is validated and stored below.
     return { disposition: "applied", round: reviewRound };
   }
@@ -216,26 +216,26 @@ export function terminalizeExactTurnReviewRound(
   return { disposition: "applied", round: terminal };
 }
 
-export type ExactTurnTerminalizationInput = Readonly<{
+export type ExactRunTerminalizationInput = Readonly<{
   taskId: string;
   roleName: string;
   agentId: string;
-  turnId: string;
+  runId: string;
   nativeSessionId?: string;
-  /** Aggregate retirement owns every queued Role signal, not only this Turn. */
+  /** Aggregate retirement owns every queued Role signal, not only this AgentRun. */
   mailboxDisposition?: "exact" | "discard";
   outcome: Readonly<{
     status: "completed";
     output: string;
-    provider?: TurnProviderResult;
+    provider?: AgentRunProviderResult;
   }> | Readonly<{
     status: "failed";
     diagnostic: string;
-    failureReason: import("../turn/turn.js").TurnFailureReason;
-    provider?: TurnProviderResult;
+    failureReason: import("../agentRun/agentRun.js").AgentRunFailureReason;
+    provider?: AgentRunProviderResult;
     output?: string;
   }>;
-  systemEvidence?: TurnSystemEvidence;
+  systemEvidence?: AgentRunSystemEvidence;
   workspaceFailure?: Readonly<{
     failureReason:
       | "workspace-unavailable"
@@ -245,16 +245,16 @@ export type ExactTurnTerminalizationInput = Readonly<{
   }>;
 }>;
 
-export type ExactTurnTerminalizationResult = Readonly<{
+export type ExactRunTerminalizationResult = Readonly<{
   disposition: "applied" | "obsolete";
-  turn: Turn | null;
+  run: AgentRun | null;
   reason?: string;
 }>;
 
-export type ExactTurnRetirementInput = Readonly<{
+export type ExactRunRetirementInput = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   agentId: string;
   adapterId: string;
   nativeSessionId?: string;
@@ -263,33 +263,33 @@ export type ExactTurnRetirementInput = Readonly<{
   reason: string;
 }>;
 
-export type ExactTurnRetirementResult = Readonly<{
+export type ExactRunRetirementResult = Readonly<{
   disposition: "applied" | "state-changed" | "blocked";
-  turn: Turn | null;
+  run: AgentRun | null;
   progressAt?: string;
   reason?: string;
 }>;
 
 /**
- * Retire one stranded active Turn only after its exact Provider Turn is
+ * Retire one stranded active AgentRun only after its exact Provider Turn is
  * terminal and every durable execution fence is quiet. The caller owns the
- * surrounding aggregate transaction so the Turn, ReviewRound/Lane, mailbox,
+ * surrounding aggregate transaction so the AgentRun, ReviewRound/Lane, mailbox,
  * Session, and append-only retirement record commit together.
  */
-export function retireExactActiveTurn(
+export function retireExactActiveRun(
   store: TaskStore,
-  input: ExactTurnRetirementInput,
+  input: ExactRunRetirementInput,
   now: Date
-): ExactTurnRetirementResult {
-  const current = store.getTurn(input.taskId, input.turnId);
-  const stateChanged = (reason: string): ExactTurnRetirementResult => ({
+): ExactRunRetirementResult {
+  const current = store.getRun(input.taskId, input.runId);
+  const stateChanged = (reason: string): ExactRunRetirementResult => ({
     disposition: "state-changed",
-    turn: current,
-    ...(current === null ? {} : { progressAt: latestTurnDurableProgressAt(
+    run: current,
+    ...(current === null ? {} : { progressAt: latestRunDurableProgressAt(
       store,
       input.taskId,
       input.roleName,
-      input.turnId
+      input.runId
     )?.progressAt }),
     reason
   });
@@ -306,35 +306,35 @@ export function retireExactActiveTurn(
     return stateChanged("turn-launch-identity-mismatch");
   }
   const active = current.executionGroupId !== undefined && current.executionLaneId !== undefined
-    ? store.getActiveExecutionLaneTurn(
+    ? store.getActiveExecutionLaneRun(
       input.taskId,
       current.executionGroupId,
       current.executionLaneId
     )
-    : store.getActiveTurn(input.taskId, input.roleName);
+    : store.getActiveRun(input.taskId, input.roleName);
   if (active?.id !== current.id) return stateChanged("active-turn-mismatch");
-  const progress = latestTurnDurableProgressAt(
+  const progress = latestRunDurableProgressAt(
     store,
     input.taskId,
     input.roleName,
-    input.turnId
+    input.runId
   );
   if (progress === null) return stateChanged("progress-unavailable");
   if (progress.progressAt !== input.expectedProgressAt) {
     return { ...stateChanged("progress-fence-mismatch"), progressAt: progress.progressAt };
   }
   const sessions = store.getTaskRoleSessionSet(input.taskId, input.roleName);
-  const terminalInput: ExactTurnTerminalizationInput = {
+  const terminalInput: ExactRunTerminalizationInput = {
     taskId: input.taskId,
     roleName: input.roleName,
     agentId: input.agentId,
-    turnId: input.turnId,
+    runId: input.runId,
     ...(input.nativeSessionId === undefined ? {} : { nativeSessionId: input.nativeSessionId }),
     outcome: { status: "failed", diagnostic: input.reason, failureReason: "missing-result" }
   };
   const session = sessions?.sessions[input.agentId];
   const providerBinding = sessions?.providerBinding;
-  const providerTurn = providerBinding?.turn;
+  const providerTurn = providerBinding?.run;
   const providerSettled = managedProviderTurnId(providerTurn) === current.id
     && (providerTurn?.status === "completed"
       || providerTurn?.status === "failed"
@@ -344,18 +344,18 @@ export function retireExactActiveTurn(
   if (session?.status === "active" && !providerSettled) {
     return {
       disposition: "blocked",
-      turn: current,
+      run: current,
       progressAt: progress.progressAt,
       reason: "runtime-not-terminal"
     };
   }
-  const terminal = terminalizeExactTaskTurn(store, terminalInput, now);
-  if (terminal.disposition !== "applied" || terminal.turn === null) {
+  const terminal = terminalizeExactTaskRun(store, terminalInput, now);
+  if (terminal.disposition !== "applied" || terminal.run === null) {
     return stateChanged(terminal.reason ?? "terminalization-fence-mismatch");
   }
   return {
     disposition: "applied",
-    turn: terminal.turn,
+    run: terminal.run,
     progressAt: progress.progressAt
   };
 }
@@ -365,44 +365,44 @@ export function retireExactActiveTurn(
  * TaskStore transaction. All caller-owned outcome records can therefore
  * be saved in the same aggregate commit.
  */
-export function terminalizeExactTaskTurn(
+export function terminalizeExactTaskRun(
   store: TaskStore,
-  input: ExactTurnTerminalizationInput,
+  input: ExactRunTerminalizationInput,
   now: Date
-): ExactTurnTerminalizationResult {
-  const turn = store.getTurn(input.taskId, input.turnId);
-  if (turn === null) return obsolete(null, "turn-missing");
-  if (turn.status !== "active") return obsolete(turn, "turn-terminal");
-  if (turn.taskId !== input.taskId || turn.roleName !== input.roleName) {
-    return obsolete(turn, "turn-owner-mismatch");
+): ExactRunTerminalizationResult {
+  const run = store.getRun(input.taskId, input.runId);
+  if (run === null) return obsolete(null, "turn-missing");
+  if (run.status !== "active") return obsolete(run, "turn-terminal");
+  if (run.taskId !== input.taskId || run.roleName !== input.roleName) {
+    return obsolete(run, "turn-owner-mismatch");
   }
-  if (turn.effective.agentId !== input.agentId) {
-    return obsolete(turn, "turn-agent-mismatch");
+  if (run.effective.agentId !== input.agentId) {
+    return obsolete(run, "turn-agent-mismatch");
   }
   const role = store.getRole(input.taskId, input.roleName);
-  if (role === null) return obsolete(turn, "role-missing");
-  const active = turn.executionGroupId !== undefined && turn.executionLaneId !== undefined
-    ? store.getActiveExecutionLaneTurn(
+  if (role === null) return obsolete(run, "role-missing");
+  const active = run.executionGroupId !== undefined && run.executionLaneId !== undefined
+    ? store.getActiveExecutionLaneRun(
       input.taskId,
-      turn.executionGroupId,
-      turn.executionLaneId
+      run.executionGroupId,
+      run.executionLaneId
     )
-    : store.getActiveTurn(input.taskId, input.roleName);
-  if (active?.id !== turn.id) return obsolete(turn, "active-turn-mismatch");
+    : store.getActiveRun(input.taskId, input.roleName);
+  if (active?.id !== run.id) return obsolete(run, "active-turn-mismatch");
 
   // Validate the exact ReviewRound, Candidate, stored workspace, and frozen
   // Project heads before any mailbox or Round write.
-  const reviewValidation = validateExactTurnReviewRound(store, turn);
+  const reviewValidation = validateExactRunReviewRound(store, run);
   if (reviewValidation.disposition !== "applied") {
-    return obsolete(turn, reviewValidation.reason ?? "review-round-mismatch");
+    return obsolete(run, reviewValidation.reason ?? "review-round-mismatch");
   }
-  const requiredSnapshotProjects = [...new Set(turn.effective.writeProjectIds)].sort();
+  const requiredSnapshotProjects = [...new Set(run.effective.writeProjectIds)].sort();
   const observedSnapshotProjects = input.systemEvidence?.workspaceSnapshot?.projects
     .map(({ projectId }) => projectId)
     .sort();
   const laneSnapshotRequired = input.outcome.status === "completed"
-    && turn.executionGroupId !== undefined
-    && turn.executionLaneId !== undefined
+    && run.executionGroupId !== undefined
+    && run.executionLaneId !== undefined
     && requiredSnapshotProjects.length > 0;
   const missingLaneSnapshot = laneSnapshotRequired
     && (
@@ -429,71 +429,71 @@ export function terminalizeExactTaskTurn(
   const terminalOutcome = effectiveOutcome.status === "failed"
     ? {
         ...effectiveOutcome,
-        diagnostic: boundedTurnFailureDiagnostic(effectiveOutcome.diagnostic)
+        diagnostic: boundedRunFailureDiagnostic(effectiveOutcome.diagnostic)
       }
     : effectiveOutcome;
 
-  // All Turn, active-pointer, Session, launch, and mailbox fences have passed.
-  // Only now may the exact ReviewRound be terminalized alongside the Turn so a
-  // stale fence never leaves a Round written while the Turn stays active.
-  const reviewRoundTerminalization = terminalizeExactTurnReviewRound(store, {
+  // All AgentRun, active-pointer, Session, launch, and mailbox fences have passed.
+  // Only now may the exact ReviewRound be terminalized alongside the AgentRun so a
+  // stale fence never leaves a Round written while the AgentRun stays active.
+  const reviewRoundTerminalization = terminalizeExactRunReviewRound(store, {
     taskId: input.taskId,
-    turn,
+    run,
     outcome: terminalOutcome
   }, now);
   if (reviewRoundTerminalization.disposition !== "applied") {
-    return obsolete(turn, reviewRoundTerminalization.reason ?? "review-round-mismatch");
+    return obsolete(run, reviewRoundTerminalization.reason ?? "review-round-mismatch");
   }
 
   const terminal = terminalOutcome.status === "completed"
-    ? completeTurn(
-        turn,
+    ? completeRun(
+        run,
         terminalOutcome.output,
         now,
         terminalOutcome.provider,
         input.systemEvidence
       )
-    : failTurn(
-        turn,
+    : failRun(
+        run,
         terminalOutcome.failureReason,
         terminalOutcome.diagnostic,
         now,
         terminalOutcome.provider,
         terminalOutcome.output
       );
-  if (turn.executionGroupId !== undefined
-    && turn.executionLaneId !== undefined
-    && turn.purpose === "execution"
-    && turn.workItemId !== undefined) {
-    const item = store.getWorkItem(input.taskId, turn.workItemId);
+  if (run.executionGroupId !== undefined
+    && run.executionLaneId !== undefined
+    && run.purpose === "execution"
+    && run.workItemId !== undefined) {
+    const item = store.getWorkItem(input.taskId, run.workItemId);
     const group = item === null
       ? undefined
-      : workItemExecutionGroupById(item, turn.executionGroupId);
+      : workItemExecutionGroupById(item, run.executionGroupId);
     if (item !== null && group !== undefined) {
       if (terminal.status === "completed") {
-        const grouped = updateWorkItemExecutionLane(group, turn.executionLaneId, {
-          currentTurnId: turn.id,
-          successfulTurnId: turn.id,
+        const grouped = updateWorkItemExecutionLane(group, run.executionLaneId, {
+          currentRunId: run.id,
+          successfulRunId: run.id,
           disposition: "succeeded"
         }, now);
         store.saveWorkItem(input.taskId, updateWorkItemExecutionGroup(item, grouped, now));
       }
     }
   }
-  if (turn.executionGroupId !== undefined
-    && turn.executionLaneId !== undefined
-    && turn.purpose === "review"
-    && turn.reviewRoundId !== undefined) {
-    const round = store.getReviewRound(input.taskId, turn.reviewRoundId);
+  if (run.executionGroupId !== undefined
+    && run.executionLaneId !== undefined
+    && run.purpose === "review"
+    && run.reviewRoundId !== undefined) {
+    const round = store.getReviewRound(input.taskId, run.reviewRoundId);
     const group = round?.executionGroup;
     if (round !== null
       && round !== undefined
       && group !== undefined
-      && group.id === turn.executionGroupId) {
+      && group.id === run.executionGroupId) {
       if (terminal.status === "completed") {
-        const grouped = updateExecutionLane(group, turn.executionLaneId, {
-          currentTurnId: turn.id,
-          successfulTurnId: turn.id,
+        const grouped = updateExecutionLane(group, run.executionLaneId, {
+          currentRunId: run.id,
+          successfulRunId: run.id,
           disposition: "succeeded"
         }, now);
         store.saveReviewRound(
@@ -503,7 +503,7 @@ export function terminalizeExactTaskTurn(
       }
     }
   }
-  store.saveTurn(terminal);
+  store.saveRun(terminal);
   if (terminal.roleName !== "leader") {
     // Keep the report in its execution record; atomically publish only a
     // collaboration reference. Duplicate terminals have already returned.
@@ -522,9 +522,9 @@ export function terminalizeExactTaskTurn(
   const dispatchIdentity = {
     taskId: terminal.taskId,
     roleName: terminal.roleName,
-    turnId: terminal.id
+    runId: terminal.id
   };
-  const dispatchToken = captureRoleTurnDispatch(
+  const dispatchToken = captureRoleRunDispatch(
     store.getWorkMailbox({
       kind: "role",
       taskId: terminal.taskId,
@@ -532,29 +532,29 @@ export function terminalizeExactTaskTurn(
     }),
     dispatchIdentity
   );
-  settleRoleTurnDispatch(store, dispatchIdentity, dispatchToken);
+  settleRoleRunDispatch(store, dispatchIdentity, dispatchToken);
   if (terminal.roleName === "leader") {
     const wake = store.listTaskWakes(input.taskId)
-      .find((candidate) => candidate.turnId === terminal.id && candidate.status === "dispatched");
+      .find((candidate) => candidate.runId === terminal.id && candidate.status === "dispatched");
     if (wake !== undefined) {
       store.saveTaskWake(input.taskId, markTaskWakeConsumed(wake, now));
     }
   }
   if (terminal.executionGroupId !== undefined && terminal.executionLaneId !== undefined) {
-    store.clearActiveExecutionLaneTurn(
+    store.clearActiveExecutionLaneRun(
       input.taskId,
       terminal.executionGroupId,
       terminal.executionLaneId
     );
   } else {
-    store.clearActiveTurn(input.taskId, input.roleName);
+    store.clearActiveRun(input.taskId, input.roleName);
   }
-  return { disposition: "applied", turn: terminal };
+  return { disposition: "applied", run: terminal };
 }
 
 function obsolete(
-  turn: Turn | null,
+  run: AgentRun | null,
   reason: string
-): ExactTurnTerminalizationResult {
-  return { disposition: "obsolete", turn, reason };
+): ExactRunTerminalizationResult {
+  return { disposition: "obsolete", run, reason };
 }

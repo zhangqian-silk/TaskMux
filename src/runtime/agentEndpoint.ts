@@ -14,10 +14,11 @@ import {
   type StructuredProviderTurnInput,
   type StructuredProviderTurnReceipt,
   type StructuredProviderTurnStarted,
-  type StructuredProviderTurnTerminal
+  type StructuredProviderTurnTerminal,
+  type StructuredProviderInputObserved
 } from "./structuredProviderHost.js";
 
-/** These are attachment facts, not another durable Task/Turn state machine. */
+/** These are attachment facts, not another durable Task/AgentRun state machine. */
 export type AgentEndpointSubmission =
   | Readonly<{ status: "accepted"; receipt: StructuredProviderTurnReceipt }>
   | Readonly<{ status: "pending"; reason: "submitting" | "native-busy"; error?: ProviderTurnBusyError }>
@@ -36,6 +37,7 @@ export type AgentEndpointEvent = Readonly<{
   | Readonly<{ type: "started"; value: StructuredProviderTurnStarted }>
   | Readonly<{ type: "terminal"; value: StructuredProviderTurnTerminal }>
   | Readonly<{ type: "goal"; value: StructuredProviderGoal | null }>
+  | Readonly<{ type: "input"; value: StructuredProviderInputObserved }>
 );
 
 export type AgentEndpointConfiguration = Readonly<{
@@ -57,7 +59,7 @@ export interface AgentEndpoint {
   submit(input: AgentEndpointInput): Promise<AgentEndpointSubmission>;
   steer(input: AgentEndpointInput): Promise<AgentEndpointSubmission>;
   inspect(): Readonly<{
-    activeTurnId?: string;
+    activeNativeTurnId?: string;
     submissions: readonly Readonly<{ attemptId: string; inputRef: string; disposition: AgentEndpointSubmission }>[];
     attachment: "attached" | "detach-requested" | "exited";
     cancellation: "not-requested" | "requested";
@@ -96,7 +98,7 @@ export function createAgentEndpointFactory(
     const implementation = pinned === undefined ? builtinAgentEndpointImplementation(control.adapterId)
       : Object.freeze({ ...requireBuiltinAgentEndpointImplementation(control.adapterId, pinned) });
     // Clone before asynchronous startup; callers must not mutate the Session's
-    // effective invocation when configuration changes for a subsequent Turn.
+    // effective invocation when configuration changes for a subsequent AgentRun.
     const configuration = Object.freeze({
       implementation,
       command: payload.command,
@@ -118,6 +120,7 @@ export function createAgentEndpointFactory(
     const opened = await start(payload, {
       onStarted: (value) => emit({ type: "started", value }),
       onTerminal: (value) => emit({ type: "terminal", value }),
+      onInput: (value) => emit({ type: "input", value }),
       onGoal: (value) => emit({ type: "goal", value })
     });
     endpoint = new BuiltinAgentEndpoint(opened.session, configuration);
@@ -145,7 +148,8 @@ function freezeConfiguration<T>(value: T): T {
 type EventValue =
   | Readonly<{ type: "started"; value: StructuredProviderTurnStarted }>
   | Readonly<{ type: "terminal"; value: StructuredProviderTurnTerminal }>
-  | Readonly<{ type: "goal"; value: StructuredProviderGoal | null }>;
+  | Readonly<{ type: "goal"; value: StructuredProviderGoal | null }>
+  | Readonly<{ type: "input"; value: StructuredProviderInputObserved }>;
 
 class BuiltinAgentEndpoint implements AgentEndpoint {
   readonly capabilities;
@@ -233,7 +237,7 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
 
   inspect(): ReturnType<AgentEndpoint["inspect"]> {
     return Object.freeze({
-      ...(this.driver.activeTurnId === undefined ? {} : { activeTurnId: this.driver.activeTurnId }),
+      ...(this.driver.activeTurnId === undefined ? {} : { activeNativeTurnId: this.driver.activeTurnId }),
       submissions: Object.freeze([...this.#attempts].map(([attemptId, attempt]) => Object.freeze({
         attemptId, inputRef: attempt.input.inputRef, disposition: attempt.disposition
       }))),

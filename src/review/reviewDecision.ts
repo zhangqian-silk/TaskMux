@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import type { GlobalRole, TaskRole } from "../role/role.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { Task } from "../task/task.js";
 import type { ReviewConfig } from "./reviewConfig.js";
 import {
@@ -21,7 +21,7 @@ export type ReviewDecisionProjection = Readonly<{
     reviewerRoleName: string;
     mode: "full" | "delta-recheck";
     status: "pending" | "running";
-    activeTurnId?: string;
+    activeRunId?: string;
     startedAt: string;
     frozenCandidate: TaskReviewCandidate | null;
     candidateRelation: "exact" | "requires-preflight" | "unavailable";
@@ -31,7 +31,7 @@ export type ReviewDecisionProjection = Readonly<{
     reviewerRoleName: string;
     status: "available" | "busy" | "unavailable";
     phase?: "review-slot" | "active-turn" | "runtime-lifecycle";
-    activeTurnId?: string;
+    activeRunId?: string;
     activeReviewRoundId?: string;
     startedAt?: string;
     retryable: boolean;
@@ -58,13 +58,13 @@ export function projectReviewDecision(input: Readonly<{
   store: ReviewDecisionStore;
   task: Task;
   roles: readonly TaskRole[];
-  turns: readonly Turn[];
+  runs: readonly AgentRun[];
   rounds: readonly ReviewRound[];
   reviewConfig: ReviewConfig | null;
   /** CLI-verified physical Task heads; null means no durable candidate is currently available. */
   currentCandidate: TaskReviewCandidate | null;
 }>): ReviewDecisionProjection {
-  const { store, task, roles, turns, rounds, reviewConfig, currentCandidate } = input;
+  const { store, task, roles, runs, rounds, reviewConfig, currentCandidate } = input;
   const taskRounds = rounds.filter((round) => (round.scope ?? "work-item") === "task");
   const accepted = [...taskRounds]
     .filter((round) => isCompletedTaskReviewEvidence(store, round))
@@ -83,17 +83,17 @@ export function projectReviewDecision(input: Readonly<{
       round.status === "pending" || round.status === "running"
     ))
     .map((round) => {
-      const activeTurn = turns.find((turn) => (
-        turn.status === "active" && turn.reviewRoundId === round.id
+      const activeRun = runs.find((run) => (
+        run.status === "active" && run.reviewRoundId === round.id
       ));
-      const workspaceRoot = round.workspace?.root ?? activeTurn?.workspace?.root;
+      const workspaceRoot = round.workspace?.root ?? activeRun?.workspace?.root;
       return {
         reviewRoundId: round.id,
         reviewerRoleName: round.reviewerRoleName,
         mode: round.deltaRecheck === undefined ? "full" as const : "delta-recheck" as const,
         status: round.status,
-        ...(activeTurn === undefined ? {} : { activeTurnId: activeTurn.id }),
-        startedAt: activeTurn?.createdAt ?? round.createdAt,
+        ...(activeRun === undefined ? {} : { activeRunId: activeRun.id }),
+        startedAt: activeRun?.createdAt ?? round.createdAt,
         frozenCandidate: round.taskCandidate ?? null,
         candidateRelation: candidateRelation(round.taskCandidate ?? null, currentCandidate),
         ...(workspaceRoot === undefined ? {} : { workspaceRoot })
@@ -127,9 +127,9 @@ export function projectReviewDecision(input: Readonly<{
       reviewerRoleName,
       status: "busy" as const,
       phase: availability.phase,
-      ...(availability.activeTurnId === undefined
+      ...(availability.activeRunId === undefined
         ? {}
-        : { activeTurnId: availability.activeTurnId }),
+        : { activeRunId: availability.activeRunId }),
       ...(availability.activeReviewRoundId === undefined
         ? {}
         : { activeReviewRoundId: availability.activeReviewRoundId }),

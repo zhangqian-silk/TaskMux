@@ -12,7 +12,7 @@ construction, native configuration, resume/interrupt/stop, and transport. Its
 Agent Driver owns runtime observation:
 
 - Hook names and payload parsing;
-- native Session and Turn identities;
+- native Session and AgentRun identities;
 - operation and waiting-state mapping;
 - transcript usage normalization.
 
@@ -23,7 +23,7 @@ core never invokes provider commands.
 
 Yui core owns shared semantics:
 
-- exact native Session and Turn fences;
+- exact native Session and AgentRun fences;
 - durable admission, replay, and idempotency;
 - runtime state projection;
 - workflow progress and workflow-stall policy;
@@ -35,7 +35,7 @@ rather than inferred from the provider name. Its `adapterId` is the explicit
 bridge to the launch facet. Its `runtime` facet maps native Hooks and may expose
 an independently sampled observer source. Managed automation is admitted only when start, resume,
 prompt delivery, interrupt, stop, exact Session identity, exact prompt
-acceptance, and exact Turn lifecycle are available.
+acceptance, and exact AgentRun lifecycle are available.
 
 ## Explicit adopted execution environments
 
@@ -53,7 +53,7 @@ explicit Session stop/new flow to apply a changed environment to native executio
 the CLI requires `--yes` to acknowledge desired changes while a Session is live.
 Role details distinguish desired and Session environments.
 
-New Session/Turn effective snapshots retain the preparation reference, directory
+New Session/AgentRun effective snapshots retain the preparation reference, directory
 path/device/inode, access, and isolation. The launch planner uses that directory
 for the native process and Codex thread cwd without automatically adding managed
 Git roots. The original managed workspace remains Yui's control/context and Git
@@ -76,7 +76,7 @@ environment launches. External clients writing directly to a shared native
 server remain outside Yui's input-validation boundary.
 
 Storage migration 9 adds this optional binding contract. Existing Roles and
-Session/Turn snapshots keep managed-workspace behavior; existing adopted
+Session/AgentRun snapshots keep managed-workspace behavior; existing adopted
 preparations are never automatically selected.
 
 ## Canonical observation flow
@@ -93,18 +93,18 @@ accepted observer source --> Controller sampler --> usage -+--> runtime-observat
                                                         runtime status projection
 ```
 
-Every Turn-scoped observation carries Task, Role, Turn, Agent, Driver,
+Every AgentRun-scoped observation carries Task, Role, AgentRun, Agent, Driver,
 native Session, native Turn, and transport receipt identity. Host attachment
-does not add another lifecycle identity. `turn.accepted` durably binds the provider's native Turn to that exact Yui
-Turn. Every later fact resolves through this binding, so a delayed terminal
-event cannot refresh, fail, or complete a successor Turn after a reused process
+does not add another lifecycle identity. `run.accepted` durably binds the provider's native Turn to that exact Yui
+AgentRun. Every later fact resolves through this binding, so a delayed terminal
+event cannot refresh, fail, or complete a successor AgentRun after a reused process
 has advanced.
 
 The stable vocabulary separates:
 
 - durable Session lifecycle: active or ended, with stopped/failed as the end reason;
-- Host and current Turn observations: starting, idle, busy, settling, failed, or unavailable;
-- Turn state: accepted, waiting, completed, failed, cancelled; each waiting
+- Host and current AgentRun observations: starting, idle, busy, settling, failed, or unavailable;
+- AgentRun state: accepted, waiting, completed, failed, cancelled; each waiting
   episode has its own `waitId` and positive operation/model evidence resumes it;
 - operations: model, tool, and subagent start/completion/failure;
 - activity: structured provider activity and normalized usage snapshots;
@@ -112,10 +112,10 @@ The stable vocabulary separates:
 
 Native Hook names do not cross the Driver boundary. Managed Claude uses the
 hidden `internal runtime-hook` ingress. Managed Codex takes exact Session,
-acceptance, and Turn lifecycle facts from its ordinary App Server subscription
+acceptance, and AgentRun lifecycle facts from its ordinary App Server subscription
 and does not install Yui-specific Hooks. The core selects the registered Driver
 from the exact launch envelope; a Driver may map native payloads, but it cannot
-choose or forge authority, Driver identity, Turn fences, ordering, or canonical
+choose or forge authority, Driver identity, AgentRun fences, ordering, or canonical
 event IDs.
 
 Native identity is also a Driver responsibility. Built-in Drivers resolve
@@ -138,7 +138,7 @@ The taxonomy contains `availability`, `rate-limit`, `transport`, `access`,
 `unknown`. These are observations, not recommended actions. A Driver recognizes
 its own native error shapes; it does not start a replacement Session, count
 attempts, or impose backoff. The Leader or Operator reads the fact with current
-Turn, Host, and Session state and chooses the next atomic operation.
+AgentRun, Host, and Session state and chooses the next atomic operation.
 
 The taxonomy describes evidence; it is not a second lifecycle state machine.
 Drivers recognize native shapes, Core records the standardized fact, and the
@@ -154,20 +154,20 @@ Yui maintains two independent clocks:
    refresh it; token usage snapshots and a live tmux pane do not.
 2. **Workflow progress** answers whether the managed Task advanced through a
    Yui outcome such as a checkpoint, block, Candidate, Review, or
-   completion. Tokens, CPU, RSS, and provider Turn completion never refresh
+   completion. Tokens, CPU, RSS, and provider AgentRun completion never refresh
    this clock.
 
 This prevents a looping or merely busy Agent from hiding a workflow stall. It
 also prevents a quiet model call from being mislabeled as workflow failure.
-Provider Turn completion automatically stores the exact Turn result. It does not
+Provider Turn completion automatically stores the exact AgentRun result. It does not
 decide whether the WorkItem or Task is complete; the Leader makes that judgment
 from durable evidence.
 
-A durable Turn corresponds to exactly one provider Turn. Structured native
-subagent operations are observable facts within that Turn, but they do not
-extend or reopen the Turn after the parent Provider reports its terminal. Later
+A durable AgentRun corresponds to exactly one provider AgentRun. Structured native
+subagent operations are observable facts within that AgentRun, but they do not
+extend or reopen the AgentRun after the parent Provider reports its terminal. Later
 facts wake the Leader as new durable context rather than continuing a closed
-Turn.
+AgentRun.
 
 ## Token evidence
 
@@ -196,7 +196,7 @@ Managed Codex threads currently report usage as unavailable because Yui does
 not add a Hook/transcript observer merely for telemetry. Claude Code
 exposes each de-duplicated assistant message as a request snapshot;
 later streaming records with the same message id replace that request.
-`turn.accepted` persists only the Driver-owned source descriptor. A
+`run.accepted` persists only the Driver-owned source descriptor. A
 Controller-owned sampler tails that source independently of Hooks, keeps an
 opaque per-source cursor, reads bounded increments, and emits each usage
 occurrence in source order with a stable occurrence identity. It never rescans
@@ -219,7 +219,7 @@ stream while preserving the same source/sample contract and canonical events.
 ## Bounded durability
 
 `runtime.observation` is a compact state boundary, not an append-only
-transcript. The exact Turn retains the ordered canonical usage occurrences
+transcript. The exact AgentRun retains the ordered canonical usage occurrences
 needed for cumulative deltas and one latest confirmed activity boundary;
 completed operation pairs are removed; terminal observations clear obsolete
 operation and waiting snapshots. Detailed high-volume diagnostics may go to
@@ -251,8 +251,8 @@ report. The parent prompt receives a bounded excerpt (512 characters) plus the
 event reference; the full content is read on demand through
 `yui task event show <task> <event>`.
 
-An active parent Turn owns its continuation results, so reported or settled
-facts are stored without a supervisor wake. If the parent Turn is terminal or
+An active parent AgentRun owns its continuation results, so reported or settled
+facts are stored without a supervisor wake. If the parent AgentRun is terminal or
 missing, Yui routes the result once from the original Role to its supervisor;
 the existing mailbox aggregation window performs batching.
 
@@ -273,7 +273,7 @@ Size and retention boundaries:
 
 Critical, non-repeatable, or independently verifiable work must use a Yui
 WorkItem/ExecutionGroup, not a native subagent. Only a managed Lane owns an
-independent Turn, receipt, and workspace.
+independent AgentRun, receipt, and workspace.
 
 ## Adding another Agent CLI
 
@@ -283,10 +283,10 @@ inbox, processor, durable fold, runtime projection, status command, or Web
 view. The Driver must:
 
 1. register a namespaced executable Driver, unique adapter bridge, and truthful capability matrix;
-2. resolve its stable native Session and Turn identities and map native events into the canonical vocabulary at its edge;
+2. resolve its stable native Session and AgentRun identities and map native events into the canonical vocabulary at its edge;
 3. expose an independently sampled, incremental observer when structured usage
    or activity is available, including explicit health;
-4. provide the full exact identity fence for every Turn-scoped fact;
+4. provide the full exact identity fence for every AgentRun-scoped fact;
 5. map every native failure to a standard Agent error code and preserve the
    complete native error, using `unknown` when no mapping is justified;
 6. prove wrong-Session rejection, replay idempotency, out-of-order replay,

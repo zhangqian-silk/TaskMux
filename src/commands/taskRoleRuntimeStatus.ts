@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import type { RoleAgentSession } from "../executor/agentExecutor.js";
 import type { EffectiveLaunchSnapshot } from "../executor/effectiveLaunch.js";
-import { turnExecutionObservation, type Turn } from "../turn/turn.js";
+import { runExecutionObservation, type AgentRun } from "../agentRun/agentRun.js";
 import type { TaskRole } from "../role/role.js";
 import {
   hasRuntimeCleanupObligation,
@@ -13,9 +13,9 @@ import type { TmuxRolePaneState } from "../tmux/tmuxManager.js";
 import type { WorkItem } from "../workItem/workItem.js";
 import type { ManagedWorkspace } from "../worktree/managedWorkspace.js";
 import {
-  isRoleTurnStalled,
+  isRoleRunStalled,
   latestStallProgressAt
-} from "../scheduler/roleTurnStall.js";
+} from "../scheduler/roleRunStall.js";
 import {
   createRuntimeObservation,
   runtimeObservationFromTaskEvent,
@@ -30,10 +30,10 @@ import {
   type RuntimeHealthLayer,
   type RuntimeDisplayStatus
 } from "../runtime/runtimeProjection.js";
-import { latestTurnDurableProgressAt } from "../scheduler/roleTurnStall.js";
+import { latestRunDurableProgressAt } from "../scheduler/roleRunStall.js";
 import { resolveRuntimeHealth } from "../config/yuiConfig.js";
 import { builtinDriverIdForAdapter } from "../runtime/builtinAgentDrivers.js";
-import { formatTurnReceiptId } from "../task/taskRecordReference.js";
+import { formatRunReceiptId } from "../task/taskRecordReference.js";
 import { operationalTaskRecords } from "../task/taskRecordRetirement.js";
 import {
   projectSessionTokenMetrics,
@@ -77,20 +77,20 @@ export type TaskRoleRuntimeStatus = Readonly<{
   desiredRevision: number;
   effectiveLaunch: EffectiveLaunchSnapshot | null;
   launchDrift: boolean;
-  turnSessionDrift: boolean;
+  runSessionDrift: boolean;
   health: TaskRoleHealth;
   healthReason: string;
   openInputRequestCount: number;
   role: TaskRole;
-  activeTurn: Turn | null;
-  execution?: ReturnType<typeof turnExecutionObservation>;
+  activeRun: AgentRun | null;
+  execution?: ReturnType<typeof runExecutionObservation>;
   /**
-   * Issue 09: the most recently updated Turn for this Role, regardless of
-   * status. Lets the status display both axes — the last Turn outcome and the
-   * current/last Session lifecycle — so a Session that stops after a Turn
-   * completed is never read back as a Turn failure.
+   * Issue 09: the most recently updated AgentRun for this Role, regardless of
+   * status. Lets the status display both axes — the last AgentRun outcome and the
+   * current/last Session lifecycle — so a Session that stops after a AgentRun
+   * completed is never read back as a AgentRun failure.
    */
-  lastTurn: Turn | null;
+  lastRun: AgentRun | null;
   activeWork: WorkItem | null;
   nativeSession: RoleAgentSession | null;
   runtimeCleanupPending: boolean;
@@ -142,13 +142,13 @@ export function inspectTaskRoleRuntimeStatuses(
 }
 
 export function renderTaskRoleRuntimeStatus(status: TaskRoleRuntimeStatus): string {
-  const activeTurn = status.activeTurn === null
+  const activeRun = status.activeRun === null
     ? "-"
-    : `${status.activeTurn.id} (${status.execution?.delivery ?? "unobserved"})`;
-  const lastTurn = status.activeTurn !== null || status.lastTurn === null
+    : `${status.activeRun.id} (${status.execution?.delivery ?? "unobserved"})`;
+  const lastRun = status.activeRun !== null || status.lastRun === null
     ? undefined
-    : `${status.lastTurn.id} (${status.lastTurn.status}${
-      status.lastTurn.result === undefined ? "" : ` at ${status.lastTurn.result.completedAt}`
+    : `${status.lastRun.id} (${status.lastRun.status}${
+      status.lastRun.result === undefined ? "" : ` at ${status.lastRun.result.completedAt}`
     })`;
   const activeWork = status.activeWork === null
     ? "-"
@@ -213,11 +213,11 @@ export function renderTaskRoleRuntimeStatus(status: TaskRoleRuntimeStatus): stri
     `  Desired drift    ${status.effectiveLaunch === null
       ? "-"
       : status.launchDrift ? "pending next launch" : "none"}`,
-    `  Turn/session     ${status.turnSessionDrift ? "snapshot mismatch" : "snapshot consistent"}`,
+    `  AgentRun/session     ${status.runSessionDrift ? "snapshot mismatch" : "snapshot consistent"}`,
     `  Active work      ${activeWork}`,
-    `  Active run       ${activeTurn}`,
-    ...(lastTurn === undefined ? [] : [`  Last turn        ${lastTurn}`]),
-    `  Turn attention   ${status.stall.active
+    `  Active run       ${activeRun}`,
+    ...(lastRun === undefined ? [] : [`  Last turn        ${lastRun}`]),
+    `  AgentRun attention   ${status.stall.active
       ? `needs-attention (${status.stall.kind ?? "workflow-not-progressing"}; no workflow progress since ${status.stall.progressAt ?? "unknown"})`
       : "none"}`,
     `  Native session   ${nativeSession}`,
@@ -234,14 +234,14 @@ export function renderTaskRoleRuntimeStatus(status: TaskRoleRuntimeStatus): stri
 
 export function taskRoleActiveWorkLabel(status: TaskRoleRuntimeStatus): string {
   if (status.activeWork !== null) return `${status.activeWork.id}: ${status.activeWork.title}`;
-  return status.activeTurn === null ? "-" : status.activeTurn.id;
+  return status.activeRun === null ? "-" : status.activeRun.id;
 }
 
-/** Issue 09: compact last-Turn outcome label for the Role list table. */
-export function taskRoleLastTurnLabel(status: TaskRoleRuntimeStatus): string {
-  if (status.activeTurn !== null) return `${status.activeTurn.id} ${status.activeTurn.status}`;
-  if (status.lastTurn === null) return "-";
-  return `${status.lastTurn.id} ${status.lastTurn.status}`;
+/** Issue 09: compact last-AgentRun outcome label for the Role list table. */
+export function taskRoleLastRunLabel(status: TaskRoleRuntimeStatus): string {
+  if (status.activeRun !== null) return `${status.activeRun.id} ${status.activeRun.status}`;
+  if (status.lastRun === null) return "-";
+  return `${status.lastRun.id} ${status.lastRun.status}`;
 }
 
 export function taskRoleNativeSessionLabel(status: TaskRoleRuntimeStatus): string {
@@ -284,30 +284,30 @@ function inspectTaskRoleRuntimeStatus(
   openInputRequestCount: number,
   now: Date
 ): TaskRoleRuntimeStatus {
-  const activeTurn = store.getActiveTurn(taskId, role.name);
-  // The last Turn outcome is a separate axis from the Session lifecycle. A
-  // Session that stops after its Turn completed must not retroactively turn
-  // that Turn into a failure; the status display keeps both visible.
-  const lastTurn = operationalTaskRecords(
-    store.listTurns(taskId),
+  const activeRun = store.getActiveRun(taskId, role.name);
+  // The last AgentRun outcome is a separate axis from the Session lifecycle. A
+  // Session that stops after its AgentRun completed must not retroactively turn
+  // that AgentRun into a failure; the status display keeps both visible.
+  const lastRun = operationalTaskRecords(
+    store.listRuns(taskId),
     store.listEvents(taskId),
-    "turn"
+    "run"
   )
     .filter((candidate) => candidate.roleName === role.name)
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))[0]
     ?? null;
-  const activeWork = activeTurn?.workItemId === undefined
+  const activeWork = activeRun?.workItemId === undefined
     ? null
-    : store.getWorkItem(taskId, activeTurn.workItemId);
+    : store.getWorkItem(taskId, activeRun.workItemId);
   const sessions = store.getTaskRoleSessionSet(taskId, role.name);
-  const effectiveAgentId = activeTurn?.effective.agentId ?? sessions?.activeAgentId;
+  const effectiveAgentId = activeRun?.effective.agentId ?? sessions?.activeAgentId;
   const nativeSession = effectiveAgentId === undefined
     ? null
     : sessions?.sessions[effectiveAgentId] ?? null;
-  const effectiveLaunch = activeTurn?.effective ?? nativeSession?.effective ?? null;
-  const turnSessionDrift = activeTurn !== null
+  const effectiveLaunch = activeRun?.effective ?? nativeSession?.effective ?? null;
+  const runSessionDrift = activeRun !== null
     && nativeSession !== null
-    && !isDeepStrictEqual(activeTurn.effective, nativeSession.effective);
+    && !isDeepStrictEqual(activeRun.effective, nativeSession.effective);
   const recovery = inspectTaskRoleSessionRecovery(taskId, role.name, store);
   const tmux: TaskRoleTmuxStatus = pane === undefined
     ? { state: "missing" }
@@ -318,13 +318,13 @@ function inspectTaskRoleRuntimeStatus(
         ...(pane.pid === undefined ? {} : { pid: pane.pid }),
         currentCommand: pane.currentCommand
       };
-  // The active Turn snapshot is authoritative for the live Role session. It
+  // The active AgentRun snapshot is authoritative for the live Role session. It
   // may point at a ReviewRound-owned workspace, which is intentionally
   // distinct from the WorkItem Develop workspace.
-  const managedWorkspace = activeTurn?.workspace
-    ?? (activeTurn?.workItemId === undefined
+  const managedWorkspace = activeRun?.workspace
+    ?? (activeRun?.workItemId === undefined
       ? store.getTaskWorkspace(taskId)
-      : store.getWorkItemWorkspace(taskId, activeTurn.workItemId));
+      : store.getWorkItemWorkspace(taskId, activeRun.workItemId));
   const workspace: TaskRoleWorkspaceStatus = managedWorkspace === null
     ? { managed: false, path: role.workspace }
     : { ...managedWorkspace, managed: true };
@@ -336,7 +336,7 @@ function inspectTaskRoleRuntimeStatus(
       : { taskId, roleName: role.name, ...nativeSession })
   );
   const runtime = projectTaskRoleRuntime(
-    activeTurn,
+    activeRun,
     nativeSession,
     tmux,
     events,
@@ -346,17 +346,19 @@ function inspectTaskRoleRuntimeStatus(
     role.name,
     now
   );
-  const stalled = activeTurn !== null && isRoleTurnStalled(events, activeTurn.id);
-  const stallProgressAt = activeTurn === null
+  const stalled = activeRun !== null && isRoleRunStalled(events, activeRun.id);
+  const stallProgressAt = activeRun === null
     ? undefined
-    : latestStallProgressAt(events, activeTurn.id);
-  const stallKind = activeTurn === null
+    : latestStallProgressAt(events, activeRun.id);
+  const stallKind = activeRun === null
     ? undefined
-    : latestStallKind(events, activeTurn.id);
-  const health = calculateHealth(
+    : latestStallKind(events, activeRun.id);
+  const execution = activeRun === null ? undefined
+    : runExecutionObservation(activeRun, sessions?.providerBinding, events);
+  const computedHealth = calculateHealth(
     role,
-    activeTurn,
-    lastTurn,
+    activeRun,
+    lastRun,
     nativeSession,
     recovery.runtimeCleanupPending,
     tmux,
@@ -364,7 +366,11 @@ function inspectTaskRoleRuntimeStatus(
     stalled,
     runtime
   );
-  const stall = activeTurn === null
+  const health = execution !== undefined && computedHealth.health === "running" && execution.delivery !== "accepted"
+    ? { health: execution?.delivery === "delivery-unknown" ? "needs-attention" as const : "awaiting-provider-acceptance" as const,
+        healthReason: `Execution record is open; native admission is ${execution?.delivery ?? "unobserved"}.` }
+    : computedHealth;
+  const stall = activeRun === null
     ? { active: false }
     : {
         active: stalled,
@@ -380,15 +386,14 @@ function inspectTaskRoleRuntimeStatus(
     effectiveLaunch,
     launchDrift: effectiveLaunch !== null
       && effectiveLaunch.sourceDesiredRevision !== role.launchRevision,
-    turnSessionDrift,
+    runSessionDrift,
     ...health,
     openInputRequestCount,
     role,
-    activeTurn,
-    lastTurn,
+    activeRun,
+    lastRun,
     activeWork,
-    ...(activeTurn === null ? {} : { execution: turnExecutionObservation(activeTurn,
-      store.getTaskRoleSessionSet(taskId, role.name)?.providerBinding) }),
+    ...(execution === undefined ? {} : { execution }),
     nativeSession,
     tmux,
     workspace,
@@ -412,11 +417,11 @@ function sessionCumulativeTokenLabel(metrics: SessionTokenMetrics): string {
 
 function latestStallKind(
   events: ReturnType<TaskStore["listEvents"]>,
-  turnId: string
+  runId: string
 ): "delivery-stalled" | "workflow-not-progressing" | undefined {
   const event = [...events]
-    .filter((candidate) => candidate.type === "turn.stalled"
-      && candidate.payload.turnId === turnId
+    .filter((candidate) => candidate.type === "run.stalled"
+      && candidate.payload.runId === runId
       && candidate.payload.status !== "diagnostic-only")
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
   return event?.payload.kind === "delivery-stalled" || event?.payload.kind === "workflow-not-progressing"
@@ -426,8 +431,8 @@ function latestStallKind(
 
 function calculateHealth(
   role: TaskRole,
-  activeTurn: Turn | null,
-  lastTurn: Turn | null,
+  activeRun: AgentRun | null,
+  lastRun: AgentRun | null,
   nativeSession: RoleAgentSession | null,
   runtimeCleanupPending: boolean,
   tmux: TaskRoleTmuxStatus,
@@ -442,17 +447,17 @@ function calculateHealth(
     };
   }
   if (nativeSession?.status === "ended" && nativeSession.endReason === "failed") {
-    // A broken Session only fails a live Turn. When the last Turn already
-    // completed, the Session death is a lifecycle event, not a Turn failure —
-    // surface it as attention with the persisted Turn outcome.
-    if (activeTurn !== null) {
+    // A broken Session only fails a live AgentRun. When the last AgentRun already
+    // completed, the Session death is a lifecycle event, not a AgentRun failure —
+    // surface it as attention with the persisted AgentRun outcome.
+    if (activeRun !== null) {
       return { health: "failed", healthReason: "the active native session is broken" };
     }
     return {
       health: "needs-attention",
-      healthReason: lastTurn === null
+      healthReason: lastRun === null
         ? "the native session is broken"
-        : `the native session is broken; last Turn ${lastTurn.id} ${lastTurn.status}`
+        : `the native session is broken; last AgentRun ${lastRun.id} ${lastRun.status}`
     };
   }
   if (tmux.state === "exited") {
@@ -461,14 +466,14 @@ function calculateHealth(
       healthReason: "the tmux pane exited; Provider Conversation/continuation state is unobservable"
     };
   }
-  if (activeTurn !== null) {
+  if (activeRun !== null) {
     if (tmux.state !== "running") {
-      return { health: "needs-attention", healthReason: "the active Turn has no live tmux pane" };
+      return { health: "needs-attention", healthReason: "the active AgentRun has no live tmux pane" };
     }
     if (stalled) {
       return {
         health: "needs-attention",
-        healthReason: "the live active Turn has no durable progress in the configured stall window"
+        healthReason: "the live active AgentRun has no durable progress in the configured stall window"
       };
     }
     if (runtime !== null) {
@@ -503,7 +508,7 @@ function calculateHealth(
     }
     return {
       health: "starting",
-      healthReason: "the active Turn is awaiting Provider runtime observations"
+      healthReason: "the active AgentRun is awaiting Provider runtime observations"
     };
   }
   if (nativeSession?.status === "active" && tmux.state !== "running") {
@@ -524,7 +529,7 @@ function calculateHealth(
 }
 
 function projectTaskRoleRuntime(
-  run: Turn | null,
+  run: AgentRun | null,
   session: RoleAgentSession | null,
   tmux: TaskRoleTmuxStatus,
   events: ReturnType<TaskStore["listEvents"]>,
@@ -544,7 +549,7 @@ function projectTaskRoleRuntime(
   const fence = {
     taskId: run.taskId,
     roleName: run.roleName,
-    turnId: run.id,
+    runId: run.id,
     agentId: run.effective.agentId,
     driverId,
     nativeSessionId: session.nativeSessionId,
@@ -553,16 +558,16 @@ function projectTaskRoleRuntime(
       {
         taskId: run.taskId,
         roleName: run.roleName,
-        turnId: run.id,
+        runId: run.id,
         agentId: run.effective.agentId,
         driverId,
         nativeSessionId: session.nativeSessionId,
-        receiptId: store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding?.turn?.attemptId
-          ?? formatTurnReceiptId(run.taskId, run.id)
+        receiptId: store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding?.run?.attemptId
+          ?? formatRunReceiptId(run.taskId, run.id)
       }
     ) ?? run.id,
-    receiptId: store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding?.turn?.attemptId
-      ?? formatTurnReceiptId(run.taskId, run.id)
+    receiptId: store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding?.run?.attemptId
+      ?? formatRunReceiptId(run.taskId, run.id)
   };
   let projection = projectRuntimeTaskEvents(fence, run.createdAt, events);
   projection = projectRuntimeObservation(projection, createRuntimeObservation({
@@ -577,7 +582,7 @@ function projectTaskRoleRuntime(
   }));
   // The semantic progress fence is the same durable fold the scheduler stall
   // pass consumes, so CLI/Web/scheduler share one progress clock.
-  const semanticProgress = latestTurnDurableProgressAt(store, taskId, roleName, run.id)
+  const semanticProgress = latestRunDurableProgressAt(store, taskId, roleName, run.id)
     ?? { progressAt: run.createdAt };
   const classification = classifyRuntimeHealth({
     projection,
@@ -615,7 +620,7 @@ function runtimeNativeTurnId(
   expected: Readonly<{
     taskId: string;
     roleName: string;
-    turnId: string;
+    runId: string;
     agentId: string;
     driverId: string;
     nativeSessionId: string;
@@ -624,7 +629,7 @@ function runtimeNativeTurnId(
 ): string | undefined {
   const observations = events
     .map(runtimeObservationFromTaskEvent)
-    .filter((observation): observation is RuntimeObservation => observation !== null && observation.fence.taskId === expected.taskId && observation.fence.roleName === expected.roleName && observation.fence.turnId === expected.turnId && observation.fence.agentId === expected.agentId && observation.fence.driverId === expected.driverId && observation.fence.nativeSessionId === expected.nativeSessionId && observation.fence.receiptId === expected.receiptId && observation.fence.nativeTurnId !== undefined)
+    .filter((observation): observation is RuntimeObservation => observation !== null && observation.fence.taskId === expected.taskId && observation.fence.roleName === expected.roleName && observation.fence.runId === expected.runId && observation.fence.agentId === expected.agentId && observation.fence.driverId === expected.driverId && observation.fence.nativeSessionId === expected.nativeSessionId && observation.fence.receiptId === expected.receiptId && observation.fence.nativeTurnId !== undefined)
     .sort((left, right) => (
       left.receivedAt.localeCompare(right.receivedAt)
       || (left.sequence ?? -1) - (right.sequence ?? -1)

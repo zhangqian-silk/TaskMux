@@ -3,7 +3,7 @@ import { updateExecutionLane } from "../execution/workItemExecution.js";
 import { usageError } from "../errors/cliError.js";
 import { requestDurableJobCancel } from "../job/durableJob.js";
 import { finishReviewRound, updateReviewExecutionGroup } from "../review/reviewRound.js";
-import { failTurn, type Turn } from "../turn/turn.js";
+import { failRun, type AgentRun } from "../agentRun/agentRun.js";
 import { queueLeaderWakeup } from "../scheduler/wakeupQueue.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import {
@@ -22,7 +22,7 @@ export type TaskExecutionStopResult = Readonly<{
   taskId: string;
   changed: boolean;
   roleNames: readonly string[];
-  terminatedTurnIds: readonly string[];
+  terminatedRunIds: readonly string[];
   cancelledJobIds: readonly string[];
   output: string;
 }>;
@@ -91,35 +91,35 @@ export function stopTaskExecutionCommand(
     const changed = task.executionGate.state !== "stopped";
     tx.saveTask(stopTaskExecution(task, now));
 
-    const activeTurns = tx.listTurns(task.id).filter((run) => run.status === "active");
+    const activeRuns = tx.listRuns(task.id).filter((run) => run.status === "active");
     const activeJobs = tx.listDurableJobs(task.id)
       .filter((job) => job.status === "queued" || job.status === "running");
     for (const job of activeJobs) {
       tx.saveDurableJob(task.id, requestDurableJobCancel(job, now));
     }
-    failExecutionAttempts(tx, task.id, activeTurns, request.reason, now);
-    for (const run of activeTurns) {
-      tx.saveTurn(failTurn(
+    failExecutionAttempts(tx, task.id, activeRuns, request.reason, now);
+    for (const run of activeRuns) {
+      tx.saveRun(failRun(
         run,
         "cancelled",
         `Task execution stopped: ${request.reason}`,
         now
       ));
       if (run.executionGroupId !== undefined && run.executionLaneId !== undefined) {
-        tx.clearActiveExecutionLaneTurn(task.id, run.executionGroupId, run.executionLaneId);
+        tx.clearActiveExecutionLaneRun(task.id, run.executionGroupId, run.executionLaneId);
       }
-      tx.clearActiveTurn(task.id, run.roleName);
+      tx.clearActiveRun(task.id, run.roleName);
     }
 
-    const roleNames = taskRuntimeRoleNames(tx, task.id, activeTurns);
+    const roleNames = taskRuntimeRoleNames(tx, task.id, activeRuns);
     for (const roleName of roleNames) {
-      tx.clearActiveTurn(task.id, roleName);
+      tx.clearActiveRun(task.id, roleName);
     }
     // A stop is allowed to discard stale pointer projections even when their
-    // historical Turns are already terminal.
-    for (const run of tx.listTurns(task.id)) {
+    // historical AgentRuns are already terminal.
+    for (const run of tx.listRuns(task.id)) {
       if (run.executionGroupId !== undefined && run.executionLaneId !== undefined) {
-        tx.clearActiveExecutionLaneTurn(task.id, run.executionGroupId, run.executionLaneId);
+        tx.clearActiveExecutionLaneRun(task.id, run.executionGroupId, run.executionLaneId);
       }
     }
 
@@ -136,7 +136,7 @@ export function stopTaskExecutionCommand(
       {
         by: actor,
         reason: request.reason,
-        terminatedRuns: String(activeTurns.length)
+        terminatedRuns: String(activeRuns.length)
       },
       now
     ));
@@ -145,11 +145,11 @@ export function stopTaskExecutionCommand(
       taskId: task.id,
       changed,
       roleNames,
-      terminatedTurnIds: activeTurns.map(({ id }) => id),
+      terminatedRunIds: activeRuns.map(({ id }) => id),
       cancelledJobIds: activeJobs.map(({ id }) => id),
       output: changed
         ? `Stopped Task execution: ${task.id}. Progress was preserved; `
-          + `${activeTurns.length} active attempt(s) were terminated and `
+          + `${activeRuns.length} active attempt(s) were terminated and `
           + `${activeJobs.length} DurableJob(s) were cancelled.`
         : `Task execution is already stopped: ${task.id}. Runtime cleanup will be verified.`
     };
@@ -173,7 +173,7 @@ export function startTaskExecutionCommand(
     if (task.executionGate.state === "enabled") {
       return { taskId: task.id, changed: false, output: `Task execution is already enabled: ${task.id}.` };
     }
-    if (tx.listTurns(task.id).some((run) => run.status === "active")
+    if (tx.listRuns(task.id).some((run) => run.status === "active")
       || tx.listDurableJobs(task.id).some((job) => job.status === "queued" || job.status === "running")) {
       throw usageError(`Task still has an active execution attempt: ${task.id}.`);
     }
@@ -232,11 +232,11 @@ function requireOperatorOrUser(
 function taskRuntimeRoleNames(
   store: TaskStore,
   taskId: string,
-  turns: readonly Turn[]
+  runs: readonly AgentRun[]
 ): readonly string[] {
   const names = new Set<string>(store.listRoles(taskId).map(({ name }) => name));
   for (const sessions of store.listRoleSessionSets(taskId)) names.add(sessions.owner.roleName);
-  for (const turn of turns) names.add(turn.roleName);
+  for (const run of runs) names.add(run.roleName);
   for (const owner of store.listSessionOwners()) {
     if (owner.owner.scope === "task" && owner.owner.taskId === taskId) {
       names.add(owner.owner.roleName);
@@ -248,7 +248,7 @@ function taskRuntimeRoleNames(
 function failExecutionAttempts(
   store: TaskStore,
   taskId: string,
-  turns: readonly Turn[],
+  runs: readonly AgentRun[],
   reason: string,
   now: Date
 ): void {
@@ -256,21 +256,21 @@ function failExecutionAttempts(
   const reviewRounds = new Map(store.listReviewRounds(taskId).map((round) => [round.id, round]));
   const affectedReviewRoundIds = new Set<string>();
 
-  for (const turn of turns) {
-    if (turn.reviewRoundId !== undefined) {
-      affectedReviewRoundIds.add(turn.reviewRoundId);
-      if (turn.executionGroupId === undefined || turn.executionLaneId === undefined) continue;
-      const round = reviewRounds.get(turn.reviewRoundId);
-      const group = round?.executionGroup?.id === turn.executionGroupId
+  for (const run of runs) {
+    if (run.reviewRoundId !== undefined) {
+      affectedReviewRoundIds.add(run.reviewRoundId);
+      if (run.executionGroupId === undefined || run.executionLaneId === undefined) continue;
+      const round = reviewRounds.get(run.reviewRoundId);
+      const group = round?.executionGroup?.id === run.executionGroupId
         ? round.executionGroup
         : undefined;
-      const lane = group?.lanes.find(({ id }) => id === turn.executionLaneId);
+      const lane = group?.lanes.find(({ id }) => id === run.executionLaneId);
       if (round !== undefined && group !== undefined && lane !== undefined
         && lane.disposition === "open") {
         reviewRounds.set(round.id, updateReviewExecutionGroup(
           round,
           updateExecutionLane(group, lane.id, {
-            currentTurnId: turn.id,
+            currentRunId: run.id,
             disposition: "failed"
           }, now)
         ));

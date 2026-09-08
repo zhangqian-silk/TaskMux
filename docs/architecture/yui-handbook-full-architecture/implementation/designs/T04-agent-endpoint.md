@@ -14,7 +14,7 @@ AgentEndpoint 是上层唯一执行接口。产品发现、native 参数和 prot
 
 open／resume 返回 Session 引用和实际有效配置。submit 接受稳定 attemptId 与 inputRef，返回 accepted／pending／not-submitted／unknown。inspect 提供事实，不解释任务进展。cancel 区分请求与确认；detach 只回收 Yui 自己的附件。
 
-对不同 Provider 保留实际能力：native steer 与排队下一 Turn 不等同，transport write 不等同 native ack，本地 attemptId 不等同 nativeTurnId。原生错误保留必要证据并映射为可读事实，不在适配器内选择新模型或新任务。
+对不同 Provider 保留实际能力：native steer 与排队下一 AgentRun 不等同，transport write 不等同 native ack，本地 attemptId 不等同 nativeTurnId。原生错误保留必要证据并映射为可读事实，不在适配器内选择新模型或新任务。
 
 ## 3. Codex 与 Claude 的实现
 
@@ -26,7 +26,7 @@ open／resume 返回 Session 引用和实际有效配置。submit 接受稳定 a
 
 ## 4. 结果与事件
 
-事件入口核对原 Session、attempt／native ID 和实现引用，重复终态写一次原结果。早到终态可在接受回执之前被临时关联，最终归同一次 Turn；迟到事件不影响 successor Turn。
+事件入口核对原 Session、attempt／native ID 和实现引用，重复终态写一次原结果。早到终态可在接受回执之前被临时关联，最终归同一次 AgentRun；迟到事件不影响 successor AgentRun。
 
 结果原文存一次。Review 和 Candidate 引用它，不由适配器解析“通过”“完成”等文字推动 WorkItem。
 
@@ -36,7 +36,7 @@ open／resume 返回 Session 引用和实际有效配置。submit 接受稳定 a
 
 同一 Role 的普通执行避免重叠。已声明 WorkItem 依赖可以检查是否有当前可用结果。暂时没有资源时保留同一请求或返回事实，由 Leader调整，不自动选择另一个 Worker。
 
-ExecutionGroup 保存同 Assignment 的副本和尝试编号；综合输入显式引用选定的 Turn，框架不决定成功数量和投票规则。多路写入使用 T05 可提供的隔离或资源条件；外部发布动作不默认复制。
+ExecutionGroup 保存同 Assignment 的副本和尝试编号；综合输入显式引用选定的 AgentRun，框架不决定成功数量和投票规则。多路写入使用 T05 可提供的隔离或资源条件；外部发布动作不默认复制。
 
 ## 6. 取消与资源事实
 

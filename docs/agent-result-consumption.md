@@ -7,12 +7,17 @@ contract is defined by the current branch head.
 
 ## Decision
 
-Every managed Agent Turn produces one durable original result. The next Agent
+Every explicitly dispatched AgentRun produces one durable original result. Ordinary
+notifications and native conversation are not implicit AgentRuns. The next Agent
 in the ownership chain reads that exact result and decides what it means.
 
-`TurnResult.output` is the sole Agent-authored durable truth. Yui Core stores
+`AgentRunResult.output` is the sole Agent-authored durable truth. Yui Core stores
 it unchanged and does not parse, classify, normalize, or validate its semantic
 content.
+
+Completion creates one reference Message in the same terminal transaction.
+`task message show <task/message>` expands its `resultRef` to this original result;
+the Message body and ReviewRound do not store another copy.
 
 Skills and dispatch instructions may recommend a Markdown or JSON layout to
 make handoffs easier to read. That layout is not a protocol. Missing headings,
@@ -23,7 +28,7 @@ for the consuming Agent; they are not Core execution failures.
 
 Yui Core owns only facts it can establish independently:
 
-- Task, Role, Turn, WorkItem, ReviewRound, and ExecutionGroup identity;
+- Task, Role, AgentRun, WorkItem, ReviewRound, and ExecutionGroup identity;
 - Provider and runtime lifecycle;
 - exact frozen Context and Git boundaries;
 - workspace ownership and write scope;
@@ -40,22 +45,22 @@ Agents own the meaning of their prose:
 Core never converts Agent prose into checks, findings, severity, verdict,
 delta disposition, repair topology, or acceptance.
 
-## Turn result
+## AgentRun result
 
 The current contract is:
 
 ```ts
-type TurnResult = Readonly<{
+type AgentRunResult = Readonly<{
   schemaVersion: 2;
   output?: string;
   diagnostic?: string;
   completedAt: string;
-  provider?: TurnProviderResult;
-  systemEvidence?: TurnSystemEvidence;
-  failureReason?: TurnFailureReason;
+  provider?: AgentRunProviderResult;
+  systemEvidence?: AgentRunSystemEvidence;
+  failureReason?: AgentRunFailureReason;
 }>;
 
-type TurnSystemEvidence = Readonly<{
+type AgentRunSystemEvidence = Readonly<{
   workspaceSnapshot?: ExecutionLaneGitSnapshot;
 }>;
 ```
@@ -63,11 +68,11 @@ type TurnSystemEvidence = Readonly<{
 `output`, when present, preserves the Provider's complete non-empty Agent text,
 including its outer whitespace, up to the 512 KiB durable result limit.
 `diagnostic`, when present, is bounded Core-authored failure context. A
-completed Turn requires `output` and has no failure metadata. A failed Turn
+completed AgentRun requires `output` and has no failure metadata. A failed AgentRun
 requires `diagnostic`; it may also retain `output` when the Agent result arrived
 before a later Core-owned workspace boundary failed. Provider status and Yui
 outcome remain separate: missing, empty, NUL-containing, or oversized result
-text terminalizes the Yui Turn as `missing-result` without inventing Agent
+text terminalizes the Yui AgentRun as `missing-result` without inventing Agent
 prose. `systemEvidence` is authored and validated by Core.
 
 A useful, optional Agent layout is:
@@ -88,9 +93,9 @@ Markdown, JSON, or ordinary prose are all legal.
 
 ## Terminal meaning
 
-- `Turn.completed` means the Provider completed and every required Core-owned
+- `AgentRun.completed` means the Provider completed and every required Core-owned
   artifact boundary is valid.
-- `Turn.failed` means Provider, runtime, authority, workspace, or another
+- `AgentRun.failed` means Provider, runtime, authority, workspace, or another
   Core-owned execution boundary failed.
 - Neither state means that the result is sufficient, correct, reviewed, or
   accepted.
@@ -104,40 +109,40 @@ those facts.
 
 ## Direct execution
 
-A direct Worker or Reviewer Turn:
+A direct Worker or Reviewer AgentRun:
 
 1. receives one exact frozen Context Snapshot;
 2. returns one original result;
 3. has Provider and Core workspace facts recorded separately;
-4. emits a terminal Event containing the exact `turnId`;
-5. is consumed by the Leader through the exact Turn record.
+4. emits a terminal Event containing the exact `runId`;
+5. is consumed by the Leader through the exact AgentRun record.
 
-For Review, `ReviewRound.completed` means its exact main Reviewer Turn
+For Review, `ReviewRound.completed` means its exact main Reviewer AgentRun
 completed. It is not a machine-derived pass verdict. The Leader's later accept
 or complete action is the semantic decision.
 
 ## Replicated execution
 
 Replicated execution retains immutable Assignment, isolated Lanes, all-Lanes
-settlement, minimum successful Producer count, and one main synthesis Turn.
+settlement, minimum successful Producer count, and one main synthesis AgentRun.
 One Group supports two through eight Lanes.
 
 Each Producer returns one opaque original result. A Producer succeeds when its
 Provider completes and its required Core workspace snapshot is valid. Core
 does not interpret any reported outcome, check, finding, or recommendation.
 
-The main synthesis Turn receives stable source references in Lane order:
+The main synthesis AgentRun receives stable source references in Lane order:
 
 ```ts
 type SynthesisSource = Readonly<{
   laneId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
 }>;
 ```
 
-Its frozen Context Snapshot materializes a compact source-Turn view for every
-successful Lane: exact identity, lineage, `TurnResult.output`, provider facts,
+Its frozen Context Snapshot materializes a compact source-AgentRun view for every
+successful Lane: exact identity, lineage, `AgentRunResult.output`, provider facts,
 and Core system evidence. It does not duplicate source prompt history,
 workspace descriptors, or launch configuration. Source results have a
 separate bounded Context budget, so eight maximum-size results cannot consume
@@ -151,33 +156,33 @@ consumes the main Reviewer result.
 
 ## Leader delivery
 
-Role completion Events contain the exact `turnId`, not a copied summary.
+Role completion Events contain the exact `runId`, not a copied summary.
 
 A normal Leader wake records a cursor window. `yui task wake show` resolves
-terminal Events in that window to the referenced Turn even when the Turn was
+terminal Events in that window to the referenced AgentRun even when the AgentRun was
 created before the window and completed much later. The wake points the Leader
 to:
 
 ```sh
-yui task turn show <task>/<turn>
+yui task run show <task>/<run>
 ```
 
-A forced steer into an already active Leader Turn includes commands for at
-most four referenced result Turns and points to `task wake show` for any
+A forced steer into an already active Leader AgentRun includes commands for at
+most four referenced result AgentRuns and points to `task wake show` for any
 remainder. In both paths the Leader reads the complete original result before
 accepting, retrying, repairing, reviewing again, or waiting.
 
 ## Review and completion
 
 ReviewRound persistence contains Core-owned identity, frozen candidate,
-workspace, execution Group, exact main Reviewer Turn, lifecycle status, and
+workspace, execution Group, exact main Reviewer AgentRun, lifecycle status, and
 optional Core failure. It does not copy Agent summary, report, checks, findings,
 or evidence commits.
 
 When a Task-final ReviewRound exists, its structural completion requires:
 
 - a completed ReviewRound over the current exact Task heads; and
-- one exact completed main Reviewer Turn bound to that Round.
+- one exact completed main Reviewer AgentRun bound to that Round.
 
 Core does not inspect the Reviewer output to decide whether it passed. The
 Leader decides whether Review is useful, reads the original result when Review
@@ -210,7 +215,7 @@ the checks requested for its current target.
 The current storage contract contains:
 
 - WorkItem v15;
-- Turn v5 with TurnResult v2;
+- AgentRun v5 with AgentRunResult v2;
 - ReviewRound v8.
 
 These record-local tags are current-shape validation guards, not independent
@@ -225,13 +230,13 @@ The required deterministic evidence is:
 
 - arbitrary non-empty Worker or Reviewer prose is preserved unchanged;
 - missing headings, invalid JSON, or omitted reported checks do not fail a
-  Turn;
+  AgentRun;
 - missing and oversized Provider results still terminalize as `missing-result`;
 - dirty or mismatched writable Lane state fails without replacing an arrived
   Agent result;
-- main synthesis receives every successful source Turn in stable Lane order;
-- Review completion depends on the exact completed main Turn, not its wording;
-- wake inspection includes a cursor-predating Turn referenced by a later
+- main synthesis receives every successful source AgentRun in stable Lane order;
+- Review completion depends on the exact completed main AgentRun, not its wording;
+- wake inspection includes a cursor-predating AgentRun referenced by a later
   terminal Event;
 - old parsed-result and finding commands are absent;
 - build, focused tests, and the complete Core test suite pass.

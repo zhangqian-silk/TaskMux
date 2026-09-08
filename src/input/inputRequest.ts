@@ -2,7 +2,7 @@ import { validateTaskRecordReference } from "../task/taskRecordReference.js";
 
 export type InputChoice = Readonly<{ key: string; label: string }>;
 export type InputBlockedRef = Readonly<{
-  type: "work-item" | "turn";
+  type: "work-item" | "run";
   taskId: string;
   id: string;
 }>;
@@ -11,7 +11,7 @@ export type InputRequester = Readonly<{
   taskId: string;
   roleName: "leader";
   agentId: string;
-  turnId: string;
+  runId: string;
   nativeSessionId?: string;
 }>;
 
@@ -168,11 +168,11 @@ export function validateInputRequest(value: unknown): InputRequest {
   validateTaskRecordReference({ taskId: base.taskId, localId: base.id }, "inputRequest");
   validateTaskRecordReference({
     taskId: base.requester.taskId,
-    localId: base.requester.turnId
-  }, "turn");
+    localId: base.requester.runId
+  }, "run");
   for (const reference of base.blockedRefs) {
     validateTaskRecordReference({ taskId: reference.taskId, localId: reference.id },
-      reference.type === "turn" ? "turn" : "workItem");
+      reference.type === "run" ? "run" : "workItem");
   }
   if (base.requester.taskId !== base.taskId
     || base.blockedRefs.some(({ taskId }) => taskId !== base.taskId)) {
@@ -250,7 +250,7 @@ function normalizeBlockedRefs(value: readonly InputBlockedRef[]): InputBlockedRe
   const references: InputBlockedRef[] = value.map((reference): InputBlockedRef => {
     const item = record(reference, "Input blocked reference");
     exact(item, ["type", "taskId", "id"], "Input blocked reference");
-    if (item.type !== "work-item" && item.type !== "turn") {
+    if (item.type !== "work-item" && item.type !== "run") {
       throw new Error("Input blocked reference type must be work-item or turn.");
     }
     return {
@@ -310,8 +310,8 @@ function normalizeRequester(value: InputRequester): InputRequester {
   exact(
     requester,
     requester.nativeSessionId === undefined
-      ? ["taskId", "roleName", "agentId", "turnId"]
-      : ["taskId", "roleName", "agentId", "turnId", "nativeSessionId"],
+      ? ["taskId", "roleName", "agentId", "runId"]
+      : ["taskId", "roleName", "agentId", "runId", "nativeSessionId"],
     "Input requester"
   );
   if (requester.roleName !== "leader") throw new Error("Input requester must be the Task Leader.");
@@ -319,7 +319,7 @@ function normalizeRequester(value: InputRequester): InputRequester {
     taskId: requireIdentity(requester.taskId, "Input requester Task id"),
     roleName: "leader",
     agentId: requireIdentity(requester.agentId, "Input requester Agent id"),
-    turnId: requireIdentity(requester.turnId, "Input requester Turn id"),
+    runId: requireIdentity(requester.runId, "Input requester AgentRun id"),
     ...(requester.nativeSessionId === undefined
       ? {}
       : { nativeSessionId: requireIdentity(requester.nativeSessionId, "Input requester native session id") })

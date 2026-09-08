@@ -7,44 +7,44 @@ import {
   runtimeObservationFromTaskEvent,
   type RuntimeObservation
 } from "../runtime/runtimeObservation.js";
-import { formatTurnReceiptId } from "../task/taskRecordReference.js";
+import { formatRunReceiptId } from "../task/taskRecordReference.js";
 import { currentProviderConversation, managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
 import type { TaskEvent } from "../event/taskEvent.js";
 import { taskRoleRuntimeIdentity } from "../runtime/managedCaller.js";
 
-export type RuntimeHookTurnFence = Readonly<{
+export type RuntimeHookRunFence = Readonly<{
   taskId: string;
   roleName: string;
   agentId: string;
-  turnId?: string;
+  runId?: string;
   receiptId?: string;
   nativeSessionId: string;
   workspace: string;
 }>;
 
-export type RuntimeHookTurnFenceOptions = Readonly<{
+export type RuntimeHookRunFenceOptions = Readonly<{
   startupSession?: "preallocated" | "discovered";
-  /** Terminal Hooks may arrive after the exact Turn has already completed. */
+  /** Terminal Hooks may arrive after the exact AgentRun has already completed. */
   terminal?: boolean;
-  /** Stable Provider Turn identity used to recover its durable accepted Turn. */
+  /** Stable Provider Turn identity used to recover its durable accepted AgentRun. */
   nativeTurnId?: string;
-  /** Stable input identity used before the Provider has recorded a Turn id. */
+  /** Stable input identity used before the Provider has recorded a AgentRun id. */
   attemptId?: string;
-  /** Session lifecycle observations remain valid while no Turn is active. */
+  /** Session lifecycle observations remain valid while no AgentRun is active. */
   sessionOnly?: boolean;
   continuationId?: string;
 }>;
 
 /**
  * Resolve observations by Session and exact input identity. A startup Hook
- * may introduce a Session for an explicit new-Session Turn.
+ * may introduce a Session for an explicit new-Session AgentRun.
  */
-export function resolveRuntimeHookTurnFence(
+export function resolveRuntimeHookRunFence(
   environment: NodeJS.ProcessEnv,
   adapterId: string,
   payloadNativeSessionId: string,
-  options: RuntimeHookTurnFenceOptions = {}
-): RuntimeHookTurnFence {
+  options: RuntimeHookRunFenceOptions = {}
+): RuntimeHookRunFence {
   if (environment.YUI_SESSION_SCOPE !== "task") {
     throw new Error("Runtime observation Hook requires a Task session scope.");
   }
@@ -71,8 +71,8 @@ export function resolveRuntimeHookTurnFence(
     : sessions?.history?.find((entry) => (
         entry.agentId === agentId && entry.nativeSessionId === nativeSessionId
       ));
-  const activeTurn = store.getActiveTurn(taskId, roleName);
-  const providerTurn = sessions?.providerBinding?.turn;
+  const activeRun = store.getActiveRun(taskId, roleName);
+  const providerTurn = sessions?.providerBinding?.run;
   const matchesProviderTurn = providerTurn !== null
     && providerTurn !== undefined
     && providerTurn.status !== "rejected" && providerTurn.status !== "deferred"
@@ -87,12 +87,12 @@ export function resolveRuntimeHookTurnFence(
     && (options.attemptId === undefined || providerTurn.attemptId === options.attemptId)
     && (options.nativeTurnId === undefined || providerTurn.nativeTurnId === undefined
       || providerTurn.nativeTurnId === options.nativeTurnId);
-  const acceptedTurn = acceptedTurnBinding(store.listEvents(taskId), {
+  const acceptedRun = acceptedRunBinding(store.listEvents(taskId), {
     taskId, roleName, agentId, nativeSessionId,
     ...(options.nativeTurnId === undefined ? {} : { nativeTurnId: options.nativeTurnId }),
     ...(options.attemptId === undefined ? {} : { attemptId: options.attemptId })
   });
-  const acceptedBinding = acceptedTurn ?? (
+  const acceptedBinding = acceptedRun ?? (
     options.continuationId === undefined ? null : knownContinuationBinding(
       store.listEvents(taskId),
       {
@@ -103,7 +103,7 @@ export function resolveRuntimeHookTurnFence(
   );
   // Collection of an exactly accepted terminal fact is not a new action by
   // the Role. A successor's active Agent or revoked execution permission
-  // cannot erase the original Turn's evidence.
+  // cannot erase the original AgentRun's evidence.
   const existingExecutionObservation = (options.terminal === true || options.attemptId !== undefined)
     && (acceptedBinding !== null || matchesProviderTurn);
   if (!(task.status === "active" && task.executionGate.state === "enabled")
@@ -111,7 +111,7 @@ export function resolveRuntimeHookTurnFence(
     && !existingExecutionObservation) {
     throw new Error("Runtime observation Hook Task does not accept this lifecycle boundary.");
   }
-  const runtimeIdentity = role === null ? null : taskRoleRuntimeIdentity(role, activeTurn);
+  const runtimeIdentity = role === null ? null : taskRoleRuntimeIdentity(role, activeRun);
   if (!existingExecutionObservation && (runtimeIdentity === null || runtimeIdentity.agentId !== agentId
     || runtimeIdentity.adapterId !== adapterId
     || (sessions !== null && sessions.activeAgentId !== agentId))) {
@@ -122,8 +122,10 @@ export function resolveRuntimeHookTurnFence(
     taskId,
     roleName
   }));
-  const directProviderTurn = matchesProviderTurn && providerTurn.turnId === undefined;
-  const sessionOnlyObservation = options.sessionOnly === true;
+  const directProviderTurn = matchesProviderTurn && providerTurn.runId === undefined;
+  const sessionOnlyObservation = options.sessionOnly === true
+    || (options.startupSession === undefined && options.terminal !== true
+      && acceptedBinding === null && !matchesProviderTurn);
   if (acceptedBinding === null && (directProviderTurn || sessionOnlyObservation)) {
     const observedSession = directProviderTurn ? executionSession : session;
     if (observedSession === undefined
@@ -145,23 +147,23 @@ export function resolveRuntimeHookTurnFence(
     ? providerTurn.attemptId
     : providerTurn !== null
     && providerTurn !== undefined
-    && managedProviderTurnId(providerTurn) === activeTurn?.id
+    && managedProviderTurnId(providerTurn) === activeRun?.id
     ? providerTurn.attemptId
-    : activeTurn === null ? undefined : formatTurnReceiptId(taskId, activeTurn.id);
-  const startupTurnId = options.startupSession === undefined ? undefined : activeTurn?.id;
-  const startupIntent = startupTurnId !== undefined
+    : activeRun === null ? undefined : formatRunReceiptId(taskId, activeRun.id);
+  const startupRunId = options.startupSession === undefined ? undefined : activeRun?.id;
+  const startupIntent = startupRunId !== undefined
     && !hasRuntimeCleanupObligation(lifecycleMailbox);
-  const startupTurn = startupTurnId === undefined
+  const startupRun = startupRunId === undefined
     ? null
-    : store.getTurn(taskId, startupTurnId);
+    : store.getRun(taskId, startupRunId);
   const replacementStartup = options.startupSession !== undefined
     && session !== undefined
     && sessions !== null
     && startupIntent
-    && startupTurn?.mode === "new"
+    && startupRun?.mode === "new"
     && session.status === "ended";
   const resumedStartup = startupIntent
-    && startupTurn?.mode === "resume"
+    && startupRun?.mode === "resume"
     && session !== undefined
     && session.adapterId === adapterId
     && session.nativeSessionId === nativeSessionId
@@ -170,54 +172,54 @@ export function resolveRuntimeHookTurnFence(
   const preallocatedStartup = options.startupSession === "preallocated"
     && (session === undefined || replacementStartup)
     && startupIntent
-    && startupTurn?.mode === "new";
+    && startupRun?.mode === "new";
   const discoveredStartup = options.startupSession === "discovered"
     && (session === undefined || replacementStartup)
     && startupIntent
-    && startupTurn?.mode === "new";
-  const registeredTurnId = acceptedBinding === null && matchesProviderTurn
+    && startupRun?.mode === "new";
+  const registeredRunId = acceptedBinding === null && matchesProviderTurn
     ? managedProviderTurnId(providerTurn) ?? undefined
     : undefined;
-  if (options.terminal === true && acceptedBinding === null && registeredTurnId === undefined) {
+  if (options.terminal === true && acceptedBinding === null && registeredRunId === undefined) {
     throw new Error("Runtime observation Hook terminal has no exact accepted execution binding.");
   }
-  const terminalTurn = acceptedBinding !== null
-    ? store.getTurn(taskId, acceptedBinding.fence.turnId!)
-    : registeredTurnId === undefined
+  const terminalRun = acceptedBinding !== null
+    ? store.getRun(taskId, acceptedBinding.fence.runId!)
+    : registeredRunId === undefined
     ? null
-    : store.getTurn(taskId, registeredTurnId);
-  const exactTerminal = terminalTurn !== null
-    && terminalTurn.status !== "active"
-    && terminalTurn.roleName === roleName
-    && terminalTurn.effective.agentId === agentId
-    && terminalTurn.effective.adapterId === adapterId
+    : store.getRun(taskId, registeredRunId);
+  const exactTerminal = terminalRun !== null
+    && terminalRun.status !== "active"
+    && terminalRun.roleName === roleName
+    && terminalRun.effective.agentId === agentId
+    && terminalRun.effective.adapterId === adapterId
     && session !== undefined;
-  if (activeTurn === null
+  if (activeRun === null
     && !preallocatedStartup
     && !discoveredStartup
     && !resumedStartup
     && !exactTerminal
-    && registeredTurnId === undefined
+    && registeredRunId === undefined
     && acceptedBinding === null) {
-    throw new Error("Runtime observation Hook has no matching durable in-flight Turn.");
+    throw new Error("Runtime observation Hook has no matching durable in-flight AgentRun.");
   }
-  const turnId = acceptedBinding?.fence.turnId
-    ?? registeredTurnId
-    ?? activeTurn?.id
-    ?? startupTurnId;
-  const turn = acceptedBinding !== null || registeredTurnId !== undefined
-    ? terminalTurn
-    : store.getActiveTurn(taskId, roleName);
-  if (turn === null
-    || turn.id !== turnId
-    || (acceptedBinding === null && registeredTurnId === undefined && !exactTerminal && turn.status !== "active")
-    || turn.roleName !== roleName
-    || turn.effective.agentId !== agentId
-    || turn.effective.adapterId !== adapterId) {
-    throw new Error("Runtime observation Hook Turn does not match durable active state.");
+  const runId = acceptedBinding?.fence.runId
+    ?? registeredRunId
+    ?? activeRun?.id
+    ?? startupRunId;
+  const run = acceptedBinding !== null || registeredRunId !== undefined
+    ? terminalRun
+    : store.getActiveRun(taskId, roleName);
+  if (run === null
+    || run.id !== runId
+    || (acceptedBinding === null && registeredRunId === undefined && !exactTerminal && run.status !== "active")
+    || run.roleName !== roleName
+    || run.effective.agentId !== agentId
+    || run.effective.adapterId !== adapterId) {
+    throw new Error("Runtime observation Hook AgentRun does not match durable active state.");
   }
-  if (turn.effective.workspace.root !== workspace) {
-    throw new Error("Runtime observation Hook workspace does not match the durable Turn snapshot.");
+  if (run.effective.workspace.root !== workspace) {
+    throw new Error("Runtime observation Hook workspace does not match the durable AgentRun snapshot.");
   }
   if (session !== undefined && acceptedBinding === null && !matchesProviderTurn && !replacementStartup && !resumedStartup) {
     if (session.adapterId !== adapterId
@@ -234,7 +236,7 @@ export function resolveRuntimeHookTurnFence(
     taskId,
     roleName,
     agentId,
-    turnId,
+    runId,
     ...(acceptedBinding?.fence.receiptId === undefined
       ? inputReceiptId === undefined ? {} : { receiptId: inputReceiptId }
       : { receiptId: acceptedBinding.fence.receiptId }),
@@ -262,7 +264,7 @@ function knownContinuationBinding(
       && observation.fence.agentId === expected.agentId
       && observation.fence.nativeSessionId === expected.nativeSessionId
       && observation.fence.continuationId === expected.continuationId
-      && observation.fence.turnId !== undefined)
+      && observation.fence.runId !== undefined)
     .sort((left, right) => (
       left.receivedAt.localeCompare(right.receivedAt)
       || (left.sequence ?? -1) - (right.sequence ?? -1)
@@ -271,14 +273,14 @@ function knownContinuationBinding(
     ));
   const binding = matches.at(-1) ?? null;
   if (binding === null) return null;
-  if (matches.some((candidate) => candidate.fence.turnId !== binding.fence.turnId
+  if (matches.some((candidate) => candidate.fence.runId !== binding.fence.runId
     || candidate.fence.receiptId !== binding.fence.receiptId)) {
-    throw new Error("Runtime observation Hook continuation has conflicting durable Turn bindings.");
+    throw new Error("Runtime observation Hook continuation has conflicting durable AgentRun bindings.");
   }
   return binding;
 }
 
-function acceptedTurnBinding(
+function acceptedRunBinding(
   events: readonly TaskEvent[],
   expected: Readonly<{
     taskId: string;
@@ -302,7 +304,7 @@ function acceptedTurnBinding(
         (expected.attemptId !== undefined && observation.fence.receiptId === expected.attemptId)
         || (expected.nativeTurnId !== undefined && observation.fence.nativeTurnId === expected.nativeTurnId)
       )
-      && observation.fence.turnId !== undefined)
+      && observation.fence.runId !== undefined)
     .sort((left, right) => (
       left.receivedAt.localeCompare(right.receivedAt)
       || (left.sequence ?? -1) - (right.sequence ?? -1)
@@ -315,9 +317,9 @@ function acceptedTurnBinding(
     (expected.attemptId !== undefined && candidate.fence.receiptId !== expected.attemptId)
     || (expected.nativeTurnId !== undefined && candidate.fence.nativeTurnId !== undefined
       && candidate.fence.nativeTurnId !== expected.nativeTurnId)
-    || candidate.fence.turnId !== binding.fence.turnId
+    || candidate.fence.runId !== binding.fence.runId
     || candidate.fence.receiptId !== binding.fence.receiptId))) {
-    throw new Error("Runtime observation Hook native Turn has conflicting durable Turn bindings.");
+    throw new Error("Runtime observation Hook native Turn has conflicting durable AgentRun bindings.");
   }
   return binding;
 }

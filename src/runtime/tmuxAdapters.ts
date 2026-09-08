@@ -43,7 +43,7 @@ import { launchBrokerForHome, type AgentHostLaunchPayload } from "./launchBroker
 import {
   AGENT_HOST_CONTROL_PROTOCOL,
   sendAgentHostLaunchControl,
-  sendAgentHostTurnControl,
+  sendAgentHostRunControl,
   sendAgentHostSteerControl,
   waitForAgentHostLaunchAck,
   type AgentHostControlResult,
@@ -82,7 +82,7 @@ export interface RuntimeRoleLaunchPlannerPort {
     adapterId: string;
     effective: EffectiveLaunchSnapshot;
     mode: "new" | "resume";
-    turnId?: string;
+    runId?: string;
     nativeSessionId?: string;
     runtimeIsolation?: TaskRuntimeIsolationDescriptor;
     environment?: Readonly<Record<string, string>>;
@@ -380,8 +380,8 @@ export class TmuxSessionHost implements SessionHostPort {
     const key = hostId;
     const previous = this.#launchTails.get(key) ?? Promise.resolve();
     let release!: () => void;
-    const turn = new Promise<void>((resolve) => { release = resolve; });
-    const tail = previous.then(() => turn);
+    const run = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => run);
     this.#launchTails.set(key, tail);
     await previous;
     try {
@@ -400,7 +400,7 @@ export class TmuxSessionHost implements SessionHostPort {
     // Validate generated identity before starting an external process.
     const bindingId = requireSafeIdentity(this.#createBindingId(), "Runtime binding id");
     const writableHumanAttached = request.owner.scope === "task"
-      && request.turnId !== undefined
+      && request.runId !== undefined
       && (this.tmux.hasWritableClientAsync !== undefined
         ? await this.tmux.hasWritableClientAsync(hostId, request.owner.roleName)
         : this.tmux.hasWritableClient?.(hostId, request.owner.roleName) === true);
@@ -418,7 +418,7 @@ export class TmuxSessionHost implements SessionHostPort {
       adapterId: request.adapterId,
       effective: request.effective,
       mode: request.mode,
-      ...(request.turnId === undefined ? {} : { turnId: request.turnId }),
+      ...(request.runId === undefined ? {} : { runId: request.runId }),
       ...(request.runtimeIsolation === undefined
         ? {}
         : { runtimeIsolation: request.runtimeIsolation }),
@@ -486,7 +486,7 @@ export class TmuxSessionHost implements SessionHostPort {
       ?? (request.mode === "resume" ? request.nativeSessionId : undefined);
     beforeHostStart?.({
       owner: request.owner,
-      ...(request.turnId === undefined ? {} : { turnId: request.turnId }),
+      ...(request.runId === undefined ? {} : { runId: request.runId }),
       agentId: request.agentId,
       adapterId: request.adapterId,
       effective: request.effective,
@@ -508,8 +508,8 @@ export class TmuxSessionHost implements SessionHostPort {
         || planned.launch.providerControl === undefined
       ))
     ) {
-      if (request.owner.scope === "task" && request.turnId !== undefined) {
-        throw new Error("Managed Task Turn is missing its structured Agent Host contract.");
+      if (request.owner.scope === "task" && request.runId !== undefined) {
+        throw new Error("Managed Task AgentRun is missing its structured Agent Host contract.");
       }
       let hostCreated: boolean;
       try {
@@ -548,7 +548,7 @@ export class TmuxSessionHost implements SessionHostPort {
         }
         if (request.mode === "new"
           && request.owner.scope === "task"
-          && request.turnId !== undefined
+          && request.runId !== undefined
           && this.#waitForNativeSession !== undefined) {
           binding = createRuntimeBinding({
             ...binding,
@@ -568,7 +568,7 @@ export class TmuxSessionHost implements SessionHostPort {
     }
     const broker = launchBrokerForHome(yuiHome);
     const sessionManifest = planned.launch.env.YUI_SESSION_MANIFEST;
-    if (request.owner.scope === "task" && request.turnId !== undefined
+    if (request.owner.scope === "task" && request.runId !== undefined
       && sessionManifest === undefined) {
       throw new Error(
         "Managed Task Agent Host launch is missing its Session Manifest."
@@ -633,7 +633,7 @@ export class TmuxSessionHost implements SessionHostPort {
           scope: request.owner.scope,
           ...(request.owner.scope === "task" ? { taskId: request.owner.taskId } : {}),
           roleName: request.owner.roleName,
-          requireTurnAck: false,
+          requireRunAck: false,
           ...(interactiveCodex ? { assertHostRunning: assertInteractivePane } : {})
         });
         if (interactiveCodex) {
@@ -820,7 +820,7 @@ function describeHostFailure(result: AgentHostControlResult): string {
   return detail === undefined ? "" : `; detail=${detail}`;
 }
 
-/** Structured managed-Turn input; tmux remains presentation/liveness only. */
+/** Structured managed-AgentRun input; tmux remains presentation/liveness only. */
 export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
   constructor(private readonly home: string) {}
 
@@ -832,7 +832,7 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
       return promptPushOutcome("unavailable");
     }
     try {
-      const result = await sendAgentHostTurnControl({
+      const result = await sendAgentHostRunControl({
         home: this.home,
         scope: "task",
         taskId: ref.hostId,
@@ -841,9 +841,10 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
           protocol: AGENT_HOST_CONTROL_PROTOCOL,
           type: "submit-turn",
           nativeSessionId: request.binding.nativeSessionId,
-          turnId: request.envelope.source.localId,
+          ...(request.envelope.source.kind === "notification"
+            ? {} : { runId: request.envelope.source.localId }),
           authority: request.binding.providerAuthority,
-          turn: {
+          run: {
             attemptId: request.envelope.id,
             boundedText: request.envelope.text
           }
@@ -862,7 +863,8 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
           ? promptPushOutcome("busy", failure)
           : promptPushOutcome("unavailable", failure);
       }
-      if (result.snapshot.state === "ready") return promptPushOutcome("delivered");
+      if (result.snapshot.state === "ready") return promptPushOutcome(
+        result.snapshot.inputAcceptance === "provider" ? "delivered" : "pending");
       return result.snapshot.state === "starting" || result.snapshot.state === "settling"
         ? promptPushOutcome("busy", failure)
         : promptPushOutcome("unavailable", failure);
@@ -884,7 +886,7 @@ export class AgentHostPromptPushAdapter implements ActivePromptPushPort {
           nativeSessionId: request.nativeSessionId,
           nativeTurnId: request.nativeTurnId,
           authority: request.providerAuthority,
-          turn: {
+          run: {
             attemptId: request.envelope.id,
             boundedText: request.envelope.text
           }

@@ -8,13 +8,13 @@
 
 Task 模块保存用户目标和工作事实，暴露原子编辑及验收能力。它不运行模型、不选择工作顺序，也不假设所有结果都通过 Git 交付。
 
-核心记录包括 Task、Brief、Decision、WorkItem、Candidate、Review 引用和验收／完成说明。Message 与 Role 通过公开接口关联；Turn 结果由 Execution 保存，Task 不复制一份相同结果正文。
+核心记录包括 Task、Brief、Decision、WorkItem、Candidate、Review 引用和验收／完成说明。Message 与 Role 通过公开接口关联；AgentRun 结果由 Execution 保存，Task 不复制一份相同结果正文。
 
 ```text
 Task → Brief / Decisions
-     → WorkItems → Candidate → Artifact / Turn result
+     → WorkItems → Candidate → Artifact / AgentRun result
      → completion note
-Review → Candidate + Reviewer Turn
+Review → Candidate + Reviewer AgentRun
 ```
 
 ## 2. Task 生命周期
@@ -23,7 +23,7 @@ Review → Candidate + Reviewer Turn
 
 Draft 可以进行对话、编辑与授权的规划实验。Active 允许正式交付。Completed 表示受权负责人明确确认结果；Cancelled 表示明确停止追求该目标。历史内容仍然可读。
 
-结束任务会停止新的自动派发，不证明旧进程已经停止。迟到结果保存到原 Turn，不自动重开 Task，也不把保存结果称为 Task 归档。
+结束任务会停止新的自动派发，不证明旧进程已经停止。迟到结果保存到原 AgentRun，不自动重开 Task，也不把保存结果称为 Task 归档。
 
 | 起点 | 允许的目标 | 条件 |
 |---|---|---|
@@ -53,7 +53,7 @@ currentFocus 可以用于进度和下一步关注点。修改它与修改方案�
 
 WorkItem 是 Leader 确认值得独立负责的一项工作，包含 objective、acceptance、可选依赖和 assignee。Requirements 较长时可保存在正文或引用材料，不必重复 Task 的全部字段。
 
-状态为 open、accepted、retired。运行与等待由 Turn 或执行请求派生；一次失败不把责任本身永久标成 failed。
+状态为 open、accepted、retired。运行与等待由 AgentRun 或执行请求派生；一次失败不把责任本身永久标成 failed。
 
 依赖用于 Leader 声明“这项工作需要那个结果”，不是让 scheduler 自主设计 DAG。执行准入根据已经声明的依赖检查是否有可用结果。若 Leader 调整策略，可以修改依赖并重新提交执行请求。退休不暗中把依赖转接到其他 WorkItem。
 
@@ -61,15 +61,15 @@ WorkItem 是 Leader 确认值得独立负责的一项工作，包含 objective�
 
 ## 5. Assignment 与执行快照
 
-一次派发保存实际交代的目标、上下文、Role 配置引用和资源范围。该信息可以存在 Turn 的 input snapshot 中，不必建立独立服务或表。
+一次派发保存实际交代的目标、上下文、Role 配置引用和资源范围。该信息可以存在 AgentRun 的 input snapshot 中，不必建立独立服务或表。
 
 Leader 修改当前 WorkItem 后，原执行快照仍是事实。它可以继续、停止或接受补充指令，由 Leader决定。框架不根据全部 revision 变化自动取消运行。
 
 ## 6. Candidate
 
-Candidate 表示明确提交的一版结果。必要字段是所属 Task、可选 WorkItem、来源 Turn 或受权导入、简短说明及 Artifact 引用。提交后内容和来源不可变；新版本结果创建新 Candidate，而非覆盖已被讨论的版本。
+Candidate 表示明确提交的一版结果。必要字段是所属 Task、可选 WorkItem、来源 AgentRun 或受权导入、简短说明及 Artifact 引用。提交后内容和来源不可变；新版本结果创建新 Candidate，而非覆盖已被讨论的版本。
 
-Artifact 可以是原始 Turn 输出、文件、外部版本或动作回执。没有额外文件的工作也可以把明确的结果文本作为产物，不应因为缺 Git commit 而无法提交。
+Artifact 可以是原始 AgentRun 输出、文件、外部版本或动作回执。没有额外文件的工作也可以把明确的结果文本作为产物，不应因为缺 Git commit 而无法提交。
 
 Candidate 不拥有运行时，也不决定代码保留。其来源保存 Agent、插件版本等可解释元数据即可，不要求完整旧依赖包永久存在。
 
@@ -77,7 +77,7 @@ Candidate 不拥有运行时，也不决定代码保留。其来源保存 Agent�
 
 Leader 选择 Candidate 并接受 WorkItem，可附说明和 Review 引用。Core 验证权限、引用属于同一目标以及记录可读，不解析结果质量。
 
-Review 关联一个 Candidate 和实际 Reviewer Turn。Reviewer 的原始结果只存在 Turn；Review 不维护另一份 verdict 文字，也不自动 reject 或生成修复任务。
+Review 关联一个 Candidate 和实际 Reviewer AgentRun。Reviewer 的原始结果只存在 AgentRun；Review 不维护另一份 verdict 文字，也不自动 reject 或生成修复任务。
 
 要求变化后，Leader 可以明确说明旧结果仍满足需求并继续使用。Framework 不需要交付版本失效传播。需要撤回接受时保留历史验收，当前 WorkItem 回到 open，但不会自动重做已经消费过结果的其他工作。
 

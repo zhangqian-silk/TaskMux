@@ -16,7 +16,7 @@ export const YUI_MANAGED_RUNTIME_ENVIRONMENT_NAMES = Object.freeze([
   "YUI_ADAPTER_ID",
   "YUI_DRIVER_ID",
   "YUI_WORKSPACE",
-  "YUI_TURN_ID",
+  "YUI_RUN_ID",
   "YUI_NATIVE_SESSION_ROOT",
   "YUI_NATIVE_SESSION_ID",
   // Retired: Yui no longer publishes a frozen control-plane descriptor into a

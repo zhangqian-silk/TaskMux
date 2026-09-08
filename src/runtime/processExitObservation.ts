@@ -9,7 +9,7 @@ export type RuntimeProcessExitObservation = Readonly<{
   providerProcessInstanceId?: string;
   taskId?: string;
   roleName: string;
-  turnId?: string;
+  runId?: string;
   nativeSessionId?: string;
   processKind: "agent-host" | "provider-child";
   exitCode?: number;
@@ -31,7 +31,7 @@ export function validateRuntimeProcessExitObservation(
   optionalIdentity(observation.providerProcessInstanceId, "providerProcessInstanceId");
   optionalIdentity(observation.taskId, "taskId");
   identity(observation.roleName, "roleName");
-  optionalIdentity(observation.turnId, "turnId");
+  optionalIdentity(observation.runId, "runId");
   optionalIdentity(observation.nativeSessionId, "nativeSessionId");
   if (observation.processKind !== "agent-host" && observation.processKind !== "provider-child") {
     throw new Error("Runtime process kind is invalid.");
@@ -59,19 +59,19 @@ export function classifyRuntimeProcessExit(
   observation: RuntimeProcessExitObservation,
   input: Readonly<{
     childLifecycle?: "persistent" | "per-turn";
-    turnTerminalObserved?: boolean;
-    turnFailureObserved?: boolean;
+    runTerminalObserved?: boolean;
+    runFailureObserved?: boolean;
   }>
 ): "expected-per-turn-exit" | "provider-turn-failed" | "stop-requested" | "host-abnormal" | "unknown" {
   validateRuntimeProcessExitObservation(observation);
   if (observation.stopRequested === true) return "stop-requested";
-  if (observation.processKind === "provider-child" && input.turnFailureObserved === true) {
+  if (observation.processKind === "provider-child" && input.runFailureObserved === true) {
     return "provider-turn-failed";
   }
   if (observation.processKind === "provider-child"
     && input.childLifecycle === "per-turn"
     && observation.exitCode === 0
-    && input.turnTerminalObserved === true) {
+    && input.runTerminalObserved === true) {
     return "expected-per-turn-exit";
   }
   if ((observation.exitCode !== undefined && observation.exitCode !== 0)

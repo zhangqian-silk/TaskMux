@@ -1,7 +1,7 @@
 import { activeRoleAgentBinding } from "../role/role.js";
 import type { Role } from "../role/role.js";
 import type { TaskStore } from "../storage/taskStore.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 
 /** Native Session identity supplied by the Agent transport. */
 export const MANAGED_NATIVE_SESSION_ENV = "YUI_NATIVE_SESSION_ID";
@@ -10,7 +10,7 @@ export const MANAGED_NATIVE_SESSION_ENV = "YUI_NATIVE_SESSION_ID";
  * One authority for "is this process the current runtime of a Task Role?".
  *
  * The caller names its Task, Role and native Session. Durable state supplies
- * the active Agent, adapter and current Turn. Reattaching the same Session
+ * the active Agent, adapter and current AgentRun. Reattaching the same Session
  * does not change authority; replacing that Session does. This is a local
  * identity boundary, not protection from another process that can read and
  * modify the same user's Home.
@@ -22,15 +22,16 @@ export type ManagedTaskCaller = Readonly<{
   agentId: string;
   adapterId: string;
   nativeSessionId: string;
+  executionAuthority: "planning" | "delivery";
   /** Workspace the process was launched into. */
   workspace?: string;
-  /** Durable active Turn of this Task/Role when the command ran, if any. */
-  currentTurnId?: string;
+  /** Durable active AgentRun of this Task/Role when the command ran, if any. */
+  currentRunId?: string;
 }>;
 
 export type ManagedCallerStore = Pick<
   TaskStore,
-  "getRole" | "getActiveTurn" | "getTaskRoleSessionSet" | "listEvents"
+  "getRole" | "getActiveRun" | "getTaskRoleSessionSet" | "listEvents"
 >;
 
 /** Immutable self-identity a managed Task Session asserts about its own process. */
@@ -128,12 +129,12 @@ export function currentManagedRuntime(
 
 /** Select execution identity, not a credential or grant. Workers retain their
  * active Assignment; Leader management follows the current Role selection. */
-export function taskRoleRuntimeIdentity(role: Role, activeTurn: Turn | null): Readonly<{
+export function taskRoleRuntimeIdentity(role: Role, activeRun: AgentRun | null): Readonly<{
   agentId: string;
   adapterId: string;
 }> {
-  const effective = role.name !== "leader" && activeTurn?.status === "active"
-    ? activeTurn.effective
+  const effective = role.name !== "leader" && activeRun?.status === "active"
+    ? activeRun.effective
     : undefined;
   return {
     agentId: effective?.agentId ?? role.activeAgentId,
@@ -152,8 +153,8 @@ function requireCurrentRuntime(
         + "A new Session must be launched to act on this Task."
     );
   }
-  const activeTurn = store.getActiveTurn(self.taskId, self.roleName);
-  const { agentId, adapterId } = taskRoleRuntimeIdentity(role, activeTurn);
+  const activeRun = store.getActiveRun(self.taskId, self.roleName);
+  const { agentId, adapterId } = taskRoleRuntimeIdentity(role, activeRun);
   const sessions = store.getTaskRoleSessionSet(self.taskId, self.roleName);
   const session = sessions?.sessions[agentId];
   if (self.nativeSessionId === undefined) {
@@ -185,11 +186,12 @@ function requireCurrentRuntime(
     agentId,
     adapterId,
     nativeSessionId: session.nativeSessionId,
+    executionAuthority: session.effective.executionAuthority,
     ...(self.workspace === undefined ? {} : { workspace: self.workspace }),
-    ...(activeTurn === null || activeTurn.status !== "active"
-      || activeTurn.effective.agentId !== agentId
+    ...(activeRun === null || activeRun.status !== "active"
+      || activeRun.effective.agentId !== agentId
       ? {}
-      : { currentTurnId: activeTurn.id })
+      : { currentRunId: activeRun.id })
   });
 }
 

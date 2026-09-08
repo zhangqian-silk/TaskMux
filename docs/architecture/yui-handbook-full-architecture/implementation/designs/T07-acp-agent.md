@@ -20,7 +20,7 @@ ACP 适配实现公共消息、会话交互与结果映射。产品描述只负�
 
 按实际协议区分 submit 后即时接受和请求直到最终响应才结束的情况。正常长连接等待映射 pending，准确关联的最终结果可以作为完成及接受证据；连接丢失后的无法确认状态是 unknown。
 
-协议 request ID、本地 attemptId 与原生 Session／Turn 身份分别保存。协议未提供原生 Turn ID 时保留 local-correlation，不生成一个 ID 冒称 native。
+协议 request ID、本地 attemptId 与原生 Session／AgentRun 身份分别保存。协议未提供原生 AgentRun ID 时保留 local-correlation，不生成一个 ID 冒称 native。
 
 取消的回应也只表达实际证明的内容。未确认所有资源停止时不能以 cancel 请求成功代表物理静止。
 
@@ -32,7 +32,7 @@ PTY 可作为人工接口，但不是结构化提交失败后的自动兜底。C
 
 ## 5. 实施切入
 
-先用协议录制／fixture 覆盖边界，再注册真实产品描述。通过 T02 能力目录发现它，使用 T04 的普通执行请求创建 Turn，结果沿同一归档路径保存。
+先用协议录制／fixture 覆盖边界，再注册真实产品描述。通过 T02 能力目录发现它，使用 T04 的普通执行请求创建 AgentRun，结果沿同一归档路径保存。
 
 如果必须修改 Task Core 才能识别第三 Agent，检查泄漏的是产品发现、协议差异还是高层假设，并在负责层解决；不把新 Agent 写进 Task 的枚举。
 

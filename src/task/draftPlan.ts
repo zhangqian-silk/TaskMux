@@ -151,12 +151,18 @@ function assertDraftWorkItemDependencyGraph(
 
 function firstDraftExecutionFact(store: TaskStore, task: Task): string | undefined {
   if (task.workspaceIdentity !== undefined || task.cwd !== undefined) return "Task workspace";
+  const planning = store.getTaskRoleSessionSet(task.id, "leader");
+  const planningSessions = planning === null ? [] : Object.values(planning.sessions)
+    .filter((session) => session.effective.executionAuthority === "planning");
   const hostOwner = store.listSessionOwners().find(({ owner }) => (
     owner.scope === "task" && owner.taskId === task.id
+    && !(owner.roleName === "leader" && planningSessions.length > 0)
   ));
   if (hostOwner !== undefined) return `Host process (${hostOwner.providerRoot.pid})`;
-  if (store.listTurns(task.id).length > 0) return "Turn";
-  if (store.listRoleSessionSets(task.id).length > 0) return "Role Session";
+  if (store.listRuns(task.id).some((run) =>
+    run.roleName !== "leader" || run.purpose !== "execution" || run.effective.executionAuthority !== "planning")) return "AgentRun";
+  if (store.listRoleSessionSets(task.id).some((sessions) => sessions.owner.roleName !== "leader"
+    || Object.values(sessions.sessions).some((session) => session.effective.executionAuthority !== "planning"))) return "Role Session";
   if (store.listDurableJobs(task.id).length > 0) return "DurableJob";
   if (store.listManagedWorkspaces(task.id).length > 0) return "managed Workspace";
   if (store.listReviewRounds(task.id).length > 0) return "ReviewRound";
@@ -172,11 +178,7 @@ function firstDraftExecutionFact(store: TaskStore, task: Task): string | undefin
   if (itemWithExecution !== undefined) {
     return `Work Item execution (${itemWithExecution.id})`;
   }
-  const runtimeEvent = store.listEvents(task.id).find(({ type }) => (
-    type.startsWith("runtime.")
-    || type.startsWith("turn.")
-    || type.startsWith("review.")
-    || type.startsWith("integration.")
-  ));
-  return runtimeEvent === undefined ? undefined : `event ${runtimeEvent.id}/${runtimeEvent.type}`;
+  // Runtime observations support planning; they are not a competing source
+  // of delivery authority. The domain records above own delivery facts.
+  return undefined;
 }

@@ -8,45 +8,54 @@ import {
   type ManagedWorkspace
 } from "../worktree/managedWorkspace.js";
 import {
-  createTurnInput,
-  createTurnInputEnvelope,
-  validateTurnInput,
-  type TurnInput,
-  type TurnInputEnvelope
-} from "../context/turnInputContract.js";
+  createRunInput,
+  createRunInputEnvelope,
+  validateRunInput,
+  type AgentRunInput,
+  type AgentRunInputEnvelope
+} from "../context/runInputContract.js";
 import type { ContextSnapshotRef } from "../context/contextSnapshot.js";
 import type { ExecutionLaneGitSnapshot } from "../repository/executionLaneGitSnapshot.js";
 import type { ProviderRuntimeBinding } from "../runtime/providerRuntimeIdentity.js";
 import {
-  boundedTurnFailureDiagnostic,
-  MAX_TURN_FAILURE_DIAGNOSTIC_BYTES,
-  MAX_TURN_RESULT_OUTPUT_BYTES
+  boundedRunFailureDiagnostic,
+  MAX_RUN_FAILURE_DIAGNOSTIC_BYTES,
+  MAX_RUN_RESULT_OUTPUT_BYTES
 } from "../domain/agentResultTransport.js";
 export {
-  boundedTurnFailureDiagnostic,
-  MAX_TURN_FAILURE_DIAGNOSTIC_BYTES,
-  MAX_TURN_RESULT_OUTPUT_BYTES,
+  boundedRunFailureDiagnostic,
+  MAX_RUN_FAILURE_DIAGNOSTIC_BYTES,
+  MAX_RUN_RESULT_OUTPUT_BYTES,
   transportAgentResult,
   type TransportedAgentResult
 } from "../domain/agentResultTransport.js";
 
 export type DispatchMode = "new" | "resume";
-export type TurnStatus = "active" | "completed" | "failed";
+export type AgentRunStatus = "active" | "completed" | "failed";
 
 /** Record lifecycle and observed delivery are separate read-only facts. */
-export function turnExecutionObservation(run: Turn, binding: ProviderRuntimeBinding | null | undefined) {
-  const current = binding?.turn?.turnId === run.id ? binding.turn : undefined;
+export function runExecutionObservation(run: AgentRun, binding: ProviderRuntimeBinding | null | undefined,
+  events: readonly import("../event/taskEvent.js").TaskEvent[] = []) {
+  const current = binding?.run?.runId === run.id ? binding.run : undefined;
+  let delivery: import("../runtime/providerRuntimeIdentity.js").ProviderTurnStatus | "unobserved"
+    = current?.status ?? run.result?.provider?.status ?? "unobserved";
+  const lastError = events.filter((event) => event.type === "runtime.agent-error"
+    && event.payload.runId === run.id && event.payload.phase === "turn-submit"
+    && (current === undefined || event.payload.attemptId === current.attemptId)).at(-1);
+  if ((delivery === "unobserved" || delivery === "submitting") && lastError?.payload.inputDisposition === "unknown") {
+    delivery = "delivery-unknown";
+  }
   return {
     recordStatus: run.status,
-    delivery: current?.status ?? run.result?.provider?.status ?? "unobserved",
+    delivery,
     ...(current === undefined ? {} : {
       attemptId: current.attemptId, observedAt: current.updatedAt,
       ...(current.nativeTurnId === undefined ? {} : { nativeTurnId: current.nativeTurnId })
     })
   };
 }
-export type TurnPurpose = "execution" | "review";
-export type TurnFailureReason =
+export type AgentRunPurpose = "execution" | "review";
+export type AgentRunFailureReason =
   | "startup-failed"
   | "runtime-failed"
   | "delivery-unknown"
@@ -56,7 +65,7 @@ export type TurnFailureReason =
   | "workspace-branch-mismatch"
   | "cancelled";
 
-export type TurnProviderResult = Readonly<{
+export type AgentRunProviderResult = Readonly<{
   providerNamespace: string;
   accountScope: string;
   conversationId: string;
@@ -66,70 +75,70 @@ export type TurnProviderResult = Readonly<{
   status: "completed" | "failed" | "cancelled";
 }>;
 
-export type TurnSystemEvidence = Readonly<{
+export type AgentRunSystemEvidence = Readonly<{
   workspaceSnapshot?: ExecutionLaneGitSnapshot;
 }>;
 
 /**
  * The automatically observed result of one managed Provider Turn. It is owned
- * by Turn; Provider Session state and Task/WorkItem acceptance remain
+ * by AgentRun; Provider Session state and Task/WorkItem acceptance remain
  * separate authorities.
  */
-export type TurnResult = Readonly<{
+export type AgentRunResult = Readonly<{
   schemaVersion: 2;
   /** Exact Agent-authored terminal result, when one was transportable. */
   output?: string;
-  /** Bounded Core-owned explanation for a failed Turn. */
+  /** Bounded Core-owned explanation for a failed AgentRun. */
   diagnostic?: string;
   completedAt: string;
-  provider?: TurnProviderResult;
+  provider?: AgentRunProviderResult;
   /** Objective evidence produced and validated by Core, never parsed from Agent output. */
-  systemEvidence?: TurnSystemEvidence;
-  failureReason?: TurnFailureReason;
+  systemEvidence?: AgentRunSystemEvidence;
+  failureReason?: AgentRunFailureReason;
 }>;
 
-export type TurnInputRecord = Readonly<{
+export type AgentRunInputRecord = Readonly<{
   sequence: number;
   submittedAt: string;
-  input: TurnInput;
+  input: AgentRunInput;
 }>;
 
-export type Turn = {
+export type AgentRun = {
   /** v5 stores Agent output opaquely and only Core-authored system evidence. */
   schemaVersion: 5;
   id: string;
   taskId: string;
   roleName: string;
   mode: DispatchMode;
-  /** Every provider-visible input, including mid-Turn Yui steer; reasoning is omitted. */
-  inputs: readonly TurnInputRecord[];
-  purpose: TurnPurpose;
+  /** Every provider-visible input, including mid-AgentRun Yui steer; reasoning is omitted. */
+  inputs: readonly AgentRunInputRecord[];
+  purpose: AgentRunPurpose;
   workItemId?: string;
   reviewRoundId?: string;
   /** Frozen lineage inside the unified execution Group. */
   executionGroupId?: string;
   executionLaneId?: string;
-  /** The settled replicated Group whose frozen Producer results this main Turn synthesizes. */
+  /** The settled replicated Group whose frozen Producer results this main AgentRun synthesizes. */
   sourceExecutionGroupId?: string;
   workspace?: ManagedWorkspace;
   /** Immutable actual launch configuration and provenance. */
   effective: EffectiveLaunchSnapshot;
-  status: TurnStatus;
-  result?: TurnResult;
+  status: AgentRunStatus;
+  result?: AgentRunResult;
   createdAt: string;
   updatedAt: string;
 };
 
-export function createTurn(
+export function createRun(
   id: string,
   taskId: string,
   roleName: string,
   mode: DispatchMode,
-  input: TurnInput,
+  input: AgentRunInput,
   now: Date,
   context: {
     workItemId?: string;
-    purpose?: TurnPurpose;
+    purpose?: AgentRunPurpose;
     reviewRoundId?: string;
     executionGroupId?: string;
     executionLaneId?: string;
@@ -137,19 +146,19 @@ export function createTurn(
     workspace?: ManagedWorkspace;
     effective: EffectiveLaunchSnapshot;
   }
-): Turn {
+): AgentRun {
   if (mode !== "new" && mode !== "resume") {
-    throw new Error(`Turn dispatch mode is invalid: ${mode}.`);
+    throw new Error(`AgentRun dispatch mode is invalid: ${mode}.`);
   }
   const timestamp = now.toISOString();
-  const normalizedInput = validateTurnInput(input);
+  const normalizedInput = validateRunInput(input);
   return {
     schemaVersion: 5,
-    id: requireSafeIdentity(id, "Turn id"),
+    id: requireSafeIdentity(id, "AgentRun id"),
     taskId: requireSafeIdentity(taskId, "Task id"),
     roleName: requireSafeIdentity(roleName, "Role name"),
     mode,
-    inputs: [turnInputRecord(normalizedInput, 1, timestamp)],
+    inputs: [runInputRecord(normalizedInput, 1, timestamp)],
     purpose: context.purpose ?? "execution",
     ...(context.workItemId === undefined
       ? {}
@@ -181,54 +190,54 @@ export function createTurn(
   };
 }
 
-export function isActiveTurn(run: Turn): boolean {
+export function isActiveRun(run: AgentRun): boolean {
   return run.status === "active";
 }
 
-/** Binds a freshly created, not-yet-persisted Turn to its frozen Context. */
-export function withTurnContextSnapshot(
-  run: Turn,
+/** Binds a freshly created, not-yet-persisted AgentRun to its frozen Context. */
+export function withRunContextSnapshot(
+  run: AgentRun,
   snapshot: ContextSnapshotRef,
   deltaRefIds: readonly string[] = []
-): Turn {
+): AgentRun {
   const initial = run.inputs[0]!;
   if (run.status !== "active" || initial.input.contextSnapshotRef !== undefined) {
-    throw new Error(`Cannot replace the Turn Context Snapshot: ${run.id}.`);
+    throw new Error(`Cannot replace the AgentRun Context Snapshot: ${run.id}.`);
   }
-  const input = createTurnInput({
+  const input = createRunInput({
     ...initial.input,
     contextSnapshotRef: snapshot,
     deltaRefIds
   });
-  return validateTurn(Object.freeze({
+  return validateRun(Object.freeze({
     ...run,
-    inputs: [turnInputRecord(input, 1, initial.submittedAt), ...run.inputs.slice(1)]
+    inputs: [runInputRecord(input, 1, initial.submittedAt), ...run.inputs.slice(1)]
   }));
 }
 
-export function appendTurnInput(run: Turn, input: TurnInput, now: Date): Turn {
-  validateTurn(run);
-  if (run.status !== "active") throw new Error(`Cannot append input to terminal Turn: ${run.id}.`);
+export function appendRunInput(run: AgentRun, input: AgentRunInput, now: Date): AgentRun {
+  validateRun(run);
+  if (run.status !== "active") throw new Error(`Cannot append input to terminal AgentRun: ${run.id}.`);
   const timestamp = now.toISOString();
   if (Date.parse(timestamp) < Date.parse(run.updatedAt)) {
-    throw new Error("Turn input timestamp moved backwards.");
+    throw new Error("AgentRun input timestamp moved backwards.");
   }
-  return validateTurn({
+  return validateRun({
     ...run,
-    inputs: [...run.inputs, turnInputRecord(input, run.inputs.length + 1, timestamp)],
+    inputs: [...run.inputs, runInputRecord(input, run.inputs.length + 1, timestamp)],
     updatedAt: timestamp
   });
 }
 
-/** Derives Provider-visible identity from the Turn, the sole semantic owner. */
-export function turnInputEnvelope(run: Turn, sequence = 1): TurnInputEnvelope {
-  validateTurn(run);
+/** Derives Provider-visible identity from the AgentRun, the sole semantic owner. */
+export function runInputEnvelope(run: AgentRun, sequence = 1): AgentRunInputEnvelope {
+  validateRun(run);
   const record = run.inputs[sequence - 1];
-  if (record === undefined) throw new Error(`Turn input does not exist: ${run.id}/${sequence}.`);
-  return createTurnInputEnvelope(turnEnvelopeContext(run), record.input);
+  if (record === undefined) throw new Error(`AgentRun input does not exist: ${run.id}/${sequence}.`);
+  return createRunInputEnvelope(runEnvelopeContext(run), record.input);
 }
 
-export function validateTurn(run: Turn): Turn {
+export function validateRun(run: AgentRun): AgentRun {
   rejectUnknownFields(run as unknown as Record<string, unknown>, [
     "schemaVersion",
     "id",
@@ -248,26 +257,26 @@ export function validateTurn(run: Turn): Turn {
     "result",
     "createdAt",
     "updatedAt"
-  ], "Turn");
-  if (run.schemaVersion !== 5) throw new Error("Turn must use schemaVersion 5.");
-  validateTaskRecordReference({ taskId: run.taskId, localId: run.id }, "turn");
+  ], "AgentRun");
+  if (run.schemaVersion !== 5) throw new Error("AgentRun must use schemaVersion 5.");
+  validateTaskRecordReference({ taskId: run.taskId, localId: run.id }, "run");
   requireSafeIdentity(run.roleName, "Role name");
   if (run.mode !== "new" && run.mode !== "resume") {
-    throw new Error(`Turn dispatch mode is invalid: ${String(run.mode)}.`);
+    throw new Error(`AgentRun dispatch mode is invalid: ${String(run.mode)}.`);
   }
   if (!Array.isArray(run.inputs) || run.inputs.length === 0) {
-    throw new Error("Turn requires at least one input.");
+    throw new Error("AgentRun requires at least one input.");
   }
   for (const [index, record] of run.inputs.entries()) {
-    if (record.sequence !== index + 1) throw new Error("Turn input sequence is invalid.");
-    requireTimestamp(record.submittedAt, "Turn input submittedAt");
-    validateTurnInput(record.input);
+    if (record.sequence !== index + 1) throw new Error("AgentRun input sequence is invalid.");
+    requireTimestamp(record.submittedAt, "AgentRun input submittedAt");
+    validateRunInput(record.input);
     if (index > 0 && Date.parse(record.submittedAt) < Date.parse(run.inputs[index - 1]!.submittedAt)) {
-      throw new Error("Turn input timestamps moved backwards.");
+      throw new Error("AgentRun input timestamps moved backwards.");
     }
   }
   if (!["execution", "review"].includes(run.purpose)) {
-    throw new Error(`Turn purpose is invalid: ${String(run.purpose)}.`);
+    throw new Error(`AgentRun purpose is invalid: ${String(run.purpose)}.`);
   }
   if (run.workItemId !== undefined) {
     validateTaskRecordReference({ taskId: run.taskId, localId: run.workItemId }, "workItem");
@@ -276,7 +285,7 @@ export function validateTurn(run: Turn): Turn {
     validateTaskRecordReference({ taskId: run.taskId, localId: run.reviewRoundId }, "reviewRound");
   }
   if ((run.executionGroupId === undefined) !== (run.executionLaneId === undefined)) {
-    throw new Error("Turn execution lineage is incomplete.");
+    throw new Error("AgentRun execution lineage is incomplete.");
   }
   if (run.executionGroupId !== undefined) {
     requireSafeIdentity(run.executionGroupId, "ExecutionGroup id");
@@ -286,54 +295,54 @@ export function validateTurn(run: Turn): Turn {
     requireSafeIdentity(run.sourceExecutionGroupId, "Source ExecutionGroup id");
     if ((run.purpose === "execution" && run.workItemId === undefined)
       || (run.purpose === "review" && run.reviewRoundId === undefined)) {
-      throw new Error("A source ExecutionGroup requires a main execution or review Turn.");
+      throw new Error("A source ExecutionGroup requires a main execution or review AgentRun.");
     }
     if (run.executionGroupId !== undefined || run.executionLaneId !== undefined) {
-      throw new Error("A main Turn cannot also be an Execution Lane Turn.");
+      throw new Error("A main AgentRun cannot also be an Execution Lane AgentRun.");
     }
   }
   if (run.workspace !== undefined) {
     validateManagedWorkspace(run.workspace);
     if (run.workspace.owner.taskId !== run.taskId) {
-      throw new Error("Turn workspace belongs to another Task.");
+      throw new Error("AgentRun workspace belongs to another Task.");
     }
     if (run.workspace.owner.type === "work-item"
       && run.workspace.owner.workItemId !== run.workItemId) {
-      throw new Error("Turn workspace belongs to another Work Item.");
+      throw new Error("AgentRun workspace belongs to another Work Item.");
     }
     if (run.workspace.owner.type === "work-item" && run.workItemId === undefined) {
-      throw new Error("A WorkItem workspace requires a WorkItem Turn reference.");
+      throw new Error("A WorkItem workspace requires a WorkItem AgentRun reference.");
     }
     if (run.workspace.owner.type === "review-round" && run.purpose !== "review") {
-      throw new Error("A ReviewRound workspace requires a review Turn.");
+      throw new Error("A ReviewRound workspace requires a review AgentRun.");
     }
     if (run.workspace.owner.type === "integration-attempt") {
-      throw new Error("An IntegrationAttempt workspace cannot be used by a Turn.");
+      throw new Error("An IntegrationAttempt workspace cannot be used by a AgentRun.");
     }
     if (run.workspace.owner.type === "execution-lane") {
       if (run.workspace.owner.executionGroupId !== run.executionGroupId
         || run.workspace.owner.executionLaneId !== run.executionLaneId) {
-        throw new Error("Turn Execution Lane workspace lineage does not match the Turn.");
+        throw new Error("AgentRun Execution Lane workspace lineage does not match the AgentRun.");
       }
       if (run.workspace.owner.purpose === "execution"
         && run.workspace.owner.workItemId !== run.workItemId) {
-        throw new Error("Turn Execution Lane workspace WorkItem does not match the Turn.");
+        throw new Error("AgentRun Execution Lane workspace WorkItem does not match the AgentRun.");
       }
       if (run.workspace.owner.purpose === "review"
         && run.workspace.owner.reviewRoundId !== run.reviewRoundId) {
-        throw new Error("Turn review Lane workspace ReviewRound does not match the Turn.");
+        throw new Error("AgentRun review Lane workspace ReviewRound does not match the AgentRun.");
       }
     }
     if (run.workspace.owner.type === "review-round"
       && run.workspace.owner.reviewRoundId !== run.reviewRoundId) {
       throw new Error(
-        `Turn ReviewRound workspace owner does not match ${run.reviewRoundId ?? "none"}.`
+        `AgentRun ReviewRound workspace owner does not match ${run.reviewRoundId ?? "none"}.`
       );
     }
   }
   if (run.purpose === "review") {
     if (run.reviewRoundId === undefined) {
-      throw new Error("A review Turn requires a ReviewRound reference.");
+      throw new Error("A review AgentRun requires a ReviewRound reference.");
     }
     if (run.workspace === undefined
       || !((run.workspace.owner.type === "review-round"
@@ -342,95 +351,95 @@ export function validateTurn(run: Turn): Turn {
           && run.workspace.owner.purpose === "review"
           && run.workspace.owner.reviewRoundId === run.reviewRoundId))) {
       throw new Error(
-        `A review Turn requires its exact ReviewRound workspace owner: ${run.reviewRoundId}.`
+        `A review AgentRun requires its exact ReviewRound workspace owner: ${run.reviewRoundId}.`
       );
     }
     if (run.workspace.entries.length === 0
       || run.workspace.entries.some(({ access }) => access !== "write")) {
-      throw new Error("A review Turn requires only isolated writable workspace entries.");
+      throw new Error("A review AgentRun requires only isolated writable workspace entries.");
     }
   } else {
     if (run.reviewRoundId !== undefined) {
-      throw new Error("An execution Turn cannot reference a ReviewRound.");
+      throw new Error("An execution AgentRun cannot reference a ReviewRound.");
     }
     if (run.workspace?.owner.type === "review-round") {
-      throw new Error("An execution Turn cannot use a ReviewRound-owned workspace.");
+      throw new Error("An execution AgentRun cannot use a ReviewRound-owned workspace.");
     }
     if (run.workspace?.owner.type === "execution-lane" && run.workspace.owner.purpose !== "execution") {
-      throw new Error("An execution Turn cannot use a review Lane workspace.");
+      throw new Error("An execution AgentRun cannot use a review Lane workspace.");
     }
   }
   validateEffectiveLaunchSnapshot(run.effective);
   if (run.workspace !== undefined
     && (run.effective.workspace.root !== run.workspace.root
       || JSON.stringify(run.effective.workspace.entries) !== JSON.stringify(run.workspace.entries))) {
-    throw new Error("Turn effective workspace does not match its managed workspace.");
+    throw new Error("AgentRun effective workspace does not match its managed workspace.");
   }
   if (run.purpose === "review") {
     if (run.effective.reviewRoundId !== run.reviewRoundId) {
-      throw new Error("Review Turn effective provenance does not match its ReviewRound.");
+      throw new Error("Review AgentRun effective provenance does not match its ReviewRound.");
     }
     if (!run.workspace!.entries.some(
       ({ baseCommit }) => baseCommit === run.effective.reviewBaseCommit
     )) {
-      throw new Error("Review Turn effective base does not match its workspace.");
+      throw new Error("Review AgentRun effective base does not match its workspace.");
     }
   } else if (run.effective.reviewRoundId !== undefined) {
-    throw new Error("Execution Turn cannot carry Review effective provenance.");
+    throw new Error("Execution AgentRun cannot carry Review effective provenance.");
   }
   for (const record of run.inputs) {
-    createTurnInputEnvelope(turnEnvelopeContext(run), record.input);
+    createRunInputEnvelope(runEnvelopeContext(run), record.input);
   }
   if (!( ["active", "completed", "failed"] as const).includes(run.status)) {
-    throw new Error(`Turn status is invalid: ${String(run.status)}.`);
+    throw new Error(`AgentRun status is invalid: ${String(run.status)}.`);
   }
-  requireTimestamp(run.createdAt, "Turn createdAt");
-  requireTimestamp(run.updatedAt, "Turn updatedAt");
+  requireTimestamp(run.createdAt, "AgentRun createdAt");
+  requireTimestamp(run.updatedAt, "AgentRun updatedAt");
   if (run.status === "active") {
-    if (run.result !== undefined) throw new Error("An active Turn cannot have a result.");
+    if (run.result !== undefined) throw new Error("An active AgentRun cannot have a result.");
   } else {
-    const result = validateTurnResult(run.result);
+    const result = validateRunResult(run.result);
     if (run.status === "failed") {
-      if (!isTurnFailureReason(result.failureReason)) {
-        throw new Error(`Failed Turn reason is invalid: ${String(result.failureReason)}.`);
+      if (!isRunFailureReason(result.failureReason)) {
+        throw new Error(`Failed AgentRun reason is invalid: ${String(result.failureReason)}.`);
       }
       if (result.diagnostic === undefined) {
-        throw new Error("A failed Turn requires a Core diagnostic.");
+        throw new Error("A failed AgentRun requires a Core diagnostic.");
       }
       if (result.systemEvidence !== undefined) {
-        throw new Error("A failed Turn cannot carry successful system evidence.");
+        throw new Error("A failed AgentRun cannot carry successful system evidence.");
       }
     } else {
       if (result.output === undefined) {
-        throw new Error("A completed Turn requires an Agent result.");
+        throw new Error("A completed AgentRun requires an Agent result.");
       }
       if (result.failureReason !== undefined || result.diagnostic !== undefined) {
-        throw new Error("A completed Turn cannot carry failure metadata.");
+        throw new Error("A completed AgentRun cannot carry failure metadata.");
       }
     }
   }
   return run;
 }
 
-export function completeTurn(
-  run: Turn,
+export function completeRun(
+  run: AgentRun,
   output: string,
   now: Date,
-  provider?: TurnProviderResult,
-  systemEvidence?: TurnSystemEvidence
-): Turn {
-  return finishTurn(run, "completed", output, now, undefined, provider, systemEvidence);
+  provider?: AgentRunProviderResult,
+  systemEvidence?: AgentRunSystemEvidence
+): AgentRun {
+  return finishRun(run, "completed", output, now, undefined, provider, systemEvidence);
 }
 
-export function failTurn(
-  run: Turn,
-  reason: TurnFailureReason,
+export function failRun(
+  run: AgentRun,
+  reason: AgentRunFailureReason,
   diagnostic: string,
   now: Date,
-  provider?: TurnProviderResult,
+  provider?: AgentRunProviderResult,
   output?: string
-): Turn {
-  return finishTurn(
+): AgentRun {
+  return finishRun(
     run,
     "failed",
     output,
@@ -438,22 +447,22 @@ export function failTurn(
     reason,
     provider,
     undefined,
-    boundedTurnFailureDiagnostic(diagnostic)
+    boundedRunFailureDiagnostic(diagnostic)
   );
 }
 
-function finishTurn(
-  run: Turn,
-  status: Exclude<TurnStatus, "active">,
+function finishRun(
+  run: AgentRun,
+  status: Exclude<AgentRunStatus, "active">,
   output: string | undefined,
   now: Date,
-  failureReason?: TurnFailureReason,
-  provider?: TurnProviderResult,
-  systemEvidence?: TurnSystemEvidence,
+  failureReason?: AgentRunFailureReason,
+  provider?: AgentRunProviderResult,
+  systemEvidence?: AgentRunSystemEvidence,
   diagnostic?: string
-): Turn {
+): AgentRun {
   if (run.status !== "active") {
-    throw new Error(`Turn is already terminal: ${run.id}.`);
+    throw new Error(`AgentRun is already terminal: ${run.id}.`);
   }
   const timestamp = now.toISOString();
   const terminal = {
@@ -461,25 +470,25 @@ function finishTurn(
     status,
     result: {
       schemaVersion: 2,
-      ...(output === undefined ? {} : { output: requireResultText(output, "Turn result output") }),
+      ...(output === undefined ? {} : { output: requireResultText(output, "AgentRun result output") }),
       ...(diagnostic === undefined
         ? {}
-        : { diagnostic: requireDiagnosticText(diagnostic, "Turn result diagnostic") }),
+        : { diagnostic: requireDiagnosticText(diagnostic, "AgentRun result diagnostic") }),
       completedAt: timestamp,
-      ...(provider === undefined ? {} : { provider: validateTurnProviderResult(provider) }),
+      ...(provider === undefined ? {} : { provider: validateRunProviderResult(provider) }),
       ...(systemEvidence === undefined
         ? {}
-        : { systemEvidence: validateTurnSystemEvidence(systemEvidence) }),
+        : { systemEvidence: validateRunSystemEvidence(systemEvidence) }),
       ...(failureReason === undefined ? {} : { failureReason })
     },
     updatedAt: timestamp,
-  } as Turn;
-  return validateTurn(terminal);
+  } as AgentRun;
+  return validateRun(terminal);
 }
 
-function validateTurnResult(result: TurnResult | undefined): TurnResult {
+function validateRunResult(result: AgentRunResult | undefined): AgentRunResult {
   if (result === undefined || result.schemaVersion !== 2) {
-    throw new Error("A terminal Turn requires TurnResult schemaVersion 2.");
+    throw new Error("A terminal AgentRun requires AgentRunResult schemaVersion 2.");
   }
   rejectUnknownFields(result as unknown as Record<string, unknown>, [
     "schemaVersion",
@@ -489,45 +498,45 @@ function validateTurnResult(result: TurnResult | undefined): TurnResult {
     "provider",
     "systemEvidence",
     "failureReason"
-  ], "Turn result");
-  if (result.output !== undefined) requireResultText(result.output, "Turn result output");
+  ], "AgentRun result");
+  if (result.output !== undefined) requireResultText(result.output, "AgentRun result output");
   if (result.diagnostic !== undefined) {
-    requireDiagnosticText(result.diagnostic, "Turn result diagnostic");
+    requireDiagnosticText(result.diagnostic, "AgentRun result diagnostic");
   }
-  requireTimestamp(result.completedAt, "Turn result completedAt");
-  if (result.provider !== undefined) validateTurnProviderResult(result.provider);
-  if (result.systemEvidence !== undefined) validateTurnSystemEvidence(result.systemEvidence);
+  requireTimestamp(result.completedAt, "AgentRun result completedAt");
+  if (result.provider !== undefined) validateRunProviderResult(result.provider);
+  if (result.systemEvidence !== undefined) validateRunSystemEvidence(result.systemEvidence);
   return result;
 }
 
-function validateTurnSystemEvidence(evidence: TurnSystemEvidence): TurnSystemEvidence {
+function validateRunSystemEvidence(evidence: AgentRunSystemEvidence): AgentRunSystemEvidence {
   rejectUnknownFields(evidence as Record<string, unknown>, [
     "workspaceSnapshot"
-  ], "Turn system evidence");
+  ], "AgentRun system evidence");
   if (evidence.workspaceSnapshot !== undefined) {
     const snapshot = evidence.workspaceSnapshot;
     if (snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.projects)) {
-      throw new Error("Turn workspace snapshot is invalid.");
+      throw new Error("AgentRun workspace snapshot is invalid.");
     }
     const projectIds = new Set<string>();
     for (const project of snapshot.projects) {
-      requireSafeIdentity(project.projectId, "Turn workspace snapshot Project id");
+      requireSafeIdentity(project.projectId, "AgentRun workspace snapshot Project id");
       if (projectIds.has(project.projectId)) {
-        throw new Error("Turn workspace snapshot Project ids must be unique.");
+        throw new Error("AgentRun workspace snapshot Project ids must be unique.");
       }
       projectIds.add(project.projectId);
       if (!/^[0-9a-f]{40}$/u.test(project.headCommit)) {
-        throw new Error("Turn workspace snapshot commit is invalid.");
+        throw new Error("AgentRun workspace snapshot commit is invalid.");
       }
-      requireText(project.branch, "Turn workspace snapshot branch");
+      requireText(project.branch, "AgentRun workspace snapshot branch");
     }
   }
   return evidence;
 }
 
-function validateTurnProviderResult(
-  provider: TurnProviderResult
-): TurnProviderResult {
+function validateRunProviderResult(
+  provider: AgentRunProviderResult
+): AgentRunProviderResult {
   requireText(provider.providerNamespace, "Provider namespace");
   requireText(provider.accountScope, "Provider account scope");
   requireText(provider.conversationId, "Provider Conversation id");
@@ -542,8 +551,8 @@ function validateTurnProviderResult(
   return provider;
 }
 
-function turnInputRecord(input: TurnInput, sequence: number, submittedAt: string): TurnInputRecord {
-  const normalized = validateTurnInput(input);
+function runInputRecord(input: AgentRunInput, sequence: number, submittedAt: string): AgentRunInputRecord {
+  const normalized = validateRunInput(input);
   return Object.freeze({
     sequence,
     submittedAt,
@@ -551,9 +560,9 @@ function turnInputRecord(input: TurnInput, sequence: number, submittedAt: string
   });
 }
 
-function turnEnvelopeContext(run: Turn): Parameters<typeof createTurnInputEnvelope>[0] {
+function runEnvelopeContext(run: AgentRun): Parameters<typeof createRunInputEnvelope>[0] {
   return {
-    turnId: run.id,
+    runId: run.id,
     roleName: run.roleName,
     purpose: run.purpose,
     subject: {
@@ -591,8 +600,8 @@ function requireText(value: string, label: string): string {
 function requireResultText(value: string, label: string): string {
   if (typeof value !== "string" || value.includes("\0")) throw new Error(`${label} is invalid.`);
   if (value.trim().length === 0) throw new Error(`${label} is required.`);
-  if (Buffer.byteLength(value, "utf8") > MAX_TURN_RESULT_OUTPUT_BYTES) {
-    throw new Error(`${label} exceeds ${MAX_TURN_RESULT_OUTPUT_BYTES} bytes.`);
+  if (Buffer.byteLength(value, "utf8") > MAX_RUN_RESULT_OUTPUT_BYTES) {
+    throw new Error(`${label} exceeds ${MAX_RUN_RESULT_OUTPUT_BYTES} bytes.`);
   }
   return value;
 }
@@ -600,8 +609,8 @@ function requireResultText(value: string, label: string): string {
 function requireDiagnosticText(value: string, label: string): string {
   if (typeof value !== "string" || value.includes("\0")) throw new Error(`${label} is invalid.`);
   if (value.trim().length === 0) throw new Error(`${label} is required.`);
-  if (Buffer.byteLength(value, "utf8") > MAX_TURN_FAILURE_DIAGNOSTIC_BYTES) {
-    throw new Error(`${label} exceeds ${MAX_TURN_FAILURE_DIAGNOSTIC_BYTES} bytes.`);
+  if (Buffer.byteLength(value, "utf8") > MAX_RUN_FAILURE_DIAGNOSTIC_BYTES) {
+    throw new Error(`${label} exceeds ${MAX_RUN_FAILURE_DIAGNOSTIC_BYTES} bytes.`);
   }
   return value;
 }
@@ -613,7 +622,7 @@ function requireTimestamp(value: string, label: string): void {
   }
 }
 
-function isTurnFailureReason(value: unknown): value is TurnFailureReason {
+function isRunFailureReason(value: unknown): value is AgentRunFailureReason {
   return [
     "startup-failed",
     "runtime-failed",

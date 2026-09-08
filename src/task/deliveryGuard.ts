@@ -1,5 +1,5 @@
 import type { NextActionFacts, NextActionRef } from "./nextAction.js";
-import { isCompletedTaskReviewEvidenceFromTurns } from "../review/reviewAcceptance.js";
+import { isCompletedTaskReviewEvidenceFromRuns } from "../review/reviewAcceptance.js";
 
 /**
  * Issue 07 (Leader convergence): duplicate/convergence guard and semantic
@@ -196,9 +196,9 @@ function detectReviewDuplicates(
       && [...wanted].every((commit) => commits.has(commit));
     if (!sameCandidate) continue;
     const ref = { kind: "review-round", id: round.id } as const;
-    if (isCompletedTaskReviewEvidenceFromTurns(
+    if (isCompletedTaskReviewEvidenceFromRuns(
       round,
-      facts.reviewOutcomeEvidence?.turns ?? []
+      facts.reviewOutcomeEvidence?.runs ?? []
     )) {
       duplicates.push({
         severity: "exact",
@@ -262,33 +262,33 @@ export type SemanticBudget = Readonly<{
  * Default number of consecutive completed Leader turns that must produce no
  * durable delivery change before the budget is exhausted.
  */
-export const DEFAULT_SEMANTIC_BUDGET_TURNS = 3;
+export const DEFAULT_SEMANTIC_BUDGET_RUNS = 3;
 
 /**
  * Evaluate the semantic-progress budget from existing records only. The
- * budget is exhausted when the last `turns` Leader Turns all completed and no
+ * budget is exhausted when the last `runs` Leader AgentRuns all completed and no
  * WorkItem/ChangeSet/Integration/Review record changed at or after the first
- * of those Turns. Active execution (any Turn) never exhausts the budget: a
+ * of those AgentRuns. Active execution (any AgentRun) never exhausts the budget: a
  * slow but progressing Worker or Leader is never interrupted.
  */
 export function evaluateSemanticBudget(
   facts: NextActionFacts,
-  turns = DEFAULT_SEMANTIC_BUDGET_TURNS
+  runs = DEFAULT_SEMANTIC_BUDGET_RUNS
 ): SemanticBudget {
-  if (facts.activeTurns.length > 0) {
+  if (facts.activeRuns.length > 0) {
     return {
       exhausted: false,
-      reason: "Active execution is in flight; the budget never interrupts a progressing Turn.",
-      evidence: facts.activeTurns.map((run) => run.id)
+      reason: "Active execution is in flight; the budget never interrupts a progressing AgentRun.",
+      evidence: facts.activeRuns.map((run) => run.id)
     };
   }
-  const recentLeaderRuns = facts.leaderTurns
+  const recentLeaderRuns = facts.leaderRuns
     .filter((run) => run.status === "completed")
-    .slice(-turns);
-  if (recentLeaderRuns.length < turns) {
+    .slice(-runs);
+  if (recentLeaderRuns.length < runs) {
     return {
       exhausted: false,
-      reason: `Fewer than ${turns} consecutive completed Leader turns.`,
+      reason: `Fewer than ${runs} consecutive completed Leader runs.`,
       evidence: recentLeaderRuns.map((run) => run.id)
     };
   }
@@ -305,7 +305,7 @@ export function evaluateSemanticBudget(
   }
   return {
     exhausted: true,
-    reason: `${turns} consecutive Leader turns produced no durable delivery change; record a diagnosis and wait for new facts instead of creating more records.`,
+    reason: `${runs} consecutive Leader runs produced no durable delivery change; record a diagnosis and wait for new facts instead of creating more records.`,
     evidence: recentLeaderRuns.map((run) => run.id)
   };
 }

@@ -4,9 +4,8 @@ import type { InputRequest } from "../input/inputRequest.js";
 import type { Milestone } from "../milestone/milestone.js";
 import type { LeaderFailure } from "./leaderFailure.js";
 import type { PendingWakeup } from "./pendingWakeup.js";
-import type { Turn } from "../turn/turn.js";
-import type { TurnFailureReason } from "../turn/turn.js";
-import type { TurnInput } from "../context/turnInputContract.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
+import type { AgentRunFailureReason } from "../agentRun/agentRun.js";
 import type {
   MailboxEntityRef,
   MailboxTarget,
@@ -14,8 +13,8 @@ import type {
   WorkMailbox
 } from "../coordination/workMailbox.js";
 import type {
-  RoleTurnDispatchSettlement,
-  RoleTurnDispatchToken
+  RoleRunDispatchSettlement,
+  RoleRunDispatchToken
 } from "../coordination/workMailboxQueue.js";
 import type {
   RuntimeLifecycleTarget,
@@ -64,7 +63,7 @@ export type SchedulerRole = Readonly<{
   managedWorkspace?: ManagedWorkspace;
 }>;
 
-export type SchedulerTurn = Turn;
+export type SchedulerRun = AgentRun;
 
 export type SchedulerRoleSession = Readonly<{
   agentId: string;
@@ -78,10 +77,10 @@ export type SchedulerRoleSession = Readonly<{
   updatedAt?: string;
 }>;
 
-export type RoleTurnStallPersistence = Readonly<{
+export type RoleRunStallPersistence = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   agentId: string;
   adapterId: string;
   /** Exact Session fact observed by the scan; null is itself a fenced fact. */
@@ -99,7 +98,7 @@ export type RoleTurnStallPersistence = Readonly<{
   now: Date;
 }>;
 
-export type SchedulerTurnProgress = Readonly<{
+export type SchedulerRunProgress = Readonly<{
   progressAt: string;
   evidence?: string;
 }>;
@@ -108,7 +107,7 @@ export type SchedulerTurnProgress = Readonly<{
 export type SchedulerRoleResourceIdentity = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   agentId: string;
   adapterId: string;
   nativeSessionId?: string;
@@ -140,26 +139,26 @@ export type SchedulerRoleResourceEntry = Readonly<{
 export type SchedulerRoleResourceInput = Readonly<{
   taskId: string;
   roleName: string;
-  turnId?: string;
+  runId?: string;
   agentId: string;
   adapterId: string;
   nativeSessionId?: string;
   progressAt?: string;
 }>;
 
-export type RoleTurnProgressPersistence = Readonly<{
+export type RoleRunProgressPersistence = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   progressAt: string;
   evidence?: string;
   now: Date;
 }>;
 
-export type RoleTurnDiagnosticPersistence = Readonly<{
+export type RoleRunDiagnosticPersistence = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   startedAt: string;
   outcome: "observed" | "observation-error";
   now: Date;
@@ -199,27 +198,10 @@ export type SchedulerReconcileSelection = Readonly<{
   blockedTaskIds?: ReadonlySet<string>;
 }>;
 
-export type LeaderDispatchPersistence = Readonly<{
-  task: SchedulerTask;
-  role: SchedulerRole;
-  turn: SchedulerTurn;
-  session: SchedulerRoleSession | null;
-  wakeup: PendingWakeup;
-  /** The TaskWake record id this dispatch will persist (peeked before dispatch). */
-  wakeId?: string;
-  /** The delta window's exclusive lower bound for this wake. */
-  wakeFromCursor?: string;
-  now: Date;
-}>;
-
-export type LeaderDispatchClaimResult = "claimed" | "busy" | "unavailable" | "state-changed";
-
-export type LeaderSteerPersistence = Readonly<{
-  taskId: string;
-  turnId: string;
-  batchId: string;
-  input: TurnInput;
-  now: Date;
+export type LeaderNotification = Readonly<{
+  wakeId: string;
+  attemptId: string;
+  disposition: "submit" | "pending" | "unknown";
 }>;
 
 export type SchedulerMailboxClaimInput = Readonly<{
@@ -234,33 +216,33 @@ export type SchedulerMailboxClaimResult =
   | Readonly<{ status: "claimed" | "processing"; processing: ProcessingBatch }>
   | Readonly<{ status: "empty" }>;
 
-export type RoleTurnDeliveryPersistence = Readonly<{
+export type RoleRunDeliveryPersistence = Readonly<{
   task: SchedulerTask;
   role: SchedulerRole;
-  turn: SchedulerTurn;
+  run: SchedulerRun;
   session: SchedulerRoleSession | null;
   now: Date;
 }>;
 
-export type RoleTurnDeliveryFailurePersistence = Readonly<{
+export type RoleRunDeliveryFailurePersistence = Readonly<{
   taskId: string;
   roleName: string;
   agentId: string;
   adapterId: AgentAdapterId;
-  turnId: string;
+  runId: string;
   nativeSessionId?: string;
   /** Exact terminal explanation for this conclusively unaccepted delivery. */
   summary?: string;
-  failureReason: TurnFailureReason;
+  failureReason: AgentRunFailureReason;
   now: Date;
 }>;
 
 /**
- * Per-Turn progress facts folded from a Task's event history in one O(events)
+ * Per-AgentRun progress facts folded from a Task's event history in one O(events)
  * pass. Stall reconciliation reads this current projection instead of
- * re-scanning history per Turn candidate.
+ * re-scanning history per AgentRun candidate.
  */
-export type TurnProgressFacts = Readonly<{
+export type AgentRunProgressFacts = Readonly<{
   latestCheckpointAt?: string;
   latestActivityAt?: string;
   latestStall?: Readonly<{ progressAt: string; evidenceKey: string }>;
@@ -283,13 +265,13 @@ export interface SchedulerStorePort {
   getTaskWorkspace(taskId: string): ManagedWorkspace | null;
   listRoles(taskId: string): readonly SchedulerRole[];
   getRole(taskId: string, roleName: string): SchedulerRole | null;
-  getActiveTurn(taskId: string, roleName: string): SchedulerTurn | null;
+  getActiveRun(taskId: string, roleName: string): SchedulerRun | null;
   hasOpenInputRequest(taskId: string): boolean;
   listOpenInputRequests(taskIds?: readonly string[]): readonly InputRequest[];
   getInputRequest(taskId: string, inputRequestId: string): InputRequest | null;
   getOperatorDeliveryTarget(): SchedulerOperatorDeliveryTarget | null;
   /** Marks a submitted Operator turn busy until its exact native completion. */
-  markOperatorTurnStarted(now: Date): void;
+  markOperatorRunStarted(now: Date): void;
   resolveExpiredInputRecommendations(
     now: Date,
     taskIds?: ReadonlySet<string>
@@ -298,7 +280,7 @@ export interface SchedulerStorePort {
   saveRoleHostExitObservation?(input: Readonly<{
     taskId: string;
     roleName: string;
-    turnId: string;
+    runId: string;
     nativeSessionId?: string;
     deadStatus?: number;
     observedAt: Date;
@@ -320,31 +302,31 @@ export interface SchedulerStorePort {
    * (Issue 05). Absent implementations fall back to an empty family, which
    * yields a coarser digest; the fail-open rule covers computation errors.
    */
-  listTurns?(taskId: string): readonly SchedulerTurn[];
+  listRuns?(taskId: string): readonly SchedulerRun[];
   listWorkItems?(taskId: string): readonly import("../workItem/workItem.js").WorkItem[];
   listReviewRounds?(taskId: string): readonly import("../review/reviewRound.js").ReviewRound[];
   listIntegrationAttempts?(taskId: string): readonly import("../integration/integrationAttempt.js").IntegrationAttempt[];
   listDurableJobs?(taskId: string): readonly import("../job/durableJob.js").DurableJob[];
   listInputRequests?(taskId: string): readonly import("../input/inputRequest.js").InputRequest[];
   listMessages?(taskId: string): readonly import("../message/message.js").TaskMessage[];
-  /** Current fold of WorkItem/Review/Integration progress for a Turn. */
-  getTurnDurableProgress(taskId: string, roleName: string, turnId: string): SchedulerTurnProgress | null;
+  /** Current fold of WorkItem/Review/Integration progress for a AgentRun. */
+  getRunDurableProgress(taskId: string, roleName: string, runId: string): SchedulerRunProgress | null;
   /**
-   * One-pass fold of a Task's event history for one Turn. Stall reconciliation
+   * One-pass fold of a Task's event history for one AgentRun. Stall reconciliation
    * reads this projection instead of maintaining a second event-scan path.
    */
-  getTurnProgressFacts(taskId: string, turnId: string): TurnProgressFacts | undefined;
+  getRunProgressFacts(taskId: string, runId: string): AgentRunProgressFacts | undefined;
   /** Materializes a newly observed related-record fold as one turn.progress fact. */
-  recordRoleTurnProgress?(input: RoleTurnProgressPersistence): "recorded" | "already-recorded" | "state-changed";
+  recordRoleRunProgress?(input: RoleRunProgressPersistence): "recorded" | "already-recorded" | "state-changed";
   /** Closes one coalesced read-only runtime diagnostic window. */
-  recordRoleTurnDiagnostic?(input: RoleTurnDiagnosticPersistence): "recorded" | "already-recorded" | "state-changed";
+  recordRoleRunDiagnostic?(input: RoleRunDiagnosticPersistence): "recorded" | "already-recorded" | "state-changed";
   /** Atomically records one advisory no-progress episode. */
-  recordRoleTurnStall?(input: RoleTurnStallPersistence): "raised" | "already-raised" | "state-changed";
+  recordRoleRunStall?(input: RoleRunStallPersistence): "raised" | "already-raised" | "state-changed";
   /** Exact durable Provider writer; human/unknown ownership blocks Controller writes. */
   getProviderAuthorityFence?(input: Readonly<{
     taskId: string;
     roleName: string;
-    turnId: string;
+    runId: string;
     agentId: string;
     nativeSessionId: string;
   }>): Readonly<{
@@ -353,16 +335,7 @@ export interface SchedulerStorePort {
     owner: "controller" | "human" | "none" | "unknown";
     holderId?: string;
   }> | null;
-  peekNextTurnId(taskId: string): string;
-  /** Freeze the exact authoritative context before claiming a new Leader Turn. */
-  freezeLeaderContextSnapshot?(
-    taskId: string,
-    roleName: string,
-    now: Date
-  ): Readonly<{
-    ref: import("../context/contextSnapshot.js").ContextSnapshotRef;
-    deltaRefIds: readonly string[];
-  }>;
+  peekNextRunId(taskId: string): string;
 
   getWorkMailbox(target: MailboxTarget): WorkMailbox | null;
   listWorkMailboxes(): readonly WorkMailbox[];
@@ -374,12 +347,12 @@ export interface SchedulerStorePort {
   listReadyWorkMailboxes?(): readonly WorkMailbox[];
   claimWorkMailbox(input: SchedulerMailboxClaimInput): SchedulerMailboxClaimResult;
   /** Settles the exact ordinary Role dispatch after acceptance or terminalization. */
-  settleRoleTurnDispatch(input: Readonly<{
+  settleRoleRunDispatch(input: Readonly<{
     taskId: string;
     roleName: string;
-    turnId: string;
-    expected?: RoleTurnDispatchToken | null;
-  }>): RoleTurnDispatchSettlement;
+    runId: string;
+    expected?: RoleRunDispatchToken | null;
+  }>): RoleRunDispatchSettlement;
   completeWorkMailbox(target: MailboxTarget, batchId: string): boolean;
   releaseWorkMailbox(target: MailboxTarget, batchId: string): boolean;
   /**
@@ -405,7 +378,7 @@ export interface SchedulerStorePort {
     now?: Date,
     expectedDormantCandidate?: DormantRuntimeOwnerCandidate
   ): RuntimeLifecycleTarget | null;
-  /** Non-stopped native sessions with no active Task Turn or lifecycle work. */
+  /** Non-stopped native sessions with no active Task AgentRun or lifecycle work. */
   listDormantRuntimeOwners?(): readonly DormantRuntimeOwnerCandidate[];
   /**
    * Current non-stopped Role Sessions from a storage-owned hot projection.
@@ -418,7 +391,7 @@ export interface SchedulerStorePort {
   recordAgentError?(input: Readonly<{
     taskId: string;
     roleName: string;
-    turnId: string;
+    runId: string;
     source: AgentErrorSource;
     phase: AgentErrorPhase;
     message: string;
@@ -478,15 +451,14 @@ export interface SchedulerStorePort {
   getTaskWakeEnvelope?(
     taskId: string
   ): import("../context/wakeNotification.js").WakeEnvelope | null;
-  /** Persist the Turn, active-turn pointer, running Role and active fixed session. */
-  saveLeaderDispatch(input: LeaderDispatchPersistence): LeaderDispatchClaimResult;
-  /** Appends an accepted in-Turn Leader steer and completes its claimed wake batch. */
-  saveLeaderSteer(input: LeaderSteerPersistence): LeaderDispatchClaimResult;
-  /** Persist a fixed Session discovered while preparing an undelivered Turn. */
-  saveRoleTurnPrepared(input: RoleTurnDeliveryPersistence): void;
-  /** Atomically fail one exact Turn after a conclusive Provider failure. */
-  saveRoleTurnDeliveryFailure(
-    input: RoleTurnDeliveryFailurePersistence
+  claimLeaderNotification(taskId: string, now: Date): LeaderNotification | null;
+  settleLeaderNotification(taskId: string, attemptId: string,
+    outcome: "accepted" | "deferred" | "rejected" | "unknown", now: Date, detail?: string): void;
+  /** Persist a fixed Session discovered while preparing an undelivered AgentRun. */
+  saveRoleRunPrepared(input: RoleRunDeliveryPersistence): void;
+  /** Atomically fail one exact AgentRun after a conclusive Provider failure. */
+  saveRoleRunDeliveryFailure(
+    input: RoleRunDeliveryFailurePersistence
   ): "failed" | "state-changed";
 }
 
@@ -578,8 +550,8 @@ export type RoleSessionLaunchMode = "new" | "resume";
 
 export type PreparedRoleDelivery = Readonly<{
   deliveryId: string;
-  /** Durable Turn identity whose transient preparation this entry serves. */
-  turnId?: string;
+  /** Durable AgentRun identity whose transient preparation this entry serves. */
+  runId?: string;
   taskId: string;
   roleName: string;
   agentId: string;
@@ -639,16 +611,17 @@ export interface TmuxDeliveryPort {
     managedWorkspace?: ManagedWorkspace;
     runtimePolicy?: TaskRuntimeLaunchPolicy;
     mode: RoleSessionLaunchMode;
-    turnId?: string;
+    runId?: string;
     nativeSessionId?: string;
     beforeHostStart?: RuntimeLaunchPreStart;
   }>): Promise<PreparedRoleDelivery>;
   waitUntilReady(delivery: PreparedRoleDelivery): Promise<ReadyRoleDelivery>;
   sendOnce(input: Readonly<{
     delivery: ReadyRoleDelivery;
-    /** Stable Provider request id. Repeating it must not create another Turn. */
+    /** Stable Provider request id. Repeating it must not create another AgentRun. */
     receiptId: string;
     text: string;
+    notificationId?: string;
   }>): Promise<RoleDeliveryReport>;
   steerOnce(input: Readonly<{
     taskId: string;
@@ -668,7 +641,7 @@ export interface TmuxDeliveryPort {
   forgetPrepared?(input: Readonly<{
     taskId: string;
     roleName: string;
-    turnId?: string;
+    runId?: string;
   }>): void;
   /** Best-effort nudge to an already-running global Operator process. */
   notifyOperatorInputOnce?(input: Readonly<{
@@ -698,7 +671,7 @@ export interface TmuxDeliveryPort {
     agentId: string;
     adapterId: string;
     nativeSessionId?: string;
-    turnId?: string;
+    runId?: string;
     progressAt?: string;
   }>[], resourceInputs?: readonly SchedulerRoleResourceInput[]):
     Promise<readonly Readonly<{

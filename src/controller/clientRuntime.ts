@@ -48,7 +48,7 @@ const CONTROLLER_OPERATIONAL_ENVIRONMENT = [
   // The worker toggle changes process placement, not storage authority.
   "YUI_STORE_WORKER",
   // rr13/test: Forward the liveness seam so an integration test's Controller
-  // subprocess does not reap a saved active Leader Turn without a real tmux role.
+  // subprocess does not reap a saved active Leader AgentRun without a real tmux role.
   "YUI_TEST_ROLE_LIVENESS_PRESENT",
   ...EPHEMERAL_DOMAIN_ENVIRONMENT_NAMES
 ] as const;
@@ -607,8 +607,8 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
   async stopTaskRoleSessions(taskId: string, roleNames: readonly string[]): Promise<void> {
     const targets = [];
     for (const roleName of [...new Set(roleNames)]) {
-      if (this.store.getActiveTurn(taskId, roleName) !== null) {
-        throw new Error(`Role has an active Turn: ${taskId}/${roleName}.`);
+      if (this.store.getActiveRun(taskId, roleName) !== null) {
+        throw new Error(`Role has an active AgentRun: ${taskId}/${roleName}.`);
       }
       const target = this.schedulerStore.enqueueRuntimeCleanup({
         scope: "task",
@@ -652,8 +652,8 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
     nativeSessionId: string;
     sessionUpdatedAt: string;
   }>): Promise<void> {
-    if (this.store.getActiveTurn(input.taskId, input.roleName) !== null) {
-      throw new Error(`Role has an active Turn: ${input.taskId}/${input.roleName}.`);
+    if (this.store.getActiveRun(input.taskId, input.roleName) !== null) {
+      throw new Error(`Role has an active AgentRun: ${input.taskId}/${input.roleName}.`);
     }
     const owner = {
       scope: "task" as const,

@@ -14,7 +14,7 @@ import { openCodexInteractiveConnection } from "./structuredProviderHost.js";
 /**
  * Keep the native TUI and its transparent App Server attachment in one pane.
  * The existing Host acknowledgement carries the ID from that TUI's exact
- * thread/start or thread/resume response, before any user/model Turn.
+ * thread/start or thread/resume response, before any user/model AgentRun.
  *
  * Codex 0.150.1 cannot resume a pre-created empty Thread: no rollout exists
  * until its first message. Observing the TUI's own startup avoids creating a

@@ -2,7 +2,7 @@ import type { TaskStore } from "../storage/taskStore.js";
 import type { InputRequest } from "../input/inputRequest.js";
 import { type Task, type TaskStatus } from "../task/task.js";
 import type { WorkItem, WorkItemStatus } from "../workItem/workItem.js";
-import { isRoleTurnStalled, latestTurnDurableProgressAt } from "../scheduler/roleTurnStall.js";
+import { isRoleRunStalled, latestRunDurableProgressAt } from "../scheduler/roleRunStall.js";
 import type { TaskEvent } from "../event/taskEvent.js";
 import { retiredTaskRecordIds } from "../task/taskRecordRetirement.js";
 import {
@@ -16,8 +16,8 @@ import {
   type RuntimeHealthLayer
 } from "../runtime/runtimeProjection.js";
 import { builtinDriverIdForAdapter } from "../runtime/builtinAgentDrivers.js";
-import { formatTurnReceiptId } from "../task/taskRecordReference.js";
-import { turnExecutionObservation, type Turn } from "../turn/turn.js";
+import { formatRunReceiptId } from "../task/taskRecordReference.js";
+import { runExecutionObservation, type AgentRun } from "../agentRun/agentRun.js";
 import { resolveRuntimeHealth } from "../config/yuiConfig.js";
 import {
   projectSessionTokenMetrics,
@@ -33,14 +33,14 @@ export type WebDashboardStore = Pick<TaskStore,
   | "listTasks"
   | "getTask"
   | "getTaskBrief"
-  | "getTurn"
+  | "getRun"
   | "getWorkItem"
   | "listRoles"
   | "listRoleSessionSets"
   | "getTaskRoleSessionSet"
   | "listWorkItems"
   | "listContextSnapshots"
-  | "listTurns"
+  | "listRuns"
   | "listReviewRounds"
   | "listInputRequests"
   | "listMessages"
@@ -114,8 +114,8 @@ export function buildWebDashboardSnapshot(
         attention.push({ taskId: task.id, taskTitle: task.title, request });
       }
       const events = reader.listEvents?.(task.id) ?? [];
-      const needsAttentionCount = reader.listTurns(task.id)
-        .filter((turn) => turn.status === "active" && isRoleTurnStalled(events, turn.id))
+      const needsAttentionCount = reader.listRuns(task.id)
+        .filter((run) => run.status === "active" && isRoleRunStalled(events, run.id))
         .length;
       const execution = buildTaskExecutionProjection(reader, task.id, task, now);
       const names = task.projectBindings.flatMap(({ projectId }) => {
@@ -159,41 +159,43 @@ export function buildWebTaskDetail(
       const name = projectNamesById.get(projectId);
       return name === undefined ? [] : [name];
     });
-    const turns = reader.listTurns(taskId);
+    const runs = reader.listRuns(taskId);
     const events = reader.listEvents?.(taskId) ?? [];
     const retiredMessageIds = retiredTaskRecordIds(events, "message");
-    const needsAttentionTurns = turns
-      .filter((turn) => turn.status === "active" && isRoleTurnStalled(events, turn.id))
-      .map((turn) => ({
-        turnId: turn.id,
-        roleName: turn.roleName,
-        progressAt: latestStallProgress(events, turn.id),
-        kind: latestStallField(events, turn.id, "kind") ?? "workflow-not-progressing",
-        classification: latestStallField(events, turn.id, "classification") ?? "truly-stalled"
+    const needsAttentionRuns = runs
+      .filter((run) => run.status === "active" && isRoleRunStalled(events, run.id))
+      .map((run) => ({
+        runId: run.id,
+        roleName: run.roleName,
+        progressAt: latestStallProgress(events, run.id),
+        kind: latestStallField(events, run.id, "kind") ?? "workflow-not-progressing",
+        classification: latestStallField(events, run.id, "classification") ?? "truly-stalled"
       }));
-    const activeTurns = new Map(turns
-      .filter((turn) => turn.status === "active")
-      .map((turn) => [turn.roleName, turn]));
-    const activeTurnHealth = turns
-      .filter((turn) => turn.status === "active")
-      .map((turn) => projectWebTurnRuntimeHealth(
+    const activeRuns = new Map(runs
+      .filter((run) => run.status === "active")
+      .map((run) => [run.roleName, run]));
+    const activeRunHealth = runs
+      .filter((run) => run.status === "active")
+      .map((run) => projectWebRunRuntimeHealth(
         reader,
         taskId,
-        turn,
+        run,
         events,
         now,
         resolveRuntimeHealth(reader.getConfig().runtimeHealth)
       ));
     const roles = reader.listRoles(taskId).map((role) => {
-      const activeTurn = activeTurns.get(role.name);
+      const activeRun = activeRuns.get(role.name);
       const sessions = reader.getTaskRoleSessionSet(taskId, role.name);
-      const activeSession = sessions?.sessions[activeTurn?.effective.agentId ?? sessions.activeAgentId];
-      const effectiveLaunch = activeTurn?.effective ?? activeSession?.effective ?? null;
+      const activeSession = sessions?.sessions[activeRun?.effective.agentId ?? sessions.activeAgentId];
+      const effectiveLaunch = activeRun?.effective ?? activeSession?.effective ?? null;
+      const delivery = sessions?.providerBinding?.run?.status;
       return {
         ...role,
-        // Presentation only: workflow activity is derived from Turn; the
-        // native Session contributes lifecycle detail when no Turn is active.
-        status: activeTurn === undefined ? activeSession?.status ?? "idle" : "running",
+        // An open record is not proof that its Agent is running.
+        status: delivery === "accepted" ? "running"
+          : delivery === "submitting" || delivery === "deferred" ? "waiting"
+          : activeSession === undefined && activeRun === undefined ? "idle" : "unknown",
         sessionTokens: projectSessionTokenMetrics(
           events,
           resolveSessionTokenIdentity(activeSession === undefined
@@ -209,9 +211,9 @@ export function buildWebTaskDetail(
           status: activeSession.status,
           endpointImplementation: activeSession.endpointImplementation ?? null
         },
-        effectiveLaunchSource: activeTurn === undefined
+        effectiveLaunchSource: activeRun === undefined
           ? activeSession === undefined ? null : "session"
-          : "turn",
+          : "run",
         launchDrift: effectiveLaunch !== null
           && effectiveLaunch.sourceDesiredRevision !== role.launchRevision
       };
@@ -237,11 +239,11 @@ export function buildWebTaskDetail(
       workItems: workItems.map((item) => ({
         ...item,
         observability: workItemObservability.get(item.id),
-        execution: projectWorkItemExecution(item, turns, roleSessionSets, reader)
+        execution: projectWorkItemExecution(item, runs, roleSessionSets, reader)
       })),
-      turns: turns.map((run) => ({ ...run, execution: turnExecutionObservation(run,
-        reader.getTaskRoleSessionSet(taskId, run.roleName)?.providerBinding) })),
-      runtimeHealth: { needsAttentionTurns, activeTurns: activeTurnHealth },
+      runs: runs.map((run) => ({ ...run, execution: runExecutionObservation(run,
+        reader.getTaskRoleSessionSet(taskId, run.roleName)?.providerBinding, events) })),
+      runtimeHealth: { needsAttentionRuns, activeRuns: activeRunHealth },
       reviewRounds: reader.listReviewRounds(taskId),
       openInputs: inputs.filter((request) => request.status === "open"),
       messages: reader.listMessages(taskId).map((message) => ({
@@ -263,34 +265,34 @@ function webRemoteDelivery(
     events: reader.listEvents?.(task.id) ?? [],
     publications: reader.listPublicationReferences(task.id),
     managedWorkspaces: reader.listManagedWorkspaces(task.id),
-    turns: reader.listTurns(task.id),
+    runs: reader.listRuns(task.id),
     currentCandidate: null
   });
 }
 
-function latestStallProgress(events: readonly TaskEvent[], turnId: string): string | undefined {
-  return latestStallField(events, turnId, "progressAt");
+function latestStallProgress(events: readonly TaskEvent[], runId: string): string | undefined {
+  return latestStallField(events, runId, "progressAt");
 }
 
 export type WebRuntimeHealthLayer = RuntimeHealthLayer | "stalled-candidate";
 
 /**
- * Layered runtime health for one active Turn, computed from the same stored
+ * Layered runtime health for one active AgentRun, computed from the same stored
  * observations and durable semantic fold as the CLI status projection. The
  * Web snapshot has no live tmux pane, so host state stays "unknown"; the
  * classifier still surfaces session/turn/operation/observer layers and the
  * scheduler's durable `turn.stalled` episode is surfaced as
  * `stalled-candidate`.
  */
-function projectWebTurnRuntimeHealth(
+function projectWebRunRuntimeHealth(
   reader: WebDashboardStore,
   taskId: string,
-  turn: Turn,
+  run: AgentRun,
   events: readonly TaskEvent[],
   now: Date,
   policy: ReturnType<typeof resolveRuntimeHealth>
 ): Readonly<{
-  turnId: string;
+  runId: string;
   roleName: string;
   layer: WebRuntimeHealthLayer;
   reason: string;
@@ -298,52 +300,52 @@ function projectWebTurnRuntimeHealth(
   lastRuntimeActivityAt?: string;
   lastSemanticProgressAt: string;
 }> {
-  const stalled = isRoleTurnStalled(events, turn.id);
-  const sessions = reader.getTaskRoleSessionSet(taskId, turn.roleName);
-  const session = sessions?.sessions[turn.effective.agentId];
-  const stallReason = "the live active Turn has no durable progress in the configured stall window";
+  const stalled = isRoleRunStalled(events, run.id);
+  const sessions = reader.getTaskRoleSessionSet(taskId, run.roleName);
+  const session = sessions?.sessions[run.effective.agentId];
+  const stallReason = "the live active AgentRun has no durable progress in the configured stall window";
   if (session?.nativeSessionId === undefined) {
     return {
-      turnId: turn.id,
-      roleName: turn.roleName,
+      runId: run.id,
+      roleName: run.roleName,
       layer: stalled ? "stalled-candidate" : "awaiting-provider-acceptance",
-      reason: stalled ? stallReason : "the active Turn is awaiting a Provider Session",
+      reason: stalled ? stallReason : "the active AgentRun is awaiting a Provider Session",
       stalled,
-      lastSemanticProgressAt: turn.createdAt
+      lastSemanticProgressAt: run.createdAt
     };
   }
   let driverId: string;
   try {
-    driverId = builtinDriverIdForAdapter(turn.effective.adapterId);
+    driverId = builtinDriverIdForAdapter(run.effective.adapterId);
   } catch {
     return {
-      turnId: turn.id,
-      roleName: turn.roleName,
+      runId: run.id,
+      roleName: run.roleName,
       layer: stalled ? "stalled-candidate" : "runtime-unobservable",
       reason: stalled ? stallReason : "the Agent Driver is not a built-in driver",
       stalled,
-      lastSemanticProgressAt: turn.createdAt
+      lastSemanticProgressAt: run.createdAt
     };
   }
-  const providerTurn = sessions?.providerBinding?.turn;
+  const providerTurn = sessions?.providerBinding?.run;
   const fence = {
     taskId,
-    roleName: turn.roleName,
-    turnId: turn.id,
-    agentId: turn.effective.agentId,
+    roleName: run.roleName,
+    runId: run.id,
+    agentId: run.effective.agentId,
     driverId,
     nativeSessionId: session.nativeSessionId,
-    nativeTurnId: providerTurn?.turnId === turn.id
-      ? providerTurn.nativeTurnId ?? turn.id
-      : turn.id,
-    receiptId: providerTurn?.turnId === turn.id
+    nativeTurnId: providerTurn?.runId === run.id
+      ? providerTurn.nativeTurnId ?? run.id
+      : run.id,
+    receiptId: providerTurn?.runId === run.id
       ? providerTurn.attemptId
-      : formatTurnReceiptId(taskId, turn.id)
+      : formatRunReceiptId(taskId, run.id)
   };
-  const projection = projectRuntimeTaskEvents(fence, turn.createdAt, events);
+  const projection = projectRuntimeTaskEvents(fence, run.createdAt, events);
   const view = {
-    getTurn: (taskId: string, turnId: string) =>
-      reader.listTurns(taskId).find((candidate) => candidate.id === turnId) ?? null,
+    getRun: (taskId: string, runId: string) =>
+      reader.listRuns(taskId).find((candidate) => candidate.id === runId) ?? null,
     listEvents: () => events,
     getWorkItem: (workItemTaskId: string, workItemId: string) =>
       reader.listWorkItems(workItemTaskId).find((item) => item.id === workItemId) ?? null,
@@ -352,8 +354,8 @@ function projectWebTurnRuntimeHealth(
     listIntegrationAttempts: (taskId: string) => reader.listIntegrationAttempts(taskId),
     listInputRequests: (taskId: string) => reader.listInputRequests(taskId)
   };
-  const semanticProgress = latestTurnDurableProgressAt(view, taskId, turn.roleName, turn.id)
-    ?? { progressAt: turn.createdAt };
+  const semanticProgress = latestRunDurableProgressAt(view, taskId, run.roleName, run.id)
+    ?? { progressAt: run.createdAt };
   const classification = classifyRuntimeHealth({
     projection,
     semanticProgressAt: semanticProgress.progressAt,
@@ -361,8 +363,8 @@ function projectWebTurnRuntimeHealth(
     policy
   });
   return {
-    turnId: turn.id,
-    roleName: turn.roleName,
+    runId: run.id,
+    roleName: run.roleName,
     layer: stalled ? "stalled-candidate" : classification.layer,
     reason: stalled ? stallReason : classification.reason,
     stalled,
@@ -375,12 +377,12 @@ function projectWebTurnRuntimeHealth(
 
 function latestStallField(
   events: readonly TaskEvent[],
-  turnId: string,
+  runId: string,
   field: string
 ): string | undefined {
   const stalled = events
-    .filter((event) => event.type === "turn.stalled"
-      && event.payload.turnId === turnId
+    .filter((event) => event.type === "run.stalled"
+      && event.payload.runId === runId
       && event.payload.status !== "diagnostic-only")
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
   return stalled?.payload[field];

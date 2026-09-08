@@ -6,7 +6,7 @@ storage version accepted by the running release.
 
 ## Authority
 
-- `yui.db` owns Tasks, WorkItems, Turns, Messages, Decisions, results, Project
+- `yui.db` owns Tasks, WorkItems, AgentRuns, Messages, Decisions, results, Project
   Knowledge references, managed workspace records, runtime bindings, mailboxes,
   durable events, and configuration.
 - Provider Sessions, transcripts, processes, caches, telemetry, and runtime
@@ -41,18 +41,18 @@ read/write path, or second migration authority.
   a frozen read/modify/write boundary.
 - Typed columns support indexed identity and status queries; the full validated
   record payload remains the durable domain representation.
-- Mailbox claim, exact Turn terminalization, active-pointer removal, result
+- Mailbox claim, exact AgentRun terminalization, active-pointer removal, result
   persistence, and downstream wake creation are transactionally coupled where
   they form one product fact.
 - Idempotency keys and unique constraints protect repeatable external-effect
   acknowledgements; they do not form a second workflow state machine.
 
-## Turn and Session boundary
+## AgentRun and Session boundary
 
-A Turn is one provider-visible input/terminal interval. It records visible
+A AgentRun is one provider-visible input/terminal interval. It records visible
 inputs and the final provider output, but not hidden reasoning or the full tool
 trace. A Provider Session is a reusable conversation and may contain many Yui
-managed or direct-user Turns. A native Turn terminal ends the Turn only; the
+managed or direct-user AgentRuns. A native Turn terminal ends the AgentRun only; the
 Leader remains the authority for WorkItem and Task completion.
 
 ## Update behavior

@@ -1,46 +1,46 @@
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { ReviewRound } from "./reviewRound.js";
 
 export type ReviewCompletionEvidenceStore = Readonly<{
-  listTurns(taskId: string): readonly Turn[];
+  listRuns(taskId: string): readonly AgentRun[];
 }>;
 
-export function isCompletedReviewExecutionFromTurns(
+export function isCompletedReviewExecutionFromRuns(
   round: ReviewRound,
-  turns: readonly Turn[]
+  runs: readonly AgentRun[]
 ): boolean {
-  if (round.status !== "completed" || round.reviewerTurnId === undefined) return false;
-  const turn = turns.find(({ id }) => id === round.reviewerTurnId);
-  return turn !== undefined
-    && turn.status === "completed"
-    && turn.result !== undefined
-    && turn.purpose === "review"
-    && turn.taskId === round.taskId
-    && turn.reviewRoundId === round.id
-    && turn.roleName === round.reviewerRoleName
-    && turn.executionGroupId === undefined
-    && turn.effective.reviewBaseCommit === round.reviewBaseCommit;
+  if (round.status !== "completed" || round.reviewerRunId === undefined) return false;
+  const run = runs.find(({ id }) => id === round.reviewerRunId);
+  return run !== undefined
+    && run.status === "completed"
+    && run.result !== undefined
+    && run.purpose === "review"
+    && run.taskId === round.taskId
+    && run.reviewRoundId === round.id
+    && run.roleName === round.reviewerRoleName
+    && run.executionGroupId === undefined
+    && run.effective.reviewBaseCommit === round.reviewBaseCommit;
 }
 
 /**
- * Whether a Task-final ReviewRound has one exact completed main Reviewer Turn.
+ * Whether a Task-final ReviewRound has one exact completed main Reviewer AgentRun.
  * This is structural evidence only and never means the Leader accepted it.
  */
 export function isCompletedTaskReviewEvidence(
   store: ReviewCompletionEvidenceStore,
   round: ReviewRound
 ): boolean {
-  return isCompletedTaskReviewEvidenceFromTurns(round, store.listTurns(round.taskId));
+  return isCompletedTaskReviewEvidenceFromRuns(round, store.listRuns(round.taskId));
 }
 
-export function isCompletedTaskReviewEvidenceFromTurns(
+export function isCompletedTaskReviewEvidenceFromRuns(
   round: ReviewRound,
-  turns: readonly Turn[]
+  runs: readonly AgentRun[]
 ): boolean {
   if ((round.scope ?? "work-item") !== "task"
     || round.taskCandidate === undefined
     || round.taskCandidate.projects.length === 0) {
     return false;
   }
-  return isCompletedReviewExecutionFromTurns(round, turns);
+  return isCompletedReviewExecutionFromRuns(round, runs);
 }

@@ -177,11 +177,11 @@ function collectTaskStatuses(store: TaskStore): Map<string, string> {
   return statuses;
 }
 
-/** Workspace paths claimed by active durable Jobs (Turns). */
+/** Workspace paths claimed by active durable Jobs (AgentRuns). */
 function collectActiveWorkspaceOwnerPaths(store: TaskStore): string[] {
   const paths: string[] = [];
   for (const task of store.listTasks()) {
-    for (const run of store.listTurns(task.id)) {
+    for (const run of store.listRuns(task.id)) {
       if (run.status !== "active") continue;
       const workspace = run.workspace;
       if (workspace === undefined) continue;

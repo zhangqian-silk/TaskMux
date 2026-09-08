@@ -24,7 +24,7 @@
 | Kernel | 存储、授权上下文、操作记录、实例句柄 | 全部模块 | [Kernel](01-kernel.md) |
 | Task | Brief、WorkItem、结果关联和验收 | Context、Execution、Surface | [Task](02-task.md) |
 | Agent & Context | Role 配置、消息；Context 为读视图 | Agent、Surface | [Agent & Context](03-agent-context.md) |
-| Execution & Runtime | Turn、Session 必要关联、执行证据 | Task、Context、Operator | [Execution & Runtime](04-execution-runtime.md) |
+| Execution & Runtime | AgentRun、Session 必要关联、执行证据 | Task、Context、Operator | [Execution & Runtime](04-execution-runtime.md) |
 | Project & Resource | 项目知识、资源、环境、产物 | Task、Execution、Context | [Project & Resource](05-project-resource.md) |
 | Plugin & Capability | 插件配置、契约、注册贡献；目录为读视图 | Agent、Surface、Execution | [Plugin & Capability](06-plugin-capability.md) |
 | Surface | 用户连接、展示和输入 | 用户 | [Surface](07-surface.md) |

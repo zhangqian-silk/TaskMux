@@ -28,13 +28,13 @@ import {
   resolveControllerTaskConcurrency,
   resolveDeliveryTimeoutSeconds,
   resolveLeaderNextActionMode,
-  resolveLeaderSemanticBudgetTurns,
+  resolveLeaderSemanticBudgetRuns,
   resolveResourcesGcAutoQuarantine,
   resolveResourcesGcMode,
   resolveResourcesQuarantineTtlHours,
   resolveRuntimeHealth,
   resolveTelemetryEnabled,
-  resolveTelemetryTurnCap,
+  resolveTelemetryRunCap,
   resolveTelemetryTerminalKeep,
   resolveTmuxBin,
   resolveTmuxHistoryLimit
@@ -52,7 +52,7 @@ import {
 } from "../executor/agentExecutor.js";
 import type { TaskMessage } from "../message/message.js";
 import type { Milestone } from "../milestone/milestone.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { RuntimeOwner } from "../runtime/runtimeOwner.js";
 import {
   type RuntimeSessionCandidate,
@@ -152,7 +152,7 @@ export type YuiConfig = Readonly<{
   controllerTaskConcurrency?: number;
   agentLaunchInactivityTimeoutSeconds?: number;
   deliveryTimeoutSeconds?: number;
-  leaderSemanticBudgetTurns?: number;
+  leaderSemanticBudgetRuns?: number;
   resourcesQuarantineTtlHours?: number;
   /**
    * Path to the tmux binary. Defaults to `tmux` on PATH.
@@ -161,10 +161,10 @@ export type YuiConfig = Readonly<{
   tmuxHistoryLimit?: number;
   /** Whether optional diagnostic telemetry is active. */
   telemetryEnabled?: boolean;
-  /** Terminal Turn progress rows retained after prune. */
+  /** Terminal AgentRun progress rows retained after prune. */
   telemetryTerminalKeep?: number;
-  /** Hard cap of progress rows per Turn while it is still active. */
-  telemetryTurnCap?: number;
+  /** Hard cap of progress rows per AgentRun while it is still active. */
+  telemetryRunCap?: number;
   completionInstallations?: Partial<Record<CompletionShell, CompletionInstallation>>;
 }>;
 export type ConfiguredAgentPatch = Readonly<Partial<
@@ -181,7 +181,7 @@ export type ConfiguredAgentUpdateResult = Readonly<{
  * makes the two key spaces disjoint even for legal Role names such as
  * `lane:worker:1`.
  */
-export function executionLaneActiveTurnKey(
+export function executionLaneActiveRunKey(
   executionGroupId: string,
   executionLaneId: string
 ): string {
@@ -192,7 +192,7 @@ function encodeLaneKeyPart(value: string): string {
   return encodeURIComponent(value).replace(/:/gu, "%3A");
 }
 
-export function executionLaneActiveTurnKeyParts(key: string):
+export function executionLaneActiveRunKeyParts(key: string):
   { executionGroupId: string; executionLaneId: string } | null {
   const match = /^\/execution-lane\/([^:]+):([^:]+)$/u.exec(key);
   if (match === null) return null;
@@ -210,7 +210,7 @@ export function executionLaneActiveTurnKeyParts(key: string):
  * Nested-record versions consumed by the current SQLite payload validators.
  */
 export const CURRENT_TASK_ROLE_SESSION_SET_SCHEMA_VERSION = 12 as const;
-export const CURRENT_TURN_SCHEMA_VERSION = 5 as const;
+export const CURRENT_RUN_SCHEMA_VERSION = 5 as const;
 export const CURRENT_INTEGRATION_QUEUE_SCHEMA_VERSION = 1 as const;
 export type TaskStore = {
   saveArtifact(artifact: Artifact): void;
@@ -255,7 +255,7 @@ export type TaskStore = {
   /**
    * Project reference projection for the lifecycle fail-closed gates: every
    * Task binding a Project (including historical), the subset still active,
-   * and the unresolved delivery (Work Items, Turns, Integration
+   * and the unresolved delivery (Work Items, AgentRuns, Integration
    * Attempts) inside those active Tasks.
    */
   summarizeProjectReferences(projectId: string): ProjectReferenceSummary;
@@ -284,7 +284,7 @@ export type TaskStore = {
   /**
    * Issue 07 (Leader convergence): load exactly the records the next-action
    * projection consumes, filtered at the storage boundary (open Inputs,
-   * active/leader Turns). Returns null when the Task does not exist.
+   * active/leader AgentRuns). Returns null when the Task does not exist.
    */
   readNextActionFacts(taskId: string): NextActionFacts | null;
   /**
@@ -360,25 +360,25 @@ export type TaskStore = {
   getContextSnapshot(taskId: string, snapshotId: string): ContextSnapshot | null;
   listContextSnapshots(taskId: string): ContextSnapshot[];
   saveContextSnapshot(snapshot: ContextSnapshot): void;
-  nextTurnId(taskId: string): string;
-  peekNextTurnId(taskId: string): string;
-  getTurn(taskId: string, turnId: string): Turn | null;
-  listTurns(taskId: string): Turn[];
-  saveTurn(turn: Turn): void;
+  nextRunId(taskId: string): string;
+  peekNextRunId(taskId: string): string;
+  getRun(taskId: string, runId: string): AgentRun | null;
+  listRuns(taskId: string): AgentRun[];
+  saveRun(run: AgentRun): void;
   nextReviewRoundId(taskId: string): string;
   getReviewRound(taskId: string, reviewRoundId: string): ReviewRound | null;
   listReviewRounds(taskId: string): ReviewRound[];
   saveReviewRound(taskId: string, round: ReviewRound): void;
-  getActiveTurn(taskId: string, roleName: string): Turn | null;
-  saveActiveTurn(turn: Turn): void;
-  clearActiveTurn(taskId: string, roleName: string): void;
-  getActiveExecutionLaneTurn(
+  getActiveRun(taskId: string, roleName: string): AgentRun | null;
+  saveActiveRun(run: AgentRun): void;
+  clearActiveRun(taskId: string, roleName: string): void;
+  getActiveExecutionLaneRun(
     taskId: string,
     executionGroupId: string,
     executionLaneId: string
-  ): Turn | null;
-  saveActiveExecutionLaneTurn(turn: Turn): void;
-  clearActiveExecutionLaneTurn(
+  ): AgentRun | null;
+  saveActiveExecutionLaneRun(run: AgentRun): void;
+  clearActiveExecutionLaneRun(
     taskId: string,
     executionGroupId: string,
     executionLaneId: string
@@ -545,13 +545,13 @@ export function validateYuiConfig(config: YuiConfig): void {
       "controllerTaskConcurrency",
       "agentLaunchInactivityTimeoutSeconds",
       "deliveryTimeoutSeconds",
-      "leaderSemanticBudgetTurns",
+      "leaderSemanticBudgetRuns",
       "resourcesQuarantineTtlHours",
       "tmuxBin",
       "tmuxHistoryLimit",
       "telemetryEnabled",
       "telemetryTerminalKeep",
-      "telemetryTurnCap",
+      "telemetryRunCap",
       "completionInstallations"
     ] as const satisfies readonly (Exclude<keyof YuiConfig, "schemaVersion">)[];
     exact(
@@ -578,12 +578,12 @@ export function validateYuiConfig(config: YuiConfig): void {
     resolveControllerTaskConcurrency(config.controllerTaskConcurrency);
     resolveAgentLaunchInactivityTimeoutSeconds(config.agentLaunchInactivityTimeoutSeconds);
     resolveDeliveryTimeoutSeconds(config.deliveryTimeoutSeconds);
-    resolveLeaderSemanticBudgetTurns(config.leaderSemanticBudgetTurns);
+    resolveLeaderSemanticBudgetRuns(config.leaderSemanticBudgetRuns);
     resolveTmuxBin(config.tmuxBin);
     resolveTmuxHistoryLimit(config.tmuxHistoryLimit);
     resolveTelemetryEnabled(config.telemetryEnabled);
     resolveTelemetryTerminalKeep(config.telemetryTerminalKeep);
-    resolveTelemetryTurnCap(config.telemetryTurnCap);
+    resolveTelemetryRunCap(config.telemetryRunCap);
   } catch (error) {
     throw new StorageRecordError(
       error instanceof Error ? error.message : "Yui reconciliation interval is invalid."
@@ -1086,7 +1086,8 @@ function assertJsonValue(value: unknown, label: string, seen = new Set<object>()
 }
 function clone<T>(value: T): T { assertJsonValue(value, "Stored value"); return JSON.parse(JSON.stringify(value)) as T; }
 export function pendingWakeupProjection(mailbox: WorkMailbox | null): PendingWakeup | null {
-  const pending = mailbox?.processing?.owner.startsWith("leader-steer:") === true
+  const pending = (mailbox?.processing?.owner.startsWith("leader-steer:") === true
+    || mailbox?.processing?.owner.startsWith("leader-notification:") === true)
     ? mailbox.processing.batch
     : mailbox?.pending ?? null;
   if (mailbox === null || mailbox.target.kind !== "role" || mailbox.target.roleName !== "leader"

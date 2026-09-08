@@ -15,9 +15,9 @@ import {
   releaseProcessing
 } from "../../dist/coordination/workMailbox.js";
 import {
-  captureRoleTurnDispatch,
-  enqueueRoleTurnDispatch,
-  settleRoleTurnDispatch
+  captureRoleRunDispatch,
+  enqueueRoleRunDispatch,
+  settleRoleRunDispatch
 } from "../../dist/coordination/workMailboxQueue.js";
 import { createTaskEvent } from "../../dist/event/taskEvent.js";
 import {
@@ -65,7 +65,7 @@ import {
 import { RuntimeLaunchCoordinator } from "../../dist/controller/runtimeLaunchCoordinator.js";
 import { resolveManagedTaskCaller } from "../../dist/runtime/managedCaller.js";
 import { taskLocalActor } from "../../dist/commands/taskActor.js";
-import { buildTurnContextPack } from "../../dist/context/turnContextPack.js";
+import { buildRunContextPack } from "../../dist/context/runContextPack.js";
 import {
   buildTaskWakeEnvelope,
   WAKE_ENVELOPE_HARD_BYTES
@@ -85,19 +85,18 @@ import { FileRuntimeEventInbox } from "../../dist/controller/runtimeEventInbox.j
 import { runRuntimeObservationHookCommand } from "../../dist/controller/runtimeObservationHook.js";
 import { callFileTaskController } from "../../dist/controller/clientRuntime.js";
 import { startControllerServer } from "../../dist/core/controllerServer.js";
-import { terminalizeExactTaskTurn } from "../../dist/lifecycle/exactTurnTerminalization.js";
+import { terminalizeExactTaskRun } from "../../dist/lifecycle/exactRunTerminalization.js";
 import {
-  MAX_TURN_RESULT_OUTPUT_BYTES,
-  completeTurn,
-  createTurn,
-  validateTurn
-} from "../../dist/turn/turn.js";
-import { createTurnInput } from "../../dist/context/turnInputContract.js";
-import { processActiveRoleTurnDeliveries } from "../../dist/scheduler/activeRoleTurnDelivery.js";
+  MAX_RUN_RESULT_OUTPUT_BYTES,
+  completeRun,
+  createRun,
+  validateRun
+} from "../../dist/agentRun/agentRun.js";
+import { createRunInput } from "../../dist/context/runInputContract.js";
+import { processActiveRoleRunDeliveries } from "../../dist/scheduler/activeRoleRunDelivery.js";
 import { processOperatorInputNotifications } from "../../dist/scheduler/operatorInputNotificationProcessor.js";
 import {
   LEADER_WAKE_AGGREGATION_MS,
-  LEADER_WAKE_FORCE_MS,
   processLeaderWakeups
 } from "../../dist/scheduler/leaderWakeupProcessor.js";
 import { buildTaskExecutionProjection } from "../../dist/scheduler/taskExecutionProjection.js";
@@ -160,11 +159,11 @@ import { sanitizedTestEnv } from "../helpers/sanitizedEnv.mjs";
 const root = resolve(import.meta.dirname, "../..");
 const bareEnv = sanitizedTestEnv();
 
-function turnInput(turnId, taskId, roleName, directive, options = {}) {
-  void turnId;
+function runInput(runId, taskId, roleName, directive, options = {}) {
+  void runId;
   void taskId;
   void roleName;
-  return createTurnInput({
+  return createRunInput({
     source: { type: "yui", channel: options.channel ?? "task-dispatch" },
     directive,
     deltaRefIds: []
@@ -202,12 +201,12 @@ test("the packaged CLI starts and exposes the core workflow", () => {
   ]) {
     assert.ok(commands.includes(command), `missing core command: ${command}`);
   }
-  assert.ok(commands.includes("task turn list"));
+  assert.ok(commands.includes("task run list"));
   assert.ok(commands.includes("task publication upsert"));
   assert.ok(commands.includes("task publication verify"));
   assert.ok(commands.includes("task remote-delivery"));
   assert.equal(commands.includes("task publication add"), false);
-  assert.equal(commands.some((command) => command.startsWith("task run")), false);
+  assert.ok(commands.includes("task run show"));
   assert.equal(commands.includes("task rebuild"), false);
   assert.equal(commands.some((command) => command.startsWith("task history")), false);
   assert.equal(commands.includes("task review rebind"), false);
@@ -320,7 +319,7 @@ test("publication evidence changes stay exact across upsert and remote delivery"
     events,
     publications,
     managedWorkspaces,
-    turns: [],
+    runs: [],
     currentCandidate: {
       projects: [{ projectId: "project-1", commit: headCommit }]
     }
@@ -337,7 +336,7 @@ test("publication evidence changes stay exact across upsert and remote delivery"
     events,
     publications,
     managedWorkspaces,
-    turns: [],
+    runs: [],
     currentCandidate: null
   });
   assert.equal(unavailable.status, "unavailable");
@@ -685,7 +684,7 @@ test("Managed Codex performs the App Server WebSocket handshake through its prox
       codexThread: { model: "gpt-5.6-luna", approvalPolicy: "never", sandbox: "read-only" },
     }
   }, {
-    onStarted: (turn) => starts.push(turn),
+    onStarted: (run) => starts.push(run),
     onTerminal: resolveTerminal,
     mirrorOutput: () => {}
   });
@@ -768,16 +767,16 @@ test("native continuation results wake the supervisor only after the parent Turn
   const leader = createRole(task.id, "leader", [agent], agent.agentId, home, now);
   store.saveRole(task.id, worker);
   store.saveRole(task.id, leader);
-  const turn = createTurn(
+  const run = createRun(
     "turn-1",
     task.id,
     worker.name,
     "new",
-    turnInput("turn-1", task.id, worker.name, "Delegate and aggregate."),
+    runInput("turn-1", task.id, worker.name, "Delegate and aggregate."),
     now,
     { effective: resolveEffectiveLaunch({ role: worker, purpose: "execution" }) }
   );
-  store.saveActiveTurn(turn);
+  store.saveActiveRun(run);
   store.saveTaskRoleSessionSet(recordRoleAgentSession(createRoleSessionSet(
     { scope: "task", taskId: task.id, roleName: worker.name },
     agent.agentId,
@@ -788,18 +787,18 @@ test("native continuation results wake the supervisor only after the parent Turn
     nativeSessionId: "thread-1",
     policy: "fixed",
     status: "active",
-    effective: turn.effective
+    effective: run.effective
   }, now));
   const adapter = new FileSchedulerStoreAdapter(store);
   const fence = {
     taskId: task.id,
     roleName: worker.name,
-    turnId: turn.id,
+    runId: run.id,
     agentId: agent.agentId,
     driverId: "openai/codex",
     nativeSessionId: "thread-1",
     nativeTurnId: "provider-turn-1",
-    receiptId: `turn:${task.id}/${turn.id}`,
+    receiptId: `turn:${task.id}/${run.id}`,
     conversationId: "thread-1",
     continuationId: "child-1",
   };
@@ -840,12 +839,12 @@ test("native continuation results wake the supervisor only after the parent Turn
     roleName: leader.name
   }), null);
 
-  store.saveTurn(completeTurn(
-    turn,
+  store.saveRun(completeRun(
+    run,
     "Parent Turn finished.",
     new Date("2026-09-03T09:13:00.000Z")
   ));
-  store.clearActiveTurn(task.id, worker.name);
+  store.clearActiveRun(task.id, worker.name);
   assert.equal(adapter.observeRuntimeObservation(observation(
     "continuation.settled",
     {
@@ -877,21 +876,21 @@ test("runtime pre-start persists the empty Session binding before Provider disco
   const agent = createRoleAgentBinding({ id: "codex", adapterId: "codex" });
   const role = createRole(task.id, "leader", [agent], agent.agentId, "/tmp/yui-prestart", now);
   store.saveRole(task.id, role);
-  const run = createTurn(
+  const run = createRun(
     "turn-1",
     task.id,
     role.name,
     "new",
-    turnInput("turn-1", task.id, role.name, "Start Provider."),
+    runInput("turn-1", task.id, role.name, "Start Provider."),
     now,
     { effective: resolveEffectiveLaunch({ role, purpose: "execution" }) }
   );
-  store.saveActiveTurn(run);
+  store.saveActiveRun(run);
 
-  new FileSchedulerStoreAdapter(store).saveRoleTurnPrepared({
+  new FileSchedulerStoreAdapter(store).saveRoleRunPrepared({
     task,
     role,
-    turn: run,
+    run: run,
     session: null,
     now
   });
@@ -913,12 +912,12 @@ test("Turns record provider-visible input without delivery handshake state", () 
     "/tmp/yui-run-boundary-smoke",
     now
   );
-  const run = createTurn(
+  const run = createRun(
     "turn-1",
     "task-1",
     role.name,
     "new",
-    turnInput(
+    runInput(
       "turn-1",
       "task-1",
       role.name,
@@ -948,7 +947,7 @@ test("Turns record provider-visible input without delivery handshake state", () 
   assert.deepEqual(mailbox.recentDedupeKeys, []);
   assert.equal(Object.hasOwn(mailbox, "inputDelivery"), false);
   assert.throws(
-    () => validateTurn({ ...run, deliveredAt: now.toISOString() }),
+    () => validateRun({ ...run, deliveredAt: now.toISOString() }),
     /unknown field: deliveredAt/u
   );
   assert.throws(
@@ -956,10 +955,10 @@ test("Turns record provider-visible input without delivery handshake state", () 
     /unknown field: inFlight/u
   );
   const originalOutput = "not JSON: { pass? }\nNo required headings.";
-  const completed = completeTurn(run, originalOutput, new Date(now.getTime() + 1_000));
+  const completed = completeRun(run, originalOutput, new Date(now.getTime() + 1_000));
   assert.equal(completed.result.output, originalOutput);
   assert.throws(
-    () => validateTurn({
+    () => validateRun({
       ...completed,
       result: { ...completed.result, producer: { checks: [] } }
     }),
@@ -988,7 +987,7 @@ test("Turns record provider-visible input without delivery handshake state", () 
       status: "completed",
       endedAt: new Date(now.getTime() + 1_000).toISOString()
     }),
-    /requires its exact main Reviewer Turn/u
+    /requires its exact main Reviewer AgentRun/u
   );
 });
 
@@ -1003,19 +1002,19 @@ test("Task-scoped Turn listing includes Leader Turns without a WorkItem", (t) =>
   const binding = createRoleAgentBinding({ id: "codex", adapterId: "codex" });
   const role = createRole(task.id, "leader", [binding], binding.agentId, "/tmp/yui-turn-list", now);
   store.saveRole(task.id, role);
-  store.saveActiveTurn(createTurn(
+  store.saveActiveRun(createRun(
     "turn-1",
     task.id,
     role.name,
     "new",
-    turnInput("turn-1", task.id, role.name, "Inspect the Task."),
+    runInput("turn-1", task.id, role.name, "Inspect the Task."),
     now,
     { effective: resolveEffectiveLaunch({ role, purpose: "execution" }) }
   ));
 
-  const result = runTaskCommand(["turn", "list", task.id], store);
+  const result = runTaskCommand(["run", "list", task.id], store);
   assert.equal(result.kind, "output");
-  assert.match(result.output, /Turns: task-1/u);
+  assert.match(result.output, /AgentRuns: task-1/u);
   assert.match(result.output, /turn-1/u);
   assert.match(result.output, /task/u);
 });
@@ -1051,74 +1050,74 @@ test("Role dispatch settlement preserves merged work and Leader wakes", () => {
     getWorkMailbox: () => workerMailbox,
     saveWorkMailbox: (updated) => { workerMailbox = updated; }
   };
-  enqueueRoleTurnDispatch(workerStore, {
+  enqueueRoleRunDispatch(workerStore, {
     taskId: "task-1",
     roleName: "worker",
-    turnId: "turn-1",
+    runId: "turn-1",
     reason: "turn-dispatched",
     occurredAt: "2026-09-03T00:00:00.000Z"
   });
-  const acceptedToken = captureRoleTurnDispatch(workerMailbox, {
+  const acceptedToken = captureRoleRunDispatch(workerMailbox, {
     taskId: "task-1",
     roleName: "worker",
-    turnId: "turn-1"
+    runId: "turn-1"
   });
   workerMailbox = enqueueSignal(workerMailbox, {
     reason: "future-work",
-    refs: [{ type: "turn", taskId: "task-1", id: "turn-2" }],
+    refs: [{ type: "run", taskId: "task-1", id: "turn-2" }],
     occurredAt: "2026-09-03T00:00:01.000Z",
     dedupeKey: "future-work"
   });
-  assert.equal(settleRoleTurnDispatch(workerStore, {
+  assert.equal(settleRoleRunDispatch(workerStore, {
     taskId: "task-1",
     roleName: "worker",
-    turnId: "turn-1"
+    runId: "turn-1"
   }, acceptedToken), "settled");
   assert.equal(workerMailbox.pending.fromSequence, 2);
   assert.equal(workerMailbox.pending.requestCount, 1);
   assert.deepEqual(workerMailbox.pending.dedupeKeys, ["future-work"]);
-  assert.equal(settleRoleTurnDispatch(workerStore, {
+  assert.equal(settleRoleRunDispatch(workerStore, {
     taskId: "task-1",
     roleName: "worker",
-    turnId: "turn-2"
+    runId: "turn-2"
   }), "absent");
   assert.equal(workerMailbox.pending.requestCount, 1);
 
   let legacyMerged = enqueueSignal(createWorkMailbox(workerTarget), {
     reason: "legacy-turn-dispatched",
-    refs: [{ type: "turn", taskId: "task-1", id: "turn-9" }],
+    refs: [{ type: "run", taskId: "task-1", id: "turn-9" }],
     occurredAt: "2026-09-03T00:00:02.000Z"
   });
   legacyMerged = enqueueSignal(legacyMerged, {
     reason: "future-work",
-    refs: [{ type: "turn", taskId: "task-1", id: "turn-10" }],
+    refs: [{ type: "run", taskId: "task-1", id: "turn-10" }],
     occurredAt: "2026-09-03T00:00:03.000Z"
   });
   const legacyStore = {
     getWorkMailbox: () => legacyMerged,
     saveWorkMailbox: (updated) => { legacyMerged = updated; }
   };
-  assert.equal(settleRoleTurnDispatch(legacyStore, {
+  assert.equal(settleRoleRunDispatch(legacyStore, {
     taskId: "task-1",
     roleName: "worker",
-    turnId: "turn-9"
+    runId: "turn-9"
   }), "absent");
   assert.equal(legacyMerged.pending.requestCount, 2);
 
   const leaderTarget = { kind: "role", taskId: "task-1", roleName: "leader" };
   let leaderMailbox = enqueueSignal(createWorkMailbox(leaderTarget), {
     reason: "operator-input",
-    refs: [{ type: "turn", taskId: "task-1", id: "turn-1" }],
+    refs: [{ type: "run", taskId: "task-1", id: "turn-1" }],
     occurredAt: "2026-09-03T00:00:04.000Z"
   });
   const leaderStore = {
     getWorkMailbox: () => leaderMailbox,
     saveWorkMailbox: (updated) => { leaderMailbox = updated; }
   };
-  assert.equal(settleRoleTurnDispatch(leaderStore, {
+  assert.equal(settleRoleRunDispatch(leaderStore, {
     taskId: "task-1",
     roleName: "leader",
-    turnId: "turn-1"
+    runId: "turn-1"
   }), "absent");
   assert.equal(leaderMailbox.pending.requestCount, 1);
 });
@@ -1128,20 +1127,20 @@ test("Reviewer availability ignores Role delivery residue", () => {
   const mailbox = enqueueSignal(createWorkMailbox(target), {
     reason: "review-requested",
     refs: [
-      { type: "turn", taskId: "task-1", id: "turn-1" },
+      { type: "run", taskId: "task-1", id: "turn-1" },
       { type: "work-item", taskId: "task-1", id: "work-item-1" }
     ],
     occurredAt: "2026-09-02T00:00:00.000Z"
   });
   const availability = projectReviewerAvailability({
-    getActiveTurn: () => null,
+    getActiveRun: () => null,
     listReviewRounds: () => [],
     getWorkMailbox: (candidate) => candidate.kind === "role" ? mailbox : null
   }, "task-1", "reviewer");
 
   assert.equal(availability.kind, "available");
   assert.equal(projectReviewerAvailability({
-    getActiveTurn: () => null,
+    getActiveRun: () => null,
     listReviewRounds: () => [],
     getWorkMailbox: (candidate) => candidate.kind === "role" ? mailbox : null
   }, "task-1", "reviewer").kind, "available");
@@ -1151,7 +1150,7 @@ test("Reviewer availability ignores Role delivery residue", () => {
     startedAt: "2026-09-02T00:00:01.000Z"
   });
   assert.equal(projectReviewerAvailability({
-    getActiveTurn: () => null,
+    getActiveRun: () => null,
     listReviewRounds: () => [],
     getWorkMailbox: (candidate) => candidate.kind === "role" ? processing : null
   }, "task-1", "reviewer").kind, "available");
@@ -1161,11 +1160,11 @@ test("Reviewer availability ignores Role delivery residue", () => {
     roleName: "reviewer"
   })), {
     reason: "runtime-launch",
-    refs: [{ type: "turn", taskId: "task-1", id: "turn-2" }],
+    refs: [{ type: "run", taskId: "task-1", id: "turn-2" }],
     occurredAt: "2026-09-02T00:00:02.000Z"
   });
   const runtimeBusy = projectReviewerAvailability({
-    getActiveTurn: () => null,
+    getActiveRun: () => null,
     listReviewRounds: () => [],
     getWorkMailbox: (candidate) => candidate.kind === "role-runtime" ? runtime : mailbox
   }, "task-1", "reviewer");
@@ -1173,13 +1172,13 @@ test("Reviewer availability ignores Role delivery residue", () => {
   assert.equal(runtimeBusy.phase, "runtime-lifecycle");
 
   let storedMailbox = mailbox;
-  assert.equal(settleRoleTurnDispatch({
+  assert.equal(settleRoleRunDispatch({
     getWorkMailbox: () => storedMailbox,
     saveWorkMailbox: (updated) => { storedMailbox = updated; }
   }, {
     taskId: "task-1",
     roleName: "reviewer",
-    turnId: "turn-1"
+    runId: "turn-1"
   }), "settled");
   assert.equal(storedMailbox.pending, null);
 });
@@ -1207,7 +1206,7 @@ test("Yui and direct Turns share one Provider conversation", () => {
     settledAt: "2026-08-31T00:00:04.000Z"
   });
   binding = beginProviderTurn(binding, {
-    turnId: "turn-1",
+    runId: "turn-1",
     attemptId: "agent-input:task-1/turn-1:2-2",
     authorityEpoch: 1,
     submittedAt: "2026-08-31T00:00:06.000Z"
@@ -1216,7 +1215,7 @@ test("Yui and direct Turns share one Provider conversation", () => {
   assert.equal(binding.currentConversationEpoch, 1);
   assert.equal(binding.conversations[0].conversationId, "thread-1");
   assert.equal(Object.hasOwn(binding, "activations"), false);
-  assert.equal(binding.turn.turnId, "turn-1");
+  assert.equal(binding.run.runId, "turn-1");
 });
 
 test("a direct Provider Turn records visible input and output without workflow state", (t) => {
@@ -1298,11 +1297,11 @@ test("a direct Provider Turn records visible input and output without workflow s
     assert.equal(adapter.observeRuntimeObservation(event, completedAt), "applied");
   }
   assert.equal(
-    store.getTaskRoleSessionSet(task.id, role.name).providerBinding.turn.status,
+    store.getTaskRoleSessionSet(task.id, role.name).providerBinding.run.status,
     "accepted"
   );
-  const directTurn = store.getActiveTurn(task.id, role.name);
-  assert.equal(directTurn, null);
+  const directRun = store.getActiveRun(task.id, role.name);
+  assert.equal(directRun, null);
   const terminal = {
     taskId: task.id,
     roleName: role.name,
@@ -1319,22 +1318,22 @@ test("a direct Provider Turn records visible input and output without workflow s
     }
   };
 
-  assert.equal(adapter.classifyRuntimeTurnTerminal(terminal), "apply");
-  const observed = adapter.observeRuntimeTurnTerminal(terminal, completedAt);
+  assert.equal(adapter.classifyRuntimeRunTerminal(terminal), "apply");
+  const observed = adapter.observeRuntimeRunTerminal(terminal, completedAt);
   assert.equal(observed.duplicate, false);
-  assert.equal(observed.turn, undefined);
-  assert.equal(store.listTurns(task.id).length, 0);
+  assert.equal(observed.run, undefined);
+  assert.equal(store.listRuns(task.id).length, 0);
   assert.equal(store.getTask(task.id).status, "active");
-  assert.equal(store.getTaskRoleSessionSet(task.id, role.name).providerBinding.turn.status, "completed");
+  assert.equal(store.getTaskRoleSessionSet(task.id, role.name).providerBinding.run.status, "completed");
   assert.equal(store.getPendingWakeup(task.id), null);
 
   const continuationAt = new Date("2026-08-31T00:31:00.500Z");
   assert.equal(adapter.observeRuntimeObservation(observation("turn.accepted", 6, {
     fence: { nativeTurnId: "turn-goal-2", receiptId: "direct:turn-goal-2" }
   }), continuationAt), "applied");
-  const goalTurn = store.getActiveTurn(task.id, role.name);
-  assert.equal(goalTurn, null);
-  const continued = adapter.observeRuntimeTurnTerminal({
+  const goalRun = store.getActiveRun(task.id, role.name);
+  assert.equal(goalRun, null);
+  const continued = adapter.observeRuntimeRunTerminal({
     taskId: task.id,
     roleName: role.name,
     agentId: agent.agentId,
@@ -1348,15 +1347,15 @@ test("a direct Provider Turn records visible input and output without workflow s
       output: "Goal-directed continuation reply."
     }
   }, continuationAt);
-  assert.equal(continued.turn, undefined);
-  assert.equal(store.listTurns(task.id).length, 0);
+  assert.equal(continued.run, undefined);
+  assert.equal(store.listRuns(task.id).length, 0);
   assert.equal(store.getPendingWakeup(task.id), null);
 
   assert.equal(adapter.observeRuntimeObservation(observation("turn.accepted", 7, {
     fence: { nativeTurnId: "turn-missing-result-3", receiptId: "direct:turn-missing-result-3" }
   }), new Date("2026-08-31T00:31:01.000Z")), "applied");
-  const missingResultTurn = store.getActiveTurn(task.id, role.name);
-  assert.equal(missingResultTurn, null);
+  const missingResultRun = store.getActiveRun(task.id, role.name);
+  assert.equal(missingResultRun, null);
   const preciseDiagnostic = "Provider Agent result is 900000 bytes and exceeds the durable result limit.";
   assert.equal(adapter.observeRuntimeObservation(observation("turn.completed", 8, {
     fence: {
@@ -1365,7 +1364,7 @@ test("a direct Provider Turn records visible input and output without workflow s
     },
     payload: { resultTransportDiagnostic: preciseDiagnostic }
   }), new Date("2026-08-31T00:31:02.000Z")), "applied");
-  assert.equal(store.listTurns(task.id).length, 0);
+  assert.equal(store.listRuns(task.id).length, 0);
 
   assert.equal(adapter.observeRuntimeObservation(observation("goal.updated", 9, {
     payload: {
@@ -1400,21 +1399,21 @@ test("a wake names a completed Turn even when that Turn predates the delta curso
     createdAt
   );
   store.saveRole(task.id, worker);
-  const turn = completeTurn(createTurn(
+  const run = completeRun(createRun(
     "turn-1",
     task.id,
     worker.name,
     "new",
-    turnInput("turn-1", task.id, worker.name, "Produce the result."),
+    runInput("turn-1", task.id, worker.name, "Produce the result."),
     createdAt,
     { effective: resolveEffectiveLaunch({ role: worker, purpose: "execution" }) }
   ), "# Original result\n\nPreserve this text.", new Date("2026-09-04T01:01:00.000Z"));
-  store.saveTurn(turn);
+  store.saveRun(run);
   store.saveEvent(task.id, createTaskEvent(
     store.nextEventId(task.id),
     task.id,
-    "turn.completed",
-    { turnId: turn.id, role: worker.name },
+    "run.completed",
+    { runId: run.id, role: worker.name },
     eventAt
   ));
 
@@ -1425,26 +1424,26 @@ test("a wake names a completed Turn even when that Turn predates the delta curso
     fromCursor: cursor,
     now: eventAt
   });
-  assert.deepEqual(envelope.referencedTurnIds, [turn.id]);
-  assert.match(envelope.text, /Changed: 1 events, 0 messages, 1 Turns/u);
-  assert.match(envelope.text, /yui task turn show task-1\/turn-1/u);
+  assert.deepEqual(envelope.referencedRunIds, [run.id]);
+  assert.match(envelope.text, /Changed: 1 events, 0 messages, 1 AgentRuns/u);
+  assert.match(envelope.text, /yui task run show task-1\/turn-1/u);
 
-  const wideTurns = Array.from({ length: 6 }, (_, index) => ({
-    ...turn,
+  const wideRuns = Array.from({ length: 6 }, (_, index) => ({
+    ...run,
     id: `turn-${index + 2}`
   }));
-  const wideEvents = wideTurns.map((candidate, index) => createTaskEvent(
+  const wideEvents = wideRuns.map((candidate, index) => createTaskEvent(
     `event-${index + 10}`,
     task.id,
-    "turn.completed",
-    { turnId: candidate.id, role: worker.name },
+    "run.completed",
+    { runId: candidate.id, role: worker.name },
     new Date(eventAt.getTime() + index + 1)
   ));
   const wideEnvelope = buildTaskWakeEnvelope({
     getTask: () => task,
     listEvents: () => wideEvents,
     listMessages: () => [],
-    listTurns: () => wideTurns,
+    listRuns: () => wideRuns,
     listReviewRounds: () => []
   }, {
     taskId: task.id,
@@ -1456,12 +1455,12 @@ test("a wake names a completed Turn even when that Turn predates the delta curso
     fromCursor: cursor,
     now: eventAt
   });
-  assert.equal(wideEnvelope.referencedTurnIds.length, 6);
+  assert.equal(wideEnvelope.referencedRunIds.length, 6);
   assert.ok(wideEnvelope.totalBytes <= WAKE_ENVELOPE_HARD_BYTES);
   assert.equal(Buffer.byteLength(wideEnvelope.text, "utf8"), wideEnvelope.totalBytes);
 });
 
-test("Leader wakeups aggregate for one minute and force-steer after ten", async (t) => {
+test("Leader notifications settle their accepted mailbox batch without creating an AgentRun", async (t) => {
   const home = mkdtempSync(join(tmpdir(), "yui-leader-wake-window-smoke-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const store = new SqliteTaskStore(home);
@@ -1507,44 +1506,22 @@ test("Leader wakeups aggregate for one minute and force-steer after ten", async 
     conversationId: "thread-1",
     startedAt: firstEventAt.toISOString()
   });
-  provider = beginProviderTurn(provider, {
-    turnId: "turn-1",
-    attemptId: "turn-input:task-1/turn-1/1",
-    authorityEpoch: provider.authority.epoch,
-    submittedAt: firstEventAt.toISOString()
-  });
-  provider = acceptProviderTurn(provider, {
-    attemptId: "turn-input:task-1/turn-1/1",
-    nativeTurnId: "native-turn-1",
-    acceptedAt: new Date(firstEventAt.getTime() + 1_000).toISOString()
-  });
   sessions = bindTaskRoleProviderRuntime(sessions, provider, firstEventAt);
   store.saveTaskRoleSessionSet(sessions);
-  const active = createTurn(
-    "turn-1",
-    task.id,
-    leader.name,
-    "new",
-    turnInput("turn-1", task.id, leader.name, "Continue the original task."),
-    firstEventAt,
-    { workspace, effective }
-  );
-  store.saveActiveTurn(active);
   const adapter = new FileSchedulerStoreAdapter(store);
   adapter.enqueueLeaderWakeup(task.id, "worker-completed", firstEventAt);
 
-  const steers = [];
-  let enqueueDuringSteer = false;
+  const notifications = [];
   const delivery = {
-    steerOnce: async (request) => {
-      steers.push(request);
-      if (enqueueDuringSteer) {
-        adapter.enqueueLeaderWakeup(
-          task.id,
-          "event-arrived-during-steer",
-          new Date(firstEventAt.getTime() + LEADER_WAKE_FORCE_MS)
-        );
-      }
+    prepareRoleSession: async (request) => {
+      assert.equal(request.runId, undefined);
+      return { session: sessions.sessions[agent.agentId] };
+    },
+    waitUntilReady: async (prepared) => prepared,
+    sendOnce: async (request) => {
+      notifications.push(request);
+      adapter.enqueueLeaderWakeup(task.id, "later-external-message",
+        new Date(firstEventAt.getTime() + LEADER_WAKE_AGGREGATION_MS));
       return { status: "sent" };
     }
   };
@@ -1554,67 +1531,22 @@ test("Leader wakeups aggregate for one minute and force-steer after ten", async 
     new Date(firstEventAt.getTime() + LEADER_WAKE_AGGREGATION_MS - 1)
   );
   assert.equal(results[0].reason, "aggregating");
-  assert.equal(steers.length, 0);
+  assert.equal(notifications.length, 0);
 
-  enqueueDuringSteer = true;
   results = await processLeaderWakeups(
     adapter,
     delivery,
     new Date(firstEventAt.getTime() + LEADER_WAKE_AGGREGATION_MS)
   );
-  assert.equal(results[0].reason, "busy");
-  adapter.enqueueLeaderWakeup(
-    task.id,
-    "reviewer-completed",
-    new Date(firstEventAt.getTime() + 5 * 60_000)
-  );
-  assert.equal(store.getPendingWakeup(task.id).firstRequestedAt, firstEventAt.toISOString());
-
-  results = await processLeaderWakeups(
-    adapter,
-    delivery,
-    new Date(firstEventAt.getTime() + LEADER_WAKE_FORCE_MS)
-  );
-  assert.equal(results[0].status, "steered");
-  assert.equal(steers.length, 1);
-  assert.match(steers[0].text, /worker-completed, reviewer-completed/u);
-  assert.match(steers[0].text, /waited at least 10 minutes/u);
-  assert.match(steers[0].text, /continue the work you were doing/u);
-  const updated = store.getActiveTurn(task.id, leader.name);
-  assert.equal(updated.inputs.length, 2);
-  assert.equal(updated.inputs[1].input.source.type, "yui");
-  assert.equal(updated.inputs[1].input.source.channel, "leader-forced-wakeup");
-  assert.deepEqual(store.getPendingWakeup(task.id).reasons, ["event-arrived-during-steer"]);
+  assert.equal(results[0].status, "dispatched");
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0].text, /No separate final report is required/u);
+  assert.equal(store.listRuns(task.id).length, 0);
+  assert.equal(store.getActiveRun(task.id, leader.name), null);
+  assert.deepEqual(store.getPendingWakeup(task.id).reasons, ["later-external-message"]);
   assert.equal(store.getWorkMailbox({ kind: "role", taskId: task.id, roleName: "leader" }).processing, null);
-
-  const leaderTarget = { kind: "role", taskId: task.id, roleName: "leader" };
-  store.saveWorkMailbox(claimPending(store.getWorkMailbox(leaderTarget), {
-    batchId: "stale-steer-batch",
-    owner: "leader-steer:turn-retired",
-    startedAt: new Date(firstEventAt.getTime() + LEADER_WAKE_FORCE_MS).toISOString()
-  }));
-  assert.equal(adapter.listPendingWakeups().length, 1);
-  results = await processLeaderWakeups(
-    adapter,
-    delivery,
-    new Date(firstEventAt.getTime() + 21 * 60_000)
-  );
-  assert.equal(results[0].reason, "state-changed");
-  assert.equal(store.getWorkMailbox(leaderTarget).processing, null);
-  assert.deepEqual(store.getPendingWakeup(task.id).reasons, ["event-arrived-during-steer"]);
-
-  const throwingAdapter = new FileSchedulerStoreAdapter(store);
-  throwingAdapter.getTaskWakeEnvelope = () => {
-    throw new Error("wake envelope read failed");
-  };
-  results = await processLeaderWakeups(
-    throwingAdapter,
-    delivery,
-    new Date(firstEventAt.getTime() + 22 * 60_000)
-  );
-  assert.equal(results[0].status, "failed");
-  assert.match(results[0].error, /wake envelope read failed/u);
-  assert.equal(store.getWorkMailbox(leaderTarget).processing, null);
+  assert.equal(store.listTaskWakes(task.id)[0].status, "consumed");
+  assert.equal(store.listTaskWakes(task.id)[0].runId, undefined);
 });
 
 test("an active Task without a durable event remains quiet", async (t) => {
@@ -1661,7 +1593,7 @@ test("an active Task without a durable event remains quiet", async (t) => {
   );
 
   assert.equal(deliveryCalls, 0);
-  assert.deepEqual(store.listTurns(task.id), []);
+  assert.deepEqual(store.listRuns(task.id), []);
   assert.equal(store.getPendingWakeup(task.id), null);
   assert.equal(store.getWorkMailbox({ kind: "role", taskId: task.id, roleName: "leader" }), null);
 });
@@ -1714,7 +1646,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
     startedAt: startedAt.toISOString()
   });
   provider = beginProviderTurn(provider, {
-    turnId: "turn-old",
+    runId: "turn-old",
     attemptId: "turn:task-1/turn-old",
     authorityEpoch: provider.authority.epoch,
     submittedAt: startedAt.toISOString()
@@ -1734,32 +1666,32 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
   });
   sessions = bindTaskRoleProviderRuntime(sessions, provider, startedAt);
   store.saveTaskRoleSessionSet(sessions);
-  const turn = createTurn(
+  const run = createRun(
     "turn-1",
     task.id,
     role.name,
     "new",
-    turnInput("turn-1", task.id, role.name, "Continue from durable Task context."),
+    runInput("turn-1", task.id, role.name, "Continue from durable Task context."),
     nextAt,
     { effective }
   );
-  store.saveActiveTurn(turn);
+  store.saveActiveRun(run);
   const deliveryTarget = { kind: "role", taskId: task.id, roleName: role.name };
-  const dispatchMailbox = enqueueRoleTurnDispatch(store, {
+  const dispatchMailbox = enqueueRoleRunDispatch(store, {
     taskId: task.id,
     roleName: role.name,
-    turnId: turn.id,
+    runId: run.id,
     reason: "turn-dispatched",
     occurredAt: nextAt
   });
   assert.deepEqual(dispatchMailbox.pending.refs, [
-    { type: "turn", taskId: task.id, id: turn.id }
+    { type: "run", taskId: task.id, id: run.id }
   ]);
 
   let preparedCalls = 0;
   const prepared = {
     deliveryId: "delivery-1",
-    turnId: turn.id,
+    runId: run.id,
     taskId: task.id,
     roleName: role.name,
     agentId: agent.agentId,
@@ -1780,7 +1712,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
       preparedCalls += 1;
       request.beforeHostStart({
         owner: { scope: "task", taskId: task.id, roleName: role.name },
-        turnId: turn.id,
+        runId: run.id,
         agentId: agent.agentId,
         adapterId: agent.adapterId,
         effective,
@@ -1802,7 +1734,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
         fence: {
           taskId: task.id,
           roleName: role.name,
-          turnId: turn.id,
+          runId: run.id,
           agentId: agent.agentId,
           driverId: "openai/codex",
           nativeSessionId: "thread-new",
@@ -1817,7 +1749,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
     inspectRole: async () => "present"
   };
 
-  const [result] = await processActiveRoleTurnDeliveries(
+  const [result] = await processActiveRoleRunDeliveries(
     adapter,
     delivery,
     nextAt
@@ -1831,11 +1763,11 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
     replacedProvider.conversations.find(({ status }) => status === "current").conversationId,
     "thread-new"
   );
-  const workerTerminal = store.transaction((tx) => terminalizeExactTaskTurn(tx, {
+  const workerTerminal = store.transaction((tx) => terminalizeExactTaskRun(tx, {
     taskId: task.id,
     roleName: role.name,
     agentId: agent.agentId,
-    turnId: turn.id,
+    runId: run.id,
     outcome: {
       status: "failed",
       failureReason: "runtime-failed",
@@ -1863,16 +1795,16 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
   );
   store.saveRole(leaderTask.id, leader);
   const leaderEffective = resolveEffectiveLaunch({ role: leader, purpose: "execution" });
-  const leaderTurn = createTurn(
+  const leaderRun = createRun(
     "turn-1",
     leaderTask.id,
     leader.name,
     "new",
-    turnInput("turn-1", leaderTask.id, leader.name, "Continue from durable Task state."),
+    runInput("turn-1", leaderTask.id, leader.name, "Continue from durable Task state."),
     nextAt,
     { effective: leaderEffective }
   );
-  store.saveActiveTurn(leaderTurn);
+  store.saveActiveRun(leaderRun);
   assert.equal(store.getWorkMailbox({
     kind: "role",
     taskId: leaderTask.id,
@@ -1880,7 +1812,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
   }), null);
   const leaderPrepared = {
     deliveryId: "delivery-leader",
-    turnId: leaderTurn.id,
+    runId: leaderRun.id,
     taskId: leaderTask.id,
     roleName: leader.name,
     agentId: agent.agentId,
@@ -1903,7 +1835,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
         leaderDeliveryCalls += 1;
         request.beforeHostStart({
           owner: { scope: "task", taskId: leaderTask.id, roleName: leader.name },
-          turnId: leaderTurn.id,
+          runId: leaderRun.id,
           agentId: agent.agentId,
           adapterId: agent.adapterId,
           effective: leaderEffective,
@@ -1923,7 +1855,7 @@ test("active Role Turns deliver from durable state and Worker hints settle at ac
     { kind: "full" },
     false
   );
-  const leaderResult = leaderPass.activeTurnDeliveries.find((candidate) => (
+  const leaderResult = leaderPass.activeRunDeliveries.find((candidate) => (
     candidate.taskId === leaderTask.id && candidate.roleName === leader.name
   ));
   assert.notEqual(leaderResult, undefined);
@@ -2017,16 +1949,16 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     startedAt
   );
   store.saveRole(task.id, role);
-  const run = createTurn(
+  const run = createRun(
     "turn-1",
     task.id,
     role.name,
     "new",
-    turnInput("turn-1", task.id, role.name, "Finish this managed Turn."),
+    runInput("turn-1", task.id, role.name, "Finish this managed Turn."),
     startedAt,
     { effective: resolveEffectiveLaunch({ role, purpose: "execution" }) }
   );
-  store.saveActiveTurn(run);
+  store.saveActiveRun(run);
   let sessions = recordRoleAgentSession(createRoleSessionSet(
     { scope: "task", taskId: task.id, roleName: role.name },
     agent.agentId,
@@ -2046,7 +1978,7 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     startedAt: startedAt.toISOString()
   });
   provider = beginProviderTurn(provider, {
-    turnId: run.id,
+    runId: run.id,
     attemptId: "run:task-1/turn-1",
     authorityEpoch: provider.authority.epoch,
     submittedAt: "2026-08-31T01:00:01.000Z"
@@ -2067,7 +1999,7 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     nativeSessionId: "thread-1",
     nativeTurnId: "turn-1",
     attemptId: "run:task-1/turn-1",
-    turnId: run.id,
+    runId: run.id,
     providerStatus: "completed",
     outcome: {
       status: "completed",
@@ -2080,12 +2012,12 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     { now: () => new Date("2026-08-31T01:00:30.000Z"), environment: bareEnv }
   );
 
-  assert.deepEqual(adapter.observeRuntimeTurnTerminal(terminal, completedAt), {
+  assert.deepEqual(adapter.observeRuntimeRunTerminal(terminal, completedAt), {
     session: store.getTaskRoleSessionSet(task.id, role.name).sessions[agent.agentId],
     duplicate: false,
-    turn: store.getTurn(task.id, run.id)
+    run: store.getRun(task.id, run.id)
   });
-  const completed = store.getTurn(task.id, run.id);
+  const completed = store.getRun(task.id, run.id);
   assert.equal(completed.status, "completed");
   assert.equal(completed.result.output, "Managed execution finished.");
   assert.deepEqual(completed.result.provider, {
@@ -2096,13 +2028,13 @@ test("the exact Provider Turn terminal atomically completes its Turn once", asyn
     attemptId: "run:task-1/turn-1",
     status: "completed"
   });
-  assert.equal(store.getActiveTurn(task.id, role.name), null);
+  assert.equal(store.getActiveRun(task.id, role.name), null);
   assert.equal(store.getTaskRoleSessionSet(task.id, role.name).sessions[agent.agentId].status, "active");
 
-  const replay = adapter.observeRuntimeTurnTerminal(terminal, completedAt);
+  const replay = adapter.observeRuntimeRunTerminal(terminal, completedAt);
   assert.equal(replay.duplicate, true);
-  assert.equal(replay.turn.id, run.id);
-  assert.equal(store.listTurns(task.id).length, 1);
+  assert.equal(replay.run.id, run.id);
+  assert.equal(store.listRuns(task.id).length, 1);
 
   const leaderMailbox = store.getWorkMailbox({ kind: "role", taskId: task.id, roleName: role.name });
   assert.deepEqual(leaderMailbox.pending.reasons, ["user-message"]);
@@ -2141,18 +2073,18 @@ test("Task execution stop/start atomically controls scheduler admission", (t) =>
     now
   );
   store.saveWorkItem(task.id, item);
-  const activeTurn = createTurn(
+  const activeRun = createRun(
     "turn-1",
     task.id,
     leader.name,
     "new",
-    turnInput("turn-1", task.id, leader.name, "Continue the Task."),
+    runInput("turn-1", task.id, leader.name, "Continue the Task."),
     now,
     {
       effective: resolveEffectiveLaunch({ role: leader, purpose: "execution" })
     }
   );
-  store.saveActiveTurn(activeTurn);
+  store.saveActiveRun(activeRun);
 
   const stopped = stopTaskExecutionCommand(
     { taskId: task.id, reason: "Operator safety fence" },
@@ -2168,15 +2100,15 @@ test("Task execution stop/start atomically controls scheduler admission", (t) =>
     projectNextAction(store.readNextActionFacts(task.id)).recommendedCommand,
     `yui task execution start ${task.id}`
   );
-  assert.equal(store.getTurn(task.id, activeTurn.id).status, "failed");
-  assert.equal(store.getActiveTurn(task.id, leader.name), null);
+  assert.equal(store.getRun(task.id, activeRun.id).status, "failed");
+  assert.equal(store.getActiveRun(task.id, leader.name), null);
   assert.equal(store.getWorkItem(task.id, item.id).status, "open");
   assert.throws(() => runTaskCommand(
-    ["turn", "retry", `${task.id}/${activeTurn.id}`],
+    ["run", "retry", `${task.id}/${activeRun.id}`],
     store,
     { now: () => new Date("2026-08-30T00:01:30.000Z"), environment: bareEnv }
   ), /Task execution is stopped/);
-  assert.equal(store.getActiveTurn(task.id, leader.name), null);
+  assert.equal(store.getActiveRun(task.id, leader.name), null);
 
   const started = startTaskExecutionCommand(task.id, store, {
     now: () => new Date("2026-08-30T00:02:00.000Z"),
@@ -2194,24 +2126,24 @@ test("Task execution stop/start atomically controls scheduler admission", (t) =>
     "Edits retained."
   );
   store.saveWorkItem(task.id, completedItem);
-  const disposableRun = createTurn(
+  const disposableRun = createRun(
     "turn-2",
     task.id,
     leader.name,
     "new",
-    turnInput("turn-2", task.id, leader.name, "Finish the Task."),
+    runInput("turn-2", task.id, leader.name, "Finish the Task."),
     new Date("2026-08-30T00:03:00.000Z"),
-    { effective: activeTurn.effective }
+    { effective: activeRun.effective }
   );
-  store.saveActiveTurn(disposableRun);
+  store.saveActiveRun(disposableRun);
   runTaskCommand(
     ["complete", task.id, "--summary", "Delivery complete."],
     store,
     { now: () => new Date("2026-08-30T00:04:00.000Z"), environment: bareEnv }
   );
   assert.equal(store.getTask(task.id).status, "completed");
-  assert.equal(store.getTurn(task.id, disposableRun.id).status, "active");
-  assert.equal(store.getActiveTurn(task.id, leader.name).id, disposableRun.id);
+  assert.equal(store.getRun(task.id, disposableRun.id).status, "active");
+  assert.equal(store.getActiveRun(task.id, leader.name).id, disposableRun.id);
   assert.equal(store.getWorkItem(task.id, completedItem.id).status, "accepted");
 });
 
@@ -2241,17 +2173,17 @@ test("direct and replicated WorkItem execution converge through exact Lane retry
       startedAt
     ));
   }
-  const finish = (turn, status, now) => {
-    const result = store.transaction((tx) => terminalizeExactTaskTurn(tx, {
+  const finish = (run, status, now) => {
+    const result = store.transaction((tx) => terminalizeExactTaskRun(tx, {
       taskId: task.id,
-      roleName: turn.roleName,
-      agentId: turn.effective.agentId,
-      turnId: turn.id,
+      roleName: run.roleName,
+      agentId: run.effective.agentId,
+      runId: run.id,
       outcome: status === "completed"
-        ? { status, output: `${turn.roleName} completed.` }
+        ? { status, output: `${run.roleName} completed.` }
         : {
             status,
-            diagnostic: `${turn.roleName} failed.`,
+            diagnostic: `${run.roleName} failed.`,
             failureReason: "runtime-failed"
           }
     }, now));
@@ -2276,33 +2208,33 @@ test("direct and replicated WorkItem execution converge through exact Lane retry
       }
     }
   ), /matching Leader/u);
-  assert.deepEqual(store.listTurns(task.id), []);
+  assert.deepEqual(store.listRuns(task.id), []);
   runTaskCommand(
     ["work", "dispatch", `${task.id}/${directItem.id}`],
     store,
     { now: () => startedAt, environment: bareEnv }
   );
-  const directTurn = store.getActiveTurn(task.id, "leader");
-  assert.equal(directTurn.executionGroupId, undefined);
-  assert.equal(directTurn.sourceExecutionGroupId, undefined);
+  const directRun = store.getActiveRun(task.id, "leader");
+  assert.equal(directRun.executionGroupId, undefined);
+  assert.equal(directRun.sourceExecutionGroupId, undefined);
   assert.equal(
     store.getWorkMailbox({ kind: "role", taskId: task.id, roleName: "leader" }),
     null
   );
-  finish(directTurn, "failed", new Date("2026-09-02T00:00:30.000Z"));
+  finish(directRun, "failed", new Date("2026-09-02T00:00:30.000Z"));
   const directProjection = projectWorkItemExecution(
     store.getWorkItem(task.id, directItem.id),
-    store.listTurns(task.id)
+    store.listRuns(task.id)
   );
   assert.equal(directProjection.nextAction.kind, "retry-main");
-  assert.deepEqual(directProjection.nextAction.targetIds, [directTurn.id]);
+  assert.deepEqual(directProjection.nextAction.targetIds, [directRun.id]);
   runTaskCommand(
-    ["turn", "retry", `${task.id}/${directTurn.id}`],
+    ["run", "retry", `${task.id}/${directRun.id}`],
     store,
     { now: () => new Date("2026-09-02T00:00:45.000Z"), environment: bareEnv }
   );
-  const retriedDirect = store.getActiveTurn(task.id, "leader");
-  assert.notEqual(retriedDirect.id, directTurn.id);
+  const retriedDirect = store.getActiveRun(task.id, "leader");
+  assert.notEqual(retriedDirect.id, directRun.id);
   finish(retriedDirect, "completed", new Date("2026-09-02T00:01:00.000Z"));
 
   const groupedItem = createWorkItem("work-item-2", task.id, {
@@ -2310,7 +2242,7 @@ test("direct and replicated WorkItem execution converge through exact Lane retry
     assignee: "leader"
   }, startedAt);
   store.saveWorkItem(task.id, groupedItem);
-  const groupId = `execution-group-${store.peekNextTurnId(task.id)}`;
+  const groupId = `execution-group-${store.peekNextRunId(task.id)}`;
   const laneWorkspaces = new Map([1, 2].map((ordinal) => {
     const laneId = `${groupId}-lane-${ordinal}`;
     return [laneId, createManagedWorkspace({
@@ -2335,15 +2267,15 @@ test("direct and replicated WorkItem execution converge through exact Lane retry
     environment: bareEnv,
     executionLaneWorkspaces: laneWorkspaces
   });
-  const producerA = store.getActiveExecutionLaneTurn(task.id, groupId, `${groupId}-lane-1`);
-  const producerB = store.getActiveExecutionLaneTurn(task.id, groupId, `${groupId}-lane-2`);
+  const producerA = store.getActiveExecutionLaneRun(task.id, groupId, `${groupId}-lane-1`);
+  const producerB = store.getActiveExecutionLaneRun(task.id, groupId, `${groupId}-lane-2`);
   const producerAMailbox = store.getWorkMailbox({
     kind: "role",
     taskId: task.id,
     roleName: producerA.roleName
   });
   assert.deepEqual(producerAMailbox.pending.refs, [
-    { type: "turn", taskId: task.id, id: producerA.id }
+    { type: "run", taskId: task.id, id: producerA.id }
   ]);
   finish(producerA, "completed", new Date("2026-09-02T00:03:00.000Z"));
   assert.equal(store.getWorkMailbox({
@@ -2356,7 +2288,7 @@ test("direct and replicated WorkItem execution converge through exact Lane retry
     store,
     { now: () => new Date("2026-09-02T00:04:00.000Z"), environment: bareEnv }
   );
-  assert.equal(store.getTurn(task.id, producerB.id).status, "failed");
+  assert.equal(store.getRun(task.id, producerB.id).status, "failed");
   assert.equal(
     store.getWorkItem(task.id, groupedItem.id).executionGroups.at(-1).lanes[1].disposition,
     "open"
@@ -2372,13 +2304,13 @@ test("direct and replicated WorkItem execution converge through exact Lane retry
     executionGroups: execution.executionGroups
   });
   assert.equal(next.kind, "retry-execution-lane");
-  assert.equal(next.recommendedCommand, `yui task turn retry ${task.id}/${producerB.id}`);
+  assert.equal(next.recommendedCommand, `yui task run retry ${task.id}/${producerB.id}`);
   runTaskCommand(
-    ["turn", "retry", `${task.id}/${producerB.id}`],
+    ["run", "retry", `${task.id}/${producerB.id}`],
     store,
     { now: () => new Date("2026-09-02T00:05:00.000Z"), environment: bareEnv }
   );
-  const retriedProducer = store.getActiveExecutionLaneTurn(
+  const retriedProducer = store.getActiveExecutionLaneRun(
     task.id,
     groupId,
     `${groupId}-lane-2`
@@ -2386,18 +2318,18 @@ test("direct and replicated WorkItem execution converge through exact Lane retry
   assert.notEqual(retriedProducer.id, producerB.id);
   finish(retriedProducer, "completed", new Date("2026-09-02T00:06:00.000Z"));
 
-  assert.equal(store.getActiveTurn(task.id, "leader"), null);
+  assert.equal(store.getActiveRun(task.id, "leader"), null);
   runTaskCommand([
     "work", "synthesize", `${task.id}/${groupedItem.id}`,
-    "--source-turn", `${task.id}/${producerA.id}`
+    "--source-run", `${task.id}/${producerA.id}`
   ], store, {
     now: () => new Date("2026-09-02T00:06:30.000Z"), environment: bareEnv
   });
-  const mainTurn = store.getActiveTurn(task.id, "leader");
-  assert.equal(mainTurn.workItemId, groupedItem.id);
-  assert.equal(mainTurn.sourceExecutionGroupId, groupId);
-  assert.equal(mainTurn.executionGroupId, undefined);
-  assert.match(mainTurn.inputs[0].input.directive, new RegExp(groupId, "u"));
+  const mainRun = store.getActiveRun(task.id, "leader");
+  assert.equal(mainRun.workItemId, groupedItem.id);
+  assert.equal(mainRun.sourceExecutionGroupId, groupId);
+  assert.equal(mainRun.executionGroupId, undefined);
+  assert.match(mainRun.inputs[0].input.directive, new RegExp(groupId, "u"));
 });
 
 test("direct and replicated Review keep Producer results non-authoritative", (t) => {
@@ -2522,23 +2454,23 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
     }, now)];
   }));
   const finish = (
-    turn,
+    run,
     status,
     completedAt,
     output,
     producerLabel,
     includeGitSnapshot = true
   ) => {
-    const result = store.transaction((tx) => terminalizeExactTaskTurn(tx, {
+    const result = store.transaction((tx) => terminalizeExactTaskRun(tx, {
       taskId: task.id,
-      roleName: turn.roleName,
-      agentId: turn.effective.agentId,
-      turnId: turn.id,
+      roleName: run.roleName,
+      agentId: run.effective.agentId,
+      runId: run.id,
       outcome: status === "failed"
         ? { status, diagnostic: output, failureReason: "runtime-failed" }
         : { status, output },
       ...(status === "completed"
-        && turn.executionLaneId !== undefined
+        && run.executionLaneId !== undefined
         && includeGitSnapshot
         ? {
             systemEvidence: {
@@ -2555,7 +2487,7 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
         : {})
     }, completedAt));
     assert.equal(result.disposition, "applied");
-    return result.turn;
+    return result.run;
   };
 
   const revisionBeforeInvalidCandidateRequest = store.getRevision();
@@ -2581,18 +2513,18 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
   });
   const directRound = attachWorkspace(store.listReviewRounds(task.id).at(-1), "review-direct");
   assert.equal(directRound.executionGroup, undefined);
-  const directTurn = dispatchPreparedReviewRound(task.id, directRound.id, store, {
+  const directRun = dispatchPreparedReviewRound(task.id, directRound.id, store, {
     now: () => new Date("2026-09-02T00:11:00.000Z"),
     environment: bareEnv,
     actualTaskReviewCandidate: candidate
   });
-  assert.ok(directTurn);
-  assert.equal(directTurn.executionGroupId, undefined);
-  assert.equal(directTurn.executionLaneId, undefined);
-  assert.equal(directTurn.sourceExecutionGroupId, undefined);
+  assert.ok(directRun);
+  assert.equal(directRun.executionGroupId, undefined);
+  assert.equal(directRun.executionLaneId, undefined);
+  assert.equal(directRun.sourceExecutionGroupId, undefined);
   const directOutput = "# Direct review\n\nFree-form result; no JSON contract.";
   const completedDirect = finish(
-    directTurn,
+    directRun,
     "completed",
     new Date("2026-09-02T00:12:00.000Z"),
     directOutput,
@@ -2613,14 +2545,14 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
     store.listReviewRounds(task.id).at(-1),
     "review-direct-failed"
   );
-  const failedTurn = dispatchPreparedReviewRound(task.id, failedRound.id, store, {
+  const failedRun = dispatchPreparedReviewRound(task.id, failedRound.id, store, {
     now: () => new Date("2026-09-02T00:12:20.000Z"),
     environment: bareEnv,
     actualTaskReviewCandidate: candidate
   });
   const failureOutput = "Provider Agent Turn failed: reviewer process exited with status 17";
   const terminalFailure = finish(
-    failedTurn,
+    failedRun,
     "failed",
     new Date("2026-09-02T00:12:30.000Z"),
     failureOutput,
@@ -2661,15 +2593,15 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
     actualTaskReviewCandidate: candidate,
     executionLaneWorkspaces: laneWorkspaces
   });
-  const producerTurns = store.listTurns(task.id)
+  const producerRuns = store.listRuns(task.id)
     .filter(({ reviewRoundId, executionGroupId }) => (
       reviewRoundId === replicatedRound.id && executionGroupId === groupId
     ))
     .sort((left, right) => left.executionLaneId.localeCompare(right.executionLaneId));
-  assert.equal(producerTurns.length, 2);
-  assert.equal(store.getReviewRound(task.id, replicatedRound.id).reviewerTurnId, undefined);
-  assert.equal(new Set(producerTurns.map(({ workspace }) => workspace.root)).size, 2);
-  for (const producer of producerTurns) {
+  assert.equal(producerRuns.length, 2);
+  assert.equal(store.getReviewRound(task.id, replicatedRound.id).reviewerRunId, undefined);
+  assert.equal(new Set(producerRuns.map(({ workspace }) => workspace.root)).size, 2);
+  for (const producer of producerRuns) {
     assert.notEqual(producer.workspace.root, taskRoot);
     assert.notEqual(producer.workspace.root, replicatedRound.workspace.root);
     assert.equal(producer.effective.writeProjectIds[0], project.id);
@@ -2682,7 +2614,7 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
     "{\"shape\":\"optional\"}\nThis trailing prose intentionally makes it invalid JSON."
   ];
   const firstProducer = finish(
-    producerTurns[0],
+    producerRuns[0],
     "completed",
     new Date("2026-09-02T00:15:00.000Z"),
     producerOutputs[0],
@@ -2695,44 +2627,44 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
     headCommit: commit,
     branch: "producer-a"
   }]);
-  assert.equal(store.getReviewRound(task.id, replicatedRound.id).reviewerTurnId, undefined);
+  assert.equal(store.getReviewRound(task.id, replicatedRound.id).reviewerRunId, undefined);
   const secondProducer = finish(
-    producerTurns[1],
+    producerRuns[1],
     "completed",
     new Date("2026-09-02T00:16:00.000Z"),
     producerOutputs[1],
     "producer-b"
   );
   assert.equal(secondProducer.result.output, producerOutputs[1]);
-  assert.equal(store.getActiveTurn(task.id, "reviewer-main"), null);
+  assert.equal(store.getActiveRun(task.id, "reviewer-main"), null);
   runTaskCommand([
     "review", "synthesize", `${task.id}/${replicatedRound.id}`,
-    ...producerTurns.flatMap(({ id }) => ["--source-turn", `${task.id}/${id}`])
+    ...producerRuns.flatMap(({ id }) => ["--source-run", `${task.id}/${id}`])
   ], store, {
     now: () => new Date("2026-09-02T00:16:15.000Z"), environment: bareEnv
   });
-  const initialMain = store.getActiveTurn(task.id, "reviewer-main");
+  const initialMain = store.getActiveRun(task.id, "reviewer-main");
   assert.ok(initialMain);
   assert.equal(initialMain.sourceExecutionGroupId, groupId);
   assert.equal(initialMain.executionGroupId, undefined);
   assert.equal(initialMain.executionLaneId, undefined);
   const mainSnapshotRef = initialMain.inputs[0].input.contextSnapshotRef;
   const mainSnapshot = store.getContextSnapshot(task.id, mainSnapshotRef.id);
-  const sourceTurns = mainSnapshot.resources
-    .filter(({ ref }) => ref.store === "source-turn")
+  const sourceRuns = mainSnapshot.resources
+    .filter(({ ref }) => ref.store === "source-run")
     .map(({ value }) => value);
   assert.deepEqual(
-    sourceTurns.map(({ id }) => id),
-    producerTurns.map(({ id }) => id)
+    sourceRuns.map(({ id }) => id),
+    producerRuns.map(({ id }) => id)
   );
   assert.deepEqual(
-    sourceTurns.map(({ result }) => result.output),
+    sourceRuns.map(({ result }) => result.output),
     producerOutputs
   );
-  for (const sourceTurn of sourceTurns) {
-    assert.equal(Object.hasOwn(sourceTurn, "inputs"), false);
-    assert.equal(Object.hasOwn(sourceTurn, "workspace"), false);
-    assert.equal(Object.hasOwn(sourceTurn, "effective"), false);
+  for (const sourceRun of sourceRuns) {
+    assert.equal(Object.hasOwn(sourceRun, "inputs"), false);
+    assert.equal(Object.hasOwn(sourceRun, "workspace"), false);
+    assert.equal(Object.hasOwn(sourceRun, "effective"), false);
   }
 
   const authoritativeOutput = [
@@ -2750,7 +2682,7 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
   );
   const terminalRound = store.getReviewRound(task.id, replicatedRound.id);
   assert.equal(terminalRound.status, "completed");
-  assert.equal(terminalRound.reviewerTurnId, initialMain.id);
+  assert.equal(terminalRound.reviewerRunId, initialMain.id);
   assert.equal(completedMain.result.output, authoritativeOutput);
   assert.equal(Object.hasOwn(terminalRound, "report"), false);
   assert.equal(Object.hasOwn(terminalRound, "checks"), false);
@@ -2849,15 +2781,15 @@ test("direct and replicated Review keep Producer results non-authoritative", (t)
     environment: bareEnv,
     executionLaneWorkspaces: laneWorkspacesFor(round)
   });
-  const candidateProducerTurns = store.listTurns(task.id).filter(({ reviewRoundId }) => (
+  const candidateProducerRuns = store.listRuns(task.id).filter(({ reviewRoundId }) => (
     reviewRoundId === round.id
   ));
-  assert.equal(candidateProducerTurns.length, 2);
-  assert.equal(new Set(candidateProducerTurns.map(({ workspace }) => workspace.root)).size, 2);
-  assert.ok(candidateProducerTurns.every(({ executionGroupId }) => (
+  assert.equal(candidateProducerRuns.length, 2);
+  assert.equal(new Set(candidateProducerRuns.map(({ workspace }) => workspace.root)).size, 2);
+  assert.ok(candidateProducerRuns.every(({ executionGroupId }) => (
     executionGroupId === round.executionGroup.id
   )));
-  assert.equal(store.getReviewRound(task.id, round.id).reviewerTurnId, undefined);
+  assert.equal(store.getReviewRound(task.id, round.id).reviewerRunId, undefined);
 });
 
 test("Leader replicated Lanes derive from Task main without a WorkItem workspace", async (t) => {
@@ -2951,7 +2883,7 @@ test("Leader replicated Lanes derive from Task main without a WorkItem workspace
     store.getTaskWorkspace(task.id),
     item.writeProjectIds
   );
-  const groupId = `execution-group-${store.peekNextTurnId(task.id)}`;
+  const groupId = `execution-group-${store.peekNextRunId(task.id)}`;
   const laneWorkspaces = new Map();
   for (const ordinal of [1, 2]) {
     const laneId = `${groupId}-lane-${ordinal}`;
@@ -3014,7 +2946,7 @@ test("Core freezes writable Lane state without parsing the Producer output", (t)
     digest: "c".repeat(64)
   };
 
-  const prepare = (workItemId, groupId, firstTurnId, writeProjectIds = projectIds) => {
+  const prepare = (workItemId, groupId, firstRunId, writeProjectIds = projectIds) => {
     const item = updateWorkItemStatus(createWorkItem(workItemId, task.id, {
       title: workItemId,
       assignee: "producer-a",
@@ -3083,17 +3015,17 @@ test("Core freezes writable Lane state without parsing the Producer output", (t)
       roleName: role.name,
       effective: effective[index],
       workspace: { root: laneWorkspaces[index].root, writableProjectIds: writeProjectIds },
-      currentTurnId: index === 0 ? firstTurnId : `${firstTurnId}-sibling`
+      currentRunId: index === 0 ? firstRunId : `${firstRunId}-sibling`
     })), now);
     const groupedItem = attachWorkItemExecutionGroup(item, group, now);
     store.saveWorkItem(task.id, groupedItem);
     store.saveManagedWorkspace(laneWorkspaces[0]);
-    const turn = createTurn(
-      firstTurnId,
+    const run = createRun(
+      firstRunId,
       task.id,
       roles[0].name,
       "new",
-      turnInput(firstTurnId, task.id, roles[0].name, "Produce."),
+      runInput(firstRunId, task.id, roles[0].name, "Produce."),
       now,
       {
         workItemId,
@@ -3104,50 +3036,50 @@ test("Core freezes writable Lane state without parsing the Producer output", (t)
         effective: effective[0]
       }
     );
-    store.saveActiveExecutionLaneTurn(turn);
-    return { item: groupedItem, turn };
+    store.saveActiveExecutionLaneRun(run);
+    return { item: groupedItem, run };
   };
 
   const incomplete = prepare("work-item-1", "execution-group-1", "turn-1");
-  const rejected = store.transaction((tx) => terminalizeExactTaskTurn(tx, {
+  const rejected = store.transaction((tx) => terminalizeExactTaskRun(tx, {
     taskId: task.id,
-    roleName: incomplete.turn.roleName,
-    agentId: incomplete.turn.effective.agentId,
-    turnId: incomplete.turn.id,
+    roleName: incomplete.run.roleName,
+    agentId: incomplete.run.effective.agentId,
+    runId: incomplete.run.id,
     outcome: {
       status: "completed",
       output: "# Result\n\nThe Agent claims everything passed."
     }
   }, new Date("2026-09-02T00:21:00.000Z")));
-  assert.equal(rejected.turn.status, "failed");
-  assert.equal(rejected.turn.result.failureReason, "workspace-unavailable");
-  assert.equal(rejected.turn.result.output, "# Result\n\nThe Agent claims everything passed.");
-  assert.match(rejected.turn.result.diagnostic, /could not freeze/u);
+  assert.equal(rejected.run.status, "failed");
+  assert.equal(rejected.run.result.failureReason, "workspace-unavailable");
+  assert.equal(rejected.run.result.output, "# Result\n\nThe Agent claims everything passed.");
+  assert.match(rejected.run.result.diagnostic, /could not freeze/u);
 
   const gitless = prepare("work-item-3", "execution-group-3", "turn-3", []);
-  const rejectedGitless = store.transaction((tx) => terminalizeExactTaskTurn(tx, {
+  const rejectedGitless = store.transaction((tx) => terminalizeExactTaskRun(tx, {
     taskId: task.id,
-    roleName: gitless.turn.roleName,
-    agentId: gitless.turn.effective.agentId,
-    turnId: gitless.turn.id,
+    roleName: gitless.run.roleName,
+    agentId: gitless.run.effective.agentId,
+    runId: gitless.run.id,
     outcome: {
       status: "completed",
       output: "Unstructured result for a Lane with no writable Projects."
     }
   }, new Date("2026-09-02T00:21:30.000Z")));
-  assert.equal(rejectedGitless.turn.status, "completed");
+  assert.equal(rejectedGitless.run.status, "completed");
   assert.equal(
-    rejectedGitless.turn.result.output,
+    rejectedGitless.run.result.output,
     "Unstructured result for a Lane with no writable Projects."
   );
-  assert.equal(rejectedGitless.turn.result.systemEvidence, undefined);
+  assert.equal(rejectedGitless.run.result.systemEvidence, undefined);
 
   const complete = prepare("work-item-2", "execution-group-2", "turn-2");
-  const accepted = store.transaction((tx) => terminalizeExactTaskTurn(tx, {
+  const accepted = store.transaction((tx) => terminalizeExactTaskRun(tx, {
     taskId: task.id,
-    roleName: complete.turn.roleName,
-    agentId: complete.turn.effective.agentId,
-    turnId: complete.turn.id,
+    roleName: complete.run.roleName,
+    agentId: complete.run.effective.agentId,
+    runId: complete.run.id,
     outcome: {
       status: "completed",
       output: "{\"status\":\"pass\"}\nnot valid JSON after all"
@@ -3163,10 +3095,10 @@ test("Core freezes writable Lane state without parsing the Producer output", (t)
       }
     }
   }, new Date("2026-09-02T00:22:00.000Z")));
-  assert.equal(accepted.turn.status, "completed");
-  assert.equal(accepted.turn.result.output, "{\"status\":\"pass\"}\nnot valid JSON after all");
+  assert.equal(accepted.run.status, "completed");
+  assert.equal(accepted.run.result.output, "{\"status\":\"pass\"}\nnot valid JSON after all");
   assert.deepEqual(
-    accepted.turn.result.systemEvidence.workspaceSnapshot.projects.map(({ projectId }) => projectId),
+    accepted.run.result.systemEvidence.workspaceSnapshot.projects.map(({ projectId }) => projectId),
     projectIds
   );
 
@@ -3266,7 +3198,7 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
     const workItemId = "work-item-1";
     const groupId = "execution-group-1";
     const laneId = `${groupId}-lane-1`;
-    const turnId = "turn-1";
+    const runId = "turn-1";
     const repositoryPath = join(home, `lane-repository-${ordinal}`);
     mkdirSync(repositoryPath, { recursive: true });
     execFileSync("git", ["init", "--initial-branch", laneId], { cwd: repositoryPath });
@@ -3366,7 +3298,7 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
         roleName: role.name,
         effective,
         workspace: { root: workspace.root, writableProjectIds: [projectId] },
-        currentTurnId: turnId
+        currentRunId: runId
       }, {
         roleName: secondaryRole.name,
         effective: secondaryEffective,
@@ -3379,12 +3311,12 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
     ), startedAt);
     store.saveWorkItem(task.id, item);
     store.saveManagedWorkspace(workspace);
-    const turn = createTurn(
-      turnId,
+    const run = createRun(
+      runId,
       task.id,
       role.name,
       "new",
-      turnInput(turnId, task.id, role.name, "Produce a result."),
+      runInput(runId, task.id, role.name, "Produce a result."),
       startedAt,
       {
         workItemId,
@@ -3395,11 +3327,11 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
         effective
       }
     );
-    store.saveActiveExecutionLaneTurn(turn);
+    store.saveActiveExecutionLaneRun(run);
 
     const nativeSessionId = `session-${ordinal}`;
     const nativeTurnId = `native-turn-${ordinal}`;
-    const attemptId = `run:${task.id}/${turn.id}`;
+    const attemptId = `run:${task.id}/${run.id}`;
     let sessions = recordRoleAgentSession(createRoleSessionSet(
       { scope: "task", taskId: task.id, roleName: role.name },
       agent.agentId,
@@ -3419,7 +3351,7 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
       startedAt: startedAt.toISOString()
     });
     provider = beginProviderTurn(provider, {
-      turnId,
+      runId,
       attemptId,
       authorityEpoch: provider.authority.epoch,
       submittedAt: startedAt.toISOString()
@@ -3433,7 +3365,7 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
     store.saveTaskRoleSessionSet(sessions);
 
     const originalOutput = `\n# Agent result ${ordinal}\n\nThis text must survive.\n`;
-    const observed = new FileSchedulerStoreAdapter(store).observeRuntimeTurnTerminal({
+    const observed = new FileSchedulerStoreAdapter(store).observeRuntimeRunTerminal({
       taskId: task.id,
       roleName: role.name,
       agentId: agent.agentId,
@@ -3441,14 +3373,14 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
       nativeSessionId,
       nativeTurnId,
       attemptId,
-      turnId,
+      runId,
       providerStatus: "completed",
       outcome: { status: "completed", output: originalOutput }
     }, new Date(startedAt.getTime() + 2_000));
-    assert.equal(observed.turn.status, "failed");
-    assert.equal(observed.turn.result.output, originalOutput);
-    assert.equal(observed.turn.result.failureReason, expectedReason);
-    assert.ok(observed.turn.result.diagnostic.length > 0);
+    assert.equal(observed.run.status, "failed");
+    assert.equal(observed.run.result.output, originalOutput);
+    assert.equal(observed.run.result.failureReason, expectedReason);
+    assert.ok(observed.run.result.diagnostic.length > 0);
   };
 
   runCase(
@@ -3901,12 +3833,12 @@ test("fresh SQLite telemetry persists and aggregates by Turn", async (t) => {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const business = new SqliteTaskStore(home);
   business.close();
-  const telemetry = new SqliteTelemetryStore(home, { turnCap: 2 });
+  const telemetry = new SqliteTelemetryStore(home, { runCap: 2 });
   t.after(() => telemetry.close());
   telemetry.observe({
     taskId: "task-1",
     roleName: "worker",
-    turnId: "turn-1",
+    runId: "turn-1",
     progressId: "progress-1",
     sequence: 1,
     payload: { kind: "activity" },
@@ -3915,7 +3847,7 @@ test("fresh SQLite telemetry persists and aggregates by Turn", async (t) => {
   telemetry.observe({
     taskId: "task-1",
     roleName: "worker",
-    turnId: "turn-1",
+    runId: "turn-1",
     progressId: "progress-2",
     sequence: 2,
     payload: { kind: "activity" },
@@ -3928,7 +3860,7 @@ test("fresh SQLite telemetry persists and aggregates by Turn", async (t) => {
     ["progress-1", "progress-2"]
   );
   assert.equal(telemetry.aggregate("task-1", "turn-1").count, 2);
-  assert.equal(telemetry.listTurnAggregates("task-1")[0].turnId, "turn-1");
+  assert.equal(telemetry.listRunAggregates("task-1")[0].runId, "turn-1");
 });
 
 test("the built-in Agent Drivers are available through the shared registry", () => {
@@ -3957,7 +3889,7 @@ test("the built-in Agent Drivers are available through the shared registry", () 
       "Provider terminal event did not include an Agent result."
     );
 
-    const boundary = "x".repeat(MAX_TURN_RESULT_OUTPUT_BYTES);
+    const boundary = "x".repeat(MAX_RUN_RESULT_OUTPUT_BYTES);
     const oversized = drivers.requireByAdapterId(adapterId).runtime.mapHook({
       hookEventName: "Stop",
       payload: { last_assistant_message: `${boundary}x` },
@@ -4039,7 +3971,7 @@ test("Operator batches durable refs and defers the whole batch while busy", asyn
     refs: [{ type: "event", taskId: event.taskId, id: event.id }],
     occurredAt: now.toISOString()
   });
-  let startedTurns = 0;
+  let startedRuns = 0;
   const store = {
     getWorkMailbox: () => mailbox,
     claimWorkMailbox: ({ batchId, owner, now: claimedAt }) => {
@@ -4057,8 +3989,8 @@ test("Operator batches durable refs and defers the whole batch while busy", asyn
     getInputRequest: () => null,
     listEvents: () => [event],
     getOperatorDeliveryTarget: () => ({ roleName: "operator", adapterId: "codex" }),
-    markOperatorTurnStarted: () => {
-      startedTurns += 1;
+    markOperatorRunStarted: () => {
+      startedRuns += 1;
     }
   };
   const delivered = [];
@@ -4072,7 +4004,7 @@ test("Operator batches durable refs and defers the whole batch while busy", asyn
   assert.equal(delivered.length, 1);
   assert.match(delivered[0].text, /yui task event show task-1 event-1/u);
   assert.equal(result[0].status, "sent");
-  assert.equal(startedTurns, 1);
+  assert.equal(startedRuns, 1);
   assert.equal(mailbox.processing, null);
   assert.equal(mailbox.pending, null);
 
@@ -4085,7 +4017,7 @@ test("Operator batches durable refs and defers the whole batch while busy", asyn
     notifyOperatorInputOnce: async () => "not-ready"
   }, undefined, now);
   assert.equal(deferred[0].reason, "operator-not-ready");
-  assert.equal(startedTurns, 1);
+  assert.equal(startedRuns, 1);
   assert.equal(mailbox.processing, null);
   assert.notEqual(mailbox.pending, null);
 });
@@ -4094,14 +4026,14 @@ test("the async runtime observer preserves terminal classification", async () =>
   const calls = [];
   const observer = createAsyncRuntimeObserver(async (method) => {
     calls.push(method);
-    return method === "classifyGlobalRuntimeTurnTerminal" ? "apply" : "deferred";
+    return method === "classifyGlobalRuntimeRunTerminal" ? "apply" : "deferred";
   });
 
-  assert.equal(await observer.classifyRuntimeTurnTerminal({}), "deferred");
-  assert.equal(await observer.classifyGlobalRuntimeTurnTerminal({}), "apply");
+  assert.equal(await observer.classifyRuntimeRunTerminal({}), "deferred");
+  assert.equal(await observer.classifyGlobalRuntimeRunTerminal({}), "apply");
   assert.deepEqual(calls, [
-    "classifyRuntimeTurnTerminal",
-    "classifyGlobalRuntimeTurnTerminal"
+    "classifyRuntimeRunTerminal",
+    "classifyGlobalRuntimeRunTerminal"
   ]);
 });
 
@@ -4147,20 +4079,20 @@ test("native terminal ingress preserves valid output and durably fails missing o
     nativeSessionId: "session-1",
     providerStatus: "completed"
   };
-  const boundary = "x".repeat(MAX_TURN_RESULT_OUTPUT_BYTES);
-  const accepted = inbox.enqueueTurnTerminal({
+  const boundary = "x".repeat(MAX_RUN_RESULT_OUTPUT_BYTES);
+  const accepted = inbox.enqueueRunTerminal({
     ...base,
     nativeTurnId: "native-turn-1",
-    turnId: "turn-1",
+    runId: "turn-1",
     outcome: { status: "completed", output: boundary }
   }).event;
   assert.equal(accepted.outcome.status, "completed");
   assert.equal(accepted.outcome.output, boundary);
 
-  const oversized = inbox.enqueueTurnTerminal({
+  const oversized = inbox.enqueueRunTerminal({
     ...base,
     nativeTurnId: "native-turn-2",
-    turnId: "turn-2",
+    runId: "turn-2",
     outcome: {
       status: "completed",
       output: `${boundary}x`
@@ -4172,10 +4104,10 @@ test("native terminal ingress preserves valid output and durably fails missing o
   assert.match(oversized.outcome.diagnostic, /524289 bytes/u);
   assert.match(oversized.outcome.diagnostic, /524288-byte durable result limit/u);
 
-  const missing = inbox.enqueueTurnTerminal({
+  const missing = inbox.enqueueRunTerminal({
     ...base,
     nativeTurnId: "native-turn-3",
-    turnId: "turn-3",
+    runId: "turn-3",
     outcome: { status: "completed", output: null }
   }).event;
   assert.deepEqual(missing.outcome, {
@@ -4185,10 +4117,10 @@ test("native terminal ingress preserves valid output and durably fails missing o
   });
 
   const longDiagnostic = `failed:${"🔥".repeat(20_000)}`;
-  const failed = inbox.enqueueTurnTerminal({
+  const failed = inbox.enqueueRunTerminal({
     ...base,
     nativeTurnId: "native-turn-4",
-    turnId: "turn-4",
+    runId: "turn-4",
     providerStatus: "failed",
     outcome: {
       status: "failed",
@@ -4200,10 +4132,10 @@ test("native terminal ingress preserves valid output and durably fails missing o
   assert.ok(Buffer.byteLength(failed.outcome.diagnostic, "utf8") <= 16 * 1024);
   assert.ok(longDiagnostic.startsWith(failed.outcome.diagnostic));
 
-  assert.throws(() => inbox.enqueueTurnTerminal({
+  assert.throws(() => inbox.enqueueRunTerminal({
     ...base,
     nativeTurnId: "native-turn-5",
-    turnId: "turn-5",
+    runId: "turn-5",
     providerStatus: "failed",
     outcome: { status: "completed", output: "Contradictory success." }
   }), /Only a completed Provider Turn/u);
@@ -4248,25 +4180,25 @@ test("managed Session authority follows durable state, not a frozen environment"
     CODEX_THREAD_ID: "native-session-1"
   };
 
-  const betweenTurns = resolveManagedTaskCaller(store, environment);
-  assert.equal(betweenTurns.agentId, "codex");
-  assert.equal(betweenTurns.adapterId, "codex");
-  assert.equal(betweenTurns.currentTurnId, undefined);
+  const betweenRuns = resolveManagedTaskCaller(store, environment);
+  assert.equal(betweenRuns.agentId, "codex");
+  assert.equal(betweenRuns.adapterId, "codex");
+  assert.equal(betweenRuns.currentRunId, undefined);
   assert.equal(taskLocalActor(store, environment, task.id), "leader");
 
-  store.saveActiveTurn(createTurn(
+  store.saveActiveRun(createRun(
     "turn-7",
     task.id,
     role.name,
     "new",
-    turnInput("turn-7", task.id, role.name, "Do the work."),
+    runInput("turn-7", task.id, role.name, "Do the work."),
     now,
     { effective: resolveEffectiveLaunch({ role, purpose: "execution" }) }
   ));
 
   // The same unchanged environment now reports the current Turn, so a Turn
   // advance can never strand a live Session.
-  assert.equal(resolveManagedTaskCaller(store, environment).currentTurnId, "turn-7");
+  assert.equal(resolveManagedTaskCaller(store, environment).currentRunId, "turn-7");
   assert.equal(taskLocalActor(store, environment, task.id), "leader");
 
   // A caller naming another Session cannot act as this Role.
@@ -4295,28 +4227,28 @@ test("a Turn Context Pack reports which of the Task's records are in flight", (t
   store.saveRole(task.id, reviewer);
   const worker = createRole(task.id, "worker", [binding], binding.agentId, workspace, now);
   store.saveRole(task.id, worker);
-  store.saveActiveTurn(createTurn(
+  store.saveActiveRun(createRun(
     "turn-22",
     task.id,
     leader.name,
     "resume",
-    turnInput("turn-22", task.id, leader.name, "Finish the Task."),
+    runInput("turn-22", task.id, leader.name, "Finish the Task."),
     now,
     { effective: resolveEffectiveLaunch({ role: leader, purpose: "execution" }) }
   ));
 
   // Alone, the Leader sees only itself in flight.
-  const alone = buildTurnContextPack(store, task.id, "turn-22");
+  const alone = buildRunContextPack(store, task.id, "turn-22");
   assert.deepEqual(alone.liveTaskState.activeTaskReviews, []);
-  assert.deepEqual(alone.liveTaskState.activeTurns.map((entry) => entry.turnId), ["turn-22"]);
+  assert.deepEqual(alone.liveTaskState.activeRuns.map((entry) => entry.runId), ["turn-22"]);
 
   // Another Role starts executing while the Leader Turn runs on.
-  store.saveActiveTurn(createTurn(
+  store.saveActiveRun(createRun(
     "turn-21",
     task.id,
     worker.name,
     "new",
-    turnInput("turn-21", task.id, worker.name, "Land the remaining change."),
+    runInput("turn-21", task.id, worker.name, "Land the remaining change."),
     now,
     { effective: resolveEffectiveLaunch({ role: worker, purpose: "execution" }) }
   ));
@@ -4324,12 +4256,12 @@ test("a Turn Context Pack reports which of the Task's records are in flight", (t
   // The Pack already carried peer Turns as readable refs, but a ref is a
   // pointer with no status: it cannot tell the Leader that turn-21 is still
   // running. That is what this block adds.
-  const peer = buildTurnContextPack(store, task.id, "turn-22");
+  const peer = buildRunContextPack(store, task.id, "turn-22");
   assert.deepEqual(
-    peer.liveTaskState.activeTurns.map((entry) => entry.turnId).sort(),
+    peer.liveTaskState.activeRuns.map((entry) => entry.runId).sort(),
     ["turn-21", "turn-22"]
   );
-  assert.equal(peer.liveTaskState.activeTurns.length, 2);
+  assert.equal(peer.liveTaskState.activeRuns.length, 2);
 
   // A requested Task-final Review is the blocker a Leader must not miss before
   // it treats the Task as finishable.
@@ -4341,7 +4273,7 @@ test("a Turn Context Pack reports which of the Task's records are in flight", (t
     { schemaVersion: 1, projects: [{ projectId: "project-1", commit: "f".repeat(40) }] },
     now
   ));
-  const during = buildTurnContextPack(store, task.id, "turn-22");
+  const during = buildRunContextPack(store, task.id, "turn-22");
   assert.deepEqual(during.liveTaskState.activeTaskReviews, [{
     reviewRoundId: "review-round-6",
     reviewerRoleName: "final-reviewer",

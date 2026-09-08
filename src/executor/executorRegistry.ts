@@ -33,7 +33,7 @@ import type {
   TaskRuntimeIsolationDescriptor,
   TaskRuntimeLaunchPolicy
 } from "../runtime/taskRuntimeIsolation.js";
-import { formatTurnReceiptId } from "../task/taskRecordReference.js";
+import { formatRunReceiptId } from "../task/taskRecordReference.js";
 
 export type PlannedRoleSession = Readonly<{
   role: TmuxRole;
@@ -50,7 +50,7 @@ export interface RoleLaunchPlanner {
     adapterId: string;
     effective?: EffectiveLaunchSnapshot;
     mode: RoleSessionLaunchMode;
-    turnId?: string;
+    runId?: string;
     nativeSessionId?: string;
     runtimeIsolation?: TaskRuntimeIsolationDescriptor;
   }>): PlannedRoleSession;
@@ -124,7 +124,7 @@ type PreparedRuntime = Readonly<{
 /**
  * rr13/test: Test-only liveness seam. Integration tests that spawn a real
  * Controller subprocess cannot inject a fake TmuxDeliveryPort, and a saved
- * active Leader Turn would be reaped by the startup liveness pass without a
+ * active Leader AgentRun would be reaped by the startup liveness pass without a
  * real tmux role. When this env var is "1", every role reads "present"
  * without probing tmux. The Controller subprocess inherits it from the
  * test's CLI env. Never set in production.
@@ -155,7 +155,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     managedWorkspace?: ManagedWorkspace;
     runtimePolicy?: TaskRuntimeLaunchPolicy;
     mode: RoleSessionLaunchMode;
-    turnId?: string;
+    runId?: string;
     nativeSessionId?: string;
     beforeHostStart?: RuntimeLaunchPreStart;
   }>): Promise<PreparedRoleDelivery> {
@@ -170,7 +170,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
       agentId: input.agentId,
       adapterId: input.adapterId,
       mode: input.mode,
-      ...(input.turnId === undefined ? {} : { turnId: input.turnId })
+      ...(input.runId === undefined ? {} : { runId: input.runId })
     };
     const cached = this.#prepared.get(deliveryBase.deliveryId);
     if (cached !== undefined) return cached.delivery;
@@ -198,7 +198,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
         ...(input.runtimePolicy === undefined
           ? {}
           : { runtimePolicy: input.runtimePolicy }),
-        ...(input.turnId === undefined ? {} : { turnId: input.turnId })
+        ...(input.runId === undefined ? {} : { runId: input.runId })
       } as const;
       if (this.runtimePorts.launchCoordinator !== undefined) {
         binding = await this.runtimePorts.launchCoordinator.prepare(
@@ -269,26 +269,29 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     delivery: ReadyRoleDelivery;
     receiptId: string;
     text: string;
+    notificationId?: string;
   }>): Promise<RoleDeliveryReport> {
     const prepared = this.requirePrepared(input.delivery.prepared);
     if (prepared.binding !== undefined && this.runtimePorts !== undefined) {
-      const turnId = input.delivery.prepared.turnId;
-      if (turnId === undefined) {
-        throw new Error("Runtime prompt delivery requires a Task-local Turn id.");
+      const runId = input.delivery.prepared.runId;
+      if (runId === undefined && input.notificationId === undefined) {
+        throw new Error("Runtime prompt delivery requires a Task-local AgentRun id.");
       }
       const outcome = await this.runtimePorts.promptPush.tryPush({
         binding: prepared.binding,
         envelope: createPromptEnvelope({
           id: input.receiptId,
-          source: {
-            kind: input.receiptId === formatTurnReceiptId(
+          source: input.notificationId !== undefined ? {
+            kind: "notification", taskId: input.delivery.prepared.taskId, localId: input.notificationId
+          } : {
+            kind: input.receiptId === formatRunReceiptId(
               input.delivery.prepared.taskId,
-              turnId
-            ) || input.receiptId.startsWith(`${formatTurnReceiptId(
-              input.delivery.prepared.taskId, turnId
-            )}/attempt/`) ? "turn" : "turn-input",
+              runId!
+            ) || input.receiptId.startsWith(`${formatRunReceiptId(
+              input.delivery.prepared.taskId, runId!
+            )}/attempt/`) ? "run" : "turn-input",
             taskId: input.delivery.prepared.taskId,
-            localId: turnId
+            localId: runId!
           },
           text: input.text,
           createdAt: new Date()
@@ -333,7 +336,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
       providerAuthority: input.authority,
       envelope: createPromptEnvelope({
         id: input.receiptId,
-        source: { kind: "turn-input", taskId: input.taskId, localId: activeTurnId(input.receiptId) },
+        source: { kind: "turn-input", taskId: input.taskId, localId: activeRunId(input.receiptId) },
         text: input.text,
         createdAt: new Date()
       })
@@ -360,12 +363,12 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
   forgetPrepared(input: Readonly<{
     taskId: string;
     roleName: string;
-    turnId?: string;
+    runId?: string;
   }>): void {
     for (const [deliveryId, prepared] of this.#prepared) {
       const delivery = prepared.delivery;
       if (
-        delivery.taskId !== input.taskId || delivery.roleName !== input.roleName || (input.turnId !== undefined && delivery.turnId !== input.turnId)
+        delivery.taskId !== input.taskId || delivery.roleName !== input.roleName || (input.runId !== undefined && delivery.runId !== input.runId)
       ) {
         continue;
       }
@@ -417,7 +420,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     agentId: string;
     adapterId: string;
     nativeSessionId?: string;
-    turnId?: string;
+    runId?: string;
     progressAt?: string;
   }>[], resourceInputs?: readonly SchedulerRoleResourceInput[]): Promise<readonly Readonly<{
     taskId: string;
@@ -450,7 +453,7 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
     const requested = resourceInputs ?? inputs.map((input) => ({
       taskId: input.taskId,
       roleName: input.roleName,
-      ...(input.turnId === undefined ? {} : { turnId: input.turnId }),
+      ...(input.runId === undefined ? {} : { runId: input.runId }),
       agentId: input.agentId,
       adapterId: input.adapterId,
       ...(input.nativeSessionId === undefined
@@ -523,9 +526,9 @@ export class ExecutorRegistry implements TmuxDeliveryPort {
   }
 }
 
-function activeTurnId(receiptId: string): string {
+function activeRunId(receiptId: string): string {
   const match = /^turn-input:[^/]+\/([^/]+)\/[1-9]\d*$/u.exec(receiptId);
-  if (match === null) throw new Error("Turn steer receipt is invalid.");
+  if (match === null) throw new Error("AgentRun steer receipt is invalid.");
   return decodeURIComponent(match[1]!);
 }
 
@@ -548,7 +551,7 @@ export function agentProcessReadinessProbe(
   if (adapterId !== "codex" && adapterId !== "claude") {
     throw new Error(`No tmux readiness probe is registered for Agent adapter: ${adapterId}.`);
   }
-  // Turn state and receipt fences decide whether delivery is allowed. Provider
+  // AgentRun state and receipt fences decide whether delivery is allowed. Provider
   // terminal contents are display-only evidence and never lifecycle input.
   return livePane;
 }
@@ -564,7 +567,7 @@ function preparedDeliveryId(input: Readonly<{
     adapterId: string;
     effective: EffectiveLaunchSnapshot;
     mode: RoleSessionLaunchMode;
-  turnId?: string;
+  runId?: string;
   nativeSessionId?: string;
 }>): string {
   return createHash("sha256").update(JSON.stringify([
@@ -574,7 +577,7 @@ function preparedDeliveryId(input: Readonly<{
     input.adapterId,
     input.effective,
     input.mode,
-    input.turnId ?? null,
+    input.runId ?? null,
     input.nativeSessionId ?? null
   ])).digest("hex");
 }

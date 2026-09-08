@@ -26,6 +26,7 @@ import {
   REMOVE_RUNTIME_GENERATION_SQL,
   removeRuntimeGenerationRecords
 } from "./migrations/removeRuntimeGeneration.js";
+import { migrateAgentRunContract } from "./migrations/agentRunContract.js";
 
 import {
   CURRENT_STORAGE_VERSION,
@@ -33,8 +34,8 @@ import {
 } from "./storageVersions.js";
 
 /** Telemetry retention bounds (§4.4). Open question 3 in §11; defaults from the design. */
-export const TELEMETRY_KEEP_PER_TURN = 200;
-export const TELEMETRY_TURN_CAP = 50_000;
+export const TELEMETRY_KEEP_PER_RUN = 200;
+export const TELEMETRY_RUN_CAP = 50_000;
 
 /**
  * Version 1 migration: creates every table and index.
@@ -894,7 +895,8 @@ UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
     introducedIn: "0.15.9",
     // A new exact busy/not-accepted fact is distinct from terminal refusal.
     // Historical refusals are not heuristically reclassified from raw text.
-    sql: "SELECT 1; -- deferred Provider admission, optional Message resultRef, and Session-sourced management facts"
+    sql: "SELECT 1; -- AgentRun contract, notification admission and Session authority",
+    migrateData: migrateAgentRunContract
   }
 ]);
 

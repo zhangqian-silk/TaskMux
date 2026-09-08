@@ -33,6 +33,7 @@ export type SessionBootstrapManifest = Readonly<{
   contextProtocol: Readonly<{
     loadCommand: string;
     expandCommand?: string;
+    currentCommand?: string;
   }>;
   digest: string;
 }>;
@@ -213,8 +214,11 @@ export function materializeSessionBootstrap(input: Readonly<{
           )
         }
       : {
-          loadCommand: "\"$YUI_SESSION_CLI\" task turn context \"$YUI_TASK_ID/<turn-id>\" --json",
-          expandCommand: "\"$YUI_SESSION_CLI\" task turn context expand \"$YUI_TASK_ID/<turn-id>\" <ref-id> --store <store> --mode full --json"
+          loadCommand: "\"$YUI_SESSION_CLI\" task run context \"$YUI_TASK_ID/<run-id>\" --json",
+          expandCommand: "\"$YUI_SESSION_CLI\" task run context expand \"$YUI_TASK_ID/<run-id>\" <ref-id> --store <store> --mode full --json",
+          ...(input.role.name === "leader" ? {
+            currentCommand: "\"$YUI_SESSION_CLI\" task context \"$YUI_TASK_ID\" --json"
+          } : {})
         }
   };
   const manifest = Object.freeze({ ...body, digest: digest(body) });

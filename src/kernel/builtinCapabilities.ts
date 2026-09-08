@@ -315,6 +315,12 @@ export function createBuiltinCapabilities(
       throw new Error("Capability target is outside the authenticated Task.");
     }
     for (const permission of descriptor?.requiredPermissions ?? []) {
+      if (permission === "job:start" && caller.scope === "task") {
+        const sessions = store.getTaskRoleSessionSet(task.id, caller.role!);
+        if (sessions?.sessions[sessions.activeAgentId]?.effective.executionAuthority !== "delivery") {
+          throw new Error("Planning Sessions cannot start delivery Jobs.");
+        }
+      }
       if (permission === "task:read" || permission === "job:start") continue;
       if (permission === "task:manage" && (
         (caller.scope === "task" && caller.role === "leader")

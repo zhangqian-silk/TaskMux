@@ -92,7 +92,7 @@ export type WorkItemCandidate = Readonly<{
   summary: string;
   source:
     | Readonly<{ type: "direct" }>
-    | Readonly<{ type: "turn"; turnId: string }>;
+    | Readonly<{ type: "run"; runId: string }>;
   executionGroupId?: string;
   executionLaneId?: string;
   reviewPolicy?: ReviewConfig;
@@ -257,7 +257,7 @@ export function submitWorkItemCandidate(
     summary: string;
     source:
       | Readonly<{ type: "direct" }>
-      | Readonly<{ type: "turn"; turnId: string }>;
+      | Readonly<{ type: "run"; runId: string }>;
     reviewPolicy?: ReviewConfig;
     taskFinalReviewContract?: TaskFinalReviewContract;
     executionGroupId?: string;
@@ -681,7 +681,7 @@ export function workItemExecutionGroupById(
 }
 
 /**
- * True when a Turn failure belongs to the WorkItem's current unresolved Lane.
+ * True when a AgentRun failure belongs to the WorkItem's current unresolved Lane.
  * Such a failure is Lane-bounded: the WorkItem remains running so the Leader
  * can reuse completed siblings and retry only this failed attempt.
  */
@@ -696,8 +696,8 @@ export function workItemOwnsUnresolvedExecutionLane(
   const group = workItem.executionGroups.find(({ id }) => id === executionGroupId);
   return group !== undefined
     && !workItemExecutionGroupSettled(group)
-    && group.lanes.some(({ id, disposition, currentTurnId }) => (
-      id === executionLaneId && disposition === "open" && currentTurnId !== undefined
+    && group.lanes.some(({ id, disposition, currentRunId }) => (
+      id === executionLaneId && disposition === "open" && currentRunId !== undefined
     ));
 }
 
@@ -759,14 +759,14 @@ export function validateWorkItemCandidate(
   if (typeof candidate.source !== "object" || candidate.source === null) {
     throw new Error("Work Item candidate source is required.");
   }
-  if (candidate.source.type !== "direct" && candidate.source.type !== "turn") {
+  if (candidate.source.type !== "direct" && candidate.source.type !== "run") {
     throw new Error("Work Item candidate source is invalid.");
   }
-  if (candidate.source.type === "turn") {
+  if (candidate.source.type === "run") {
     validateTaskRecordReference({
       taskId: candidate.taskId,
-      localId: candidate.source.turnId
-    }, "turn");
+      localId: candidate.source.runId
+    }, "run");
   }
   if ((candidate.executionGroupId === undefined) !== (candidate.executionLaneId === undefined)) {
     throw new Error("Work Item candidate execution lineage is incomplete.");

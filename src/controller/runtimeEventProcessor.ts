@@ -4,8 +4,8 @@ import type {
   RuntimeDurableJobTerminalEvent,
   RuntimeLifecycleEvent,
   RuntimeObservationInboxEvent,
-  RuntimeTurnTerminalEvent,
-  RuntimeTurnTerminalOutcome
+  RuntimeRunTerminalEvent,
+  RuntimeRunTerminalOutcome
 } from "./runtimeEventInbox.js";
 import {
   isRuntimeTokenEvidence,
@@ -16,7 +16,7 @@ import { builtinAgentDriverRegistry } from "../runtime/builtinAgentDrivers.js";
 
 export type ProviderLifecycleObservation = "applied" | "obsolete" | "deferred";
 
-export type TaskRuntimeTurnTerminal = Readonly<{
+export type TaskRuntimeRunTerminal = Readonly<{
   eventId?: string;
   taskId: string;
   roleName: string;
@@ -24,13 +24,13 @@ export type TaskRuntimeTurnTerminal = Readonly<{
   adapterId: string;
   nativeSessionId: string;
   nativeTurnId: string;
-  turnId?: string;
+  runId?: string;
   input?: string;
   providerStatus: "completed" | "failed" | "cancelled";
-  outcome: RuntimeTurnTerminalOutcome;
+  outcome: RuntimeRunTerminalOutcome;
 }>;
 
-export type GlobalRuntimeTurnTerminal = Readonly<{
+export type GlobalRuntimeRunTerminal = Readonly<{
   eventId?: string;
   roleName: string;
   agentId: string;
@@ -39,10 +39,10 @@ export type GlobalRuntimeTurnTerminal = Readonly<{
   nativeTurnId: string;
   title?: string;
   providerStatus: "completed" | "failed" | "cancelled";
-  outcome: RuntimeTurnTerminalOutcome;
+  outcome: RuntimeRunTerminalOutcome;
 }>;
 
-export type RuntimeTurnEventObserver = Readonly<{
+export type RuntimeRunEventObserver = Readonly<{
   /** Batch multiple inbox folds into one authoritative aggregate commit. */
   withRuntimeEventTransaction?<T>(execute: () => T): T;
   getTask(taskId: string): SchedulerTask | null;
@@ -51,19 +51,19 @@ export type RuntimeTurnEventObserver = Readonly<{
     input: RuntimeObservation,
     now?: Date
   ): ProviderLifecycleObservation;
-  observeRuntimeTurnTerminal(
-    input: TaskRuntimeTurnTerminal,
+  observeRuntimeRunTerminal(
+    input: TaskRuntimeRunTerminal,
     now?: Date
   ): unknown;
-  observeGlobalRuntimeTurnTerminal(
-    input: GlobalRuntimeTurnTerminal,
+  observeGlobalRuntimeRunTerminal(
+    input: GlobalRuntimeRunTerminal,
     now?: Date
   ): unknown;
-  classifyRuntimeTurnTerminal?(
-    input: TaskRuntimeTurnTerminal
+  classifyRuntimeRunTerminal?(
+    input: TaskRuntimeRunTerminal
   ): "apply" | "deferred" | "obsolete";
-  classifyGlobalRuntimeTurnTerminal?(
-    input: GlobalRuntimeTurnTerminal
+  classifyGlobalRuntimeRunTerminal?(
+    input: GlobalRuntimeRunTerminal
   ): "apply" | "obsolete";
   observeObsoleteRuntimeEvent?(
     input: Readonly<{
@@ -72,7 +72,7 @@ export type RuntimeTurnEventObserver = Readonly<{
       taskId: string;
       roleName: string;
       agentId: string;
-      turnId?: string;
+      runId?: string;
       nativeSessionId: string;
       reason: string;
     }>,
@@ -155,7 +155,7 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
 
   constructor(
     private readonly inbox: RuntimeEventInboxPort,
-    private readonly observer: RuntimeTurnEventObserver,
+    private readonly observer: RuntimeRunEventObserver,
     private readonly options: FileRuntimeEventProcessorOptions = {}
   ) {
     this.drivers = options.drivers ?? builtinAgentDriverRegistry();
@@ -353,12 +353,12 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
   }
 
   private applyNativeTurnTerminal(
-    event: RuntimeTurnTerminalEvent,
+    event: RuntimeRunTerminalEvent,
     now: Date
   ): "applied" | "deferred" | "obsolete" {
     if (event.scope === "task") {
       const task = this.observer.getTask(event.taskId!);
-      const input: TaskRuntimeTurnTerminal = {
+      const input: TaskRuntimeRunTerminal = {
         eventId: event.id,
         taskId: event.taskId!,
         roleName: event.roleName,
@@ -366,7 +366,7 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
         adapterId: event.adapterId,
         nativeSessionId: event.nativeSessionId,
         nativeTurnId: event.nativeTurnId,
-        ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+        ...(event.runId === undefined ? {} : { runId: event.runId }),
         providerStatus: event.providerStatus,
         outcome: event.outcome
       };
@@ -379,20 +379,20 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
         );
         return "obsolete";
       }
-      const disposition = this.observer.classifyRuntimeTurnTerminal?.(input) ?? "apply";
+      const disposition = this.observer.classifyRuntimeRunTerminal?.(input) ?? "apply";
       if (disposition === "deferred") return disposition;
       if (disposition === "obsolete") {
         this.recordObsolete(event, "identity-mismatch-or-terminal", now);
         return disposition;
       }
-      const observed = this.observer.observeRuntimeTurnTerminal(input, now);
-      if (isObsoleteRuntimeTurnObservation(observed)) {
+      const observed = this.observer.observeRuntimeRunTerminal(input, now);
+      if (isObsoleteRuntimeRunObservation(observed)) {
         this.recordObsolete(event, "runtime-cleanup-or-stopped-session", now);
         return "obsolete";
       }
       return "applied";
     }
-    const input: GlobalRuntimeTurnTerminal = {
+    const input: GlobalRuntimeRunTerminal = {
       eventId: event.id,
       roleName: event.roleName,
       agentId: event.agentId,
@@ -403,8 +403,8 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
       providerStatus: event.providerStatus,
       outcome: event.outcome
     };
-    if (this.observer.classifyGlobalRuntimeTurnTerminal?.(input) !== "obsolete") {
-      this.observer.observeGlobalRuntimeTurnTerminal(input, now);
+    if (this.observer.classifyGlobalRuntimeRunTerminal?.(input) !== "obsolete") {
+      this.observer.observeGlobalRuntimeRunTerminal(input, now);
       return "applied";
     }
     return "obsolete";
@@ -421,7 +421,7 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
         taskId: event.taskId,
         roleName: fence.roleName,
         agentId: fence.agentId,
-        ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
+        ...(fence.runId === undefined ? {} : { runId: fence.runId }),
         nativeSessionId: fence.nativeSessionId,
         reason
       }, now);
@@ -436,7 +436,7 @@ export class FileRuntimeEventProcessor implements RuntimeEventProcessorPort {
       taskId: event.taskId,
       roleName: event.roleName,
       agentId: event.agentId,
-      ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+      ...(event.runId === undefined ? {} : { runId: event.runId }),
       nativeSessionId: event.nativeSessionId,
       reason
     }, now);
@@ -580,7 +580,7 @@ function progressStreamKey(event: RuntimeObservationInboxEvent): string {
     fence.agentId,
     fence.driverId,
     fence.nativeSessionId ?? null,
-    fence.turnId ?? null,
+    fence.runId ?? null,
     payload.activity,
     isRuntimeTokenEvidence(event.observation) ? "usage" : "signal"
   ]);
@@ -620,7 +620,7 @@ function positiveInteger(value: number | undefined, fallback: number): number {
   return resolved;
 }
 
-function isObsoleteRuntimeTurnObservation(value: unknown): boolean {
+function isObsoleteRuntimeRunObservation(value: unknown): boolean {
   return typeof value === "object"
     && value !== null
     && (value as { disposition?: unknown }).disposition === "obsolete";
@@ -719,25 +719,25 @@ function nonEmptyString(value: unknown): string | undefined {
  * `FileSchedulerStoreAdapter` folds run off the main event loop). The main
  * thread only awaits; it never touches the db.
  */
-export type AsyncRuntimeTurnEventObserver = Readonly<{
+export type AsyncRuntimeRunEventObserver = Readonly<{
   getTask(taskId: string): Promise<SchedulerTask | null>;
   observeRuntimeObservation?(
     input: RuntimeObservation,
     now?: Date
   ): Promise<ProviderLifecycleObservation>;
-  observeRuntimeTurnTerminal(
-    input: TaskRuntimeTurnTerminal,
+  observeRuntimeRunTerminal(
+    input: TaskRuntimeRunTerminal,
     now?: Date
   ): Promise<unknown>;
-  observeGlobalRuntimeTurnTerminal(
-    input: GlobalRuntimeTurnTerminal,
+  observeGlobalRuntimeRunTerminal(
+    input: GlobalRuntimeRunTerminal,
     now?: Date
   ): Promise<unknown>;
-  classifyRuntimeTurnTerminal?(
-    input: TaskRuntimeTurnTerminal
+  classifyRuntimeRunTerminal?(
+    input: TaskRuntimeRunTerminal
   ): Promise<"apply" | "deferred" | "obsolete">;
-  classifyGlobalRuntimeTurnTerminal?(
-    input: GlobalRuntimeTurnTerminal
+  classifyGlobalRuntimeRunTerminal?(
+    input: GlobalRuntimeRunTerminal
   ): Promise<"apply" | "obsolete">;
   observeObsoleteRuntimeEvent?(
     input: Readonly<{
@@ -746,7 +746,7 @@ export type AsyncRuntimeTurnEventObserver = Readonly<{
       taskId: string;
       roleName: string;
       agentId: string;
-      turnId?: string;
+      runId?: string;
       nativeSessionId: string;
       reason: string;
     }>,
@@ -763,7 +763,7 @@ export type AsyncObserverInvoker = (method: string, args: unknown[]) => Promise<
  * logic (read-then-write transactions) runs in the worker, off the main event
  * loop; the main thread only awaits the result.
  */
-export function createAsyncRuntimeObserver(invoke: AsyncObserverInvoker): AsyncRuntimeTurnEventObserver {
+export function createAsyncRuntimeObserver(invoke: AsyncObserverInvoker): AsyncRuntimeRunEventObserver {
   const call = (method: string, args: unknown[]) => invoke(method, args);
   const withNow = (method: string, input: unknown, now?: Date) =>
     now === undefined ? call(method, [input]) : call(method, [input, now]);
@@ -771,13 +771,13 @@ export function createAsyncRuntimeObserver(invoke: AsyncObserverInvoker): AsyncR
     getTask: (taskId) => call("getTask", [taskId]) as Promise<SchedulerTask | null>,
     observeRuntimeObservation: (input, now) =>
       withNow("observeRuntimeObservation", input, now) as Promise<ProviderLifecycleObservation>,
-    observeRuntimeTurnTerminal: (input, now) => withNow("observeRuntimeTurnTerminal", input, now),
-    observeGlobalRuntimeTurnTerminal: (input, now) => withNow("observeGlobalRuntimeTurnTerminal", input, now),
-    classifyRuntimeTurnTerminal: (input) => (
-      call("classifyRuntimeTurnTerminal", [input]) as Promise<"apply" | "deferred" | "obsolete">
+    observeRuntimeRunTerminal: (input, now) => withNow("observeRuntimeRunTerminal", input, now),
+    observeGlobalRuntimeRunTerminal: (input, now) => withNow("observeGlobalRuntimeRunTerminal", input, now),
+    classifyRuntimeRunTerminal: (input) => (
+      call("classifyRuntimeRunTerminal", [input]) as Promise<"apply" | "deferred" | "obsolete">
     ),
-    classifyGlobalRuntimeTurnTerminal: (input) => (
-      call("classifyGlobalRuntimeTurnTerminal", [input]) as Promise<"apply" | "obsolete">
+    classifyGlobalRuntimeRunTerminal: (input) => (
+      call("classifyGlobalRuntimeRunTerminal", [input]) as Promise<"apply" | "obsolete">
     ),
     observeObsoleteRuntimeEvent: (input, now) => withNow("observeObsoleteRuntimeEvent", input, now)
   };
@@ -795,7 +795,7 @@ export class AsyncRuntimeEventProcessor {
 
   constructor(
     private readonly inbox: RuntimeEventInboxPort,
-    private readonly observer: AsyncRuntimeTurnEventObserver,
+    private readonly observer: AsyncRuntimeRunEventObserver,
     private readonly options: FileRuntimeEventProcessorOptions = {}
   ) {
     this.drivers = options.drivers ?? builtinAgentDriverRegistry();
@@ -897,12 +897,12 @@ export class AsyncRuntimeEventProcessor {
   }
 
   private async applyNativeTurnTerminal(
-    event: RuntimeTurnTerminalEvent,
+    event: RuntimeRunTerminalEvent,
     now: Date
   ): Promise<"applied" | "deferred" | "obsolete"> {
     if (event.scope === "task") {
       const task = await this.observer.getTask(event.taskId!);
-      const input: TaskRuntimeTurnTerminal = {
+      const input: TaskRuntimeRunTerminal = {
         eventId: event.id,
         taskId: event.taskId!,
         roleName: event.roleName,
@@ -910,7 +910,7 @@ export class AsyncRuntimeEventProcessor {
         adapterId: event.adapterId,
         nativeSessionId: event.nativeSessionId,
         nativeTurnId: event.nativeTurnId,
-        ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+        ...(event.runId === undefined ? {} : { runId: event.runId }),
         providerStatus: event.providerStatus,
         outcome: event.outcome
       };
@@ -923,20 +923,20 @@ export class AsyncRuntimeEventProcessor {
         );
         return "obsolete";
       }
-      const disposition = (await this.observer.classifyRuntimeTurnTerminal?.(input)) ?? "apply";
+      const disposition = (await this.observer.classifyRuntimeRunTerminal?.(input)) ?? "apply";
       if (disposition === "deferred") return disposition;
       if (disposition === "obsolete") {
         await this.recordObsolete(event, "identity-mismatch-or-terminal", now);
         return disposition;
       }
-      const observed = await this.observer.observeRuntimeTurnTerminal(input, now);
-      if (isObsoleteRuntimeTurnObservation(observed)) {
+      const observed = await this.observer.observeRuntimeRunTerminal(input, now);
+      if (isObsoleteRuntimeRunObservation(observed)) {
         await this.recordObsolete(event, "runtime-cleanup-or-stopped-session", now);
         return "obsolete";
       }
       return "applied";
     }
-    const input: GlobalRuntimeTurnTerminal = {
+    const input: GlobalRuntimeRunTerminal = {
       eventId: event.id,
       roleName: event.roleName,
       agentId: event.agentId,
@@ -947,8 +947,8 @@ export class AsyncRuntimeEventProcessor {
       providerStatus: event.providerStatus,
       outcome: event.outcome
     };
-    if ((await this.observer.classifyGlobalRuntimeTurnTerminal?.(input)) !== "obsolete") {
-      await this.observer.observeGlobalRuntimeTurnTerminal(input, now);
+    if ((await this.observer.classifyGlobalRuntimeRunTerminal?.(input)) !== "obsolete") {
+      await this.observer.observeGlobalRuntimeRunTerminal(input, now);
       return "applied";
     }
     return "obsolete";
@@ -965,7 +965,7 @@ export class AsyncRuntimeEventProcessor {
         taskId: event.taskId,
         roleName: fence.roleName,
         agentId: fence.agentId,
-        ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
+        ...(fence.runId === undefined ? {} : { runId: fence.runId }),
         nativeSessionId: fence.nativeSessionId,
         reason
       }, now);
@@ -977,7 +977,7 @@ export class AsyncRuntimeEventProcessor {
       taskId: event.taskId,
       roleName: event.roleName,
       agentId: event.agentId,
-      ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+      ...(event.runId === undefined ? {} : { runId: event.runId }),
       nativeSessionId: event.nativeSessionId,
       reason
     }, now);

@@ -87,7 +87,7 @@ export interface SessionRecord {
   readonly nativeSessionId?: Id;
   readonly implementation: ImplementationRef;
   readonly statefulDependencies: readonly ImplementationRef[];
-  readonly effective: RoleConfiguration;
+  readonly effective: RoleConfiguration & Readonly<{ executionAuthority: 'planning' | 'delivery' }>;
   readonly environmentRef?: Id;
 }
 export interface Assignment {
@@ -96,7 +96,7 @@ export interface Assignment {
   readonly contextRefs: readonly RecordRef[];
   readonly permittedResourceRefs: readonly Id[];
 }
-export interface TurnRecord {
+export interface AgentRunRecord {
   readonly id: Id;
   readonly taskId?: Id;
   readonly roleId: Id;
@@ -105,22 +105,27 @@ export interface TurnRecord {
   readonly attemptId: Id;
   readonly nativeTurnId?: Id;
   readonly source: 'yui' | 'user' | 'provider';
-  readonly purpose: 'planning' | 'delivery' | 'review' | 'dialogue';
+  readonly purpose: 'execution' | 'review'; // planning/delivery authority belongs to the Session snapshot
   readonly inputRef: Id;
   readonly assignment?: Assignment;
   readonly effectiveConfigRef: Id;
-  readonly state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-  readonly resultRef?: Id; // original output is stored once
-  readonly errorRef?: Id;
+  readonly state: 'active' | 'completed' | 'failed'; // delivery/activity is a separate observation
+  readonly result?: AgentRunResult;
+}
+export interface AgentRunResult {
+  readonly output?: string;
+  readonly diagnostic?: string;
+  readonly completedAt: Time;
+  readonly provider?: Readonly<{ nativeTurnId?: Id; attemptId?: Id; status: 'completed' | 'failed' | 'cancelled' }>;
 }
 export interface ExecutionGroup {
   readonly id: Id;
   readonly assignment: Assignment;
   readonly attempts: readonly Readonly<{
-    replica: number; attempt: number; turnId: Id;
+    replica: number; attempt: number; runId: Id;
   }>[];
-  readonly selectedResultTurns: readonly Id[];
-  readonly synthesisTurnId?: Id;
+  readonly selectedResultRuns: readonly Id[];
+  readonly synthesisRunId?: Id;
 }
 export type ArtifactRef =
   | Readonly<{ kind: 'content'; id: Id; digest: string; locator: string }>
@@ -134,7 +139,7 @@ export interface Candidate {
   readonly taskId: Id;
   readonly workItemId?: Id;
   readonly source:
-    | Readonly<{ kind: 'turn'; turnId: Id }>
+    | Readonly<{ kind: 'run'; runId: Id }>
     | Readonly<{ kind: 'import'; actorId: Id; note: string }>;
   readonly summary?: string;
   readonly artifacts: readonly ArtifactRef[];
@@ -144,8 +149,8 @@ export interface Review {
   readonly id: Id;
   readonly taskId: Id;
   readonly candidateId: Id;
-  readonly reviewerTurnId: Id;
-  // Result text belongs to the referenced Turn, not another verdict authority.
+  readonly reviewerRunId: Id;
+  // Result text belongs to the referenced AgentRun, not another verdict authority.
 }
 export interface Acceptance {
   readonly taskId: Id;
@@ -163,6 +168,7 @@ export interface Message {
   readonly from: Actor;
   readonly to: Readonly<{ kind: 'operator' }> | Readonly<{ kind: 'role'; roleId: Id }>;
   readonly body: string;
+  readonly resultRef?: Readonly<{ type: 'agent-run-result'; runId: Id }>;
   readonly relatedRefs: readonly Id[];
   readonly createdAt: Time;
 }
@@ -176,7 +182,7 @@ export interface DeliveryReceipt {
   readonly messageIds: readonly Id[];
   readonly attemptId: Id;
   readonly state: 'pending' | 'accepted' | 'unknown';
-  readonly acceptedTurnId?: Id;
+  readonly acceptedRunId?: Id;
 }
 export interface ContextCursor {
   readonly taskId: Id;
@@ -295,7 +301,7 @@ export interface PreparedEnvironment {
 export interface ActivationRequest {
   readonly taskId: Id;
   readonly requestId: Id;
-  readonly timing: 'now' | Readonly<{ afterPlanningTurnId: Id }>;
+  readonly timing: 'now' | Readonly<{ afterPlanningRunId: Id }>;
 }
 export interface PluginManifest {
   readonly id: Id;

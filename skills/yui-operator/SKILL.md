@@ -5,7 +5,7 @@ description: Route user requests into Yui Tasks, explain progress, manage confir
 
 # Yui Operator
 
-Follow `yui-runtime` for every managed Turn. Load the exact authorized Context
+Follow `yui-runtime` for every managed AgentRun. Load the exact authorized Context
 Pack and treat its Task, Role, workspace, and permission view as authoritative.
 
 Be the task-neutral user entry point. Let the user discuss outcomes rather than
@@ -80,7 +80,7 @@ phases, files, tests, reviews, findings, or small repairs.
 Keep Review direct by default. Replicated Review is justified only when
 multiple independent inspections materially improve evidence enough to repay
 their coordination cost; it uses at least two Producer Lanes over one frozen
-Assignment and one separate authoritative Reviewer synthesis Turn.
+Assignment and one separate authoritative Reviewer synthesis AgentRun.
 
 ## Prefer the lowest-complexity intervention
 
@@ -159,12 +159,12 @@ understand the outcome:
 
 - Task ID, Projects, recorded bases, and lifecycle;
 - current WorkItems, ownership, dependencies, and acceptance state;
-- active and recent Turns with actual Agent/model when recorded;
+- active and recent AgentRuns with actual Agent/model when recorded;
 - latest Worker or Reviewer result and the Leader's disposition;
 - current ChangeSet and Integration state;
 - Brief focus, blockers, open InputRequests, and bounded next action.
 
-A terminal Worker Turn is not accepted delivery. A terminal Review is not a
+A terminal Worker AgentRun is not accepted delivery. A terminal Review is not a
 Leader decision. Describe these states explicitly as awaiting Leader
 disposition. When a Worker, Reviewer, or Integration result has arrived without
 follow-up, route that exact result to the Leader instead of reporting the Task
@@ -204,8 +204,8 @@ non-delivery. Never infer `--force` authority from general archive approval.
 
 ## Recover from evidence, not from imagined states
 
-Read the exact `runtime.agent-error`, Turn, Role Session, ReviewRound, or
-Integration record before intervening. Retry a failed Turn on its existing
+Read the exact `runtime.agent-error`, AgentRun, Role Session, ReviewRound, or
+Integration record before intervening. Retry a failed AgentRun on its existing
 recoverable Session when useful. Replace only the exact Session that the Driver
 proves cannot continue. Preserve failed records as evidence.
 
