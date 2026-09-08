@@ -1271,7 +1271,8 @@ export async function runAgentHost(input: Readonly<{
       const drain = await endpointOwner.stop(adapterId, ENDPOINT_DRAIN_TIMEOUT_MS);
       if (!drain.quiescent) {
         const detail = `Endpoint stop ${drain.timedOut ? "timed out" : "returned"} after ${drain.waitedMs}ms`
-          + ` (bound ${ENDPOINT_DRAIN_TIMEOUT_MS}ms); ${drain.references} reference(s) and `
+          + ` (bound ${ENDPOINT_DRAIN_TIMEOUT_MS}ms); ${drain.references} reference(s), `
+          + `${drain.opening} opening client(s) and `
           + `${drain.sessions.reduce((total, held) => total + held.pending.length, 0)} pending effect(s) `
           + "may still be in use. Owned client resources are unknown.";
         updateSnapshot(hostSnapshot(snapshot.state, {
@@ -1289,7 +1290,21 @@ export async function runAgentHost(input: Readonly<{
         process.stderr.write(`${detail}\n`);
       }
     }
-    await endpointOwner.close().catch(() => undefined);
+    // Final cleanup is bounded on its own deadline. The bounded stop above may
+    // already have given up on a client that never proves exit, and waiting for
+    // that same drain again would leave the control socket open and this function
+    // never returning. Anything still held is reported, not silently released.
+    const remaining = await endpointOwner.close(ENDPOINT_DRAIN_TIMEOUT_MS).catch(() => []);
+    const held = remaining.filter((drain) => !drain.quiescent);
+    if (held.length > 0) {
+      const references = held.reduce((total, drain) => total + drain.references, 0);
+      const opening = held.reduce((total, drain) => total + drain.opening, 0);
+      process.stderr.write(
+        `Endpoint cleanup returned with ${references} reference(s) and ${opening} opening client(s) `
+        + `still held across ${held.length} implementation(s) (bound ${ENDPOINT_DRAIN_TIMEOUT_MS}ms); `
+        + "those implementations stay detached and undisposed. Owned client resources are unknown.\n"
+      );
+    }
     await control.close();
     void sessionPayload;
   }
