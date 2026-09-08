@@ -159,13 +159,13 @@ export function grantUseReservations(grant: CapabilityGrant): readonly string[] 
 
 /**
  * Record one use against the grant, failing closed once the limit is reached.
- * The reservation key is appended to the grant's durable reservations so a
- * later resume recognizes this exact attempt and avoids a double charge.
+ * Supply a reservation key when a later resume must recognize the attempt.
+ * Non-resumable calls only advance the counter; historical keys stay intact.
  */
 export function recordGrantUse(
   grant: CapabilityGrant,
   now: Date,
-  reservationKey: string
+  reservationKey?: string
 ): CapabilityGrant {
   validateCapabilityGrant(grant);
   if (grant.maxUses !== undefined && grant.usesUsed >= grant.maxUses) {
@@ -174,7 +174,10 @@ export function recordGrantUse(
   return validateCapabilityGrant({
     ...grant,
     usesUsed: grant.usesUsed + 1,
-    useReservations: Object.freeze([...grantUseReservations(grant), reservationKey]),
+    useReservations: Object.freeze([
+      ...grantUseReservations(grant),
+      ...(reservationKey === undefined ? [] : [reservationKey])
+    ]),
     updatedAt: now.toISOString()
   });
 }

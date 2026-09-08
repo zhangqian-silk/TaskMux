@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -206,7 +207,7 @@ import { NodeCommandExecutor } from "./tmux/commandExecutor.js";
 import { TmuxManager } from "./tmux/tmuxManager.js";
 import { WorkItemChangeSetManager } from "./workspace/workItemChangeSetManager.js";
 import { workspaceProjectEntry } from "./worktree/managedWorkspace.js";
-import { parseWebCommandOptions, startYuiWebServer } from "./web/webServer.js";
+import { parseWebCommandOptions } from "./web/webServer.js";
 import {
   AgentConfigurationCatalogService,
   validateAgentLaunchConfiguration
@@ -216,7 +217,6 @@ import {
   resolveAgentProfileView
 } from "./profile/agentProfileRuntime.js";
 import type { AgentProfile } from "./profile/agentProfile.js";
-import { TmuxWebTerminalService } from "./web/tmuxWebTerminal.js";
 import {
   listOperatorSessions,
   operatorSessionRef
@@ -814,45 +814,34 @@ export async function main(): Promise<void> {
   const workspaceCoordinator = new TaskWorkspaceCoordinator(store, workspacePreparer, runtime);
 
   if (resolved[0] === "web") {
-    if (jsonOutput) throw usageError("Web does not support --json.");
+    if (managedInvocation || process.env.YUI_ROLE || process.env.YUI_NATIVE_SESSION_ID) {
+      throw usageError("The Web user ingress must be started from a local user terminal, not a managed Session.");
+    }
+    if (resolved.length === 2 && (resolved[1] === "--status" || resolved[1] === "--stop")) {
+      const status = await callController(home, "web.status", {}) as { id: string; url: string } | null;
+      if (resolved[1] === "--status") emit(status ? `Yui web control room: ${status.url}\n` : "Web is not running.\n", false, status);
+      else {
+        if (status) await callController(home, "web.stop", { id: status.id });
+        emit("Web listener stopped; Controller and Agents are unchanged.\n");
+      }
+      return;
+    }
+    if (jsonOutput) throw usageError("Web start does not support --json; use --status.");
     const options = parseWebCommandOptions(resolved.slice(1));
-    const terminal = new TmuxWebTerminalService({
-      yuiHome: home,
-      tmuxBin: resolveTmuxBin(store.getConfig().tmuxBin),
-      tmux,
-      prepareGlobalRole: (roleName) => runtime.prepareGlobalRoleEnter(roleName),
-      environment: process.env,
-      onError: (error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        process.stderr.write(`Web terminal cleanup error: ${message}\n`);
-      }
-    });
-    await startYuiWebServer(store, options, {
-      terminal,
-      answerInput: async ({ taskId, inputId, answer }) => {
-        const command = [
-          "input", "answer", inputId, "--task", taskId,
-          ...("choiceKey" in answer
-            ? ["--choice", answer.choiceKey]
-            : ["--text", answer.text])
-        ];
-        const result = runTaskCommand(command, store, {
-          runtime,
-          environment: {},
-          yuiHome: home
-        });
-        if (result.kind !== "output") {
-          throw new Error("Input answer returned an invalid control result.");
-        }
-        const data = result.data as Readonly<{ request?: unknown }> | undefined;
-        if (data?.request === undefined) {
-          throw new Error("Input answer did not return the updated request.");
-        }
-        return data.request;
-      }
-    });
+    const id = randomUUID();
+    await callController(home, "web.start", { ...options, id });
     const displayHost = options.host === "::1" ? "[::1]" : options.host;
     process.stdout.write(`Yui web control room: http://${displayHost}:${options.port}\n`);
+    await new Promise<void>((resolve) => {
+      const stop = () => {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+        resolve();
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+    await callController(home, "web.stop", { id });
     return;
   }
 

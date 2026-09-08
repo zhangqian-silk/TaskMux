@@ -3,10 +3,12 @@ import type { DurableJobCaller } from "./jobControl.js";
 import type { createBuiltinCapabilities } from "../kernel/builtinCapabilities.js";
 import type { CapabilityCall } from "../kernel/capabilityRegistry.js";
 import { capabilitySchemaError } from "../kernel/capabilitySchema.js";
+import { SurfaceContributions } from "../surface/surfaceContributions.js";
 
 /** The same transport method is usable by CLI, Agent and an authenticated
  * Surface adapter. Credentials are an ingress envelope, never capability input. */
 export function createCapabilityDispatcher(capabilities: ReturnType<typeof createBuiltinCapabilities>) {
+  const surfaces = new SurfaceContributions(capabilities.registry);
   return async (method: string, value: JsonValue): Promise<JsonValue> => {
     const error = capabilitySchemaError({
       type: "object", required: ["taskId", "caller"],
@@ -22,6 +24,7 @@ export function createCapabilityDispatcher(capabilities: ReturnType<typeof creat
           }
         },
         query: { type: "string" },
+        surface: { enum: ["commands", "panels"] },
         request: {
           type: "object", required: ["name"], additionalProperties: false,
           properties: {
@@ -35,15 +38,22 @@ export function createCapabilityDispatcher(capabilities: ReturnType<typeof creat
     }, value);
     if (error) throw invalidParams(`Invalid capability envelope: ${error}`);
     const params = value as unknown as {
-      taskId: string; caller: DurableJobCaller; query?: string; request?: CapabilityCall;
+      taskId: string; caller: DurableJobCaller; query?: string; surface?: "commands" | "panels"; request?: CapabilityCall;
     };
     const context = capabilities.authenticate(params.caller, params.taskId);
     let result: unknown;
     if (method === "capability.search") {
       if (params.request !== undefined) throw invalidParams("search accepts query, not request.");
-      result = { capabilities: capabilities.registry.search(context, params.query) };
+      if (params.surface !== undefined) {
+        if (params.query !== undefined) throw invalidParams("Surface listing does not accept query.");
+        result = params.surface === "commands"
+          ? { commands: surfaces.listCommands(context) }
+          : { panels: surfaces.listPanels(context) };
+      } else result = { capabilities: capabilities.registry.search(context, params.query) };
     } else {
-      if (params.query !== undefined || params.request === undefined) throw invalidParams("describe/call requires request.");
+      if (params.query !== undefined || params.surface !== undefined || params.request === undefined) {
+        throw invalidParams("describe/call requires request, not query or surface.");
+      }
       if (method === "capability.describe") result = capabilities.registry.describe(context, params.request);
       else if (method === "capability.call") {
         if (!Object.hasOwn(params.request, "input")) throw invalidParams("call requires input.");

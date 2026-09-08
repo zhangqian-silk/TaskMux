@@ -187,7 +187,7 @@ export function buildWebTaskDetail(
     const roles = reader.listRoles(taskId).map((role) => {
       const activeTurn = activeTurns.get(role.name);
       const sessions = reader.getTaskRoleSessionSet(taskId, role.name);
-      const activeSession = sessions?.sessions[sessions.activeAgentId];
+      const activeSession = sessions?.sessions[activeTurn?.effective.agentId ?? sessions.activeAgentId];
       const effectiveLaunch = activeTurn?.effective ?? activeSession?.effective ?? null;
       return {
         ...role,
@@ -201,6 +201,14 @@ export function buildWebTaskDetail(
             : { taskId, roleName: role.name, ...activeSession })
         ),
         effectiveLaunch,
+        observedAt: now.toISOString(),
+        runtimeSession: activeSession === undefined ? null : {
+          agentId: activeSession.agentId,
+          adapterId: activeSession.adapterId,
+          nativeSessionId: activeSession.nativeSessionId ?? null,
+          status: activeSession.status,
+          endpointImplementation: activeSession.endpointImplementation ?? null
+        },
         effectiveLaunchSource: activeTurn === undefined
           ? activeSession === undefined ? null : "session"
           : "turn",

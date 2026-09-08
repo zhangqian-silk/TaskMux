@@ -890,8 +890,40 @@ UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
   },
   {
     version: 10,
+    name: "plugin-validation-evidence",
+    introducedIn: "0.15.8",
+    sql: `
+CREATE TABLE plugin_validations (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
+`
+  },
+  {
+    version: 11,
+    name: "plugin-enable-intent",
+    introducedIn: "0.15.8",
+    // A v10 validation proves no enable/disable choice. Preserve it unchanged;
+    // never infer desired configuration from historical reports or processes.
+    sql: `
+CREATE TABLE plugin_intents (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  plugin_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, plugin_id)
+);
+`
+  },
+  {
+    // Renumbered from 10 to 12 when this branch adopted upstream master: PR320
+    // took 10 and 11 while this work was in review. Both are already merged, so
+    // they own those numbers; this migration appends after them rather than
+    // competing for a number, and no released entry is touched.
+    version: 12,
     name: "draft-planning-and-deferred-activation",
-    // Same unreleased release as migrations 4-9: this does not bump the version.
+    // Same unreleased release as migrations 4-11: this does not bump the version.
     introducedIn: "0.15.8",
     // One current-version migration for everything this change adds. No existing
     // record is rewritten and no payload is backfilled:
@@ -1329,6 +1361,8 @@ export function migrateSqliteSchema(
 
 /** The names of every table the schema creates (for tests/introspection). */
 export const SQLITE_SCHEMA_TABLES: readonly string[] = [
+  "plugin_intents",
+  "plugin_validations",
   "artifacts",
   "local_resources",
   "environment_preparations",

@@ -162,7 +162,8 @@ import {
   type TaskMetadata,
   type TaskMetadataUpdate,
   type TaskProjectBinding,
-  type TaskPriority
+  type TaskPriority,
+  type TaskStatus
 } from "../task/task.js";
 import {
   resolveTaskRecordReference
@@ -2018,57 +2019,7 @@ function taskMessageCommand(
     } else {
       throw usageError(`--wake-policy must be 'leader' or 'none': ${wakePolicyRaw}.`);
     }
-    const now = clock(options);
-    const result = store.transaction((tx) => {
-      const task = requireTask(tx, parsed.positionals[0]);
-      assertTaskOpen(task);
-      const actor = taskActor(tx, options, task.id);
-      const message = actor === "leader"
-        ? appendMessage(
-            tx,
-            task.id,
-            body,
-            "role-result",
-            { type: "role", roleName: LEADER_ROLE },
-            now
-          )
-        : actor === "operator"
-          ? appendMessage(tx, task.id, body, "operator", { type: "operator" }, now, { wakePolicy })
-          : appendMessage(tx, task.id, body, "user", { type: "user" }, now, { wakePolicy });
-      // Issue 05: only `wakePolicy=leader` (the default for backward
-      // compatibility) enqueues Leader work. `wakePolicy=none` persists the
-      // message as context without waking the Leader.
-      //
-      // A Draft wakes its Leader too: that is the Task entry point for the
-      // planning conversation, which needs no delivery environment and no prior
-      // Activation (S01). The wake carries intent only; the Controller decides
-      // the Turn's purpose from the Task's own lifecycle.
-      if ((task.status === "active" || task.status === "draft")
-        && actor !== "leader"
-        && wakePolicy !== "none") {
-        enqueueWork(
-          tx,
-          leaderMailbox(task.id),
-          actor === "operator" ? "operator-input" : "user-message",
-          now,
-          [messageRef(task.id, message.id)],
-          {
-            source: actor,
-            dedupeKey: `message:${task.id}:${message.id}`
-          }
-        );
-      }
-      return { task, message, actor };
-    });
-    if (result.actor !== "leader") {
-      notifyMailbox(
-        options.runtime,
-        result.task.status === "active" || result.task.status === "draft"
-          ? leaderMailbox(result.task.id)
-          : taskMailbox(result.task.id),
-        result.task.id
-      );
-    }
+    const result = sendTaskMessageCommand(store, parsed.positionals[0], body, wakePolicy, options);
     return `Sent message ${result.message.id} to ${result.task.id}\n`;
   }
   if (command === "list") {
@@ -2125,6 +2076,65 @@ function taskMessageCommand(
   throw usageError(command === undefined
     ? "Task message command is required."
     : `Unknown command: task message ${command}`);
+}
+
+/** CLI and authenticated user Surface share the same message and mailbox
+ * transaction. Talking to Leader does not impersonate Leader authority. */
+/**
+ * The one transaction that turns an inbound Task Message into durable facts and,
+ * when the Task's own lifecycle calls for it, Leader work.
+ *
+ * CLI `task message send` and the Web Task surface both call this, so neither
+ * owns a private notion of what "sending a message" means. The Draft case is the
+ * reason that matters here: a Draft's Leader conversation is its planning Turn,
+ * so a Draft must wake its Leader exactly like an active Task does. Gating the
+ * wake on `active` would leave the Draft entry point saving text that no Leader
+ * ever reads — the message would be persisted and silently go nowhere, which is
+ * indistinguishable to the user from a Provider that never answered.
+ *
+ * The wake carries intent only. Whether the resulting Turn is planning or
+ * execution is decided by the Controller from the Task's own status, so this
+ * function never names a purpose and no second planning path exists.
+ */
+export function sendTaskMessageCommand(
+  store: TaskWorkflowStore, taskId: string, body: string,
+  wakePolicy: "leader" | "none" | undefined, options: TaskCommandOptions = {}
+) {
+  if (!body.trim()) throw usageError("Message body is required.");
+  const now = clock(options);
+  const result = store.transaction((tx) => {
+    const task = requireTask(tx, taskId);
+    assertTaskOpen(task);
+    const actor = taskActor(tx, options, task.id);
+    const message = actor === "leader"
+      ? appendMessage(tx, task.id, body, "role-result", { type: "role", roleName: LEADER_ROLE }, now)
+      : actor === "operator"
+        ? appendMessage(tx, task.id, body, "operator", { type: "operator" }, now, { wakePolicy })
+        : appendMessage(tx, task.id, body, "user", { type: "user" }, now, { wakePolicy });
+    // Issue 05: only `wakePolicy=leader` (the default for backward
+    // compatibility) enqueues Leader work; `wakePolicy=none` persists the
+    // message as context without waking the Leader.
+    if (leaderWakingTaskStatus(task.status) && actor !== "leader" && wakePolicy !== "none") {
+      enqueueWork(tx, leaderMailbox(task.id), actor === "operator" ? "operator-input" : "user-message",
+        now, [messageRef(task.id, message.id)], { source: actor, dedupeKey: `message:${task.id}:${message.id}` });
+    }
+    return { task, message, actor };
+  });
+  if (result.actor !== "leader") {
+    notifyMailbox(options.runtime, leaderWakingTaskStatus(result.task.status)
+      ? leaderMailbox(result.task.id) : taskMailbox(result.task.id), result.task.id);
+  }
+  return result;
+}
+
+/**
+ * Whether an inbound Message on a Task in this status is delivered to its
+ * Leader. Draft qualifies because planning is a Leader conversation that
+ * deliberately precedes any delivery environment or Activation (S01); a
+ * terminal Task has no Leader lane and keeps the message as context only.
+ */
+export function leaderWakingTaskStatus(status: TaskStatus): boolean {
+  return status === "active" || status === "draft";
 }
 
 function updateMessage(

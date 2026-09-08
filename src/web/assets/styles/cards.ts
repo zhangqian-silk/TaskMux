@@ -5,6 +5,17 @@
  * live in widgets.ts; markdown typography lives in markdown.ts.
  */
 export const CARD_STYLES = `
+.surface-json { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 36rem; overflow: auto; }
+.task-surface .section-body { display:grid; gap:12px; min-width:0; }
+.task-surface .section-body > .pill { width:max-content; }
+.task-surface form,.task-surface label { display:grid; gap:10px; min-width:0; }
+.task-surface label { font-size:13px; font-weight:500; }
+.task-surface input,.task-surface textarea { box-sizing:border-box; width:100%; min-width:0; padding:12px; border:1px solid var(--border-strong); border-radius:var(--radius); background:var(--bg-1); color:var(--text); font:inherit; }
+.task-surface textarea { min-height:96px; resize:vertical; }
+.task-surface input:focus-visible,.task-surface textarea:focus-visible,.task-surface summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.task-surface button { min-height:40px; }
+.task-surface summary { cursor:pointer; padding:8px 0; font-weight:600; }
+.task-surface [role=status] { overflow-wrap:anywhere; }
 /* Overview scaffolding */
 .overview{display:grid;gap:14px;padding-top:2px}
 .overview-duo{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
