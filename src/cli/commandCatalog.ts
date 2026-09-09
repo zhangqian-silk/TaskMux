@@ -486,13 +486,19 @@ const taskChildren: readonly NodeInput[] = [
   {
     name: "message",
     summary: "Manage durable Task messages.",
-    sections: [{ id: "manage", title: "Commands", entries: ["send", "list", "show", "update", "retire"] }],
+    sections: [{ id: "manage", title: "Commands", entries: ["send", "handoff", "list", "show", "update", "retire"] }],
     children: [
+      {
+        name: "handoff",
+        summary: "Explicitly hand an unassigned Message to the current dispatched owner of the same work.",
+        usage: "yui task message handoff <task/message> --to <role>",
+        options: ["--to"]
+      },
       {
         name: "send",
         summary: "Send a Task message.",
-        usage: "yui task message send <id> (<body>|--body-file <path|->) [--wake-policy leader|none]",
-        options: ["--body-file", "--wake-policy"],
+        usage: "yui task message send <id> (<body>|--body-file <path|->) [--wake-policy leader|none] [--to <role> --work-item <id>|--review-round <id>]",
+        options: ["--body-file", "--wake-policy", "--to", "--work-item", "--review-round"],
         optionValues: {
           "--wake-policy": ["leader", "none"]
         },
@@ -1075,10 +1081,12 @@ const taskChildren: readonly NodeInput[] = [
   {
     name: "wake",
     summary: "Inspect the durable Leader wake ledger and its delta content.",
-    sections: [{ id: "manage", title: "Commands", entries: ["list", "show"] }],
+    sections: [{ id: "manage", title: "Commands", entries: ["list", "show", "resolve"] }],
     children: [
       { name: "list", summary: "List recorded Leader wakes.", usage: "yui task wake list <task>" },
-      { name: "show", summary: "Show one wake and its delta content.", usage: "yui task wake show <task> <wake>" }
+      { name: "show", summary: "Show one wake and its delta content.", usage: "yui task wake show <task> <wake>" },
+      { name: "resolve", summary: "Release an unknown notification claim after explicit quiescence evidence, without replay.",
+        usage: "yui task wake resolve <task> <wake> --reason <quiescence-evidence>", options: ["--reason"] }
     ]
   },
   {

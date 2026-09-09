@@ -51,7 +51,8 @@ export async function processLeaderWakeups(
     if (notification.disposition !== "submit") {
       results.push({ ...base, status: "skipped", reason: "not-ready",
         ...(notification.disposition === "unknown" ? {
-          error: "Notification acceptance is unknown; the original batch is retained and will not be replayed."
+          error: `Notification acceptance is unknown; the fixed wake is retained and will not be replayed. `
+            + `After establishing native quiescence, release only this claim with yui task wake resolve ${task.id} ${notification.wakeId} --reason <evidence>.`
         } : {}) }); continue;
     }
     let attempted = false;

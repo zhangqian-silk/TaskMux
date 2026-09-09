@@ -3,6 +3,9 @@ import { createContextSnapshot, contextContentDigest, type ContextSnapshot } fro
 
 /** Storage 9 -> 10 only. Text, native identities and opaque record/receipt ids
  * are never renamed. Ordinary runtime stores do not interpret old payloads.
+ * v10 also introduces optional Message recipient/continuation/handovers.
+ * Existing messages have no recipient and remain informational/Leader wakes;
+ * migration never guesses an owner or causes historical messages to execute.
  */
 export function migrateAgentRunContract(db: Database.Database): void {
   const snapshotDigests = new Map<string, string>();

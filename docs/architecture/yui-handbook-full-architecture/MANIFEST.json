@@ -43,8 +43,8 @@
     },
     {
       "path": "architecture/07-session-run-contract.md",
-      "bytes": 11628,
-      "sha256": "8e38218ae7cf3bb7e7ab3f21b2be4c8be5eb99eabf52489d7f01c03fab78f140"
+      "bytes": 16223,
+      "sha256": "64084d7402cbd37577a1100c604b9cc6af949df1230dc2faa5bd7c122813a486"
     },
     {
       "path": "contracts/README.md",
@@ -243,8 +243,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 557573,
-      "sha256": "699f0dc5b63088dd545587846fa39fd8250626ca2d3882f5f370cf9fd8538d66"
+      "bytes": 562623,
+      "sha256": "bd233a78dcb0d4430ef5833b8d69e254efc78224df299601351660bbfd63f5ce"
     },
     {
       "path": "modules/01-kernel.md",

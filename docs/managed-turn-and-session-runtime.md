@@ -31,6 +31,41 @@ Ordinary notifications claim a fixed mailbox batch and settle it at confirmed
 acceptance, without requiring a final prose report. Later messages remain
 pending. No periodic force-steer interrupts the user's conversation.
 
+## Owner-directed collaboration
+
+Dispatch establishes an owner and frozen Assignment. Thereafter
+`task message send <task> <body> --to <role> --work-item <id>` (or
+`--review-round <id>`) preserves collaboration for that exact owner. The
+`message.send` capability invokes the same authenticated transaction. The
+Message carries a logical recipient and the original owner Run reference;
+its continuation Run is delivery evidence, not another Message or a result copy.
+
+Busy input remains saved. The Controller reserves at most sixteen ordered
+Messages in one transaction with the next AgentRun, then uses the ordinary
+Provider admission path. Terminal collection checks pending Messages in its
+existing result transaction, so both sides of the send/terminal race are covered.
+No Message means no continuation. The same compatible native Session,
+worktree (including unfinished files), effective permissions and frozen
+Assignment are retained. The bounded Snapshot adds authorized Message refs
+and the preceding original result, without expanding workspace or candidate
+authority. Reading it is not an acknowledgement.
+
+Changed ownership, unavailable compatible Sessions, terminal WorkItems/Tasks
+and obsolete Review candidates produce visible nondelivery reasons. Pending
+Messages may be handed to an already-dispatched successor for the same work
+only through explicit `task message handoff <task/message> --to <role>`.
+Replicated Assignment continuations remain an explicit Lane/Group operation;
+a Message does not silently choose or rewrite a Producer or synthesis lineage.
+
+Unknown Leader notifications retain their exact unconsumed wake, input window
+and delivery event. `task wake show` includes delivery/resolution facts even
+when they occur after that input window. `task wake resolve <task> <wake>
+--reason <quiescence-evidence>` releases only that claim, without replay or
+invented acceptance, after the existing native execution fences are clear.
+Unknown or active native effects still prevent conflicting admission; they do
+not prevent scoped local facts or independent Role work. This is an explicit
+Agent/Operator operation, not an automatic recovery worker.
+
 ## Results and recovery
 
 The runtime stores one AgentRunResult and a reference Message in the existing
@@ -61,6 +96,9 @@ AgentRun is the current API vocabulary. Historical IDs and provider-native
 terms remain opaque. The private inbox v1 codec retains pending wire facts;
 the CLI's old `task turn` spelling is a bounded alias for existing Manifests.
 There is one current domain schema, migrated centrally from storage 9 to 10.
+Optional Message ownership/continuation/handover fields belong to that same
+unreleased transition. Existing Messages remain unchanged and never acquire
+guessed recipients or automatic executions during migration.
 See the detailed contract for migration, Host protocol v5, rollback and the
 T07/T08/T09 adoption boundary.
 

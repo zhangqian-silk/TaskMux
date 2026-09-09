@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { prepareMessageContinuations } from "../message/messageContinuation.js";
 import { isDeepStrictEqual } from "node:util";
 import { assertExecutionEnvironmentCurrent } from "../runtime/executionEnvironment.js";
 
@@ -1848,6 +1849,26 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
   clearPendingWakeup(taskId: string): void { this.store.clearPendingWakeup(taskId); }
   getLeaderFailure(taskId: string) { return this.store.getLeaderFailure(taskId); }
 
+  prepareMessageContinuations(taskId: string, now: Date): void {
+    const roles = new Set(this.store.listMessages(taskId).flatMap((message) =>
+      message.recipient?.ownerRunId !== undefined && message.continuation?.runId === undefined ? [message.recipient.roleName] : []));
+    for (const roleName of roles) {
+      try {
+        this.store.transaction((store) => prepareMessageContinuations(store, taskId, now, roleName));
+      } catch (error) {
+        const reason = `preparation-failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1000);
+        this.store.transaction((store) => {
+          for (const message of store.listMessages(taskId)) {
+            if (message.recipient?.roleName === roleName && message.recipient.ownerRunId !== undefined && message.continuation?.runId === undefined
+              && message.continuation?.notDeliveredReason !== reason) {
+              store.updateMessage(taskId, { ...message, continuation: { notDeliveredReason: reason } });
+            }
+          }
+        });
+      }
+    }
+  }
+
   claimLeaderNotification(taskId: string, now: Date): import("../scheduler/ports.js").LeaderNotification | null {
     return this.store.transaction((store) => {
       const task = store.getTask(taskId);
@@ -1881,6 +1902,8 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         }
         if (native?.status === "submitting") return { wakeId, attemptId, disposition: "pending" };
         if (native?.status !== "deferred" && previous?.payload.outcome !== "deferred") {
+          this.settleLeaderNotification(taskId, attemptId, "unknown", now,
+            "Acceptance could not be recovered. Preserve the fixed wake; no automatic replay.");
           return { wakeId, attemptId, disposition: "unknown" };
         }
         if (provider !== null && provider !== undefined && provider.attemptId !== attemptId

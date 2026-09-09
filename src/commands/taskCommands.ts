@@ -140,6 +140,7 @@ import {
   settleExactWorkExecution
 } from "../coordination/workMailboxQueue.js";
 import {
+  completeProcessing,
   mailboxHasWork as workMailboxHasWork,
   type MailboxEntityRef,
   type MailboxTarget
@@ -186,7 +187,7 @@ import {
   currentWorkItemExecutionGroup,
   workItemExecutionGroupById,
   createWorkItem,
-  editDraftWorkItemDefinition,
+  editWorkItemDefinition,
   attachWorkItemExecutionGroup,
   updateWorkItemExecutionGroup,
   retireWorkItem,
@@ -289,6 +290,7 @@ import {
   assertTaskDeliveryAuthority
 } from "./taskActor.js";
 import { currentManagedRuntime } from "../runtime/managedCaller.js";
+import { resolveMessageRecipient, messageContinuationBlocker } from "../message/messageContinuation.js";
 import { enqueueOperatorEvent } from "../scheduler/operatorEvent.js";
 import { queueLeaderWakeup } from "../scheduler/wakeupQueue.js";
 import { renderWakeReason, wakeReason } from "../scheduler/wakeReason.js";
@@ -1991,6 +1993,37 @@ function taskMessageCommand(
   options: TaskCommandOptions
 ): string | TaskCommandExecution {
   const [command, ...rest] = args;
+  if (command === "handoff") {
+    const usage = "Task message handoff usage: yui task message handoff <task/message> --to <role>.";
+    const parsed = parseTail(rest, new Set(["--to"]), usage);
+    exactPositionals(parsed.positionals, 1, usage);
+    const ref = taskRecordReference(parsed.positionals[0], "message", "Message reference", options);
+    const now = clock(options);
+    const message = store.transaction((tx) => {
+      assertTaskDeliveryAuthority(tx, options.environment, ref.taskId);
+      const current = tx.listMessages(ref.taskId).find((entry) => entry.id === ref.localId);
+      if (current?.recipient?.ownerRunId === undefined || current.continuation?.runId !== undefined) {
+        throw usageError("Only an unassigned pending Message can be explicitly handed off.");
+      }
+      const recipient = resolveMessageRecipient(tx, ref.taskId, requiredOption(parsed.options, "--to"), {
+        ...(current.recipient.workItemId === undefined ? {} : { workItemId: current.recipient.workItemId }),
+        ...(current.recipient.reviewRoundId === undefined ? {} : { reviewRoundId: current.recipient.reviewRoundId })
+      });
+      const updated = { ...current, recipient, continuation: {},
+        handovers: [...(current.handovers ?? []), { from: current.recipient, at: now.toISOString() }] };
+      const blocker = messageContinuationBlocker(tx, updated);
+      if (blocker !== undefined) throw usageError(`Message handoff cannot proceed: ${blocker}.`);
+      tx.updateMessage(ref.taskId, updated);
+      recordTaskEvent(tx, ref.taskId, "message.handed-off", {
+        messageId: current.id, fromRole: current.recipient.roleName, toRole: recipient.roleName,
+        ownerRunId: recipient.ownerRunId
+      }, now);
+      enqueueWork(tx, taskMailbox(ref.taskId), "message-continuation", now, [messageRef(ref.taskId, current.id)]);
+      return updated;
+    });
+    notifyMailbox(options.runtime, taskMailbox(ref.taskId), ref.taskId);
+    return output(`Handed off Message ${ref.localId} to ${message.recipient.roleName}.\n`, message);
+  }
   if (command === "show") {
     const usage = "Task message show usage: yui task message show <task/message>.";
     exactPositionals(rest, 1, usage);
@@ -1998,14 +2031,19 @@ function taskMessageCommand(
     const message = listContextMessages(store, ref.taskId, options.environment)
       .find((entry) => entry.id === ref.localId);
     if (message === undefined) throw dataError("Message is unavailable in the caller's scope.");
-    const expanded = expandTaskMessageResult(message, (task, run) => store.getRun(task, run));
+    const continuationRun = message.continuation?.runId === undefined
+      ? null : store.getRun(ref.taskId, message.continuation.runId);
+    const expanded = { ...expandTaskMessageResult(message, (task, run) => store.getRun(task, run)),
+      ...(continuationRun === null ? {} : { execution: runExecutionObservation(continuationRun,
+        store.getTaskRoleSessionSet(ref.taskId, continuationRun.roleName)?.providerBinding,
+        store.listEvents(ref.taskId)) }) };
     return { kind: "output", output: `${JSON.stringify(expanded, null, 2)}\n`, data: expanded };
   }
   if (command === "send") {
-    const usage = "Task message send usage: yui task message send <id> (<body>|--body-file <path|->) [--wake-policy leader|none].";
+    const usage = "Task message send usage: yui task message send <id> (<body>|--body-file <path|->) [--wake-policy leader|none] [--to <role> --work-item <id>|--review-round <id>].";
     const parsed = parseTail(
       rest,
-      new Set(["--body-file", "--wake-policy"]),
+      new Set(["--body-file", "--wake-policy", "--to", "--work-item", "--review-round"]),
       usage
     );
     if (parsed.positionals.length < 1 || parsed.positionals.length > 2) throw usageError(usage);
@@ -2024,8 +2062,18 @@ function taskMessageCommand(
     } else {
       throw usageError(`--wake-policy must be 'leader' or 'none': ${wakePolicyRaw}.`);
     }
-    const result = sendTaskMessageCommand(store, parsed.positionals[0], body, wakePolicy, options);
-    return `Sent message ${result.message.id} to ${result.task.id}\n`;
+    const recipientRole = parsed.options.get("--to");
+    const workItemId = parsed.options.get("--work-item");
+    const reviewRoundId = parsed.options.get("--review-round");
+    if (recipientRole === undefined && (workItemId !== undefined || reviewRoundId !== undefined)) throw usageError("--to is required for scoped Message delivery.");
+    const result = sendTaskMessageCommand(store, parsed.positionals[0], body, wakePolicy, options,
+      recipientRole === undefined ? undefined : { roleName: recipientRole, workItemId, reviewRoundId });
+    const reason = result.message.continuation?.notDeliveredReason;
+    const delivery = reason !== undefined ? { state: "not-delivered", reason }
+      : recipientRole !== undefined || result.actor !== "leader" && wakePolicy !== "none"
+        ? { state: "queued" } : { state: "saved" };
+    return output(`Saved message ${result.message.id} to ${result.task.id} (${delivery.state}${reason === undefined ? "" : `: ${reason}`}).\n`,
+      { taskId: result.task.id, message: result.message, delivery });
   }
   if (command === "list") {
     const messageListUsage = "Task message list usage: yui task message list <id> [--after <timestamp>] [--limit <n>].";
@@ -2087,26 +2135,64 @@ function taskMessageCommand(
  * transaction. Talking to Leader does not impersonate Leader authority. */
 export function sendTaskMessageCommand(
   store: TaskWorkflowStore, taskId: string, body: string,
-  wakePolicy: "leader" | "none" | undefined, options: TaskCommandOptions = {}
+  wakePolicy: "leader" | "none" | undefined, options: TaskCommandOptions = {},
+  recipient?: Readonly<{ roleName: string; workItemId?: string; reviewRoundId?: string }>
 ) {
   if (!body.trim()) throw usageError("Message body is required.");
+  if (recipient !== undefined && wakePolicy !== undefined) {
+    throw usageError("--wake-policy applies only to unaddressed Leader Messages; an owner-directed Message uses its exact continuation boundary.");
+  }
   const now = clock(options);
   const result = store.transaction((tx) => {
     const task = requireTask(tx, taskId);
-    assertTaskOpen(task);
-    const actor = taskActor(tx, options, task.id);
+    if (recipient === undefined) assertTaskOpen(task);
+    const caller = currentManagedRuntime(tx, options.environment, task.id);
+    const roleCaller = caller !== undefined && caller.roleName !== "leader" ? caller : undefined;
+    if (roleCaller !== undefined) {
+      const run = roleCaller.currentRunId === undefined ? null : tx.getRun(task.id, roleCaller.currentRunId);
+      if (run === null || recipient?.roleName !== "leader"
+        || recipient.workItemId !== run.workItemId || recipient.reviewRoundId !== run.reviewRoundId) {
+        throw usageError("A Worker or Reviewer may send only to Leader within its current Assignment.");
+      }
+    }
+    const actor = roleCaller === undefined ? taskActor(tx, options, task.id) : "role";
+    if (recipient !== undefined && actor === "leader") assertTaskDeliveryAuthority(tx, options.environment, task.id);
+    const target: TaskMessageContext["recipient"] = recipient === undefined ? undefined
+      : recipient.roleName === "leader" && roleCaller !== undefined ? {
+        roleName: "leader", ...(recipient.workItemId === undefined ? {} : { workItemId: recipient.workItemId }),
+        ...(recipient.reviewRoundId === undefined ? {} : { reviewRoundId: recipient.reviewRoundId })
+      } : resolveMessageRecipient(tx, task.id, recipient.roleName, {
+        ...(recipient.workItemId === undefined ? {} : { workItemId: recipient.workItemId }),
+        ...(recipient.reviewRoundId === undefined ? {} : { reviewRoundId: recipient.reviewRoundId }) });
+    const context: TaskMessageContext = {
+      ...(wakePolicy === undefined || actor === "leader" || actor === "role" ? {} : { wakePolicy }),
+      ...(target === undefined ? {} : { recipient: target }),
+      ...(recipient?.workItemId === undefined ? {} : { workItemId: recipient.workItemId })
+    };
     const message = actor === "leader"
-      ? appendMessage(tx, task.id, body, "role-result", { type: "role", roleName: LEADER_ROLE }, now)
+      ? appendMessage(tx, task.id, body, "role-result", { type: "role", roleName: LEADER_ROLE }, now, context)
+      : actor === "role"
+        ? appendMessage(tx, task.id, body, "role-result", { type: "role", roleName: roleCaller!.roleName }, now, context)
       : actor === "operator"
-        ? appendMessage(tx, task.id, body, "operator", { type: "operator" }, now, { wakePolicy })
-        : appendMessage(tx, task.id, body, "user", { type: "user" }, now, { wakePolicy });
-    if (task.status === "active" && actor !== "leader" && wakePolicy !== "none") {
+        ? appendMessage(tx, task.id, body, "operator", { type: "operator" }, now, context)
+        : appendMessage(tx, task.id, body, "user", { type: "user" }, now, context);
+    if (target?.ownerRunId !== undefined) {
+      const reason = messageContinuationBlocker(tx, message);
+      if (reason !== undefined) {
+        message.continuation = { notDeliveredReason: reason };
+        tx.updateMessage(task.id, message);
+      }
+      enqueueWork(tx, taskMailbox(task.id), "message-continuation", now,
+        [messageRef(task.id, message.id)], { dedupeKey: `message:${task.id}:${message.id}` });
+    } else if (task.status === "active" && actor !== "leader" && wakePolicy !== "none") {
       enqueueWork(tx, leaderMailbox(task.id), actor === "operator" ? "operator-input" : "user-message",
         now, [messageRef(task.id, message.id)], { source: actor, dedupeKey: `message:${task.id}:${message.id}` });
     }
     return { task, message, actor };
   });
-  if (result.actor !== "leader") {
+  if (recipient !== undefined) {
+    notifyMailbox(options.runtime, taskMailbox(result.task.id), result.task.id);
+  } else if (result.actor !== "leader") {
     notifyMailbox(options.runtime, result.task.status === "active"
       ? leaderMailbox(result.task.id) : taskMailbox(result.task.id), result.task.id);
   }
@@ -2985,7 +3071,7 @@ function editWork(
       ? requiredOption(parsed.options, "--role")
       : parsed.options.has("--clear-role") ? null : undefined;
     if (typeof assignee === "string") requireRole(tx, task.id, assignee);
-    const updated = editDraftWorkItemDefinition(item, {
+    const updated = editWorkItemDefinition(item, {
       ...(parsed.options.has("--title")
         ? { title: requiredOption(parsed.options, "--title") }
         : {}),
@@ -8150,6 +8236,47 @@ function taskWakeDispatch(
   options: TaskCommandOptions
 ): TaskCommandExecution {
   const [subcommand] = args;
+  if (subcommand === "resolve") {
+    const usage = "Task wake resolve usage: yui task wake resolve <task> <wake> --reason <quiescence-evidence>.";
+    const parsed = parseTail(args.slice(1), new Set(["--reason"]), usage);
+    exactPositionals(parsed.positionals, 2, usage);
+    const reason = requiredOption(parsed.options, "--reason");
+    const now = clock(options);
+    const result = store.transaction((tx) => {
+      const task = requireTask(tx, parsed.positionals[0]);
+      taskActor(tx, options, task.id);
+      const wakeId = parsed.positionals[1];
+      const wake = tx.getTaskWake(task.id, wakeId);
+      if (wake === null) throw usageError("Wake is unavailable.");
+      const target = leaderMailbox(task.id);
+      const mailbox = tx.getWorkMailbox(target);
+      const claim = mailbox?.processing;
+      if (claim === undefined || claim === null || claim.owner !== `leader-notification:${wake.id}`) {
+        throw usageError("This wake has no unresolved notification claim.");
+      }
+      const previous = tx.listEvents(task.id).filter((event) =>
+        event.type === "notification.delivery" && event.payload.attemptId === claim.batchId).at(-1);
+      const sessions = tx.getTaskRoleSessionSet(task.id, "leader");
+      const provider = sessions?.providerBinding;
+      if (previous?.payload.outcome !== "unknown") throw usageError("Only an unknown notification can be resolved.");
+      if (tx.getActiveRun(task.id, "leader") !== null
+        || provider?.authority.owner === "human" || provider?.authority.owner === "unknown"
+        || (provider?.run !== undefined && provider.run !== null
+          && ["submitting", "accepted", "delivery-unknown"].includes(provider.run.status))) {
+        throw usageError("Shared native execution is not proven quiescent; resolve that exact runtime boundary first.");
+      }
+      // Preserve the original unknown outcome and the unconsumed fixed wake.
+      // This releases only the scheduling claim; it never replays, claims
+      // acceptance, or asserts that Message requirements were implemented.
+      recordTaskEvent(tx, task.id, "notification.resolved", {
+        wakeId: wake.id, attemptId: claim.batchId, reason, outcome: "released-without-replay"
+      }, now);
+      tx.saveWorkMailbox(completeProcessing(mailbox!, claim.batchId));
+      return { taskId: task.id, wakeId: wake.id, outcome: "released-without-replay" };
+    });
+    notifyMailbox(options.runtime, leaderMailbox(result.taskId), result.taskId);
+    return output(`Released ${result.wakeId} without replay; original acceptance remains unknown.\n`, result);
+  }
   if (subcommand === "list" || subcommand === "show") {
     return taskWakeInspectionCommand(args, store);
   }
@@ -8209,6 +8336,10 @@ function taskWakeInspectionCommand(
       return ms > fromMs && ms <= toMs;
     };
     const allEvents = store.listEvents(task.id);
+    const deliveryEvents = allEvents.filter((event) =>
+      (event.type === "notification.delivery" || event.type === "notification.resolved")
+      && (event.payload.wakeId === wake.id
+        || event.payload.attemptId?.startsWith(`notification:${task.id}/${wake.id}/`)));
     const events = allEvents.filter((e) => inWindow(e.createdAt));
     const messages = store.listMessages(task.id).filter((m) => inWindow(m.createdAt));
     const allRuns = store.listRuns(task.id);
@@ -8220,6 +8351,7 @@ function taskWakeInspectionCommand(
       `Wake: ${wake.id}`,
       `Task: ${task.id}`,
       `Status: ${wake.status}`,
+      `Notification: ${deliveryEvents.at(-1)?.payload.outcome ?? "unobserved"}`,
       `Reasons: ${wake.reasons.map(renderWakeReason).join(", ")}`,
       `Delta window: ${wake.fromCursor} → ${wake.toCursor}`,
       ...(wake.runId === undefined ? [] : [`AgentRun: ${wake.runId}`]),
@@ -8242,6 +8374,7 @@ function taskWakeInspectionCommand(
     ];
     return output(lines.join("\n").concat("\n"), {
       taskId: task.id,
+      deliveryEvents,
       wake,
       events,
       messages,

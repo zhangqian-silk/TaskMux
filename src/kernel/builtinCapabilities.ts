@@ -1,4 +1,4 @@
-import { updateTaskMetadataCommand } from "../commands/taskCommands.js";
+import { updateTaskMetadataCommand, sendTaskMessageCommand } from "../commands/taskCommands.js";
 import { runConfigCommand } from "../commands/configCommands.js";
 import {
   readTaskContext, readTaskContextDelta, inspectTaskContext, withContextObservations,
@@ -37,6 +37,14 @@ const provider = Object.freeze({ id: "yui:builtin-capabilities", generation: "1"
 
 /** Source locators identify the existing semantic owner, not a new Store. */
 const definitions: readonly Omit<CapabilityDescriptor, "contractVersion" | "provider" | "scope">[] = [
+  {
+    name: "message.send", summary: "Save collaboration for Leader or continue the same dispatched work owner.",
+    effect: "local-mutation", requiredPermissions: ["task:read"], source: "sendTaskMessageCommand",
+    inputSchema: object({ taskId: text, body: text,
+      wakePolicy: { enum: ["leader", "none"] },
+      recipient: object({ roleName: text, workItemId: text, reviewRoundId: text }, ["roleName"])
+    }, ["taskId", "body"]), outputSchema: recordOutput
+  },
   {
     name: "context.read", summary: "Read a bounded authorized Task working set and atomic core cursor.",
     effect: "query", requiredPermissions: ["task:read"], source: "readTaskContext",
@@ -233,6 +241,13 @@ export function createBuiltinCapabilities(
         throw new Error("Capability target is outside the authenticated Task.");
       }
       const taskId = invocation.context.targetId;
+      if (name === "message.send") {
+        const result = sendTaskMessageCommand(store, taskId, params.body as string,
+          params.wakePolicy as "leader" | "none" | undefined, { environment: callerEnvironment(caller) },
+          params.recipient as { roleName: string; workItemId?: string; reviewRoundId?: string } | undefined);
+        signal(taskId);
+        return result.message;
+      }
       if (name === "context.read") {
         const core = readTaskContext(store, taskId, callerEnvironment(caller));
         return withContextObservations(core, contextProviders);

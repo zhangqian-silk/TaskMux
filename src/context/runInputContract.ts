@@ -19,6 +19,7 @@ export const YUI_RUN_INPUT_CHANNELS = [
   "input-response",
   "task-dispatch",
   "workitem-dispatch",
+  "message-continuation",
   "leader-wakeup",
   "leader-forced-wakeup"
 ] as const;

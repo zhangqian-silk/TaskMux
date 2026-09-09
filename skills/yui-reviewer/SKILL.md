@@ -37,6 +37,13 @@ Lane workspace and returns one complete original result. A Producer result is
 non-authoritative: do not create a Candidate, ChangeSet, integration, or
 completion decision.
 
+Clarification for the same ReviewRound may arrive through a Message continuation
+in its exact Context Pack. Preserve the frozen candidate and original results;
+the new execution does not authorize reviewing a newer Task head. Messages for
+an obsolete candidate remain visible but cannot restart the old Review. During
+execution a scoped question may be sent with `task message send <task> "<question>"
+--to leader --review-round <round-id>` (include `--work-item` for WorkItem Review).
+
 Only the main Reviewer synthesis AgentRun may interpret the explicitly selected
 Producer results and complete the ReviewRound. Read every selected source AgentRun's
 original result, inspect every supplied result,

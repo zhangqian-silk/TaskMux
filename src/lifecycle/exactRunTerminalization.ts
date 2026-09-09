@@ -504,6 +504,14 @@ export function terminalizeExactTaskRun(
     }
   }
   store.saveRun(terminal);
+  const pendingMessages = store.listMessages(terminal.taskId).filter((message) =>
+    message.recipient?.roleName === terminal.roleName && message.recipient.ownerRunId !== undefined
+    && message.continuation?.runId === undefined);
+  if (pendingMessages.length > 0) {
+    enqueueWork(store, { kind: "task", taskId: terminal.taskId }, "message-continuation", now,
+      pendingMessages.slice(0, 16).map((message) => ({ type: "message", taskId: terminal.taskId, id: message.id })),
+      { dedupeKey: `message-after-result:${terminal.taskId}/${terminal.id}` });
+  }
   if (terminal.roleName !== "leader") {
     // Keep the report in its execution record; atomically publish only a
     // collaboration reference. Duplicate terminals have already returned.

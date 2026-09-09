@@ -11,6 +11,16 @@ export type TaskMessageAuthor =
   | Readonly<{ type: "role"; roleName: string }>
   | Readonly<{ type: "system" }>;
 
+/** Logical ownership is frozen at send time, never inferred from the latest
+ * native process occupying a Role. The referenced Run supplies the Assignment. */
+export type TaskMessageRecipient = Readonly<{
+  roleName: string;
+  /** Absent for a scoped Leader notification, which is not an Assignment. */
+  ownerRunId?: string;
+  workItemId?: string;
+  reviewRoundId?: string;
+}>;
+
 export type TaskMessage = {
   schemaVersion: 3;
   id: string;
@@ -30,6 +40,12 @@ export type TaskMessage = {
   runId?: string;
   resultRef?: Readonly<{ type: "agent-run-result"; runId: string }>;
   workItemId?: string;
+  recipient?: TaskMessageRecipient;
+  continuation?: Readonly<{
+    runId?: string;
+    notDeliveredReason?: string;
+  }>;
+  handovers?: readonly Readonly<{ from: TaskMessageRecipient; at: string }>[];
   createdAt: string;
 };
 
@@ -38,6 +54,7 @@ export type TaskMessageContext = Readonly<{
   resultRef?: Readonly<{ type: "agent-run-result"; runId: string }>;
   workItemId?: string;
   wakePolicy?: "leader" | "none";
+  recipient?: TaskMessageRecipient;
 }>;
 
 export type TaskMessageDraftUpdate = Readonly<{
@@ -72,6 +89,8 @@ export function createTaskMessage(
     ...(context.workItemId === undefined
       ? {}
       : { workItemId: requireSafeIdentity(context.workItemId, "Message Work item id") }),
+    ...(context.recipient === undefined ? {} : { recipient: { ...context.recipient },
+      ...(context.recipient.ownerRunId === undefined ? {} : { continuation: {} }) }),
     createdAt: now.toISOString()
   };
   validateTaskMessage(message);
@@ -134,6 +153,38 @@ export function validateTaskMessage(message: TaskMessage): void {
     throw new Error("Message wakePolicy is only valid for user/operator messages.");
   }
   if (message.runId !== undefined) requireSafeIdentity(message.runId, "Message AgentRun id");
+  if (message.recipient !== undefined) {
+    requireSafeIdentity(message.recipient.roleName, "Recipient Role");
+    if (message.recipient.ownerRunId !== undefined) {
+      validateTaskRecordReference({ taskId: message.taskId, localId: message.recipient.ownerRunId }, "run");
+    } else if (message.recipient.roleName !== "leader") {
+      throw new Error("An execution recipient requires an owner Assignment.");
+    }
+    if (message.recipient.workItemId !== undefined) {
+      validateTaskRecordReference({ taskId: message.taskId, localId: message.recipient.workItemId }, "workItem");
+    }
+    if (message.recipient.reviewRoundId !== undefined) {
+      requireSafeIdentity(message.recipient.reviewRoundId, "Recipient ReviewRound");
+    }
+    if (message.recipient.workItemId === undefined && message.recipient.reviewRoundId === undefined) {
+      throw new Error("A recipient requires an exact WorkItem or ReviewRound.");
+    }
+  }
+  if (message.continuation !== undefined && message.recipient?.ownerRunId === undefined) {
+    throw new Error("Message continuation requires an owner Assignment.");
+  }
+  if (message.continuation?.runId !== undefined) {
+    validateTaskRecordReference({ taskId: message.taskId, localId: message.continuation.runId }, "run");
+  }
+  if (message.continuation?.notDeliveredReason !== undefined) {
+    requireText(message.continuation.notDeliveredReason, "Message nondelivery reason");
+    if (message.continuation.runId !== undefined) throw new Error("Assigned Message delivery is observed from its AgentRun.");
+  }
+  for (const handover of message.handovers ?? []) {
+    requireSafeIdentity(handover.from.roleName, "Previous Message Role");
+    requireSafeIdentity(handover.from.ownerRunId!, "Previous Message Assignment");
+    if (Number.isNaN(Date.parse(handover.at))) throw new Error("Message handover timestamp is invalid.");
+  }
   if (message.resultRef !== undefined) {
     if (message.kind !== "role-result" || message.resultRef.type !== "agent-run-result") {
       throw new Error("Execution result references require a role-result Message.");

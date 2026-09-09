@@ -133,6 +133,31 @@ not need narrative records.
 
 ## Execute the chosen path
 
+Dispatch establishes the first owner and frozen Assignment. For ordinary
+clarification, feedback or a continuation of that same work, send a Message:
+
+```sh
+yui task message send <task> "<clarification or continuation>" --to <role> --work-item <work-id>
+yui task message send <task> "<review clarification>" --to <role> --review-round <round-id>
+```
+
+Busy execution queues the Message. Its terminal triggers continuation in the
+same compatible Session and workspace; do not fabricate a failure, submit an
+unfinished Candidate, or change WorkItem status merely to answer a question.
+Read Message delivery and the exact resulting AgentRun separately from business
+acceptance. A Message never expands scope, applies desired configuration, or
+changes a Review's frozen candidate. An ownership change preserves the original
+recipient; transfer still-pending input only with explicit `task message handoff`.
+Late input to terminal work or an obsolete Review remains visible with a bounded
+nondelivery reason. Use the existing formal operation for new scope or Review.
+
+If a notification's acceptance is unknown, preserve its fixed wake and do not
+replay it. After establishing shared-native quiescence, `task wake resolve
+<task> <wake> --reason <evidence>` releases only its claim, leaves the original
+unknown record intact, and permits independent later inputs. It neither asserts
+acceptance nor implements the Message. Native uncertainty still blocks conflicting
+execution; unrelated authorized local work remains available.
+
 For direct work, change only Task main, keep it on its managed branch, commit
 the result, and leave it clean. Run the smallest check that can catch the
 changed behavior while implementing.

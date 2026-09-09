@@ -30,6 +30,17 @@ pack.
 
 ## Execute within the exact boundary
 
+Leader clarification and continuation arrive as Messages in the exact bounded
+Context Pack. Read those authorized refs; do not request pack-external Leader
+messages or require redispatch/status changes merely to answer a question.
+Continuation preserves the original Assignment, effective permissions and
+workspace, including unfinished files. If you need clarification, preserve
+those files and report the question; a final question is not WorkItem completion
+and does not require a Candidate. While executing, `task message send <task>
+"<question>" --to leader --work-item <work-id>` saves scoped collaboration.
+Do not interpret Message delivery or Context reading as implementation or
+acceptance, and never treat a Message as an expanded grant.
+
 - Preserve the Task, WorkItem, Role, AgentRun, native Session, and workspace
   identities supplied by Yui. A new AgentRun is another attempt or continuation of
   the same delivery unit; do not request a fresh Role or Session merely because

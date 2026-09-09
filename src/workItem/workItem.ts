@@ -203,15 +203,16 @@ export function createWorkItem(
   });
 }
 
-/** Replace the mutable definition of an execution-free Draft WorkItem. */
-export function editDraftWorkItemDefinition(
+/** Edit current open-work requirements; frozen Assignments are separate records.
+ * The command boundary owns Task authority and workspace/assignee constraints. */
+export function editWorkItemDefinition(
   workItem: WorkItem,
   update: WorkItemDefinitionUpdate,
   now: Date
 ): WorkItem {
   validateWorkItem(workItem);
-  if (workItem.status === "retired") {
-    throw new Error(`Work Item is retired: ${workItem.id}.`);
+  if (workItem.status !== "open") {
+    throw new Error(`Only open Work Item definitions may change: ${workItem.id} (${workItem.status}).`);
   }
   const next = {
     ...workItem,

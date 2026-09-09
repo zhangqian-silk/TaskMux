@@ -824,6 +824,15 @@ export function messageCard(message, t, locale, result) {
   meta.append(node("span", "mono", message.id));
   meta.append(node("time", "", formatDateTime(message.createdAt, locale)));
   if (message.runId) meta.append(node("span", "mono", message.runId + (message.workItemId ? " · " + message.workItemId : "")));
+  if (message.recipient) {
+    meta.append(node("span", "mono", "→ " + message.recipient.roleName + " · "
+      + (message.recipient.reviewRoundId || message.recipient.workItemId)));
+    meta.append(node("span", "mono", !message.recipient.ownerRunId ? t("messageDelivery.notification") : message.continuation?.runId
+      ? t("messageDelivery.run") + " " + message.continuation.runId
+      : message.continuation?.notDeliveredReason
+        ? t("messageDelivery.blocked") + " " + message.continuation.notDeliveredReason
+        : t("messageDelivery.pending")));
+  }
   card.append(meta);
 
   card.append(richText(null, message.body, t));

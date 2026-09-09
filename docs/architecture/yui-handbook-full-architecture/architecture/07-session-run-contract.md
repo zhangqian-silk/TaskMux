@@ -38,6 +38,28 @@ Provider runtime binding 保存当前输入的实际准入和原生关联。两�
 Leader 自己的事实修改不在产生端新增自唤醒，仍保留业务事件和 Task 状态通知。
 其他来源的输入不因 Leader 忙碌而被清空、忽略或自动确认。
 
+### 已有负责人的 Message 续作
+
+首次 Dispatch 建立负责人、Assignment、工作区与冻结 effective；后续澄清和继续要求
+使用 `task message send <task> <body> --to <role> --work-item <id>` 或
+`--review-round <id>`。能力桥的 `message.send` 复用同一身份和写入事务。
+Message 保存原 Role、工作关联和 ownerRunId；底层自动生成的 continuation Run
+只是后续投递/结果关联，不要求 Leader 修改业务状态或提交未完成 Candidate。
+
+同 Role 忙时保存即可返回，原执行结束后检查待办。每批最多 16 条有序消息，与新 Run
+和原 Mailbox 信号原子关联；重复终态不再次关联已分配输入。新 Snapshot 保持原 Assignment，
+追加授权消息及前次原结果，原 effective、工作区和未提交文件不变。Context read 不 ack。
+更换负责人不迁移旧消息；`task message handoff` 只将未分配输入显式交给同一工作已经
+Dispatch 的继任者。已结束的 Task/WorkItem 或过期 Review 候选保留消息和明确未投递原因，
+不自动重开。副本 Producer/综合 Assignment 仍通过原 Lane/Group 正式操作处理，
+不由消息静默重写冻结血缘。
+
+未知通知保留原固定 TaskWake、输入窗口和投递事件。`task wake show` 展示窗口之后的
+接受/unknown/处置事实。确认共享原生执行已经静止后，Agent/Operator 可用
+`task wake resolve <task> <wake> --reason <evidence>` 释放该批次认领，让独立后续输入继续。
+它不重投、不把 unknown 当作 not-accepted、不标记落实；存在原生 active/unknown 效果时
+仍拒绝释放相应资源边界。没有自动恢复 Worker、结果副本或独立 outbox。
+
 ### 准入处置
 
 | 证据 | 行为 |
@@ -138,6 +160,8 @@ Host 控制协议升级至 v5，拒绝旧协议连接；存储升级需使用既
 既有 1–9 迁移不变。迁移重命名结构化引用、重算受影响的 ContextSnapshot
 resource/parent digest，并为历史实际 launch 保留 delivery 权限。
 此前合法的 managed launch 不含 planning Session，不能用现在的 Task 状态推测历史权限。
+Message 可选的 recipient/continuation/handovers 也属于同一未发布的 9→10 合同；
+旧消息不猜负责人、不补发、不产生历史续作。
 
 历史 `turn-N`、receipt ID、native ID、原始报告和正文保持原值；新记录分配 `run-N`。
 SQLite 的 `turns`、`active_turns` 和 `turn_id` 是保留的物理表/列名，不是公开双模型。
@@ -180,3 +204,34 @@ Controller 和真实 SQLite；迁移使用基准版本二进制生成的旧 Home
 `npm run build`、`npm run lint`、`npm run test:core` 通过；core 为原有规模
 81 项，测试阶段约 4.6 秒。文档包、54 篇离线 HTML、119 个相对链接和契约
 TypeScript 检查通过。正式 Claude Opus 固定候选审查由 Leader 在集成后另行安排。
+
+### Message 续作增量的隔离证据（2026-09-09）
+
+临时协议 fixture 使用公开 CLI、真正的 Controller daemon、SQLite、Codex App Server
+协议接受与原始结果采集，不手写 AgentRunResult。合成 Task 与所有 native 进程均在独立
+可丢弃 Home 中，未读取 task19 工作区，未调用真实模型作为测试对象。
+
+- 忙时先保存两条消息，原 Run 结束后有序合并为一次续作；未提交文件、原 WorkItem
+  `open` 状态、空 Candidate 列表及冻结 effective 保持。
+- Controller 重启不重复已接受输入；终态后新的消息自动续作。Provider 发出重复终态和
+  不相干 native Turn 的结果，仍只有每个准确 Run 的一份原报告及一条结果引用消息。
+- fixture 用自己的真实受管 Session CLI 读取后续 Run Context；新消息和前次结果在有限
+  授权集中。Worker 的 `message.send` capability（显式 requestId）复用同一存储和 Leader
+  通知入口，不产生隐式 Leader Run。
+- 改负责人后旧消息显示 owner-changed；显式停止原 idle Session、正式建立继任执行再
+  handoff，原消息保留来源并在同一 WorkItem 继续。退役后迟到消息保留但不执行。
+- 同 ReviewRound 的澄清续作保持候选与 effective，Context 的 reviewerRunId 指向新执行，
+  两份原报告分别保留。新 Round 接管物理 Review workspace 后，旧 Round 消息不可抢占。
+- P1 另以有界 SQLite 状态 fixture 建立 unknown 通知认领（不冒充真实 Provider 故障）：
+  原 unknown 仍被保留时，另一 Role 的真实消息执行链可以完成；公开 `wake resolve`
+  仅释放认领，原 wake 仍未 consumed、原 unknown 事件不变，后续输入使用新窗口且不重投。
+- 补充有界门禁检查：消息续作复用 `requireManagedTaskCaller`，同 Agent 的 revoked
+  Leader Session 即使保留 active 标记也被拒绝；替换 native Session 不静默取得原 Assignment。
+  已验证 Leader 可在原 Run 仍 active 时修改 open WorkItem 的 objective/acceptance，
+  `work.edited` 保留前后值，原 Run、冻结 Context/effective 与业务状态不变；原有资源/
+  负责人变更门禁未放宽，已接受或退役的 WorkItem 定义不可改写。
+
+`npm run build`、`npm run lint`、`npm run test:core` 通过，原有 81 项 core 全通过，
+测试阶段约 4.34 秒。新增消息卡片元信息复用现有布局；本增量未追加浏览器交互验证。
+临时 fixture/scripts 与私有测试进程在交付前清理，未增加永久回归矩阵。
+组合候选的正式独立审查仍由 Leader 在固定新 commit 后安排；旧审查不覆盖此增量。

@@ -452,6 +452,7 @@ export interface SchedulerStorePort {
     taskId: string
   ): import("../context/wakeNotification.js").WakeEnvelope | null;
   claimLeaderNotification(taskId: string, now: Date): LeaderNotification | null;
+  prepareMessageContinuations?(taskId: string, now: Date): void;
   settleLeaderNotification(taskId: string, attemptId: string,
     outcome: "accepted" | "deferred" | "rejected" | "unknown", now: Date, detail?: string): void;
   /** Persist a fixed Session discovered while preparing an undelivered AgentRun. */

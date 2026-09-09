@@ -63,6 +63,7 @@ export async function processActiveRoleRunDeliveries(
 ): Promise<ActiveRoleRunDeliveryResult[]> {
   const results: ActiveRoleRunDeliveryResult[] = [];
   for (const task of selectedActiveSchedulerTasks(store, selection)) {
+    store.prepareMessageContinuations?.(task.id, now);
     for (const role of selectedSchedulerRoles(store, task.id, selection)) {
       const run = store.getActiveRun(task.id, role.name);
       if (run === null) continue;
