@@ -4,6 +4,12 @@ import {
   type ExecutionEnvironmentSnapshot
 } from "../resources/projectResource.js";
 
+import { isAgentAdapterId } from "../agent/adapterCatalog.js";
+import {
+  adapterIdForExecutionComponent,
+  resolveAgentExecutionComponent,
+  type AgentExecutionComponentId
+} from "../agent/executionComponents.js";
 import type { WorkerAccess } from "../profile/agentProfile.js";
 import type {
   ClaudeRoleAgentConfig,
@@ -38,6 +44,12 @@ export type RoleProfile = {
 
 export type RoleAgentBinding = {
   agentId: string;
+  /**
+   * The execution component the Role selected. It is carried here, not looked
+   * up from the Agent record at launch, so that a Session's effective snapshot
+   * records the product it actually started against.
+   */
+  component: AgentExecutionComponentId;
   adapterId: RoleAgentConfig["adapterId"];
   config: RoleAgentConfig;
 };
@@ -80,12 +92,20 @@ export type RoleAgentSwitchEvent = {
   };
 };
 
+/**
+ * The Agent argument is the stored record, not a hand-picked pair of fields.
+ * `component` is required for exactly that reason: an Agent registered as the
+ * Claude Agent SDK that reached a Role binding as `unknown-acp-agent` would be
+ * silently demoted, and an optional parameter makes that a quiet default
+ * instead of a compile error at the call site that forgot it.
+ */
 export function createRoleAgentBinding(
-  agent: { id: string; adapterId: string },
+  agent: { id: string; adapterId: string; component: string },
   config?: RoleAgentConfig
 ): RoleAgentBinding {
   const agentId = requireSafeIdentity(agent.id, "Role Agent id");
   const adapterId = requireSupportedAdapterId(agent.adapterId);
+  const component = resolveAgentExecutionComponent(adapterId, agent.component);
   const defaults = defaultRoleAgentConfig(adapterId);
   const effectiveConfig = config === undefined
     ? defaults
@@ -95,7 +115,7 @@ export function createRoleAgentBinding(
   if (effectiveConfig.adapterId !== adapterId) {
     throw new Error(`Role Agent config adapter does not match Agent: ${agentId}.`);
   }
-  return cloneBinding({ agentId, adapterId, config: effectiveConfig });
+  return cloneBinding({ agentId, component, adapterId, config: effectiveConfig });
 }
 
 export function createRole(
@@ -452,6 +472,16 @@ function validateRoleOwner<T extends GlobalRole | TaskRole>(role: T): T {
 function validateRoleAgentBinding(binding: RoleAgentBinding): RoleAgentBinding {
   const agentId = requireSafeIdentity(binding.agentId, "Role Agent id");
   const adapterId = requireSupportedAdapterId(binding.adapterId);
+  // Storage 10 backfilled every stored binding, so a missing component here is
+  // a corrupt record rather than an old one. Defaulting it would invent a
+  // product identity for data that never lost one.
+  if (binding.component === undefined) {
+    throw new Error(`Role Agent binding is missing its execution component: ${agentId}.`);
+  }
+  const component = resolveAgentExecutionComponent(adapterId, binding.component);
+  if (adapterIdForExecutionComponent(component) !== adapterId) {
+    throw new Error(`Role Agent binding execution component is inconsistent: ${agentId}.`);
+  }
   if (binding.config === null || typeof binding.config !== "object" || Array.isArray(binding.config)) {
     throw new Error(`Role Agent config is invalid: ${agentId}.`);
   }
@@ -513,6 +543,10 @@ function cloneBindings(bindings: Record<string, RoleAgentBinding>): Record<strin
 function cloneBinding(binding: RoleAgentBinding): RoleAgentBinding {
   return {
     agentId: binding.agentId,
+    // Copied, never re-derived. Cloning is not the place to decide what an
+    // absent component means: validation above already refuses that record,
+    // and resolving here would hide the refusal behind a plausible default.
+    component: binding.component,
     adapterId: binding.adapterId,
     config: cloneJson(binding.config)
   };
@@ -548,7 +582,10 @@ function cloneJson<T>(value: T): T {
 
 function requireSupportedAdapterId(value: string): RoleAgentConfig["adapterId"] {
   const normalized = requireText(value, "Role Agent adapter id");
-  if (normalized !== "codex" && normalized !== "claude") {
+  // The catalog defines which adapters exist. A second list here would let a
+  // catalogued adapter be registered as an Agent and then rejected when a Role
+  // binds to it, which reads as corruption rather than as the missing entry.
+  if (!isAgentAdapterId(normalized)) {
     throw new Error(`Role Agent adapter is unsupported: ${normalized}.`);
   }
   return normalized;

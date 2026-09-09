@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { AgentDefinition } from "../agent/agent.js";
-import { supportedAgentAdapterIds, type AgentAdapterId } from "../agent/adapterCatalog.js";
+import { isAgentAdapterId, supportedAgentAdapterIds, type AgentAdapterId } from "../agent/adapterCatalog.js";
 import {
   ownedArgumentsForAdapter,
   validateAgentAdvancedArguments,
@@ -14,12 +14,14 @@ import type {
   AgentConfigurationDiscoveryInput
 } from "./agentConfigurationCatalog.js";
 import {
+  discoverAcpConfiguration,
   discoverClaudeConfiguration,
   discoverCodexConfiguration
 } from "./agentConfigurationProbe.js";
 import type { PreInputReadinessCapability } from "../lifecycle/canonicalLifecycleEvent.js";
 import { builtinAgentDriverRegistry } from "../runtime/builtinAgentDrivers.js";
 import type { CodexThreadOptions } from "../runtime/codexAppServerRuntime.js";
+import type { AcpSessionOptions } from "../runtime/acpProtocol.js";
 
 export type AdvancedAgentConfig = Readonly<{ rawArgs?: readonly string[] }>;
 export type PermissionStrategy = "default" | "bypass" | "configured";
@@ -60,9 +62,56 @@ export type ClaudeAgentConfig = Readonly<{
   settingsSources?: readonly string[];
   advanced?: AdvancedAgentConfig;
 }>;
-export type RoleAgentConfig = CodexAgentConfig | ClaudeAgentConfig;
+/**
+ * Configuration for an Agent reached over ACP.
+ *
+ * Model and reasoning effort are absent here because Yui's ACP client does not
+ * implement `session/set_config_option` — not because the protocol lacks it.
+ * ACP v1 defines that method and the `configOptions` an Agent advertises during
+ * session setup, including `model` and `thought_level` categories. Stating the
+ * limit as Yui's keeps the record honest and marks exactly what to build next.
+ */
+export type AcpAgentConfig = Readonly<{
+  adapterId: "acp";
+  /**
+   * Selected through ACP's own session config options after the Session exists.
+   * The protocol enumerates the values each Agent accepts, so a value stated
+   * here is checked against that enumeration at launch rather than guessed at
+   * configuration time.
+   */
+  model?: string;
+  effort?: string;
+  additionalDirectories?: readonly string[];
+  /**
+   * Unsupported by Yui's ACP client, not by the protocol: ACP defines no
+   * client-side settings file or settings source, so there is nothing to send.
+   */
+  settingsFile?: undefined;
+  settingsSources?: undefined;
+  /**
+   * How this Role's Session permission mode is decided.
+   *
+   * `default` states no opinion: Yui sends no mode, so the Agent's own default
+   * stands. `bypass` is the user explicitly asking to act without approval
+   * prompts, and is applied only through the mode value the selected execution
+   * component declares. `configured` names one exact mode id the Agent offers.
+   *
+   * This is separate from how Yui answers `session/request_permission`. That
+   * client-side question has one answer on this transport — Yui holds no
+   * interactive consent and declines — and no strategy here changes it.
+   */
+  permission: AcpPermissionConfig;
+  advanced?: AdvancedAgentConfig;
+}>;
+
+export type AcpPermissionConfig =
+  | Readonly<{ strategy: "default" }>
+  | Readonly<{ strategy: "bypass" }>
+  | Readonly<{ strategy: "configured"; mode: string }>;
+export type RoleAgentConfig = CodexAgentConfig | ClaudeAgentConfig | AcpAgentConfig;
 export type CodexRoleAgentConfig = CodexAgentConfig;
 export type ClaudeRoleAgentConfig = ClaudeAgentConfig;
+export type AcpRoleAgentConfig = AcpAgentConfig;
 
 export type CapabilityField = Readonly<{
   key: string;
@@ -126,8 +175,9 @@ export type CompiledAgentLaunch = Readonly<{
   sessionStrategy: "runtime-discovery" | "preallocated";
 }>;
 export type CompiledManagedControlLaunch = CompiledAgentLaunch & Readonly<{
-  transport: "codex-app-server-proxy" | "claude-stream-json";
+  transport: "codex-app-server-proxy" | "claude-stream-json" | "acp-stdio";
   codexThread?: CodexThreadOptions;
+  acpSession?: AcpSessionOptions;
 }>;
 
 export interface AgentAdapter<TConfig extends RoleAgentConfig = RoleAgentConfig> {
@@ -489,6 +539,159 @@ class ClaudeAdapter extends BaseAdapter<ClaudeAgentConfig> {
   }
 }
 
+/**
+ * The Agent Client Protocol adapter.
+ *
+ * One adapter serves every ACP Agent. It deliberately compiles no arguments of
+ * its own: entering ACP mode is a per-product invocation detail that belongs in
+ * the Agent descriptor's `baseArgs`, and everything after startup is negotiated
+ * over the protocol. Adding a second ACP product therefore requires a new
+ * descriptor and no new code here.
+ */
+class AcpAdapter extends BaseAdapter<AcpAgentConfig> {
+  readonly id = "acp" as const;
+  readonly label = "Agent Client Protocol";
+  // The protocol version Yui implements. ACP Agents are versioned
+  // independently of their products, and `initialize` negotiates the real
+  // version at connect time, so no product's release number belongs here.
+  readonly supportedVersion = "0.0.0";
+  readonly capabilities = {
+    recover: true,
+    interrupt: true,
+    // ACP assigns the Session id in its `session/new` response.
+    nativeSessionDiscovery: "runtime",
+    preInputReadiness: driverPreInputReadiness("acp")
+  } as const;
+
+  discoverConfiguration(input: AgentConfigurationDiscoveryInput): Promise<AgentConfigurationCatalog> {
+    return discoverAcpConfiguration(input);
+  }
+
+  validateStructured(config: AcpAgentConfig): void {
+    exact(config, ["adapterId", "model", "effort", "permission", "additionalDirectories",
+      "settingsFile", "settingsSources", "advanced"], "ACP Agent config");
+    if (config.adapterId !== "acp") throw new Error("ACP Agent config adapter is invalid.");
+    // Model and effort are session config options in ACP, so a value is legal
+    // here whatever this build knows about the product. Whether the Agent
+    // actually offers it is decided by the live option list at launch: the
+    // protocol enumerates the accepted values, and only that enumeration can
+    // answer it. Rejecting an unrecognised name here would require Yui to hold
+    // a model list per product, which is the fabricated authority this design
+    // avoids.
+    optionalText(config.model, "ACP model");
+    optionalText(config.effort, "ACP effort");
+    if (config.settingsFile !== undefined || config.settingsSources !== undefined) {
+      throw new Error("Yui's ACP client exposes no client-side settings configuration.");
+    }
+    // `additionalDirectories` is a real ACP session-lifecycle field, so a
+    // Project-backed workspace is configurable here. Whether it is actually
+    // sent is decided per connection: ACP requires Clients to send it only to
+    // an Agent that advertised `sessionCapabilities.additionalDirectories`, and
+    // only the live handshake knows that. Rejecting it here instead would make
+    // every multi-root Project launch fail before the Agent is even asked.
+    validatePaths(config.additionalDirectories, "ACP additional directory");
+    if (config.permission === undefined) {
+      throw new Error("ACP permission strategy is required.");
+    }
+    // `configured` carries the one mode id the user named; the other two
+    // strategies carry nothing, so an extra field would mean a caller expected a
+    // value this adapter never reads.
+    if (config.permission.strategy === "configured") {
+      exact(config.permission, ["strategy", "mode"], "ACP permission config");
+      // The mode is matched by exact id against what the Agent offers at launch.
+      // Yui keeps no per-product mode list, so any non-empty id is accepted here
+      // and verified there.
+      requireOneText(config.permission.mode, "ACP permission mode");
+    } else {
+      exact(config.permission, ["strategy"], "ACP permission config");
+      if (config.permission.strategy !== "default" && config.permission.strategy !== "bypass") {
+        throw new Error("ACP permission strategy is invalid.");
+      }
+    }
+    advanced(this.id, config.advanced);
+  }
+
+  structuredArgs(_config: AcpAgentConfig): string[] {
+    return [];
+  }
+
+  compileResume(input: ResumeInput<AcpAgentConfig>): CompiledAgentLaunch {
+    // Reattaching is a `session/load` call inside the protocol, not a flag.
+    nativeId(input.nativeSessionId);
+    return this.compileNew(input);
+  }
+
+  compileManagedControl(
+    input: CompileInput<AcpAgentConfig>,
+    _mode: "new" | "resume",
+    _nativeSessionId?: string
+  ): CompiledManagedControlLaunch {
+    const config = this.canonicalizeConfig(input.config);
+    const bootstrap = acpSessionBootstrap(input);
+    const directories = config.additionalDirectories ?? [];
+    // What the Role asked for, in the form the Session applies. Only stated
+    // fields travel: an absent model is a request for the Agent's own default,
+    // and `default` permission deliberately sends no mode at all.
+    const desired = {
+      ...(config.model === undefined ? {} : { model: config.model }),
+      ...(config.effort === undefined ? {} : { effort: config.effort }),
+      ...(config.permission.strategy === "configured"
+        ? { permissionMode: config.permission.mode }
+        : config.permission.strategy === "bypass"
+          ? { permissionBypass: true }
+          : {})
+    };
+    const hasDesired = Object.keys(desired).length > 0;
+    return {
+      ...this.compileNew(input),
+      transport: "acp-stdio",
+      // ACP accepts no Yui flags, so everything a managed Session needs travels
+      // as protocol input. Omit the key entirely when there is nothing to say.
+      ...(directories.length === 0 && bootstrap === undefined && !hasDesired ? {} : {
+        acpSession: {
+          ...(directories.length === 0 ? {} : { additionalDirectories: [...directories] }),
+          ...(bootstrap === undefined ? {} : { sessionBootstrap: bootstrap }),
+          ...(hasDesired ? { desiredConfiguration: desired } : {})
+        }
+      })
+    };
+  }
+}
+
+/**
+ * The instructions a managed ACP Session must read before it acts.
+ *
+ * ACP defines no system prompt and no equivalent of `--append-system-prompt`,
+ * so unlike Codex and Claude this text cannot be delivered at launch. It is
+ * carried to the Session and prepended to the first prompt instead. The
+ * manifest form stays a pointer rather than an inlined Task: content is read
+ * through the manifest's own Context API, exactly as the other adapters do.
+ */
+function acpSessionBootstrap(input: CompileInput<AcpAgentConfig>): string | undefined {
+  const sections = input.sessionManifestPath === undefined
+    ? [
+        input.developerInstructions,
+        ...(input.skills === undefined || input.skills.length === 0 ? [] : [
+          [
+            "Yui Role Skills are available at the paths below. Before performing work "
+            + "governed by one, read and follow its SKILL.md on demand; do not treat "
+            + "this list as a user message.",
+            ...input.skills.map((skill) => `- ${skill.id}: ${skill.path}/SKILL.md`)
+          ].join("\n")
+        ])
+      ]
+    : [
+        `Yui managed Session. Read and follow the Session Manifest at `
+        + `${input.sessionManifestPath} (digest ${input.sessionManifestDigest ?? "unknown"}). `
+        + "Load each Skill and Role Profile by its manifest path before acting; Task "
+        + "content is available only through the manifest's exact Context API."
+      ];
+  const bootstrap = sections
+    .filter((value): value is string => value !== undefined && value.trim().length > 0)
+    .join("\n\n");
+  return bootstrap.length === 0 ? undefined : bootstrap;
+}
+
 function driverPreInputReadiness(adapterId: AgentAdapterId): PreInputReadinessCapability {
   const capability = builtinAgentDriverRegistry().requireByAdapterId(adapterId)
     .capabilities.observation.preInputReadiness;
@@ -506,7 +709,7 @@ function driverPreInputReadiness(adapterId: AgentAdapterId): PreInputReadinessCa
 }
 
 const ADAPTERS: Readonly<Record<AgentAdapterId, AgentAdapter<any>>> = {
-  codex: new CodexAdapter(), claude: new ClaudeAdapter()
+  codex: new CodexAdapter(), claude: new ClaudeAdapter(), acp: new AcpAdapter()
 };
 
 function tomlString(value: string): string {
@@ -577,7 +780,10 @@ function sessionTitle(value: string): string {
 }
 export { supportedAgentAdapterIds };
 export function findAgentAdapter(id: string): AgentAdapter | null {
-  return id === "codex" || id === "claude" ? ADAPTERS[id] : null;
+  // `ADAPTERS` is keyed by the catalog, so it already answers this question.
+  // A second name list here would strand a catalogued adapter that has a real
+  // implementation sitting one line above.
+  return isAgentAdapterId(id) ? ADAPTERS[id] : null;
 }
 export function resolveAgentAdapter(id: string): AgentAdapter {
   const adapter = findAgentAdapter(id);
@@ -655,6 +861,25 @@ export function inspectAgentCapabilities(
 }
 
 function baseline(id: AgentAdapterId): CapabilityField[] {
+  // ACP negotiates its whole configurable surface per Session, so a static
+  // baseline can only say which axes exist — never which values one Agent
+  // accepts. Model, effort and mode are all `degraded` for exactly that reason:
+  // they are configurable and the enumeration comes from the live Session, so
+  // promising values here would be inventing them.
+  if (id === "acp") return [
+    field("model", "enum", "degraded", true),
+    field("effort", "enum", "degraded", true),
+    field("permission.strategy", "enum", "available", false,
+      ["default", "bypass", "configured"]),
+    // The exact mode ids belong to the Agent, and only a live Session lists
+    // them. `configured` carries whichever id the user names.
+    field("permission.mode", "enum", "degraded", true),
+    // Configurable, but only reaches an Agent that advertises
+    // `sessionCapabilities.additionalDirectories` at `initialize`. A static
+    // baseline cannot see that handshake, so it reports the field as degraded
+    // rather than promising delivery it cannot guarantee.
+    field("additionalDirectories", "path-list", "degraded", true)
+  ];
   if (id === "codex") return [
     field("model", "enum", "degraded", true), field("effort", "enum", "unavailable", true),
     field("permission.strategy", "enum", "available", false, ["default", "bypass", "configured"]),
@@ -677,6 +902,9 @@ function baseline(id: AgentAdapterId): CapabilityField[] {
 
 function fromHelp(id: AgentAdapterId, help: string): CapabilityField[] {
   const fields = baseline(id);
+  // Nothing in an ACP Agent's `--help` describes the protocol it speaks, so
+  // there is nothing here to refine: the baseline is already the whole truth.
+  if (id === "acp") return fields;
   const replacements = id === "codex"
     ? [permissionStrategyField(help, "--dangerously-bypass-approvals-and-sandbox"),
         choiceField("permission.sandbox", help, "--sandbox", SANDBOXES),
@@ -764,6 +992,11 @@ function compareVersions(leftVersion: string, rightVersion: string): number {
 }
 
 function missingRequiredCapabilities(id: AgentAdapterId, help: string): string[] {
+  // An ACP Agent declares its capabilities in the `initialize` handshake, not
+  // in `--help`. Demanding Claude's flags of it reported a working Agent as a
+  // broken one, so ACP is required to expose no flags at all here; the real
+  // check is `discoverAcpConfiguration`, which speaks the protocol.
+  if (id === "acp") return [];
   const required: readonly (readonly [RegExp, string])[] = id === "codex"
     ? [
         [/(?:^|\s)--config(?:\s|[=<,]|$)/m, "--config"],
@@ -788,6 +1021,12 @@ function missingRequiredCapabilities(id: AgentAdapterId, help: string): string[]
 
 function cloneConfig(config: RoleAgentConfig, paths: readonly string[] | undefined): RoleAgentConfig {
   const advancedConfig = config.advanced?.rawArgs === undefined ? config.advanced : { rawArgs: [...config.advanced.rawArgs] };
+  if (config.adapterId === "acp") {
+    return { ...config,
+      permission: { ...config.permission },
+      ...(paths === undefined ? {} : { additionalDirectories: [...paths] }),
+      ...(advancedConfig === undefined ? {} : { advanced: advancedConfig }) };
+  }
   if (config.adapterId === "codex") return { ...config,
     permission: { ...config.permission },
     ...(paths === undefined ? {} : { additionalDirectories: [...paths] }),
@@ -804,9 +1043,15 @@ function cloneConfig(config: RoleAgentConfig, paths: readonly string[] | undefin
 }
 
 export function defaultRoleAgentConfig(adapterId: AgentAdapterId): RoleAgentConfig {
-  return adapterId === "codex"
-    ? { adapterId: "codex", permission: { strategy: "bypass" } }
-    : { adapterId: "claude", permission: { strategy: "bypass" } };
+  // Keyed by adapter, not a codex/else ternary: defaulting an unrecognized
+  // adapter to Claude's shape produced a config whose `adapterId` disagreed
+  // with the binding it was created for.
+  //
+  // ACP defaults to `default` rather than `bypass` because Yui answers ACP
+  // permission requests itself, and the answer it must never invent is "yes".
+  return adapterId === "acp"
+    ? { adapterId: "acp", permission: { strategy: "default" } }
+    : { adapterId, permission: { strategy: "bypass" } };
 }
 
 function validateSimplePermissionStrategy(value: unknown, label: string): void {
@@ -851,6 +1096,10 @@ function absolutePath(value: string, label: string): void {
 }
 function optionalText(value: unknown, label: string): void {
   if (value !== undefined) text(value, label);
+}
+/** A required non-empty single-line value. */
+function requireOneText(value: unknown, label: string): void {
+  text(value, label);
 }
 function optionalTexts(values: readonly string[] | undefined, label: string): void {
   if (values === undefined) return;

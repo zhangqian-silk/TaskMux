@@ -15,6 +15,7 @@ import {
   transcriptObserverSource
 } from "./builtinTranscriptObserver.js";
 import {
+  mapAcpAgentError,
   mapClaudeAgentError,
   mapCodexAgentError
 } from "./builtinAgentErrorMappers.js";
@@ -23,6 +24,12 @@ import { transportAgentResult } from "../domain/agentResultTransport.js";
 
 export const CODEX_DRIVER_ID = "openai/codex";
 export const CLAUDE_CODE_DRIVER_ID = "anthropic/claude-code";
+/**
+ * The Agent Client Protocol Driver is named after the protocol, not a product:
+ * every ACP Agent is observed through this one entry, so adding a second ACP
+ * CLI needs a launch descriptor and no new Driver.
+ */
+export const ACP_DRIVER_ID = "acp/agent-client-protocol";
 
 export function builtinDriverIdForAdapter(adapterId: string): string {
   return builtinAgentDriverRegistry().requireByAdapterId(adapterId).id;
@@ -47,6 +54,9 @@ const STRUCTURED_CLI_CAPABILITIES: AgentDriverCapabilities = Object.freeze({
     resume: true,
     sendTurn: true,
     interrupt: true,
+    // Conservative default: a Driver that has not stated otherwise is assumed
+    // to cancel by stopping the process Yui owns.
+    interruptDelivery: "owned-process" as const,
     stop: true
   }),
   conversation: Object.freeze({
@@ -152,6 +162,12 @@ export const BUILTIN_AGENT_DRIVERS: readonly AgentDriver[] = Object.freeze([
         acceptance: "exact" as const,
         idempotency: "unavailable" as const
       }),
+      control: Object.freeze({
+        ...STRUCTURED_CLI_CAPABILITIES.control,
+        // Managed Codex interrupts its Turn through the App Server, which
+        // leaves the Session (and its process) alive.
+        interruptDelivery: "native" as const
+      }),
       descendants: Object.freeze({
         lineage: "partial" as const,
         detachedQuery: "partial" as const,
@@ -196,6 +212,121 @@ export const BUILTIN_AGENT_DRIVERS: readonly AgentDriver[] = Object.freeze([
         ),
         sample: codexTranscriptObserver
       })
+    })
+  }),
+  Object.freeze({
+    id: ACP_DRIVER_ID,
+    label: "Agent Client Protocol",
+    protocolVersion: 1,
+    adapterId: "acp",
+    /**
+     * Declared from ACP v1 itself, not from any product's abilities.
+     *
+     * ACP is a client-driven JSON-RPC protocol: Yui owns the pipe and learns
+     * everything from request/response pairs, so there is no Hook ingress and
+     * no transcript file to sample. Several capabilities are therefore
+     * genuinely unavailable rather than merely unimplemented, and saying so is
+     * what keeps managed admission fail-closed.
+     */
+    capabilities: Object.freeze({
+      // No interactive surface: `acp` mode is a machine protocol on stdio.
+      surfaces: Object.freeze(["managed-protocol"] as const),
+      lifecycle: Object.freeze({
+        host: "persistent" as const,
+        providerProcess: "persistent" as const,
+        // `session/load` is ACP's exact Conversation resume, so the protocol
+        // does define one and managed admission — which runs adapter-wide,
+        // before any connection exists — is right to see it here. What a
+        // *given* Agent implements is negotiated per connection via
+        // `agentCapabilities.loadSession`, and that answer cannot be predicted
+        // by a static table. The live Session therefore reports its own
+        // recoverability after the handshake, and that value, not this one, is
+        // what gets published and stored. An Agent that never advertised
+        // `loadSession` also fails loudly inside `session/load` rather than
+        // silently degrading a running Turn.
+        nativeConversationResume: "exact" as const,
+        compaction: "unknown" as const,
+        compactionEvents: "unavailable" as const,
+        contextUsage: "unavailable" as const,
+        inSessionContinuation: true,
+        deliveryDeduplication: "unsupported" as const
+      }),
+      control: Object.freeze({
+        start: true,
+        resume: true,
+        sendTurn: true,
+        // `session/cancel` is a notification the Agent MUST answer with the
+        // `cancelled` stop reason, but halting the work is only a SHOULD.
+        interrupt: true,
+        interruptDelivery: "native" as const,
+        stop: true
+      }),
+      conversation: Object.freeze({
+        // `session/new` returns the Agent's own Session id.
+        persistentIdentity: "exact" as const,
+        // Same as `nativeConversationResume`: `session/load` is how ACP carries
+        // a Conversation across processes, so the capability exists. Whether
+        // this Agent honours it is the live Session's answer, not this table's.
+        crossProcessResume: true,
+        // `session/load` replays the Conversation, but ACP exposes no way to
+        // read back a Session's history without reloading it.
+        readback: "unavailable" as const
+      }),
+      input: Object.freeze({
+        startTurn: true,
+        // One Turn is one `session/prompt` request; ACP defines no way to add
+        // input to a Turn already in flight.
+        steer: "unavailable" as const,
+        inject: "unavailable" as const,
+        // The prompt response IS the terminal, so ACP defines no separate
+        // acceptance message. This is a permanent protocol fact, not a
+        // per-Agent gap: a completed pipe write is all that can be observed
+        // before the Turn's own result arrives.
+        acceptance: "unavailable" as const,
+        idempotency: "unavailable" as const
+      }),
+      descendants: Object.freeze({
+        lineage: "unavailable" as const,
+        detachedQuery: "unavailable" as const,
+        resultRouting: "unavailable" as const
+      }),
+      // The prompt response carries an explicit stopReason, which is an exact
+      // structured terminal for the Turn that requested it.
+      bounded: Object.freeze({ structuredTerminal: true }),
+      observation: Object.freeze({
+        sessionIdentity: "exact" as const,
+        sessionBootstrap: "discovered" as const,
+        // ACP has no "ready" signal beyond `initialize` answering.
+        preInputReadiness: "unavailable" as const,
+        promptAcceptance: "unavailable" as const,
+        // The terminal status and its correlation to the exact request are
+        // both exact. What ACP lacks is intermediate progress, which is
+        // recorded as absent operations and usage rather than by understating
+        // the lifecycle Yui does observe.
+        turnLifecycle: "exact" as const,
+        goalLifecycle: "unavailable" as const,
+        operations: Object.freeze([] as const),
+        waiting: Object.freeze([] as const),
+        usage: "unavailable" as const,
+        delivery: "host-only" as const
+      })
+    }),
+    runtime: Object.freeze({
+      // ACP delivers no Hooks. Identity comes from the protocol Session the
+      // managed Endpoint already holds, so there is no payload to mine here —
+      // and inventing a Turn id from a JSON-RPC request id would present a
+      // Yui-owned value as a Provider identity.
+      nativeSessionId: ({ payload }: AgentDriverNativeHook) => (
+        optionalIdentityFrom(payload, ["sessionId"])
+      ),
+      nativeTurnId: () => undefined,
+      mapError: mapAcpAgentError,
+      mapHook: ({ hookEventName }: AgentDriverNativeHook): readonly MappedHook[] => {
+        throw new Error(`ACP Driver receives no native Hooks: ${hookEventName}.`);
+      },
+      classifyHook: ({ hookEventName }: AgentDriverNativeHook) => {
+        throw new Error(`ACP Driver receives no native Hooks: ${hookEventName}.`);
+      }
     })
   })
 ]);

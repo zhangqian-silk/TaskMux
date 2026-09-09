@@ -34,11 +34,46 @@ export type AgentConfigurationField = Readonly<{
   reason?: string;
 }>;
 
+/**
+ * What a live handshake reported, as distinct from what Yui statically
+ * supports.
+ *
+ * A connection plan's static table says which protocol Yui implements. It
+ * cannot say what the Agent on the other end agreed to, and for a plan whose
+ * products are interchangeable that difference is the whole point. Every field
+ * is explicit about absence: a plan with no capability exchange reports
+ * `unsupported`, and a plan that has one but learned nothing reports `unknown`,
+ * so a missing value is never read as a negative answer.
+ */
+export type AgentHandshakeObservation =
+  | Readonly<{
+      status: "unsupported";
+      /** Why no handshake facts exist: this plan negotiates nothing. */
+      reason: string;
+    }>
+  | Readonly<{
+      status: "observed";
+      /** Protocol version the two sides settled on. */
+      protocolVersion: number;
+      /** Self-reported product identity, `unknown` when the Agent stayed silent. */
+      agentName: string | "unknown";
+      agentVersion: string | "unknown";
+      /** Capability names the Agent advertised, sorted; `[]` means none. */
+      capabilities: readonly string[];
+      /** Authentication methods advertised, sorted; `[]` means none. */
+      authMethods: readonly string[];
+    }>;
+
 export type AgentConfigurationCatalog = Readonly<{
   schemaVersion: 1;
   agentId: string;
   adapterId: AgentAdapterId;
   cliVersion?: string;
+  /**
+   * Absent when the catalog was not produced by a live connection, which is a
+   * third state distinct from both branches above: nothing was attempted.
+   */
+  handshake?: AgentHandshakeObservation;
   models: readonly AgentModelChoice[];
   fields: readonly AgentConfigurationField[];
   warnings: readonly string[];
@@ -206,6 +241,27 @@ export function fallbackAgentConfigurationCatalog(
     field("model", [], true),
     field("effort", [], true)
   ];
+  // The fallback exists for when the probe could not run, so it must still be
+  // this Agent's own shape. Falling through to Claude's fields handed the
+  // caller a catalog whose `adapterId` contradicted the Agent it described.
+  if (agent.adapterId === "acp") {
+    return {
+      schemaVersion: 1,
+      agentId: agent.id,
+      adapterId: "acp",
+      models: [],
+      fields: [
+        ...common,
+        field("permission.strategy",
+          [choice("default"), choice("bypass"), choice("configured")], false),
+        // The mode ids come from a live Session, so an offline catalog can only
+        // say the axis exists. Listing candidates here would invent an Agent's
+        // vocabulary from a build-time guess.
+        field("permission.mode", [], true)
+      ],
+      warnings: ["Runtime configuration catalog is unavailable."]
+    };
+  }
   return agent.adapterId === "codex"
     ? {
         schemaVersion: 1,
@@ -320,9 +376,15 @@ function catalogFingerprint(
     sourceName: binding.sourceName,
     value: environment[binding.sourceName] ?? null
   }));
-  const nativeRoot = input.agent.adapterId === "codex"
-    ? environment.CODEX_HOME ?? join(environment.HOME ?? homedir(), ".codex")
-    : environment.CLAUDE_CONFIG_DIR ?? join(environment.HOME ?? homedir(), ".claude");
+  // Which directory an ACP Agent keeps its own state in is that product's
+  // business, not the protocol's. Fingerprinting it against Claude's config
+  // root made unrelated Claude edits invalidate this cache; the executable
+  // path below is the honest identity for an Agent Yui only speaks to.
+  const nativeRoot = input.agent.adapterId === "acp"
+    ? null
+    : input.agent.adapterId === "codex"
+      ? environment.CODEX_HOME ?? join(environment.HOME ?? homedir(), ".codex")
+      : environment.CLAUDE_CONFIG_DIR ?? join(environment.HOME ?? homedir(), ".claude");
   const context = input.config?.adapterId === "codex"
     ? { profile: input.config.profile ?? null }
     : input.config?.adapterId === "claude"
@@ -332,6 +394,10 @@ function catalogFingerprint(
         }
       : null;
   return createHash("sha256").update(JSON.stringify({
+    // The component, not just the plan: two ACP products answer the same
+    // handshake differently, so a cache keyed on the plan alone would serve one
+    // product's capabilities for the other.
+    component: input.agent.component,
     adapterId: input.agent.adapterId,
     command: input.agent.command,
     baseArgs: input.agent.baseArgs,
@@ -391,7 +457,6 @@ function validateCatalog(
     || value.agentId !== agent.id
     || value.adapterId !== agent.adapterId
     || !Array.isArray(value.models)
-    || value.models.length === 0
     || !Array.isArray(value.fields)
     || !Array.isArray(value.warnings)) {
     throw new Error("Agent configuration model catalog is incomplete.");
@@ -400,6 +465,9 @@ function validateCatalog(
   unique(models.map(({ value: model }) => model), "model");
   const fields = value.fields.map(validateField);
   unique(fields.map(({ key }) => key), "configuration field");
+  if (models.length === 0 && !modelAxisIsAccountedFor(fields)) {
+    throw new Error("Agent configuration model catalog is incomplete.");
+  }
   const warnings = value.warnings.map((warning) => text(warning, "catalog warning"));
   return {
     schemaVersion: 1,
@@ -407,9 +475,98 @@ function validateCatalog(
     adapterId: agent.adapterId,
     ...(typeof value.cliVersion === "string"
       ? { cliVersion: text(value.cliVersion, "CLI version") } : {}),
+    // Carried through rather than dropped. This is the only record of what the
+    // Agent on the other end actually agreed to, and for a plan whose products
+    // are interchangeable it is the one fact that tells them apart. Rebuilding
+    // the catalog without it silently erased the probe's answer on both the
+    // live path and the cache read-back, leaving every consumer unable to
+    // distinguish "negotiated nothing" from "never asked".
+    ...(value.handshake === undefined
+      ? {}
+      : { handshake: validateHandshake(value.handshake) }),
     models,
     fields,
     warnings
+  };
+}
+
+/**
+ * Whether an empty model list is an answer or a failure.
+ *
+ * Emptiness alone does not distinguish the two, so the `model` field's own
+ * contract decides. `available` is the field that carries a probe's explicit
+ * statement about an axis, and only a probe that states it has said anything
+ * about what an empty list means:
+ *
+ * - `available: false` — the axis does not exist for this Agent, and `reason`
+ *   says why. Nothing to enumerate.
+ * - `available: true` — the axis exists and its values are deliberately
+ *   enumerated later, with `allowCustom` letting a value be named before Yui has
+ *   the list. This is ACP: models live in the `configOptions` a Session returns,
+ *   so listing them at probe time would mean opening a real, possibly billed
+ *   Session to populate a menu. The probe reports the axis, defers the values,
+ *   and the configured model is verified against the Agent's own list at launch.
+ * - absent — the probe made no claim, which is the Codex and Claude shape. Those
+ *   probes enumerate models into the top-level `models` array on success, so an
+ *   empty array there means `model list` failed or returned nothing usable, and
+ *   the catalog really is incomplete.
+ *
+ * So an unstated `available` with no models stays a rejection, which is what
+ * keeps a genuinely broken Codex or Claude discovery from passing as an answer.
+ *
+ * The earlier form of this check accepted only the first case. It therefore
+ * rejected a valid ACP catalog and replaced it with the fallback, discarding the
+ * live handshake and the probe's own reasons — the failure mode the
+ * `available`/`reason` pair exists to prevent.
+ */
+function modelAxisIsAccountedFor(fields: readonly AgentConfigurationField[]): boolean {
+  const model = fields.find(({ key }) => key === "model");
+  if (model === undefined) return false;
+  if (model.available === undefined) return model.choices.length > 0;
+  // Stated either way, the field itself explains the empty list.
+  return true;
+}
+
+/**
+ * A handshake observation, kept in whichever of its three states it arrived in.
+ *
+ * Absence is meaningful and is preserved by the caller: it means no live
+ * connection produced this catalog. The two present states are distinguished
+ * here rather than merged, because `unsupported` ("this plan negotiates
+ * nothing") and an `observed` result with empty capabilities ("the Agent
+ * answered, and advertised none") are different answers that would otherwise
+ * be indistinguishable. An unrecognised status is rejected instead of being
+ * coerced into either one.
+ */
+function validateHandshake(value: unknown): AgentHandshakeObservation {
+  if (!record(value)) throw new Error("Agent handshake observation is invalid.");
+  if (value.status === "unsupported") {
+    return {
+      status: "unsupported",
+      reason: text(value.reason, "handshake reason")
+    };
+  }
+  if (value.status !== "observed") {
+    throw new Error(`Agent handshake status is unsupported: ${String(value.status)}.`);
+  }
+  if (!Number.isSafeInteger(value.protocolVersion)) {
+    throw new Error("Agent handshake protocol version is invalid.");
+  }
+  const capabilities = array(value.capabilities, "handshake capabilities")
+    .map((capability) => text(capability, "handshake capability"));
+  unique(capabilities, "handshake capability");
+  const authMethods = array(value.authMethods, "handshake authentication methods")
+    .map((method) => text(method, "handshake authentication method"));
+  unique(authMethods, "handshake authentication method");
+  return {
+    status: "observed",
+    protocolVersion: value.protocolVersion as number,
+    // `unknown` is a real answer here — the Agent connected but did not name
+    // itself — so it is stored as given and never replaced by a guess.
+    agentName: text(value.agentName, "handshake Agent name"),
+    agentVersion: text(value.agentVersion, "handshake Agent version"),
+    capabilities: [...capabilities].sort(),
+    authMethods: [...authMethods].sort()
   };
 }
 

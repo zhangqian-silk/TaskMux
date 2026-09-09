@@ -60,6 +60,16 @@ export type AgentDriverCapabilities = Readonly<{
     resume: boolean;
     sendTurn: boolean;
     interrupt: boolean;
+    /**
+     * How `interrupt` is actually delivered.
+     *
+     * `native` means the provider is asked to stop over its own protocol and
+     * decides when to settle the Turn; `owned-process` means Yui stops the
+     * process it owns, which ends the Session along with the Turn. Callers
+     * that surface cancellation to a user need the difference: only the second
+     * is a physical stop, and only the first can leave the Turn unsettled.
+     */
+    interruptDelivery: "native" | "owned-process";
     stop: boolean;
   }>;
   conversation: Readonly<{
@@ -263,6 +273,9 @@ export function validateAgentDriverCapabilities(
       throw new Error(`Agent Driver control capability ${name} must be boolean.`);
     }
   }
+  if (!["native", "owned-process"].includes(String(control.interruptDelivery))) {
+    throw new Error("Agent Driver interrupt delivery capability is invalid.");
+  }
   const lifecycle = input.lifecycle;
   if (lifecycle === null || typeof lifecycle !== "object" || Array.isArray(lifecycle)) {
     throw new Error("Agent Driver lifecycle capabilities must be an object.");
@@ -366,6 +379,7 @@ export function validateAgentDriverCapabilities(
       resume: control.resume,
       sendTurn: control.sendTurn,
       interrupt: control.interrupt,
+      interruptDelivery: control.interruptDelivery as "native" | "owned-process",
       stop: control.stop
     }),
     conversation: Object.freeze({
@@ -421,8 +435,7 @@ export function managedRuntimeAdmission(
   if (!actual.control.stop) missing.push("stop");
   if (actual.observation.sessionIdentity !== "exact"
     || actual.conversation.persistentIdentity !== "exact") missing.push("exact-session-identity");
-  if (actual.observation.promptAcceptance !== "exact"
-    || actual.input.acceptance !== "exact") missing.push("exact-prompt-acceptance");
+  if (!provesPromptAcceptance(actual)) missing.push("provable-prompt-acceptance");
   if (actual.lifecycle.host !== "persistent") missing.push("persistent-agent-host");
   if (actual.lifecycle.nativeConversationResume !== "exact") {
     missing.push("exact-native-conversation-resume");
@@ -432,6 +445,31 @@ export function managedRuntimeAdmission(
   return missing.length === 0
     ? Object.freeze({ admitted: true })
     : Object.freeze({ admitted: false, missing: Object.freeze(missing) });
+}
+
+/**
+ * Whether a Turn's input can be proven either accepted or not accepted.
+ *
+ * Two different protocol shapes satisfy this, and neither is weaker than the
+ * other:
+ *
+ *  - the provider announces acceptance separately from the result, so a Turn
+ *    is known to be running before it finishes (`acceptance: "exact"`);
+ *  - the provider answers the request itself with an exact structured
+ *    terminal, so the reply that settles the Turn is also the proof its input
+ *    was accepted (`bounded.structuredTerminal` with an exact turn lifecycle).
+ *
+ * In the second shape a long wait is genuinely pending rather than unproven:
+ * the correlated response is still owed, and it will say which way the Turn
+ * went. What must never be admitted is a provider that can leave input in a
+ * state with no reply and no acceptance, because nothing there can ever settle
+ * the Turn.
+ */
+function provesPromptAcceptance(actual: AgentDriverCapabilities): boolean {
+  if (actual.observation.promptAcceptance === "exact" && actual.input.acceptance === "exact") {
+    return true;
+  }
+  return actual.bounded.structuredTerminal && actual.observation.turnLifecycle === "exact";
 }
 
 export function boundedRuntimeAdmission(

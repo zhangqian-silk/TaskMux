@@ -1,8 +1,10 @@
 import type { ImplementationRef } from "../kernel/instanceHost.js";
+import { builtinAgentDriverRegistry } from "./builtinAgentDrivers.js";
 import { builtinAgentEndpointImplementation, requireBuiltinAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 import { CodexPreSubmissionError } from "./codexAppServerRuntime.js";
 export { builtinAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 import type { AgentHostLaunchPayload } from "./launchBroker.js";
+import type { AgentRunConfigurationObservation } from "./agentRunConfiguration.js";
 import {
   ProviderDeliveryUnknownError,
   ProviderTurnBusyError,
@@ -56,6 +58,18 @@ export interface AgentEndpoint {
   readonly processInstanceId: string;
   readonly configuration: AgentEndpointConfiguration;
   readonly capabilities: Readonly<{ steer: "native" | "unsupported"; cancel: "native-interrupt" | "owned-process" }>;
+  /** What this live connection proved about rebinding its Conversation. */
+  readonly conversationRecoverability: "recoverable" | "unknown";
+  /**
+   * What the Agent reports it is running under, read live on every access.
+   *
+   * Deliberately not part of `configuration` above: that record is the process
+   * invocation, frozen before startup is awaited, and it structurally cannot
+   * carry a fact the Agent only states afterwards. Keeping the two apart is also
+   * what keeps them honest — one is what Yui asked for, the other is what the
+   * Agent answered.
+   */
+  readonly runConfiguration: AgentRunConfigurationObservation;
   submit(input: AgentEndpointInput): Promise<AgentEndpointSubmission>;
   steer(input: AgentEndpointInput): Promise<AgentEndpointSubmission>;
   inspect(): Readonly<{
@@ -157,6 +171,7 @@ type EventValue =
 
 class BuiltinAgentEndpoint implements AgentEndpoint {
   readonly capabilities;
+  readonly conversationRecoverability: "recoverable" | "unknown";
   readonly #listeners = new Set<(event: AgentEndpointEvent) => void>();
   readonly #openingEvents: AgentEndpointEvent[] = [];
   readonly #attempts = new Map<string, {
@@ -171,10 +186,28 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
     private readonly driver: StructuredProviderSession,
     readonly configuration: AgentEndpointConfiguration
   ) {
+    // The registered Driver, not the adapter name, states which control
+    // affordances this Session really has: a Session that sends a native
+    // cancel message must not be reported as one that can only kill its
+    // process, and vice versa.
+    const capabilities = builtinAgentDriverRegistry()
+      .requireByAdapterId(driver.adapterId)
+      .capabilities;
     this.capabilities = Object.freeze({
-      steer: driver.adapterId === "codex" ? "native" as const : "unsupported" as const,
-      cancel: driver.adapterId === "codex" ? "native-interrupt" as const : "owned-process" as const
+      steer: capabilities.input.steer === "fenced" ? "native" as const : "unsupported" as const,
+      cancel: capabilities.control.interruptDelivery === "native"
+        ? "native-interrupt" as const
+        : "owned-process" as const
     });
+    // What the protocol permits is not always what this Agent agreed to. When
+    // the Session settled the question during its own handshake, that answer
+    // wins over the adapter-wide capability, which cannot see the difference
+    // between two Agents on the same adapter.
+    this.conversationRecoverability = driver.conversationRecoverability
+      ?? (capabilities.lifecycle.nativeConversationResume === "exact"
+        && capabilities.conversation.crossProcessResume
+        ? "recoverable"
+        : "unknown");
     void driver.waitForExit().then(() => { this.#attachment = "exited"; });
   }
 
@@ -182,6 +215,15 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
   get nativeSessionId(): string { return this.driver.nativeSessionId; }
   get conversationId(): string { return this.driver.conversationId; }
   get processInstanceId(): string { return this.driver.processInstanceId; }
+
+  /**
+   * Delegated rather than copied at construction: the Session reads its own
+   * current state, and a value captured here would freeze the configuration as
+   * it stood when the connection opened.
+   */
+  get runConfiguration(): AgentRunConfigurationObservation {
+    return this.driver.runConfiguration;
+  }
 
   submit(input: AgentEndpointInput): Promise<AgentEndpointSubmission> {
     return this.deliver(input, "submit");

@@ -630,7 +630,7 @@ function inspectReview(
   checks.push({
     name: "reviewer binding",
     status: "ok",
-    detail: `agent=${binding.agentId} adapter=${binding.adapterId}`
+    detail: `agent=${binding.agentId} component=${binding.component} adapter=${binding.adapterId}`
   });
 
   const agent = source.agent ?? null;
@@ -645,8 +645,28 @@ function inspectReview(
   checks.push({
     name: "reviewer agent",
     status: "ok",
-    detail: `id=${agent.id} adapter=${agent.adapterId} command=${agent.command}`
+    detail: `id=${agent.id} component=${agent.component} adapter=${agent.adapterId} command=${agent.command}`
   });
+
+  // Two products can share one connection plan, so a matching adapter is not
+  // enough: a binding naming the SDK against an Agent recorded as the CLI is a
+  // real mismatch, and launching either one would contradict the other record.
+  if (agent.component !== binding.component) {
+    checks.push({
+      name: "reviewer component",
+      status: "invalid",
+      detail: `binding component=${binding.component} does not match Agent component=${agent.component}.`
+    });
+    return reviewMisconfigured(
+      policy,
+      checks,
+      "Reviewer execution component does not match its Agent binding.",
+      role,
+      agent.id,
+      agent.adapterId,
+      agent.command
+    );
+  }
 
   if (agent.adapterId !== binding.adapterId) {
     checks.push({

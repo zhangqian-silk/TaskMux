@@ -6,6 +6,8 @@
  * these phases; the scheduler and durable fold reason about phases, sources,
  * and evidence — never about provider names.
  */
+import { isAgentAdapterId } from "../agent/adapterCatalog.js";
+
 export type CanonicalLifecyclePhase =
   /** A host window/process was created by Yui for a Role Session. */
   | "host-process-created"
@@ -472,7 +474,11 @@ function normalizeFence(fence: CanonicalIdentityFence): CanonicalIdentityFence {
   const taskId = requireFenceText(fence.taskId, "taskId");
   const roleName = requireFenceText(fence.roleName, "roleName");
   const agentId = requireFenceText(fence.agentId, "agentId");
-  if (fence.adapterId !== "codex" && fence.adapterId !== "claude") {
+  // The fence names an adapter, and the catalog is what defines which adapters
+  // exist. Re-listing them here would silently exclude a catalogued adapter
+  // from the durable fold, which reads as an identity mismatch rather than as
+  // the missing registration it actually is.
+  if (!isAgentAdapterId(fence.adapterId)) {
     throw new CanonicalLifecycleError(`Unsupported adapter fence: ${String(fence.adapterId)}.`);
   }
   return Object.freeze({

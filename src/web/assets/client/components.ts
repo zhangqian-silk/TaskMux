@@ -1,3 +1,6 @@
+import { AGENT_ADAPTER_CATALOG } from "../../../agent/adapterCatalog.js";
+import { AGENT_EXECUTION_COMPONENT_CATALOG } from "../../../agent/executionComponents.js";
+
 export const COMPONENTS_SCRIPT = `
 // Reusable widgets and record cards. Everything here is a pure builder:
 // data + i18n in, DOM out. Page composition lives in view.js.
@@ -5,14 +8,18 @@ import { node } from "/assets/js/dom.js";
 import { formatDateTime, relativeTime } from "/assets/js/format.js";
 import { escapeHtml, inlineMarkdown, renderMarkdown } from "/assets/js/markdown.js";
 
-export function translatedStatus(t, prefix, status) {
-  return t(prefix + "." + status);
-}
-
-// Mirrors src/agent/adapterCatalog.ts to avoid a runtime import loop.
-const adapterLabels = { codex: "Codex", claude: "Claude" };
+// Generated from the server catalogs, not a second product registry.
+const adapterLabels = ${JSON.stringify(Object.fromEntries(AGENT_ADAPTER_CATALOG.map(({ id, label }) => [id, label])))};
+const componentLabels = ${JSON.stringify(Object.fromEntries(AGENT_EXECUTION_COMPONENT_CATALOG.map(({ id, label }) => [id, label])))};
 function adapterLabel(adapterId) {
   return adapterLabels[adapterId] || adapterId;
+}
+function componentLabel(component, adapterId) {
+  return component ? componentLabels[component] || component : adapterLabel(adapterId);
+}
+
+export function translatedStatus(t, prefix, status) {
+  return t(prefix + "." + status);
 }
 
 // --- Small widgets -----------------------------------------------------------
@@ -37,7 +44,9 @@ export function chip(text, extraClass) {
 export function agentBadge(agent) {
   if (!agent) return null;
   const badge = node("span", "agent-badge");
-  if (agent.adapterId) badge.append(chip(adapterLabel(agent.adapterId), "is-adapter"));
+  if (agent.adapterId || agent.component) {
+    badge.append(chip(componentLabel(agent.component, agent.adapterId), "is-adapter"));
+  }
   if (agent.model) badge.append(chip(agent.model));
   if (agent.effort) badge.append(chip(agent.effort));
   return badge.childNodes.length ? badge : null;
@@ -703,6 +712,7 @@ export function roleCard(role, task, t, locale, actions) {
   if (activeBinding) {
     const badge = agentBadge({
       adapterId: activeBinding.adapterId,
+      component: activeBinding.component,
       model: activeBinding.config && activeBinding.config.model,
       effort: activeBinding.config && activeBinding.config.effort
     });
@@ -754,10 +764,10 @@ export function roleCard(role, task, t, locale, actions) {
     const bindings = bindingIds.map(function (id) {
       const binding = role.agentBindings[id];
       const model = binding.config && binding.config.model;
-      return adapterLabel(binding.adapterId) + (model ? " · " + model : "");
+      return componentLabel(binding.component, binding.adapterId) + (model ? " · " + model : "");
     });
     const activeBindingLabel = activeBinding
-      ? adapterLabel(activeBinding.adapterId) + (activeBinding.config && activeBinding.config.model ? " · " + activeBinding.config.model : "")
+      ? componentLabel(activeBinding.component, activeBinding.adapterId) + (activeBinding.config && activeBinding.config.model ? " · " + activeBinding.config.model : "")
       : undefined;
     cols.append(chipRow(t("detail.agents"), bindings, activeBindingLabel));
   }

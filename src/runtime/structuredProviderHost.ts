@@ -22,10 +22,34 @@ import type {
   AgentHostProviderControl
 } from "./launchBroker.js";
 import { serializeAgentErrorRaw } from "./agentError.js";
+import type { AgentAdapterId } from "../agent/adapterCatalog.js";
+import { AcpStructuredProviderSession } from "./acpSession.js";
+import { acpDesiredSessionConfiguration } from "./acpSessionConfiguration.js";
+import {
+  unsupportedAgentRunConfiguration,
+  type AgentRunConfigurationObservation
+} from "./agentRunConfiguration.js";
+import { YUI_VERSION } from "../version.js";
+import {
+  JsonLineChannel,
+  PROVIDER_MESSAGE_MAX_BYTES,
+  terminateProcessGroup,
+  type JsonObject
+} from "./jsonLineChannel.js";
 import { PROVIDER_ACCEPT_TIMEOUT_MS } from "./runtimeDeadlines.js";
 
-const PROVIDER_MESSAGE_MAX_BYTES = 16 * 1024 * 1024;
 const CODEX_PROXY_HANDSHAKE_TIMEOUT_MS = 10_000;
+
+/**
+ * These Session implementations do not expose run-configuration observations.
+ * Do not echo launch flags as Provider confirmation.
+ */
+const CODEX_RUN_CONFIGURATION = unsupportedAgentRunConfiguration(
+  "The Codex app-server protocol"
+);
+const CLAUDE_RUN_CONFIGURATION = unsupportedAgentRunConfiguration(
+  "Claude Code's stream-json interface"
+);
 
 export type StructuredProviderTurnReceipt = Readonly<{
   attemptId: string;
@@ -95,11 +119,33 @@ export type StructuredProviderProcessExit = Readonly<{
 }>;
 
 export interface StructuredProviderSession {
-  readonly adapterId: "codex" | "claude";
+  readonly adapterId: AgentAdapterId;
   readonly conversationId: string;
   readonly nativeSessionId: string;
   readonly processInstanceId: string;
   readonly activeTurnId: string | undefined;
+  /**
+   * Whether *this* connection proved its Conversation can be rebound by a
+   * later process.
+   *
+   * A Driver capability states what the protocol allows; some protocols settle
+   * it per connection instead. ACP negotiates `agentCapabilities.loadSession`
+   * during `initialize`, so two Agents on the same adapter can genuinely
+   * disagree. A Session that knows the answer reports it here and the Host
+   * prefers it; a Session that omits it leaves the Driver capability standing.
+   */
+  readonly conversationRecoverability?: "recoverable" | "unknown";
+  /**
+   * What this Session is running under, as the Agent itself reports it.
+   *
+   * Read on every access rather than stored, because an Agent may change its own
+   * configuration mid-Session; a value cached at launch would keep being
+   * presented as current. Implementations with no observation reader answer
+   * `unsupported` with the reason, which is a
+   * different fact from having nothing to say and must not be rendered as
+   * agreement with what Yui requested.
+   */
+  readonly runConfiguration: AgentRunConfigurationObservation;
   submitTurn(turn: StructuredProviderTurnInput): Promise<StructuredProviderTurnReceipt>;
   steerTurn(turn: StructuredProviderTurnInput): Promise<StructuredProviderTurnReceipt>;
   cancelTurn(attemptId: string): Promise<"requested" | "not-active" | "unknown">;
@@ -184,6 +230,40 @@ export async function startStructuredProviderSession(
   child.stderr.on("data", (chunk: string) => mirror("stderr", chunk));
   const exit = childExit(child, processInstanceId);
   try {
+    // Dispatch is on the negotiated transport, not on a product name: every
+    // Agent that speaks a given transport is opened by the same code.
+    if (control.transport === "acp-stdio") {
+      const session = await AcpStructuredProviderSession.open({
+        child,
+        exit,
+        processInstanceId,
+        clientVersion: YUI_VERSION,
+        cwd: payload.cwd,
+        ...(control.acpSession?.additionalDirectories === undefined
+          ? {}
+          : { additionalDirectories: control.acpSession.additionalDirectories }),
+        ...(control.acpSession?.sessionBootstrap === undefined
+          ? {}
+          : { sessionBootstrap: control.acpSession.sessionBootstrap }),
+        ...(control.acpSession?.desiredConfiguration === undefined
+          ? {}
+          : {
+              desiredConfiguration: acpDesiredSessionConfiguration(
+                control.acpSession.desiredConfiguration
+              )
+            }),
+        // The product identity comes from the Agent binding the launch was
+        // compiled from. It is needed for one decision only — which mode value
+        // grants bypass — and is never inferred from the command that was run.
+        ...(control.component === undefined ? {} : { component: control.component }),
+        ...(control.nativeSessionId === undefined
+          ? {}
+          : { nativeSessionId: control.nativeSessionId }),
+        ...(input.onTerminal === undefined ? {} : { onTerminal: input.onTerminal }),
+        mirror
+      });
+      return Object.freeze({ session });
+    }
     if (control.adapterId === "codex") {
       const opened = await CodexStructuredProviderSession.open(
           child,
@@ -220,8 +300,6 @@ export async function startStructuredProviderSession(
     throw error;
   }
 }
-
-type JsonObject = Record<string, unknown>;
 
 /**
  * Open an uninitialized, transparent connection for a native TUI. The TUI
@@ -471,71 +549,6 @@ class ChildProcessDuplex extends Duplex {
   }
 }
 
-class JsonLineChannel {
-  readonly #listeners = new Set<(message: JsonObject) => void>();
-  #buffer = "";
-  #closedError: Error | undefined;
-
-  constructor(
-    private readonly child: ChildProcessWithoutNullStreams,
-    private readonly mirror: (stream: "stdout" | "stderr", text: string) => void
-  ) {
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => this.#receive(chunk));
-    child.once("error", (error) => this.#close(error));
-    child.once("close", (code, signal) => this.#close(new Error(
-      `Provider process exited (code=${code ?? "none"}, signal=${signal ?? "none"}).`
-    )));
-  }
-
-  onMessage(listener: (message: JsonObject) => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
-  }
-
-  async send(message: JsonObject): Promise<void> {
-    if (this.#closedError !== undefined) throw this.#closedError;
-    const line = `${JSON.stringify(message)}\n`;
-    if (Buffer.byteLength(line, "utf8") > PROVIDER_MESSAGE_MAX_BYTES) {
-      throw new Error("Provider request exceeds its message bound.");
-    }
-    await new Promise<void>((resolvePromise, reject) => {
-      this.child.stdin.write(line, "utf8", (error) => {
-        if (error === null || error === undefined) resolvePromise();
-        else reject(error);
-      });
-    });
-  }
-
-  #receive(chunk: string): void {
-    this.mirror("stdout", chunk);
-    this.#buffer += chunk;
-    if (Buffer.byteLength(this.#buffer, "utf8") > PROVIDER_MESSAGE_MAX_BYTES) {
-      this.#close(new Error("Provider response line exceeds its message bound."));
-      terminateProcessGroup(this.child, "SIGTERM");
-      return;
-    }
-    for (;;) {
-      const newline = this.#buffer.indexOf("\n");
-      if (newline < 0) return;
-      const line = this.#buffer.slice(0, newline).trim();
-      this.#buffer = this.#buffer.slice(newline + 1);
-      if (line.length === 0) continue;
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-        for (const listener of this.#listeners) listener(parsed as JsonObject);
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  #close(error: Error): void {
-    if (this.#closedError === undefined) this.#closedError = error;
-  }
-}
-
 class CodexStructuredProviderSession implements StructuredProviderSession {
   readonly #turnAttempts = new Map<string, string>();
   readonly adapterId = "codex" as const;
@@ -761,6 +774,13 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     return this.#activeTurnId;
   }
 
+  /**
+   * This implementation has no run-configuration observation reader.
+   */
+  get runConfiguration(): AgentRunConfigurationObservation {
+    return CODEX_RUN_CONFIGURATION;
+  }
+
   async submitTurn(
     turn: StructuredProviderTurnInput
   ): Promise<StructuredProviderTurnReceipt> {
@@ -940,6 +960,13 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
   get activeTurnId(): string | undefined {
     // stream-json result.uuid is a message identity, not an execution identity.
     return undefined;
+  }
+
+  /**
+   * This implementation has no run-configuration observation reader.
+   */
+  get runConfiguration(): AgentRunConfigurationObservation {
+    return CLAUDE_RUN_CONFIGURATION;
   }
 
   async submitTurn(
@@ -1125,22 +1152,6 @@ function childExit(
       processInstanceId
     })));
   });
-}
-
-function terminateProcessGroup(
-  child: ChildProcessWithoutNullStreams,
-  signal: NodeJS.Signals
-): void {
-  if (child.pid === undefined) return;
-  // Managed Providers are spawned detached and therefore own a process group.
-  // Kill that exact group so a CLI helper cannot outlive the Agent Host. The
-  // direct-child fallback covers embedded runtimes that cannot create setsid.
-  try {
-    process.kill(-child.pid, signal);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-    child.kill(signal);
-  }
 }
 
 function defaultMirrorOutput(stream: "stdout" | "stderr", text: string): void {

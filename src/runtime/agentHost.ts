@@ -6,12 +6,15 @@ import { createConnection, createServer, type Server } from "node:net";
 import { createInterface } from "node:readline";
 import { assertAgentExecutionEnvironment } from "./executionEnvironment.js";
 
+import { builtinAgentDriverRegistry } from "./builtinAgentDrivers.js";
+
 import {
   callController,
   controllerCallMayHaveApplied,
   ControllerClientError
 } from "../core/controllerClient.js";
 import { readHomeFilesystemId } from "../core/homeFilesystemIdentity.js";
+import type { AgentAdapterId } from "../agent/adapterCatalog.js";
 import { callFileTaskController } from "../controller/clientRuntime.js";
 import { isForeignHandoverLockHeld } from "../release/runtimeRelease.js";
 import {
@@ -75,6 +78,11 @@ import {
   type ProviderDeliveryFailure
 } from "./agentError.js";
 import { runCodexInteractiveHost } from "./codexInteractiveHost.js";
+import {
+  readAgentRunConfigurationObservation,
+  unknownAgentRunConfiguration,
+  type AgentRunConfigurationObservation
+} from "./agentRunConfiguration.js";
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 import type { PromptPushOutcome } from "./ports.js";
 
@@ -150,7 +158,7 @@ export type AgentHostProviderState =
 export type AgentHostSnapshot = Readonly<{
   schemaVersion: 2;
   state: AgentHostProviderState;
-  adapterId?: "codex" | "claude";
+  adapterId?: AgentAdapterId;
   processInstanceId?: string;
   nativeSessionId?: string;
   conversationId?: string;
@@ -161,6 +169,8 @@ export type AgentHostSnapshot = Readonly<{
   authorityOwner?: ProviderAuthorityFence["owner"];
   authorityHolderId?: string;
   endpointImplementation?: ImplementationRef;
+  /** Live-only status reading, rebuilt on each query and never persisted. */
+  runConfiguration?: AgentRunConfigurationObservation;
   detail?: string;
   updatedAt: string;
 }>;
@@ -413,6 +423,12 @@ export async function runAgentHost(input: Readonly<{
       providerControl: {
         schemaVersion: 1,
         adapterId: "codex",
+        // Reconnecting reaches the same product the disconnected Session was
+        // pinned to. Rebuilding the control without the component would quietly
+        // drop that identity halfway through a Session's life.
+        ...(previousControl.component === undefined
+          ? {}
+          : { component: previousControl.component }),
         transport: "codex-app-server-proxy",
         kind: "restore",
         mode: "resume",
@@ -649,9 +665,6 @@ export async function runAgentHost(input: Readonly<{
         }
         sessionPayload = next;
       } else {
-        conversationRecoverability = providerControl.adapterId === "codex"
-          ? "recoverable"
-          : "unknown";
         if (providerControl.kind === "restore" && providerControl.ownedTurn !== undefined) {
           activeRunPayload = next;
           activeRunAttemptId = providerControl.ownedTurn.attemptId;
@@ -667,6 +680,12 @@ export async function runAgentHost(input: Readonly<{
           ? endpointLease.open(next) : endpointLease.resume(next));
         session = started.session;
         sessionPayload = next;
+        // Recoverable means a later process can rebind this Conversation by
+        // its native id. The Endpoint answers that from the Driver capability
+        // or, where the protocol settles it per connection, from what this
+        // Agent actually negotiated — so it is read after the handshake, never
+        // predicted before it.
+        conversationRecoverability = started.session.conversationRecoverability;
         started.session.events((event) => {
           if (session !== started.session && event.type !== "terminal") return;
           if (event.type === "started") handleStarted(event.value, next);
@@ -1079,7 +1098,18 @@ export async function runAgentHost(input: Readonly<{
 
   const control = await openAgentHostControl(input.home, payload, () => snapshot, async (request) => {
     if (request.type === "status") {
-      return controlResult("status", snapshot);
+      // Read the Agent's configuration at answer time, not from the stored
+      // snapshot. The Agent may have changed it since the last state
+      // transition, and a status request is exactly where a caller expects the
+      // current reading rather than the one that was true at launch. Nothing is
+      // sent to the Agent to obtain it: this reads what the Session has already
+      // been told.
+      return controlResult("status", session === undefined
+        ? snapshot
+        : validateSnapshot({
+            ...snapshot,
+            runConfiguration: session.runConfiguration
+          }));
     }
     if (request.type === "cancel") {
       if (session === undefined || request.nativeSessionId !== session.nativeSessionId
@@ -1660,6 +1690,22 @@ function boundControlResponse(result: AgentHostControlResult): AgentHostControlR
       text.slice(text.length - (chars - head))
     }`;
   };
+  // Never make an omitted option list look like a complete empty enumeration.
+  if (result.snapshot.runConfiguration?.status === "observed") {
+    result = controlResult(
+      result.outcome,
+      validateSnapshot({
+        ...result.snapshot,
+        runConfiguration: unknownAgentRunConfiguration(
+          "The Agent's reported configuration is too large for the Agent Host "
+          + "control response, so it could not be carried in full and none of it "
+          + "is shown rather than part of it."
+        )
+      }),
+      result.failure
+    );
+    if (withinControlBound(result)) return result;
+  }
   let bounded = controlResult(
     result.outcome,
     {
@@ -1816,6 +1862,12 @@ function validateSnapshot(snapshot: AgentHostSnapshot): AgentHostSnapshot {
   // to expose the original exception on their normal success paths.
   return Object.freeze({
     ...snapshot,
+    ...(snapshot.runConfiguration === undefined
+      ? {}
+      // Re-read through the same parser the client uses. A shape this build does
+      // not recognize becomes an explicit `unknown` here rather than travelling
+      // as a partial record that renders like a real answer.
+      : { runConfiguration: readAgentRunConfigurationObservation(snapshot.runConfiguration) }),
     ...(snapshot.detail === undefined ? {} : { detail: redactAgentErrorText(snapshot.detail) })
   });
 }

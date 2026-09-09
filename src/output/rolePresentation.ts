@@ -3,9 +3,42 @@ import {
   type RoleSessionSet
 } from "../executor/agentExecutor.js";
 import type { GlobalRole, Role, RoleAgentBinding } from "../role/role.js";
+import { effectiveRoleForLaunch, type EffectiveLaunchSnapshot } from "../executor/effectiveLaunch.js";
 import { defaultTableWidth, renderTable } from "./table.js";
 
 type PresentedRole = GlobalRole | Role;
+
+/** Desired configuration and the fixed Session request are not Provider evidence. */
+export function renderRoleLaunchComparison(
+  role: PresentedRole,
+  effective: EffectiveLaunchSnapshot
+): string {
+  const pinned = effectiveRoleForLaunch(role, effective);
+  return renderTable(
+    "Configuration intent (not observed Provider state)",
+    [
+      { header: "Source", minWidth: 14, maxWidth: 20 },
+      { header: "Agent / component", minWidth: 18, maxWidth: 32 },
+      { header: "Model", minWidth: 10, maxWidth: 20 },
+      { header: "Effort", minWidth: 8, maxWidth: 14 },
+      { header: "Permission", minWidth: 12, maxWidth: 34 },
+      { header: "Profile intent", minWidth: 14, maxWidth: 14 }
+    ],
+    ([[`Role desired r${role.launchRevision}`, role],
+      [`Session pinned r${effective.sourceDesiredRevision}`, pinned]] as const).map(([source, current]) => {
+      const binding = current.agentBindings[current.activeAgentId]!;
+      return [
+        source,
+        `${binding.agentId}/${binding.component}`,
+        binding.config.model ?? "Agent default",
+        binding.config.effort ?? "Agent default",
+        permission(binding),
+        current.defaultAccess
+      ];
+    }),
+    defaultTableWidth()
+  );
+}
 
 export function activeRoleSummary(role: PresentedRole): Readonly<{
   agent: string;
@@ -49,9 +82,11 @@ export function renderRoleDetails(
           : `${effective.executionEnvironment.environmentRef}; ${effective.executionEnvironment.directory.path}; ${effective.executionEnvironment.access}`}`
     ] : []),
     `  Desired launch   r${role.launchRevision}; Profile intent=${role.defaultAccess}`,
+    // The component is what the Session is pinned to; its plan follows from it.
+    // Naming the plan alone would show two different ACP products identically.
     `  Effective launch ${effective === undefined
       ? "not started"
-      : `${effective.agentId}/${effective.adapterId}; r${effective.sourceDesiredRevision}; Profile intent=${effective.profileAccess}; permission=${effective.permission.strategy}`}`,
+      : `${effective.agentId}/${effective.component}; r${effective.sourceDesiredRevision}; Profile intent=${effective.profileAccess}; permission=${effective.permission.strategy}`}`,
     `  Desired drift    ${effective === undefined
       ? "-"
       : effective.sourceDesiredRevision === role.launchRevision
@@ -72,7 +107,10 @@ export function renderRoleDetails(
       [
         { header: "Agent", minWidth: 5, maxWidth: 20 },
         { header: "Active", minWidth: 6, maxWidth: 6 },
-        { header: "Adapter", minWidth: 7, maxWidth: 10 },
+        // Wide enough to hold the longest component id whole: it is an
+        // identifier, so splitting it mid-token reads worse than letting the
+        // prose in Permission wrap, which it does naturally.
+        { header: "Component", minWidth: 17, maxWidth: 18 },
         { header: "Model", minWidth: 8, maxWidth: 24 },
         { header: "Effort", minWidth: 8, maxWidth: 16 },
         { header: "Permission", minWidth: 10, maxWidth: 34 },
@@ -93,7 +131,7 @@ function bindingRow(
   return [
     binding.agentId,
     binding.agentId === role.activeAgentId ? "yes" : "",
-    binding.adapterId,
+    binding.component,
     binding.config.model ?? "CLI default",
     binding.config.effort ?? "CLI default",
     permission(binding),
@@ -113,6 +151,18 @@ function permission(binding: RoleAgentBinding): string {
       permission.sandbox === undefined ? undefined : `sandbox=${permission.sandbox}`,
       permission.approval === undefined ? undefined : `approval=${permission.approval}`
     ].filter((value): value is string => value !== undefined).join("; ");
+  }
+  // ACP's strategy decides the Session mode Yui requests over the protocol. It
+  // is stated separately from how Yui answers `session/request_permission`,
+  // which is always a decline on this transport: those are two different
+  // questions, and collapsing them would make a configured Session mode read as
+  // interactive consent Yui does not hold.
+  if (binding.config.adapterId === "acp") {
+    const permission = binding.config.permission;
+    const requests = "requests declined";
+    if (permission.strategy === "default") return `Agent default; ${requests}`;
+    if (permission.strategy === "bypass") return `bypass; ${requests}`;
+    return `mode=${permission.mode}; ${requests}`;
   }
   const permission = binding.config.permission;
   if (permission.strategy === "default") return "CLI default";

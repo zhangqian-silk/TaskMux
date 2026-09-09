@@ -1,3 +1,4 @@
+import { agentAdapterLabel as adapterLabel } from "../agent/adapterCatalog.js";
 import {
   normalizeRoleAgentSessionText,
   roleAgentSessionRef,
@@ -217,13 +218,7 @@ function optionalDisplayText(value: string | undefined): string | undefined {
   return normalized.length === 0 ? undefined : normalized;
 }
 
-function adapterLabel(adapterId: string): string {
-  return adapterId === "codex"
-    ? "Codex"
-    : adapterId === "claude"
-      ? "Claude"
-      : adapterId;
-}
+
 
 function requireText(value: string, label: string): string {
   if (typeof value !== "string" || value.includes("\0") || value.trim().length === 0) {

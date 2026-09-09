@@ -27,6 +27,7 @@ import {
   type RuntimeLaunchPreparationPort,
   type SessionHostPort
 } from "../runtime/index.js";
+import { builtinAgentDriverRegistry } from "../runtime/builtinAgentDrivers.js";
 import type { EffectiveLaunchSnapshot } from "./effectiveLaunch.js";
 import type { ManagedWorkspace } from "../worktree/managedWorkspace.js";
 import type {
@@ -550,7 +551,12 @@ export function agentProcessReadinessProbe(
   adapterId: string,
   _surface: "role" | "operator" = "role"
 ): TmuxReadinessProbe {
-  if (adapterId !== "codex" && adapterId !== "claude") {
+  // A tmux pane probe is only meaningful for an Agent that actually has an
+  // interactive CLI surface. Asking a protocol-only Agent whether its pane
+  // looks alive would answer a question about the wrong thing, so the refusal
+  // is derived from the declared surface rather than from an adapter name.
+  const driver = builtinAgentDriverRegistry().findByAdapterId(adapterId);
+  if (driver === null || !driver.capabilities.surfaces.includes("interactive-cli")) {
     throw new Error(`No tmux readiness probe is registered for Agent adapter: ${adapterId}.`);
   }
   // AgentRun state and receipt fences decide whether delivery is allowed. Provider

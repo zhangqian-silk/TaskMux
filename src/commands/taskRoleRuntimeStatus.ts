@@ -153,12 +153,18 @@ export function renderTaskRoleRuntimeStatus(status: TaskRoleRuntimeStatus): stri
   const activeWork = status.activeWork === null
     ? "-"
     : `${status.activeWork.id} (${status.activeWork.status}) ${status.activeWork.title}`;
+  // Both lines name the execution component, as the Role view does. The
+  // connection plan cannot stand in for it here either: two different ACP
+  // products would print identically, and this display exists to say what is
+  // actually running.
   const nativeSession = status.nativeSession === null
     ? "not recorded"
-    : `${status.nativeSession.nativeSessionId} (${status.nativeSession.status}, ${status.nativeSession.adapterId}, effective r${status.nativeSession.effective.sourceDesiredRevision})`;
+    : `${status.nativeSession.nativeSessionId} (${status.nativeSession.status}, ${
+      status.nativeSession.effective.component
+    }, effective r${status.nativeSession.effective.sourceDesiredRevision})`;
   const effectiveLaunch = status.effectiveLaunch === null
     ? "not started"
-    : `${status.effectiveLaunch.agentId}/${status.effectiveLaunch.adapterId}; r${status.effectiveLaunch.sourceDesiredRevision}; Profile intent=${status.effectiveLaunch.profileAccess}; permission=${status.effectiveLaunch.permission.strategy}`;
+    : `${status.effectiveLaunch.agentId}/${status.effectiveLaunch.component}; r${status.effectiveLaunch.sourceDesiredRevision}; Profile intent=${status.effectiveLaunch.profileAccess}; permission=${status.effectiveLaunch.permission.strategy}`;
   const tmux = status.tmux.state === "missing"
     ? "missing"
     : [

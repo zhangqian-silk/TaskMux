@@ -1,14 +1,23 @@
 import { randomBytes } from "node:crypto";
-import { resolve } from "node:path";
+import { resolve, isAbsolute } from "node:path";
 import {
   validateProviderAuthorityFence,
   type ProviderAuthorityFence
 } from "./providerAuthorityFence.js";
 import { AGENT_HOST_LAUNCH_TICKET_TTL_MS } from "./runtimeDeadlines.js";
 import type { CodexThreadOptions } from "./codexAppServerRuntime.js";
+import type { AcpSessionOptions } from "./acpProtocol.js";
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 import { validateAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 import { validateExecutionEnvironmentSnapshot, type ExecutionEnvironmentSnapshot } from "../resources/projectResource.js";
+import { isAgentAdapterId, type AgentAdapterId } from "../agent/adapterCatalog.js";
+import {
+  adapterIdForExecutionComponent,
+  isAgentExecutionComponentId,
+  type AgentExecutionComponentId
+} from "../agent/executionComponents.js";
+import { agentTransportForAdapter, type AgentTransport } from "../agent/connectionPlan.js";
+import { resolveAgentAdapter } from "../executor/agentAdapter.js";
 
 export type AgentHostLaunchPayload = Readonly<{
   schemaVersion: 2;
@@ -29,11 +38,21 @@ export type ProviderOwnedTurn = Readonly<{
 
 type AgentHostProviderControlBase = Readonly<{
   schemaVersion: 1;
-  adapterId: "codex" | "claude";
-  transport: "codex-app-server-proxy" | "claude-stream-json";
+  adapterId: AgentAdapterId;
+  /**
+   * Which product executes, as recorded by the Agent binding. The plan above
+   * says how Yui reaches it; this says what answers. Carried because one
+   * protocol decision depends on the product — the mode value that grants
+   * bypass — and it must come from the stored binding rather than from the
+   * command line that was assembled.
+   */
+  component?: AgentExecutionComponentId;
+  transport: AgentTransport;
   sessionTitle?: string;
   authority: ProviderAuthorityFence;
   codexThread?: CodexThreadOptions;
+  /** ACP has no launch flags; its per-Session facts travel with the control. */
+  acpSession?: AcpSessionOptions;
   endpointImplementation?: ImplementationRef;
   /** Session-only launch; the coordinator records its identity before any input. */
   sessionOnly?: boolean;
@@ -154,17 +173,35 @@ function validatePayload(payload: AgentHostLaunchPayload): AgentHostLaunchPayloa
 function validateProviderControl(control: AgentHostProviderControl): void {
   if (control.schemaVersion !== 1) throw new Error("Agent Host Provider control version is invalid.");
   if (control.endpointImplementation !== undefined) validateAgentEndpointImplementation(control.endpointImplementation);
-  if (control.adapterId !== "codex" && control.adapterId !== "claude") {
+  if (!isAgentAdapterId(control.adapterId)) {
     throw new Error("Agent Host Provider control adapter is invalid.");
   }
-  if ((control.adapterId === "codex" && control.transport !== "codex-app-server-proxy")
-    || (control.adapterId === "claude" && control.transport !== "claude-stream-json")) {
+  // The connection plan owns the protocol/transport pair. Re-deriving it here
+  // is what keeps a control from naming a carrier its adapter does not speak.
+  if (control.transport !== agentTransportForAdapter(control.adapterId)) {
     throw new Error("Agent Host Provider control transport does not match its adapter.");
+  }
+  // The component determines its plan, so a control naming both must have them
+  // agree. Letting them drift would let a launch apply one product's
+  // configuration decisions to another product's Session.
+  if (control.component !== undefined) {
+    if (!isAgentExecutionComponentId(control.component)) {
+      throw new Error("Agent Host Provider control execution component is invalid.");
+    }
+    if (adapterIdForExecutionComponent(control.component) !== control.adapterId) {
+      throw new Error(
+        "Agent Host Provider control execution component does not match its adapter."
+      );
+    }
   }
   if ((control.adapterId === "codex") !== (control.codexThread !== undefined)) {
     throw new Error("Agent Host Provider thread settings do not match its adapter.");
   }
   if (control.codexThread !== undefined) validateCodexThreadOptions(control.codexThread);
+  if (control.adapterId !== "acp" && control.acpSession !== undefined) {
+    throw new Error("Agent Host ACP session settings do not match its adapter.");
+  }
+  if (control.acpSession !== undefined) validateAcpSessionOptions(control.acpSession);
   if (control.mode !== "new" && control.mode !== "resume") {
     throw new Error("Agent Host Provider control mode is invalid.");
   }
@@ -184,7 +221,11 @@ function validateProviderControl(control: AgentHostProviderControl): void {
     text(control.ownedTurn.attemptId, "owned Provider input attemptId");
     text(control.ownedTurn.turnId, "owned Provider Turn id");
   }
-  const requiresNativeSessionId = control.mode === "resume" || control.adapterId === "claude";
+  // Resume always needs the id being resumed. A new launch needs one only from
+  // an Agent that accepts a caller-chosen Session id; the others report theirs
+  // once they answer, so demanding it up front rejects a valid launch.
+  const requiresNativeSessionId = control.mode === "resume"
+    || resolveAgentAdapter(control.adapterId).capabilities.nativeSessionDiscovery === "preallocated";
   if (requiresNativeSessionId !== (control.nativeSessionId !== undefined)) {
     throw new Error("Agent Host Provider resume identity is inconsistent.");
   }
@@ -224,6 +265,49 @@ function validateCodexThreadOptions(options: CodexThreadOptions): void {
     && (options.config === null || typeof options.config !== "object"
       || Array.isArray(options.config))) {
     throw new Error("Agent Host Codex thread config is invalid.");
+  }
+}
+
+function validateAcpSessionOptions(options: AcpSessionOptions): void {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new Error("Agent Host ACP session settings are invalid.");
+  }
+  if (options.additionalDirectories !== undefined) {
+    if (!Array.isArray(options.additionalDirectories)) {
+      throw new Error("Agent Host ACP additional workspace roots are invalid.");
+    }
+    // ACP requires each additional root to be absolute. Rejecting a relative
+    // path here keeps an invalid request from reaching the Agent at all.
+    for (const root of options.additionalDirectories) {
+      if (!isAbsolute(text(root, "ACP additional workspace root"))) {
+        throw new Error("Agent Host ACP additional workspace root must be absolute.");
+      }
+    }
+  }
+  if (options.sessionBootstrap !== undefined) {
+    text(options.sessionBootstrap, "ACP session bootstrap");
+  }
+  const desired = options.desiredConfiguration;
+  if (desired !== undefined) {
+    if (desired === null || typeof desired !== "object" || Array.isArray(desired)) {
+      throw new Error("Agent Host ACP session configuration is invalid.");
+    }
+    if (desired.model !== undefined) text(desired.model, "ACP session model");
+    if (desired.effort !== undefined) text(desired.effort, "ACP session effort");
+    if (desired.permissionMode !== undefined) {
+      text(desired.permissionMode, "ACP session permission mode");
+    }
+    if (desired.permissionBypass !== undefined && typeof desired.permissionBypass !== "boolean") {
+      throw new Error("Agent Host ACP session permission bypass is invalid.");
+    }
+    // Naming an exact mode and asking for bypass are two different requests, and
+    // a payload carrying both leaves it ambiguous which one the user made.
+    if (desired.permissionMode !== undefined && desired.permissionBypass === true) {
+      throw new Error(
+        "Agent Host ACP session configuration cannot request both a named permission "
+        + "mode and the bypass strategy."
+      );
+    }
   }
 }
 

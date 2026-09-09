@@ -238,7 +238,14 @@ function permissionPatch(
   }
   const current = binding.config.permission;
   if (selected !== "configured" && !nativeOptions) {
-    return structuredClone(current ?? { strategy: "bypass" }) as Record<string, unknown>;
+    // Nothing about permission was named, so the binding keeps what it already
+    // had. The fallback applies only to a binding that somehow carries no
+    // permission at all, and it must be the adapter's own default rather than a
+    // fixed `bypass`: ACP defaults to `default`, and defaulting it to bypass
+    // here would widen authority the user never granted.
+    return structuredClone(
+      current ?? defaultRoleAgentConfig(binding.adapterId).permission
+    ) as Record<string, unknown>;
   }
   const permission = current?.strategy === "configured"
     ? structuredClone(current) as unknown as Record<string, unknown>
@@ -247,6 +254,14 @@ function permissionPatch(
   if (binding.adapterId === "codex") {
     if (parsed.has("--sandbox")) permission.sandbox = requiredText(parsed.one("--sandbox"));
     if (parsed.has("--approval")) permission.approval = requiredText(parsed.one("--approval"));
+  } else if (binding.adapterId === "acp") {
+    // An ACP Session's configured permission is exactly one mode id, matched
+    // against what the Agent enumerates at launch. Tool rules are a Claude
+    // launch-flag concept with no ACP equivalent, so they are excluded above
+    // rather than silently written into a config the adapter would reject.
+    if (parsed.has("--permission-mode")) {
+      permission.mode = requiredText(parsed.one("--permission-mode"));
+    }
   } else {
     if (parsed.has("--permission-mode")) {
       permission.mode = requiredText(parsed.one("--permission-mode"));
@@ -311,16 +326,22 @@ function assertAgentOptionConflicts(parsed: ParsedRoleOptions): void {
 
 function assertAdapterOptions(adapterId: string, parsed: ParsedRoleOptions): void {
   const codex = ["--sandbox", "--approval", "--search", "--clear-search"];
-  const claude = [
-    "--permission-mode",
+  const tools = [
     "--allowed-tool", "--clear-allowed-tools",
     "--disallowed-tool", "--clear-disallowed-tools"
   ];
   if (adapterId !== "codex" && codex.some((option) => parsed.has(option))) {
     throw usageError("Sandbox, approval, and search settings are only supported by Codex.");
   }
-  if (adapterId !== "claude" && claude.some((option) => parsed.has(option))) {
-    throw usageError("Permission mode and tool rules are only supported by Claude.");
+  if (adapterId !== "claude" && tools.some((option) => parsed.has(option))) {
+    throw usageError("Tool rules are only supported by Claude.");
+  }
+  // `--permission-mode` is shared: Claude takes its own permission mode as a
+  // launch flag, and ACP selects a session mode the Agent enumerated. Codex has
+  // neither, so it stays excluded. Which mode ids are valid is not decided here
+  // — for ACP only the live Session can say, and that check happens there.
+  if (adapterId !== "claude" && adapterId !== "acp" && parsed.has("--permission-mode")) {
+    throw usageError("Permission mode is only supported by Claude and ACP Agents.");
   }
 }
 

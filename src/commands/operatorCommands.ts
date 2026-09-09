@@ -1,4 +1,5 @@
 import { usageError } from "../errors/cliError.js";
+import { agentAdapterLabel as adapterLabel } from "../agent/adapterCatalog.js";
 import {
   createRoleSessionSet,
   type GlobalRoleSessionSet
@@ -294,14 +295,6 @@ function requireOperator(store: TaskWorkflowStore): GlobalRole {
   const role = store.getGlobalRole("operator");
   if (role === null) throw usageError("Operator is not configured. Run yui setup first.");
   return role;
-}
-
-function adapterLabel(adapterId: string): string {
-  return adapterId === "codex"
-    ? "Codex"
-    : adapterId === "claude"
-      ? "Claude"
-      : adapterId;
 }
 
 function requiredValue(value: string | undefined, option: string): string {

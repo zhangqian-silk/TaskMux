@@ -164,6 +164,7 @@ export function dispatchWorkItemSynthesis(
       purpose: run.purpose,
       mode: run.mode,
       agent: `${run.effective.agentId}/${run.effective.adapterId}`,
+      component: run.effective.component,
       effectiveRevision: String(run.effective.sourceDesiredRevision),
       profileAccess: run.effective.profileAccess,
       effectivePermission: run.effective.permission.strategy,

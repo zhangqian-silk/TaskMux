@@ -962,6 +962,173 @@ CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
     introducedIn: "0.15.9",
     sql: "SELECT 1; -- AgentRun contract, notification admission and Session authority",
     migrateData: migrateAgentRunContract
+  },
+  {
+    version: 14,
+    name: "acp-session-workspace-configuration",
+    introducedIn: "0.15.10",
+    // ACP is a new legal adapter/configuration value, including its optional
+    // additional workspace roots. The v13 baseline has no ACP bindings; existing
+    // Codex/Claude configuration and Session history remain valid unchanged.
+    // This widens the persistent contract without rewriting payloads or earlier
+    // migration checksums. Workspace delivery is negotiated at initialize, not
+    // stored as another configuration authority.
+    sql: "SELECT 1; -- ACP bindings may carry additionalDirectories; history stays valid"
+  },
+  {
+    version: 15,
+    name: "agent-execution-component",
+    introducedIn: "0.15.10",
+    // Which product executes is now its own recorded fact, separate from the
+    // connection plan that reaches it. The plan keeps its `adapterId` name and
+    // its meaning; only the product identity is new.
+    //
+    // The backfill is a total function of the stored plan, never of a command
+    // string. `codex` and `claude` each have exactly one component, so those
+    // rows gain their true value. Every `acp` row becomes `unknown-acp-agent`:
+    // a v14 Home cannot say which product answered, and an executable named
+    // `claude-agent-acp` is not evidence that it was the Claude Agent SDK. The
+    // unidentified value is the honest one and stays correctable by hand.
+    //
+    // Sessions keep their own recorded component, so a Session started before
+    // this migration continues against exactly the implementation it began on.
+    //
+    // Every persisted effective snapshot must be reached, not only the ones on
+    // Session sets: `validateEffectiveLaunchSnapshot` demands schemaVersion 4,
+    // and the upgrade verifier replays it over Runs, WorkItem ExecutionLanes
+    // and ReviewRound ExecutionLanes too. A Home holding any of those would
+    // otherwise fail the upgrade and roll back. The list below is the
+    // verifier's own reachable set, not a scan for fields that look similar.
+    sql: `
+UPDATE configured_agents SET payload = json_set(payload,
+  '$.schemaVersion', 3,
+  '$.component', CASE json_extract(payload, '$.adapterId')
+    WHEN 'codex' THEN 'codex-cli'
+    WHEN 'claude' THEN 'claude-code-cli'
+    ELSE 'unknown-acp-agent' END)
+WHERE json_extract(payload, '$.component') IS NULL;
+
+UPDATE global_roles SET payload = json_set(payload, '$.agentBindings', json((
+  SELECT json_group_object(key, json_set(value, '$.component',
+    CASE json_extract(value, '$.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.agentBindings')
+))) WHERE json_type(payload, '$.agentBindings') = 'object';
+
+UPDATE task_roles SET payload = json_set(payload, '$.agentBindings', json((
+  SELECT json_group_object(key, json_set(value, '$.component',
+    CASE json_extract(value, '$.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.agentBindings')
+))) WHERE json_type(payload, '$.agentBindings') = 'object';
+
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.effective.schemaVersion', 4,
+    '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.sessions')
+))) WHERE json_type(payload, '$.sessions') = 'object';
+UPDATE global_role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_object(key, json_set(value, '$.effective.schemaVersion', 4,
+    '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'object';
+
+UPDATE role_session_sets SET payload = json_set(payload, '$.sessions', json((
+  SELECT json_group_object(key, json_set(value, '$.effective.schemaVersion', 4,
+    '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.sessions')
+))) WHERE json_type(payload, '$.sessions') = 'object';
+UPDATE role_session_sets SET payload = json_set(payload, '$.history', json((
+  SELECT json_group_array(json_set(value, '$.effective.schemaVersion', 4,
+    '$.effective.component', CASE json_extract(value, '$.effective.adapterId')
+      WHEN 'codex' THEN 'codex-cli'
+      WHEN 'claude' THEN 'claude-code-cli'
+      ELSE 'unknown-acp-agent' END))
+  FROM json_each(payload, '$.history')
+))) WHERE json_type(payload, '$.history') = 'array';
+
+-- A Turn records the launch it actually ran on, one snapshot per row.
+UPDATE turns SET payload = json_set(payload,
+  '$.effective.schemaVersion', 4,
+  '$.effective.component', CASE json_extract(payload, '$.effective.adapterId')
+    WHEN 'codex' THEN 'codex-cli'
+    WHEN 'claude' THEN 'claude-code-cli'
+    ELSE 'unknown-acp-agent' END)
+WHERE json_type(payload, '$.effective') = 'object';
+
+-- ExecutionLane launch facts are frozen per Lane, inside an array of Groups
+-- that each hold an array of Lanes. A Lane that was never dispatched has no
+-- effective at all, and must keep that absence: json_set would otherwise
+-- create a partial snapshot the Lane validator rejects as incomplete.
+UPDATE work_items SET payload = json_set(payload, '$.executionGroups', json((
+  SELECT json_group_array(json_set(grp.value, '$.lanes', json((
+    SELECT json_group_array(CASE
+      WHEN json_type(lane.value, '$.effective') = 'object'
+      THEN json_set(lane.value, '$.effective.schemaVersion', 4,
+        '$.effective.component', CASE json_extract(lane.value, '$.effective.adapterId')
+          WHEN 'codex' THEN 'codex-cli'
+          WHEN 'claude' THEN 'claude-code-cli'
+          ELSE 'unknown-acp-agent' END)
+      ELSE lane.value END)
+    FROM json_each(grp.value, '$.lanes') AS lane
+  ))))
+  FROM json_each(payload, '$.executionGroups') AS grp
+))) WHERE json_type(payload, '$.executionGroups') = 'array';
+
+-- A ReviewRound holds at most one Group, so only the Lane array nests here.
+UPDATE review_rounds SET payload = json_set(payload, '$.executionGroup.lanes', json((
+  SELECT json_group_array(CASE
+    WHEN json_type(lane.value, '$.effective') = 'object'
+    THEN json_set(lane.value, '$.effective.schemaVersion', 4,
+      '$.effective.component', CASE json_extract(lane.value, '$.effective.adapterId')
+        WHEN 'codex' THEN 'codex-cli'
+        WHEN 'claude' THEN 'claude-code-cli'
+        ELSE 'unknown-acp-agent' END)
+    ELSE lane.value END)
+  FROM json_each(payload, '$.executionGroup.lanes') AS lane
+))) WHERE json_type(payload, '$.executionGroup.lanes') = 'array';
+`
+  },
+  {
+    version: 16,
+    name: "acp-session-run-configuration",
+    introducedIn: "0.15.10",
+    // An ACP Role binding may now carry a model, a reasoning effort and a
+    // permission strategy beyond `default`, because Yui's ACP client implements
+    // `session/set_config_option` and pushes those values to the Session before
+    // it prompts. Previously the adapter rejected all three, so no stored
+    // payload can contain them.
+    //
+    // This widens the contract without rewriting anything, and the absence of a
+    // payload update is the substantive decision rather than an omission. A v10
+    // ACP binding holds `permission.strategy = "default"`, which keeps exactly
+    // the meaning it always had: Yui sends no mode, so the Agent's own default
+    // stands. Rewriting those rows to `bypass` — or to any newly expressible
+    // value — would grant authority the user never chose, on Homes whose owner
+    // did nothing but upgrade. `bypass` is reachable only by asking for it.
+    //
+    // Effective launch snapshots need no change either. They already carry
+    // optional `model` and `effort` on the shared base, and their ACP permission
+    // is the same object the adapter canonicalizes, so a historical snapshot
+    // still validates unchanged at schemaVersion 4 across Sessions, Session
+    // history, Turns, WorkItem ExecutionLanes and ReviewRound ExecutionLanes.
+    // A frozen snapshot therefore keeps describing the launch it actually ran,
+    // which is what makes replaying old history honest.
+    sql: "SELECT 1; -- ACP bindings may carry model/effort and a chosen "
+      + "permission mode; existing `default` bindings keep their meaning"
   }
 ]);
 

@@ -18,12 +18,20 @@ import type {
 import { validateManagedWorkspace } from "../worktree/managedWorkspace.js";
 import {
   resolveAgentAdapter,
+  type AcpAgentConfig,
   type AdvancedAgentConfig,
   type ClaudeAgentConfig,
   type CodexAgentConfig,
   type RoleAgentConfig
 } from "./agentAdapter.js";
 import { roleSessionKind } from "../context/roleSessionContext.js";
+import { isAgentAdapterId } from "../agent/adapterCatalog.js";
+import {
+  adapterIdForExecutionComponent,
+  isAgentExecutionComponentId,
+  resolveAgentExecutionComponent,
+  type AgentExecutionComponentId
+} from "../agent/executionComponents.js";
 import {
   SESSION_BOOTSTRAP_MANIFEST_SCHEMA_VERSION,
   sessionManifestCompatibilityDigest
@@ -39,10 +47,17 @@ export type EffectiveLaunchWorkspace = Readonly<{
 export type EffectiveLaunchContext = Readonly<RoleProfile>;
 
 type EffectiveLaunchBase = Readonly<{
-  schemaVersion: 3;
+  schemaVersion: 4;
   executionAuthority: "planning" | "delivery";
   sourceDesiredRevision: number;
   agentId: string;
+  /**
+   * The execution component this Session is pinned to. The connection plan
+   * below cannot stand in for it: several products share the ACP plan, and a
+   * Session that started against one of them must not silently continue
+   * against another.
+   */
+  component: AgentExecutionComponentId;
   /** Profile behavior intent captured for this Session; not a provider sandbox. */
   profileAccess: EffectiveLaunchProfileAccess;
   model?: string;
@@ -74,9 +89,26 @@ export type ClaudeEffectiveLaunchSnapshot = EffectiveLaunchBase & Readonly<{
   settingsSources?: readonly string[];
 }>;
 
+/**
+ * ACP negotiates model, effort and permission inside the protocol or the
+ * Agent's own configuration, so this snapshot carries none of the native
+ * launch knobs the other two adapters resolve here.
+ */
+export type AcpEffectiveLaunchSnapshot = EffectiveLaunchBase & Readonly<{
+  adapterId: "acp";
+  /**
+   * The permission decision this launch runs under, including the exact mode id
+   * when one was named. Frozen here like every other launch fact, so a resumed
+   * Session is configured from what the launch recorded rather than from a Role
+   * that may have changed since.
+   */
+  permission: NonNullable<AcpAgentConfig["permission"]>;
+}>;
+
 export type EffectiveLaunchSnapshot =
   | CodexEffectiveLaunchSnapshot
-  | ClaudeEffectiveLaunchSnapshot;
+  | ClaudeEffectiveLaunchSnapshot
+  | AcpEffectiveLaunchSnapshot;
 
 export type EffectiveLaunchRole = TaskRole | GlobalRole;
 
@@ -108,6 +140,7 @@ export function resolveEffectiveLaunch(
     executionAuthority: input.executionAuthority ?? (input.purpose === "planning" ? "planning" : "delivery"),
     sourceDesiredRevision: input.role.launchRevision,
     agentId: binding.agentId,
+    component: resolveAgentExecutionComponent(binding.adapterId, binding.component),
     config,
     profileAccess: input.role.defaultAccess,
     writeProjectIds,
@@ -183,6 +216,27 @@ function claudeConfigFromSnapshot(
     ...(snapshot.settingsSources === undefined
       ? {}
       : { settingsSources: [...snapshot.settingsSources] })
+  };
+}
+
+function acpConfigFromSnapshot(
+  snapshot: AcpEffectiveLaunchSnapshot
+): AcpAgentConfig {
+  // Model and effort round-trip because they are ACP session config options
+  // that this launch pushes and confirms. Settings deliberately do not: the
+  // protocol defines no client-side settings file or settings source, so the
+  // snapshot type keeps those permanently absent.
+  return {
+    adapterId: "acp",
+    ...(snapshot.model === undefined ? {} : { model: snapshot.model }),
+    ...(snapshot.effort === undefined ? {} : { effort: snapshot.effort }),
+    permission: clone(snapshot.permission),
+    ...(snapshot.additionalDirectories === undefined
+      ? {}
+      : { additionalDirectories: [...snapshot.additionalDirectories] }),
+    ...(snapshot.advanced === undefined
+      ? {}
+      : { advanced: clone(snapshot.advanced) })
   };
 }
 
@@ -262,6 +316,10 @@ function sessionContinuitySnapshot(snapshot: EffectiveLaunchSnapshot): unknown {
     executionAuthority: snapshot.executionAuthority,
     contextProtocolVersion: snapshot.contextProtocolVersion,
     agentId: snapshot.agentId,
+    // Two products on one connection plan are two different conversations. A
+    // Session that started against an unidentified ACP Agent must not silently
+    // continue against the Claude Agent SDK just because both speak ACP.
+    component: snapshot.component,
     adapterId: snapshot.adapterId,
     executionEnvironment: snapshot.executionEnvironment,
     workspace: {
@@ -280,14 +338,20 @@ function sessionContinuitySnapshot(snapshot: EffectiveLaunchSnapshot): unknown {
 export function validateEffectiveLaunchSnapshot<T extends EffectiveLaunchSnapshot>(
   snapshot: T
 ): T {
-  if (snapshot.schemaVersion !== 3) {
-    throw new Error("Effective launch snapshot must use schemaVersion 3.");
+  if (snapshot.schemaVersion !== 4) {
+    throw new Error("Effective launch snapshot must use schemaVersion 4.");
   }
   if (snapshot.executionAuthority !== "planning" && snapshot.executionAuthority !== "delivery") {
     throw new Error("Effective launch requires its captured execution authority.");
   }
   positiveInteger(snapshot.sourceDesiredRevision, "Source desired revision");
   identity(snapshot.agentId, "Effective Agent id");
+  if (!isAgentExecutionComponentId(snapshot.component)
+    || adapterIdForExecutionComponent(snapshot.component) !== snapshot.adapterId) {
+    throw new Error(
+      `Effective launch execution component is invalid: ${String(snapshot.component)}.`
+    );
+  }
   if (snapshot.profileAccess !== "read" && snapshot.profileAccess !== "write") {
     throw new Error(
       `Effective launch Profile access is invalid: ${String(snapshot.profileAccess)}.`
@@ -347,6 +411,7 @@ export function effectiveRoleForLaunch<T extends EffectiveLaunchRole>(
   const config = effectiveLaunchConfig(snapshot);
   const binding: RoleAgentBinding = {
     agentId: snapshot.agentId,
+    component: snapshot.component,
     adapterId: snapshot.adapterId,
     config
   };
@@ -378,6 +443,7 @@ function snapshotFromConfig(input: Readonly<{
   executionAuthority: "planning" | "delivery";
   sourceDesiredRevision: number;
   agentId: string;
+  component: AgentExecutionComponentId;
   config: RoleAgentConfig;
   profileAccess: EffectiveLaunchProfileAccess;
   writeProjectIds: readonly string[];
@@ -400,13 +466,14 @@ function snapshotFromConfig(input: Readonly<{
         reviewBaseCommit: commit(input.reviewBaseCommit ?? "", "Review base commit")
       };
   const common = {
-    schemaVersion: 3 as const,
+    schemaVersion: 4 as const,
     executionAuthority: input.executionAuthority,
     sourceDesiredRevision: positiveInteger(
       input.sourceDesiredRevision,
       "Source desired revision"
     ),
     agentId: identity(input.agentId, "Effective Agent id"),
+    component: input.component,
     profileAccess: input.profileAccess,
     ...(config.model === undefined ? {} : { model: config.model }),
     ...(config.effort === undefined ? {} : { effort: config.effort }),
@@ -432,15 +499,17 @@ function snapshotFromConfig(input: Readonly<{
         permission: clone(config.permission),
         ...(config.profile === undefined ? {} : { profile: config.profile })
       }
-    : {
-        ...common,
-        adapterId: "claude",
-        permission: clone(config.permission),
-        ...(config.settingsFile === undefined ? {} : { settingsFile: config.settingsFile }),
-        ...(config.settingsSources === undefined
-          ? {}
-          : { settingsSources: [...config.settingsSources] })
-      };
+    : config.adapterId === "acp"
+      ? { ...common, adapterId: "acp", permission: clone(config.permission) }
+      : {
+          ...common,
+          adapterId: "claude",
+          permission: clone(config.permission),
+          ...(config.settingsFile === undefined ? {} : { settingsFile: config.settingsFile }),
+          ...(config.settingsSources === undefined
+            ? {}
+            : { settingsSources: [...config.settingsSources] })
+        };
   return validateEffectiveLaunchSnapshot(snapshot);
 }
 
@@ -449,7 +518,9 @@ function effectiveLaunchConfigUnchecked(
 ): RoleAgentConfig {
   return snapshot.adapterId === "codex"
     ? codexConfigFromSnapshot(snapshot)
-    : claudeConfigFromSnapshot(snapshot);
+    : snapshot.adapterId === "acp"
+      ? acpConfigFromSnapshot(snapshot)
+      : claudeConfigFromSnapshot(snapshot);
 }
 
 function effectiveWriteProjects(
@@ -596,7 +667,8 @@ function validateDesiredRole(role: EffectiveLaunchRole): void {
   }
   const binding = role.agentBindings[role.activeAgentId];
   if (binding === undefined) throw new Error("Role active Agent binding is missing.");
-  if (binding.adapterId !== "codex" && binding.adapterId !== "claude") {
+  // Adapter support is the catalog's fact, not a second list to keep in sync.
+  if (!isAgentAdapterId(binding.adapterId)) {
     throw new Error(`Role Agent adapter is unsupported: ${binding.adapterId}.`);
   }
 }

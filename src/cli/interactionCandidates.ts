@@ -1,6 +1,6 @@
 import type { TableColumn } from "../output/table.js";
 import type { ArgumentSelector } from "./interactionPolicy.js";
-import { orderRoleOptions } from "./roleOptionCatalog.js";
+import { orderRoleOptions } from "./roleOptionOrder.js";
 import type { SelectionPorts } from "./selectionPorts.js";
 
 export type SelectionCandidate = Readonly<{

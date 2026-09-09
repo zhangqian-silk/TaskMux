@@ -397,6 +397,17 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     if (configured.adapterId !== binding.adapterId) {
       throw new Error(`Configured Agent adapter changed: ${input.agentId}.`);
     }
+    // The command below comes from the Agent record while the product identity
+    // stamped onto this Session comes from the pinned snapshot. Checking only
+    // the adapter lets those disagree whenever two products share a plan, which
+    // is exactly the ACP case: the launch would run the newly configured
+    // executable and label it with the product the Session was pinned to. The
+    // update path refuses this change on a referenced Agent, so reaching here
+    // means the record was altered some other way — still not something to
+    // launch through.
+    if (configured.component !== binding.component) {
+      throw new Error(`Configured Agent execution component changed: ${input.agentId}.`);
+    }
 
     const agent = configuredAgentToDefinition(configured);
     const agentSourceEnvironment = input.environment ?? this.#agentEnvironment;
@@ -533,7 +544,10 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       ? "new"
       : "resume";
     const managedControl = owner.scope === "task";
-    const preallocatedNativeSessionId = binding.adapterId === "claude"
+    // Only an Agent that accepts a caller-chosen Session id can have one
+    // preallocated. Keying this on the adapter name instead of the declared
+    // capability meant every non-Claude adapter was assumed to accept one.
+    const preallocatedNativeSessionId = adapter.capabilities.nativeSessionDiscovery === "preallocated"
       && resumeNativeSessionId === undefined
       ? requireText(
           this.#createNativeSessionId(),
@@ -596,13 +610,20 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         ? readySession(input.agentId, binding.adapterId, resumeNativeSessionId!, effective)
         : null;
     } else if (launchMode === "new") {
-      const nativeSessionId = requireText(
-        preallocatedNativeSessionId,
-        "Native session id"
-      );
-      if (!managedControl) args.push("--session-id", nativeSessionId);
-      else if (!args.includes("--session-id")) args.push("--session-id", nativeSessionId);
-      session = readySession(input.agentId, binding.adapterId, nativeSessionId, effective);
+      if (adapter.capabilities.nativeSessionDiscovery === "preallocated") {
+        const nativeSessionId = requireText(
+          preallocatedNativeSessionId,
+          "Native session id"
+        );
+        if (!managedControl) args.push("--session-id", nativeSessionId);
+        else if (!args.includes("--session-id")) args.push("--session-id", nativeSessionId);
+        session = readySession(input.agentId, binding.adapterId, nativeSessionId, effective);
+      } else {
+        // A runtime-discovered Session id does not exist until the Agent
+        // answers, so there is no ready Session to record at plan time and no
+        // id to pass on the command line. Same shape as a new Codex launch.
+        session = null;
+      }
     } else {
       session = readySession(input.agentId, binding.adapterId, resumeNativeSessionId!, effective);
     }
@@ -638,6 +659,11 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         ? {
             schemaVersion: 1,
             adapterId: binding.adapterId,
+            // The product identity is pinned by the snapshot this launch was
+            // resolved from, and the check above proves the Agent record still
+            // names it. Carrying only the adapter would leave the runtime with
+            // two products sharing one plan and no way to tell them apart.
+            component: binding.component,
             transport: managedCompiled!.transport,
             endpointImplementation,
             kind: "restore",
@@ -651,12 +677,16 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             ...(managedCompiled!.codexThread === undefined
               ? {}
               : { codexThread: managedCompiled!.codexThread }),
-            ...(providerOwnedRun === undefined ? {} : { ownedRun: providerOwnedRun }),
+            ...(providerOwnedRun === undefined ? {} : { ownedTurn: providerOwnedRun }),
+            ...(managedCompiled!.acpSession === undefined
+              ? {}
+              : { acpSession: managedCompiled!.acpSession }),
             authority: providerAuthority!
           }
         : {
             schemaVersion: 1,
             adapterId: binding.adapterId,
+            component: binding.component,
             transport: managedCompiled!.transport,
             endpointImplementation,
             kind: "start",
@@ -669,6 +699,9 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             ...(managedCompiled!.codexThread === undefined
               ? {}
               : { codexThread: managedCompiled!.codexThread }),
+            ...(managedCompiled!.acpSession === undefined
+              ? {}
+              : { acpSession: managedCompiled!.acpSession }),
             authority: providerAuthority!
           };
     const launch = {

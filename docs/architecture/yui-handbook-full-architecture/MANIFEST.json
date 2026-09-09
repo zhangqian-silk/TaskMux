@@ -157,6 +157,16 @@
       "sha256": "29425b28996168e1eb4421ecac1f7d3369ec3664d8771d9ab044d040474a7290"
     },
     {
+      "path": "implementation/designs/T07-cli-probe.md",
+      "bytes": 4500,
+      "sha256": "74f8513b1ca05c224fb8d5d2dc777b7a633090642c1d9c5c60badf665b27c622"
+    },
+    {
+      "path": "implementation/designs/T07-evidence.md",
+      "bytes": 70800,
+      "sha256": "5ac5d4264303bf2c073eecce30022f46293353f0bd1e494a18d533931bc95d33"
+    },
+    {
       "path": "implementation/designs/T08-draft-leader.md",
       "bytes": 3724,
       "sha256": "47ac833474765fb07a4dc5c6c53cfae98d8003b82d5dc053ecf2976966e63412"
@@ -248,8 +258,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 609742,
-      "sha256": "c7c6e80b8e17022c2198b224fdefe439250c63791294e5807c6540507a21b7cb"
+      "bytes": 711637,
+      "sha256": "135685d5e1b3ad772c03edb0f23f7bb32e637a5b5ab6a88d595ecc5e06af7a6b"
     },
     {
       "path": "modules/01-kernel.md",

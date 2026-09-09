@@ -11,18 +11,37 @@ import { parse } from "smol-toml";
 
 import { configuredAgentLaunchEnvironment } from "../agent/launchEnvironment.js";
 import { codexClientInitialization } from "../runtime/codexAppServerRuntime.js";
+import {
+  acpInitializeRequest,
+  readAcpInitializeResult,
+  type AcpInitializeResult
+} from "../runtime/acpProtocol.js";
+import { handshakeObservationFrom } from "../runtime/agentRunConfiguration.js";
+import { YUI_VERSION } from "../version.js";
 import type {
   AgentConfigurationCatalog,
   AgentConfigurationChoice,
   AgentConfigurationDiscoveryInput,
   AgentConfigurationField,
+  AgentHandshakeObservation,
   AgentModelChoice
 } from "./agentConfigurationCatalog.js";
+
+/**
+ * Codex and Claude Code are configured by flags and their own files; neither
+ * plan exchanges capabilities on connect. Saying so explicitly keeps a caller
+ * from reading a missing handshake as an Agent that answered with nothing.
+ */
+const NO_HANDSHAKE: AgentHandshakeObservation = Object.freeze({
+  status: "unsupported",
+  reason: "This connection plan has no capability handshake; support is static."
+});
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const PROCESS_TERMINATION_GRACE_MS = 100;
 const CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"] as const;
 const CODEX_APPROVALS = ["untrusted", "on-request", "never"] as const;
+const ACP_PROBE_REQUEST_ID = 1;
 
 export async function discoverCodexConfiguration(
   input: AgentConfigurationDiscoveryInput
@@ -89,6 +108,7 @@ export async function discoverCodexConfiguration(
       agentId: input.agent.id,
       adapterId: "codex",
       ...(semanticVersion(version) === undefined ? {} : { cliVersion: semanticVersion(version) }),
+      handshake: NO_HANDSHAKE,
       models,
       fields: [
         field("model", [], true),
@@ -167,6 +187,7 @@ export async function discoverClaudeConfiguration(
     agentId: input.agent.id,
     adapterId: "claude",
     ...(semanticVersion(version) === undefined ? {} : { cliVersion: semanticVersion(version) }),
+    handshake: NO_HANDSHAKE,
     models,
     fields: [
       field("model", [], true),
@@ -327,6 +348,173 @@ async function requestClaudeInitialization(
       request_id: requestId,
       type: "control_request",
       request: { subtype: "initialize" }
+    })}\n`);
+  });
+}
+
+/**
+ * Discover an ACP Agent's capabilities from the protocol itself.
+ *
+ * `initialize` is the only method used: it is the one exchange ACP guarantees
+ * before any Session exists, and it requires no authentication, so discovery
+ * never touches a model or spends quota. Everything reported here is what the
+ * Agent actually advertised — no field is inferred from which product it is.
+ */
+export async function discoverAcpConfiguration(
+  input: AgentConfigurationDiscoveryInput
+): Promise<AgentConfigurationCatalog> {
+  const environment = configuredAgentLaunchEnvironment(input.agent, input.environment);
+  const negotiated = await requestAcpInitialization(
+    input.agent.command,
+    [...input.agent.baseArgs],
+    input.cwd,
+    environment,
+    input.signal
+  );
+  const warnings: string[] = [];
+  if (!negotiated.capabilities.loadSession) {
+    warnings.push(
+      "This ACP Agent does not support `session/load`, so a managed Yui Turn "
+      + "cannot survive a Provider restart."
+    );
+  }
+  if (negotiated.authMethods.length > 0) {
+    // Authenticating is the operator's decision, made outside Yui with the
+    // product's own tooling. Reporting the requirement is the honest action.
+    warnings.push(
+      "This ACP Agent advertises authentication methods "
+      + `(${negotiated.authMethods.map((method) => method.id).join(", ")}); `
+      + "this handshake does not establish whether authentication is required "
+      + "or already satisfied."
+    );
+  }
+  return {
+    schemaVersion: 1,
+    agentId: input.agent.id,
+    adapterId: "acp",
+    ...(negotiated.agentVersion === undefined
+      ? {}
+      : semanticVersion(negotiated.agentVersion) === undefined
+        ? {}
+        : { cliVersion: semanticVersion(negotiated.agentVersion)! }),
+    // What this Agent actually agreed to, kept separate from what Yui's client
+    // statically supports. Projected by the same function a live Session uses,
+    // so this query and a Session inspect cannot describe one Agent's handshake
+    // differently. An Agent that reports no name stays `unknown` here and is
+    // never resolved into a product by its command line.
+    handshake: handshakeObservationFrom(negotiated),
+    // Deliberately empty, and not because ACP cannot select a model. ACP
+    // enumerates a Session's models in the `configOptions` returned by
+    // `session/new` — which means listing them requires creating a real Session
+    // on the Agent, and for a hosted product that is a billable remote effect
+    // triggered by what the user asked to be a capability query. So this probe
+    // stops at `initialize`: it reports that the axis is configurable and that
+    // its values are negotiated per Session, rather than opening a Session to
+    // populate a menu. The values are checked where they are actually known, at
+    // launch, against the option list that Session returns.
+    models: [],
+    fields: [
+      field("model", [], true, true,
+        "ACP selects a model with session/set_config_option. The values one Agent "
+        + "accepts are enumerated per Session at session/new, so Yui does not list "
+        + "them here: creating a Session to populate the list would be a real, "
+        + "possibly billed remote effect for what is only a capability query. A "
+        + "configured model is checked against the Agent's own list at launch and "
+        + "the launch fails if it is not offered."),
+      field("effort", [], true, true,
+        "ACP selects reasoning effort with session/set_config_option, under the "
+        + "`thought_level` category. As with the model, the accepted values are "
+        + "negotiated per Session and verified at launch rather than listed here."),
+      field("permission.strategy", [choice("default"), choice("bypass"), choice("configured")],
+        false, true,
+        "`default` sends no mode, so the Agent's own default stands. `configured` "
+        + "selects one exact mode the Agent offers. `bypass` applies the mode that "
+        + "grants unattended action, and only for an execution component Yui can "
+        + "identify — it is never guessed from a mode's name. None of these change "
+        + "how Yui answers session/request_permission: this client holds no "
+        + "interactive consent and always declines."),
+      field("permission.mode", [], true, true,
+        "The mode ids belong to the Agent and are enumerated per Session, so Yui "
+        + "verifies a configured mode against that list at launch instead of "
+        + "listing candidates here."),
+      field("additionalDirectories", [], true,
+        negotiated.capabilities.additionalDirectories,
+        negotiated.capabilities.additionalDirectories
+          ? undefined
+          : "This ACP Agent does not advertise "
+            + "`sessionCapabilities.additionalDirectories`, so extra workspace roots "
+            + "cannot be sent to it and only the launch `cwd` is in scope.")
+    ],
+    warnings
+  };
+}
+
+/**
+ * Run one `initialize` exchange and stop. The Agent is spawned, asked what it
+ * supports, and terminated without creating a Session.
+ */
+async function requestAcpInitialization(
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+  signal: AbortSignal
+): Promise<AcpInitializeResult> {
+  const child = spawn(command, args, { cwd, env: environment, stdio: ["pipe", "pipe", "pipe"] });
+  return new Promise<AcpInitializeResult>((resolvePromise, reject) => {
+    let settled = false;
+    let bytes = 0;
+    const output = createInterface({ input: child.stdout });
+    const finish = (error?: Error, value?: AcpInitializeResult): void => {
+      if (settled) return;
+      settled = true;
+      output.close();
+      terminateProcess(child);
+      signal.removeEventListener("abort", abort);
+      if (error !== undefined) reject(error);
+      else resolvePromise(value!);
+    };
+    const abort = (): void => finish(abortError());
+    signal.addEventListener("abort", abort, { once: true });
+    child.on("error", (error) => finish(error));
+    child.on("exit", (code, exitSignal) => {
+      if (!settled) finish(new Error(
+        `ACP configuration probe exited before initialize (${code ?? exitSignal ?? "unknown"}).`
+      ));
+    });
+    output.on("line", (line) => {
+      bytes += Buffer.byteLength(line);
+      if (bytes > MAX_OUTPUT_BYTES) {
+        finish(new Error("ACP configuration probe exceeded the output limit."));
+        return;
+      }
+      let message: unknown;
+      try {
+        message = JSON.parse(line) as unknown;
+      } catch {
+        return;
+      }
+      const envelope = object(message);
+      if (envelope === undefined || envelope.id !== ACP_PROBE_REQUEST_ID) return;
+      const failure = object(envelope.error);
+      if (failure !== undefined) {
+        finish(new Error(typeof failure.message === "string"
+          ? `ACP initialize failed: ${failure.message}`
+          : "ACP initialize failed."));
+        return;
+      }
+      try {
+        finish(undefined, readAcpInitializeResult(envelope.result));
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    child.stdin.on("error", (error) => finish(error));
+    child.stdin.end(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: ACP_PROBE_REQUEST_ID,
+      method: "initialize",
+      params: acpInitializeRequest(YUI_VERSION)
     })}\n`);
   });
 }
