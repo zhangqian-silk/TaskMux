@@ -699,7 +699,7 @@ function normalizeFailure(input: RuntimeRunFailure): RuntimeRunFailure {
       : { lastOutput: requireText(input.lastOutput, "Runtime failure last output") }),
     ...(input.runTerminal === undefined
       ? {}
-      : { runTerminal: requireBoolean(input.runTerminal, "Runtime failure turnTerminal") })
+      : { runTerminal: requireBoolean(input.runTerminal, "Runtime failure runTerminal") })
   });
 }
 

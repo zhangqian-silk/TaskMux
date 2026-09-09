@@ -583,7 +583,7 @@ function claudeFailure(
       }),
       ...(lastOutput === undefined ? {} : { lastOutput }),
       ...(payload.run_terminal === true || payload.unrecoverable === true
-        ? { turnTerminal: true }
+        ? { runTerminal: true }
         : {})
     },
     summary: [
