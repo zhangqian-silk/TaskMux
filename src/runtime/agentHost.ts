@@ -38,10 +38,13 @@ import {
   type StructuredProviderTurnTerminal
 } from "./structuredProviderHost.js";
 import {
-  createAgentEndpointFactory,
   type AgentEndpoint,
   type AgentEndpointSubmission
 } from "./agentEndpoint.js";
+import {
+  createAgentEndpointOwner,
+  type AgentEndpointLease
+} from "./agentEndpointOwnership.js";
 import {
   sameProviderAuthorityFence,
   validateProviderAuthorityFence,
@@ -56,8 +59,10 @@ import {
   replayRuntimeProcessExitOutbox
 } from "./processExitOutbox.js";
 import {
+  AGENT_HOST_CLIENT_EXIT_GRACE_MS,
   AGENT_HOST_CONTROL_TIMEOUT_MS,
   AGENT_HOST_READY_TIMEOUT_MS,
+  ENDPOINT_DRAIN_TIMEOUT_MS,
   PROVIDER_ACCEPT_TIMEOUT_MS
 } from "./runtimeDeadlines.js";
 import {
@@ -203,7 +208,14 @@ export async function runAgentHost(input: Readonly<{
     return runCodexInteractiveHost(input.home, payload);
   }
   let session: AgentEndpoint | undefined;
-  const endpoints = createAgentEndpointFactory();
+  // This process really holds the Endpoint code its Session runs on. The lease
+  // spans the Session's Turns, so installing a newer generation does not change
+  // the implementation under a Session that is still using this one.
+  const endpointOwner = createAgentEndpointOwner();
+  let endpointLease: AgentEndpointLease | undefined;
+  /** The adapter this process actually pinned, so the drain below reports the
+   * implementation genuinely held rather than whichever one a later payload names. */
+  let endpointAdapterId: AgentHostSnapshot["adapterId"];
   let sessionPayload: AgentHostLaunchPayload | undefined;
   let activeTurnPayload: AgentHostLaunchPayload | undefined;
   let activeTurnAttemptId: string | undefined;
@@ -420,7 +432,12 @@ export async function runAgentHost(input: Readonly<{
       if (hostStopRequested) return;
       try {
         assertAgentExecutionEnvironment(input.home, reconnectPayload);
-        const started = await endpoints.resume(reconnectPayload);
+        // Reattaching a dropped client continues the same Session on the same
+        // pinned generation; it never re-selects an implementation.
+        if (endpointLease === undefined) {
+          throw new Error("Codex client reconnect lost its Endpoint implementation lease.");
+        }
+        const started = await endpointLease.resume(reconnectPayload);
         session = started.session;
         sessionPayload = currentPayload;
         started.session.events((event) => {
@@ -527,6 +544,12 @@ export async function runAgentHost(input: Readonly<{
         session = undefined;
         conversationRecoverability = "unknown";
         authority = undefined;
+        // The client is gone for good, so this Session stops holding the
+        // implementation. Keeping the reference would report work in progress
+        // that no longer exists; a later launch pins again explicitly.
+        const ending = endpointLease;
+        endpointLease = undefined;
+        await ending?.release().catch(() => undefined);
       }
       hostSequence += 1;
       const observedAt = new Date().toISOString();
@@ -630,7 +653,13 @@ export async function runAgentHost(input: Readonly<{
           activeNativeTurnId = providerControl.ownedTurn.turnId;
         }
         assertAgentExecutionEnvironment(input.home, next);
-        const started = await (providerControl.mode === "new" ? endpoints.open(next) : endpoints.resume(next));
+        // Pin before opening: the Session holds this exact generation for every
+        // later Turn. A pinned reference naming code this process is not running
+        // fails here, rather than silently starting on a different generation.
+        endpointLease ??= endpointOwner.pin(providerControl.adapterId, providerControl.endpointImplementation);
+        endpointAdapterId = providerControl.adapterId;
+        const started = await (providerControl.mode === "new"
+          ? endpointLease.open(next) : endpointLease.resume(next));
         session = started.session;
         sessionPayload = next;
         started.session.events((event) => {
@@ -1209,7 +1238,7 @@ export async function runAgentHost(input: Readonly<{
       if (hostStopRequested) return;
       hostStopRequested = true;
       session?.detach(signal);
-      forceKillTimer = setTimeout(() => session?.detach("SIGKILL"), 10_000);
+      forceKillTimer = setTimeout(() => session?.detach("SIGKILL"), AGENT_HOST_CLIENT_EXIT_GRACE_MS);
       forceKillTimer.unref();
       stopResolve();
     };
@@ -1227,7 +1256,55 @@ export async function runAgentHost(input: Readonly<{
     for (const [signal, handler] of handlers) process.removeListener(signal, handler);
     if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
     humanConsole?.close();
+    // Ask the client to exit, then hand back the Session's hold. The reference
+    // is only actually returned once the client proves it exited, so the bounded
+    // stop below waits on the real dependency instead of an assumed one.
     session?.detach();
+    const adapterId = endpointAdapterId;
+    await endpointLease?.release();
+    endpointLease = undefined;
+    if (adapterId !== undefined) {
+      // Stop new acquisition and wait a bounded time for what is already
+      // running. A timeout reports the references and pending effects that are
+      // genuinely still in use; it never escalates to killing a Provider this
+      // Endpoint does not own, and it never reports quiescence it cannot prove.
+      const drain = await endpointOwner.stop(adapterId, ENDPOINT_DRAIN_TIMEOUT_MS);
+      if (!drain.quiescent) {
+        const detail = `Endpoint stop ${drain.timedOut ? "timed out" : "returned"} after ${drain.waitedMs}ms`
+          + ` (bound ${ENDPOINT_DRAIN_TIMEOUT_MS}ms); ${drain.references} reference(s), `
+          + `${drain.opening} opening client(s) and `
+          + `${drain.sessions.reduce((total, held) => total + held.pending.length, 0)} pending effect(s) `
+          + "may still be in use. Owned client resources are unknown.";
+        updateSnapshot(hostSnapshot(snapshot.state, {
+          ...definedFields({
+            adapterId,
+            nativeSessionId: snapshot.nativeSessionId,
+            conversationId: snapshot.conversationId
+          }),
+          ...authorityFields(),
+          detail
+        }));
+        // The snapshot is about to stop being reachable, and a stop this process
+        // could not prove quiescent must remain diagnosable afterwards. Written
+        // to the Host's own stream, which its pane and logs retain.
+        process.stderr.write(`${detail}\n`);
+      }
+    }
+    // Final cleanup is bounded on its own deadline. The bounded stop above may
+    // already have given up on a client that never proves exit, and waiting for
+    // that same drain again would leave the control socket open and this function
+    // never returning. Anything still held is reported, not silently released.
+    const remaining = await endpointOwner.close(ENDPOINT_DRAIN_TIMEOUT_MS).catch(() => []);
+    const held = remaining.filter((drain) => !drain.quiescent);
+    if (held.length > 0) {
+      const references = held.reduce((total, drain) => total + drain.references, 0);
+      const opening = held.reduce((total, drain) => total + drain.opening, 0);
+      process.stderr.write(
+        `Endpoint cleanup returned with ${references} reference(s) and ${opening} opening client(s) `
+        + `still held across ${held.length} implementation(s) (bound ${ENDPOINT_DRAIN_TIMEOUT_MS}ms); `
+        + "those implementations stay detached and undisposed. Owned client resources are unknown.\n"
+      );
+    }
     await control.close();
     void sessionPayload;
   }
