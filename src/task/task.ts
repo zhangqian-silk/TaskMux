@@ -158,11 +158,15 @@ export function bindTaskWorkspaceIdentity(
 }
 
 /**
- * How many terminal activation requests a Task retains beside its latest one.
+ * How many terminal activation requests the Task payload *displays* beside its
+ * latest one.
  *
- * Enough to answer "was this id already settled?" across a realistic planning
- * conversation, small enough that the Task payload stays bounded. Overflow drops
- * the oldest entries, which are the least likely to be replayed.
+ * This is a display bound, not an authority. Whether a requestId was already
+ * cancelled or adopted is answered from the durable activation event ledger,
+ * which is never compacted, so overflow trims only what the payload shows, never
+ * what replay enforcement can see: an evicted entry is still refused. The oldest
+ * request is not "least likely to be replayed" — it is simply the oldest, and it
+ * keeps its authority exactly like the newest.
  */
 export const MAX_SETTLED_ACTIVATION_REQUESTS = 16;
 
@@ -172,36 +176,20 @@ function isSettledActivationRequest(request: TaskActivationRequest): boolean {
 }
 
 /**
- * The settled record for this requestId, if the Task still retains one.
- *
- * Callers use this to refuse replaying an id whose outcome was already decided,
- * instead of trusting the single latest slot — which a later request evicts.
- */
-export function settledActivationRequest(
-  task: Task,
-  requestId: string
-): TaskActivationRequest | undefined {
-  const current = task.activationRequest;
-  if (current?.operation.requestId === requestId && isSettledActivationRequest(current)) {
-    return current;
-  }
-  return task.settledActivationRequests?.find(
-    (request) => request.operation.requestId === requestId
-  );
-}
-
-/**
  * Persists the Task's latest activation request.
  *
  * The request is intent only, so this never touches `status`: a Draft stays a
  * continuable Draft after a request is recorded, cancelled, or failed. Only
  * `activateTask` inside the adoption transaction moves the lifecycle.
  *
- * A request being displaced from the slot is retired into the bounded settled
- * history when its outcome was terminal, so an explicit cancellation survives
- * the next request and cannot be replayed away. A `failed` request is
- * deliberately not archived: it stays replayable by contract, and it is still
- * in the slot until something replaces it.
+ * A request being displaced from the slot is projected into the bounded settled
+ * history when its outcome was terminal, so the recent decisions stay visible on
+ * the Task payload. This history is a display projection, not the authority:
+ * whether a cancelled or adopted id may be replayed is decided from the durable
+ * activation event ledger, so trimming the oldest entries here never lets a
+ * decided outcome be replayed away. A `failed` request is deliberately not
+ * projected: it stays replayable by contract, and it is still in the slot until
+ * something replaces it.
  */
 export function setTaskActivationRequest(
   task: Task,

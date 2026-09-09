@@ -150,9 +150,11 @@ function showActivation(args: string[], store: TaskWorkflowStore): TaskCommandEx
   exactPositionals(parsed.positionals, 1, usage);
   const task = requireTask(store, parsed.positionals[0]!);
   const request = task.activationRequest;
-  // Terminal requests the Task still retains. They are what makes a cancelled
-  // id unreplayable, so an Operator diagnosing a refusal can see the outcome
-  // that is refusing them instead of only the latest request.
+  // The recent terminal requests the Task still displays. The refusal itself is
+  // enforced from the durable activation event ledger, not this bounded list;
+  // showing it just lets an Operator diagnosing a refusal see the recent
+  // outcomes at a glance instead of only the latest request. An id can be
+  // refused without appearing here once it has aged out of the display bound.
   const settled = task.settledActivationRequests ?? [];
   const settledLines = settled.length === 0 ? [] : [
     "",

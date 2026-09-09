@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { requireIdentity, requireTimestamp } from "../domain/validation.js";
+import type { TaskEvent } from "../event/taskEvent.js";
 import {
   recordOperationEvidence,
   validateOperationFacts,
@@ -15,6 +16,22 @@ export const TASK_ACTIVATION_IMPLEMENTATION = Object.freeze({
 });
 
 export const TASK_ACTIVATION_CAPABILITY = "task.activate";
+
+/**
+ * The durable activation event vocabulary.
+ *
+ * These events are the never-compacted authority for a request's terminal
+ * outcome, so the type strings are named constants shared by every emitter and
+ * every reader. A rename cannot silently desynchronise what adoption/cancel
+ * record from what replay enforcement reads back — which is exactly how the
+ * bounded display list used to lose authority once it overflowed.
+ */
+export const TASK_ACTIVATION_EVENT = Object.freeze({
+  requested: "task.activation-requested",
+  cancelled: "task.activation-cancelled",
+  adopted: "task.activation-adopted",
+  failed: "task.activation-failed"
+} as const);
 
 /**
  * How the requester expects delivery to start.
@@ -291,6 +308,50 @@ export function admitTaskActivationRequest(
     };
   }
   return { disposition: "ready", request };
+}
+
+/**
+ * A requestId's terminal outcome as an authority fact, independent of whether
+ * the bounded display payload still carries the full request record.
+ */
+export type SettledActivationRequestFact = Readonly<{
+  disposition: "cancelled" | "adopted";
+  /** The recorded cancellation reason, when the terminal event carried one. */
+  outcome?: string;
+}>;
+
+/**
+ * The durable terminal outcome for a requestId, read from the activation event
+ * ledger.
+ *
+ * `task.activation-cancelled` and `task.activation-adopted` are never compacted
+ * — only runtime-observation events are pruned — so this answers "was this id
+ * already settled?" for the entire life of the Task, no matter how many later
+ * requests displaced it from the bounded display payload. A `failed` request is
+ * intentionally absent here: it stays replayable by contract, so replaying it is
+ * not a resurrection of a decided outcome.
+ *
+ * A requestId reaches at most one terminal disposition — adoption and
+ * cancellation exclude each other by construction — so the first matching
+ * terminal event is authoritative.
+ */
+export function settledActivationFromEvents(
+  events: readonly TaskEvent[],
+  requestId: string
+): SettledActivationRequestFact | undefined {
+  for (const event of events) {
+    if (event.payload.requestId !== requestId) continue;
+    if (event.type === TASK_ACTIVATION_EVENT.cancelled) {
+      return {
+        disposition: "cancelled",
+        ...(event.payload.reason === undefined ? {} : { outcome: event.payload.reason })
+      };
+    }
+    if (event.type === TASK_ACTIVATION_EVENT.adopted) {
+      return { disposition: "adopted" };
+    }
+  }
+  return undefined;
 }
 
 export function validateTaskActivationRequest(

@@ -10,11 +10,40 @@ import {
   createTaskActivationRequest,
   describeEnvironmentPlan,
   failTaskActivationRequest,
+  settledActivationFromEvents,
   taskActivationInputDigest,
+  TASK_ACTIVATION_EVENT,
+  type SettledActivationRequestFact,
   type TaskActivationRequest,
   type TaskActivationStartMode
 } from "./taskActivation.js";
-import { setTaskActivationRequest, recordTaskActivationRequestEvidence, settledActivationRequest, type Task } from "./task.js";
+import { setTaskActivationRequest, recordTaskActivationRequestEvidence, type Task } from "./task.js";
+
+/**
+ * The terminal outcome already recorded for a requestId, or `undefined` if it
+ * was never cancelled or adopted.
+ *
+ * The authority is the durable activation event ledger, which is never
+ * compacted, so a decided outcome survives the bounded display payload evicting
+ * its record. The live slot is consulted first only as a fast path for the id
+ * that still occupies it; the two always agree, because every terminal
+ * transition writes its event in the same transaction that mutates the slot.
+ */
+function settledActivationRequest(
+  reader: Pick<TaskStore, "listEvents">,
+  task: Task,
+  requestId: string
+): SettledActivationRequestFact | undefined {
+  const current = task.activationRequest;
+  if (current?.operation.requestId === requestId
+    && (current.disposition === "cancelled" || current.disposition === "adopted")) {
+    return {
+      disposition: current.disposition,
+      ...(current.outcome === undefined ? {} : { outcome: current.outcome })
+    };
+  }
+  return settledActivationFromEvents(reader.listEvents(task.id), requestId);
+}
 
 export type RequestTaskActivationInput = Readonly<{
   taskId: string;
@@ -76,7 +105,12 @@ export function requestTaskActivation(
     // explicit authority, and adoption is exactly the effect it withdrew. An
     // adopted id is equally final — its environment and status change happened.
     // Only `failed` stays replayable, which is its documented contract.
-    const settled = settledActivationRequest(task, input.requestId);
+    //
+    // The authority is the durable activation event ledger, not the bounded
+    // display payload: the payload trims its oldest entries once it overflows,
+    // but the terminal events are never compacted, so an evicted cancellation is
+    // still refused with its original outcome instead of silently resurrecting.
+    const settled = settledActivationRequest(tx, task, input.requestId);
     if (settled !== undefined) {
       throw new Error(
         `Activation request ${input.requestId} was already ${settled.disposition} for ${task.id}`
@@ -123,7 +157,7 @@ export function requestTaskActivation(
     tx.saveEvent(task.id, createTaskEvent(
       tx.nextEventId(task.id),
       task.id,
-      "task.activation-requested",
+      TASK_ACTIVATION_EVENT.requested,
       {
         requestId: request.operation.requestId,
         startMode: request.startMode,
@@ -172,7 +206,7 @@ export function cancelTaskActivation(
       tx.saveEvent(taskId, createTaskEvent(
         tx.nextEventId(taskId),
         taskId,
-        "task.activation-cancelled",
+        TASK_ACTIVATION_EVENT.cancelled,
         { requestId, reason: cancelled.outcome ?? reason },
         now
       ));
@@ -380,7 +414,7 @@ export function recordAdoptedTaskActivation(
   store.saveEvent(task.id, createTaskEvent(
     store.nextEventId(task.id),
     task.id,
-    "task.activation-adopted",
+    TASK_ACTIVATION_EVENT.adopted,
     {
       requestId: adopted.operation.requestId,
       environmentPlan: describeEnvironmentPlan(adopted.environmentPlan),
@@ -424,7 +458,7 @@ export function recordFailedTaskActivation(
     tx.saveEvent(taskId, createTaskEvent(
       tx.nextEventId(taskId),
       taskId,
-      "task.activation-failed",
+      TASK_ACTIVATION_EVENT.failed,
       {
         requestId: failed.operation.requestId,
         outcome: failed.outcome ?? outcome,

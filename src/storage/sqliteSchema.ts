@@ -932,10 +932,13 @@ CREATE TABLE plugin_intents (
     //     never explicitly requested, so a Draft is never inferred to have
     //     requested it;
     //   - its bounded settled-request history: absent means no request ever
-    //     reached a terminal disposition on this Task. It is what makes an
-    //     explicitly cancelled requestId unreplayable after a later request
-    //     takes the latest slot — per-request evidence inside the Task that
-    //     owns it, not a second scheduling or operation ledger;
+    //     reached a terminal disposition on this Task. This is a display
+    //     projection, not the authority: whether an explicitly cancelled or
+    //     adopted requestId may be replayed is decided from the durable
+    //     activation event ledger (never compacted), so eviction from this
+    //     bounded list never resurrects a decided outcome — per-request state
+    //     inside the Task that owns it, not a second scheduling or operation
+    //     ledger;
     //   - the planning Turn purpose: historical Turns keep their execution or
     //     review purpose untouched.
     //
