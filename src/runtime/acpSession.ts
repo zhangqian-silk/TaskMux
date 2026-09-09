@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { isAbsolute } from "node:path";
 
 import type { AgentExecutionComponentId } from "../agent/executionComponents.js";
-import { MAX_TURN_RESULT_OUTPUT_BYTES } from "../domain/agentResultTransport.js";
+import { MAX_RUN_RESULT_OUTPUT_BYTES } from "../domain/agentResultTransport.js";
 import {
   ACP_METHOD_NOT_FOUND_CODE,
   acpCancelNotification,
@@ -29,6 +29,7 @@ import {
 } from "./acpProtocol.js";
 import {
   ACP_CONFIGURATION_ORDER,
+  acpRunConfigurationOptions,
   confirmAcpConfigurationStep,
   describeAcpConfigurationRejections,
   resolveAcpConfigurationField,
@@ -36,6 +37,12 @@ import {
   type AcpConfigurationOutcome,
   type AcpDesiredSessionConfiguration
 } from "./acpSessionConfiguration.js";
+import {
+  handshakeObservationFrom,
+  unknownAgentRunConfiguration,
+  type AgentRunConfigurationCurrentValue,
+  type AgentRunConfigurationObservation
+} from "./agentRunConfiguration.js";
 import {
   JsonLineChannel,
   terminateProcessGroup,
@@ -151,6 +158,8 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
    * the complete list, so this is replaced wholesale and never merged.
    */
   #configOptions: readonly AcpConfigOption[] = [];
+  /** Legacy writes invalidate current evidence until the peer reports it again. */
+  readonly #unobservedConfigIds = new Set<string>();
   /**
    * True when this Agent described its options through the legacy `modes` field
    * only. Mode changes then go to `session/set_mode`, because an Agent that
@@ -367,14 +376,18 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
   }
 
   async #create(cwd: string, additionalDirectories: readonly string[]): Promise<string> {
-    const result = asObject(await this.#request(
+    await this.#request(
       "session/new",
-      acpNewSessionRequest(cwd, this.#sendableDirectories(additionalDirectories))
-    ));
-    const sessionId = result === null ? undefined : optionalText(result.sessionId);
-    if (sessionId === undefined) throw new Error("ACP `session/new` returned no sessionId.");
-    this.#readConfiguration(result);
-    return sessionId;
+      acpNewSessionRequest(cwd, this.#sendableDirectories(additionalDirectories)),
+      (response) => {
+        const setup = asObject(response);
+        const id = setup === null ? undefined : optionalText(setup.sessionId);
+        if (id === undefined) throw new Error("ACP `session/new` returned no sessionId.");
+        this.#sessionId = id;
+        this.#readConfiguration(setup);
+      }
+    );
+    return this.#sessionId;
   }
 
   /**
@@ -400,14 +413,14 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
     // notifications before it answers. Those replays are history: the receive
     // path only settles a Turn from a `session/prompt` response, so replayed
     // content can never be mistaken for a new terminal.
-    const result = asObject(await this.#request("session/load", {
+    this.#sessionId = sessionId;
+    await this.#request("session/load", {
       sessionId,
       ...(acpNewSessionRequest(cwd, this.#sendableDirectories(additionalDirectories)) as JsonObject)
-    }));
+    }, (response) => this.#readConfiguration(asObject(response)));
     // A resumed Session reports its own current configuration, which is the
     // Agent's state after the earlier launch — not this launch's request. Both
     // are read the same way so a resume is configured from what is true now.
-    this.#readConfiguration(result);
     return sessionId;
   }
 
@@ -474,6 +487,7 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
         continue;
       }
       const step = resolution.step;
+      if (this.#legacyModes) this.#unobservedConfigIds.add(step.configId);
       // An Agent that only ever advertised legacy `modes` has no
       // `session/set_config_option` handler, so mode changes must use the method
       // it does implement. Sending the modern method to it would fail with
@@ -482,7 +496,11 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
         ? await this.#request("session/set_mode", acpSetModeRequest(this.#sessionId, step.value))
         : await this.#request(
             "session/set_config_option",
-            acpSetConfigOptionRequest(this.#sessionId, step.configId, step.value)
+            acpSetConfigOptionRequest(this.#sessionId, step.configId, step.value),
+            (response) => {
+              const options = readAcpConfigOptions(asObject(response)?.configOptions);
+              if (options !== undefined) this.#configOptions = options;
+            }
           );
       if (this.#legacyModes) {
         // `session/set_mode` answers with no options, so the only fact available
@@ -501,8 +519,7 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
       // The answer is the whole option list, so it both confirms this step and
       // carries any change the Agent made alongside it.
       const options = readAcpConfigOptions(asObject(result)?.configOptions);
-      if (options !== undefined) this.#configOptions = options;
-      const mismatch = confirmAcpConfigurationStep(step, this.#configOptions);
+      const mismatch = confirmAcpConfigurationStep(step, options ?? this.#configOptions);
       if (mismatch !== undefined) throw new Error(mismatch);
       outcomes.push(Object.freeze({
         field,
@@ -532,6 +549,79 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
   }
 
   /**
+   * What this Session is actually running under, read fresh on every call.
+   *
+   * Two facts are combined and kept labelled. Each requested value carries the
+   * confirmation its own step earned, which is history and does not change. The
+   * current value beside it is read from the option list the Agent reports right
+   * now, so an axis the Agent has since moved shows as a different current value
+   * rather than as the launch's confirmed one. Reading the private field on every
+   * call rather than caching a projection is what makes that true: a snapshot
+   * taken at launch would keep reporting a configuration this Session has left.
+   *
+   * A legacy mode-only peer has no reported value to pair with its
+   * `acknowledged` step, because Yui deliberately never wrote the requested value
+   * into its own view. That absence is stated as `unobserved` instead of being
+   * filled in from the request.
+   */
+  get runConfiguration(): AgentRunConfigurationObservation {
+    if (this.#closed !== undefined) {
+      return unknownAgentRunConfiguration("The ACP connection is closed; its reports are no longer current.");
+    }
+    return Object.freeze({
+      status: "observed",
+      observedAt: new Date().toISOString(),
+      handshake: handshakeObservationFrom(this.negotiated),
+      requested: Object.freeze(this.#appliedConfiguration.map((outcome) => Object.freeze({
+        field: outcome.field,
+        key: outcome.configId,
+        value: outcome.value,
+        confirmation: outcome.confirmation,
+        current: this.#currentValue(outcome)
+      }))),
+      axes: Object.freeze(acpRunConfigurationOptions(this.#configOptions).map((option) => Object.freeze({
+        key: option.id,
+        ...(option.category === undefined ? {} : { category: option.category }),
+        current: this.#axisValue(option),
+        offered: Object.freeze(option.options.map(({ value }) => value))
+      })))
+    });
+  }
+
+  /**
+   * What the Agent reports for one listed axis.
+   *
+   * Almost always an observation: the option list ACP sends is the Agent's own
+   * report. The exception is an axis Yui changed on a legacy peer, whose value
+   * here still dates from the setup reply because `session/set_mode` returned
+   * nothing to refresh it with. That entry is listed — the axis is real and its
+   * enumeration is accurate — but its value is stale by construction, so it is
+   * reported as unobserved rather than as the Agent's current answer.
+   */
+  #axisValue(option: AcpConfigOption): AgentRunConfigurationCurrentValue {
+    if (this.#unobservedConfigIds.has(option.id)) {
+      return Object.freeze({
+        status: "unobserved",
+        reason: "Yui set this axis with `session/set_mode`, which reports no "
+          + `configuration, so the Agent last reported \`${option.currentValue}\` before that call.`
+      });
+    }
+    return Object.freeze({ status: "observed", value: option.currentValue });
+  }
+
+  /** Read current evidence independently of the request's historical confirmation. */
+  #currentValue(outcome: AcpConfigurationOutcome): AgentRunConfigurationCurrentValue {
+    const option = this.#configOptions.find((candidate) => candidate.id === outcome.configId);
+    if (option !== undefined) {
+      return this.#axisValue(option);
+    }
+    return Object.freeze({
+      status: "unobserved",
+      reason: `The Agent no longer reports an option \`${outcome.configId}\` in its configuration.`
+    });
+  }
+
+  /**
    * The subset of requested roots this Agent is allowed to receive. Gating here
    * rather than at the call sites keeps `session/new` and `session/load` from
    * ever disagreeing about what this connection negotiated.
@@ -545,7 +635,7 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
     return this.#unsentAdditionalDirectories;
   }
 
-  #request(method: string, params: JsonObject): Promise<unknown> {
+  #request(method: string, params: JsonObject, receive?: (result: unknown) => void): Promise<unknown> {
     return new Promise<unknown>((resolvePromise, reject) => {
       if (this.#closed !== undefined) {
         reject(this.#closed);
@@ -553,7 +643,18 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
       }
       const id = this.#nextRequestId;
       this.#nextRequestId += 1;
-      this.#pending.set(id, { resolve: resolvePromise, reject });
+      this.#pending.set(id, {
+        resolve: (result) => {
+          try {
+            // Apply response facts in wire order, before a following notification.
+            receive?.(result);
+            resolvePromise(result);
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error(String(error)));
+          }
+        },
+        reject
+      });
       void this.channel.send({ jsonrpc: "2.0", id, method, params }).catch((error: unknown) => {
         this.#pending.delete(id);
         reject(error instanceof Error ? error : new Error(String(error)));
@@ -684,9 +785,13 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
     // already confirmed before any prompt was sent.
     if (update?.kind === "config-options") {
       this.#configOptions = update.options;
+      this.#unobservedConfigIds.clear();
       return;
     }
     if (update?.kind === "mode") {
+      for (const option of this.#configOptions) {
+        if (option.category === "mode") this.#unobservedConfigIds.delete(option.id);
+      }
       this.#configOptions = this.#configOptions.map((option) => option.category === "mode"
         ? Object.freeze({ ...option, currentValue: update.modeId })
         : option);
@@ -703,7 +808,7 @@ export class AcpStructuredProviderSession implements StructuredProviderSession {
     // as this attempt's output.
     if (this.#activeAttemptId === undefined || this.#answerOverflowed) return;
     const bytes = Buffer.byteLength(update.text, "utf8");
-    if (this.#answerBytes + bytes > MAX_TURN_RESULT_OUTPUT_BYTES) {
+    if (this.#answerBytes + bytes > MAX_RUN_RESULT_OUTPUT_BYTES) {
       // Stop retaining rather than keep a prefix: a truncated answer that still
       // looked complete would be worse than an explicit absence.
       this.#answerOverflowed = true;

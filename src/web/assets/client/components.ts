@@ -1,3 +1,6 @@
+import { AGENT_ADAPTER_CATALOG } from "../../../agent/adapterCatalog.js";
+import { AGENT_EXECUTION_COMPONENT_CATALOG } from "../../../agent/executionComponents.js";
+
 export const COMPONENTS_SCRIPT = `
 // Reusable widgets and record cards. Everything here is a pure builder:
 // data + i18n in, DOM out. Page composition lives in view.js.
@@ -5,30 +8,18 @@ import { node } from "/assets/js/dom.js";
 import { formatDateTime, relativeTime } from "/assets/js/format.js";
 import { escapeHtml, inlineMarkdown, renderMarkdown } from "/assets/js/markdown.js";
 
-export function translatedStatus(t, prefix, status) {
-  return t(prefix + "." + status);
-}
-
-// Mirrors src/agent/adapterCatalog.ts to avoid a runtime import loop.
-const adapterLabels = { codex: "Codex", claude: "Claude", acp: "Agent Client Protocol" };
+// Generated from the server catalogs, not a second product registry.
+const adapterLabels = ${JSON.stringify(Object.fromEntries(AGENT_ADAPTER_CATALOG.map(({ id, label }) => [id, label])))};
+const componentLabels = ${JSON.stringify(Object.fromEntries(AGENT_EXECUTION_COMPONENT_CATALOG.map(({ id, label }) => [id, label])))};
 function adapterLabel(adapterId) {
   return adapterLabels[adapterId] || adapterId;
 }
-
-// Mirrors src/agent/executionComponents.ts, for the same reason.
-const componentLabels = {
-  "codex-cli": "Codex CLI",
-  "claude-code-cli": "Claude Code CLI",
-  "claude-agent-sdk": "Claude Agent SDK (ACP)",
-  "unknown-acp-agent": "ACP Agent (unidentified)"
-};
-
-// The component names the product; the adapter names only the connection plan,
-// which several products share. Prefer the component and fall back to the plan
-// for records written before the component axis existed.
 function componentLabel(component, adapterId) {
-  if (!component) return adapterLabel(adapterId);
-  return componentLabels[component] || component;
+  return component ? componentLabels[component] || component : adapterLabel(adapterId);
+}
+
+export function translatedStatus(t, prefix, status) {
+  return t(prefix + "." + status);
 }
 
 // --- Small widgets -----------------------------------------------------------

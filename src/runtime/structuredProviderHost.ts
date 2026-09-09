@@ -25,6 +25,10 @@ import { serializeAgentErrorRaw } from "./agentError.js";
 import type { AgentAdapterId } from "../agent/adapterCatalog.js";
 import { AcpStructuredProviderSession } from "./acpSession.js";
 import { acpDesiredSessionConfiguration } from "./acpSessionConfiguration.js";
+import {
+  unsupportedAgentRunConfiguration,
+  type AgentRunConfigurationObservation
+} from "./agentRunConfiguration.js";
 import { YUI_VERSION } from "../version.js";
 import {
   JsonLineChannel,
@@ -35,6 +39,17 @@ import {
 import { PROVIDER_ACCEPT_TIMEOUT_MS } from "./runtimeDeadlines.js";
 
 const CODEX_PROXY_HANDSHAKE_TIMEOUT_MS = 10_000;
+
+/**
+ * These Session implementations do not expose run-configuration observations.
+ * Do not echo launch flags as Provider confirmation.
+ */
+const CODEX_RUN_CONFIGURATION = unsupportedAgentRunConfiguration(
+  "The Codex app-server protocol"
+);
+const CLAUDE_RUN_CONFIGURATION = unsupportedAgentRunConfiguration(
+  "Claude Code's stream-json interface"
+);
 
 export type StructuredProviderTurnReceipt = Readonly<{
   attemptId: string;
@@ -120,6 +135,17 @@ export interface StructuredProviderSession {
    * prefers it; a Session that omits it leaves the Driver capability standing.
    */
   readonly conversationRecoverability?: "recoverable" | "unknown";
+  /**
+   * What this Session is running under, as the Agent itself reports it.
+   *
+   * Read on every access rather than stored, because an Agent may change its own
+   * configuration mid-Session; a value cached at launch would keep being
+   * presented as current. Implementations with no observation reader answer
+   * `unsupported` with the reason, which is a
+   * different fact from having nothing to say and must not be rendered as
+   * agreement with what Yui requested.
+   */
+  readonly runConfiguration: AgentRunConfigurationObservation;
   submitTurn(turn: StructuredProviderTurnInput): Promise<StructuredProviderTurnReceipt>;
   steerTurn(turn: StructuredProviderTurnInput): Promise<StructuredProviderTurnReceipt>;
   cancelTurn(attemptId: string): Promise<"requested" | "not-active" | "unknown">;
@@ -748,6 +774,13 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     return this.#activeTurnId;
   }
 
+  /**
+   * This implementation has no run-configuration observation reader.
+   */
+  get runConfiguration(): AgentRunConfigurationObservation {
+    return CODEX_RUN_CONFIGURATION;
+  }
+
   async submitTurn(
     turn: StructuredProviderTurnInput
   ): Promise<StructuredProviderTurnReceipt> {
@@ -927,6 +960,13 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
   get activeTurnId(): string | undefined {
     // stream-json result.uuid is a message identity, not an execution identity.
     return undefined;
+  }
+
+  /**
+   * This implementation has no run-configuration observation reader.
+   */
+  get runConfiguration(): AgentRunConfigurationObservation {
+    return CLAUDE_RUN_CONFIGURATION;
   }
 
   async submitTurn(

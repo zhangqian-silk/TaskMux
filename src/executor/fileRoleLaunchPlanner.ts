@@ -677,7 +677,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
             ...(managedCompiled!.codexThread === undefined
               ? {}
               : { codexThread: managedCompiled!.codexThread }),
-            ...(providerOwnedRun === undefined ? {} : { ownedRun: providerOwnedRun }),
+            ...(providerOwnedRun === undefined ? {} : { ownedTurn: providerOwnedRun }),
             ...(managedCompiled!.acpSession === undefined
               ? {}
               : { acpSession: managedCompiled!.acpSession }),

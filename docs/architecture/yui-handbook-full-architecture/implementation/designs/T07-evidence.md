@@ -955,3 +955,159 @@ initialize，不通过隐式新建 Session 来填充枚举，因此可先输入�
 修改共享配置或服务。本轮不重新声明真实 Claude ACP 效果验证，
 既有真实证据仍仅限 §8。Endpoint 配置展示、产品描述集中化和实现版本
 固定等架构建议留待独立范围，不作为本轮已完成内容。
+
+## 13. W4：组件描述与只读配置事实贯通
+
+2026-09-09，`task-19/work-item-4`，基线
+`1ddfc4b2b5da3f54a84909248aed4e70c4e5c24f`。`turn-25` 仅核对上下文并
+报告已有改动；Leader 确认归属后，`turn-28` 在原 Session、原工作树接续完成。
+本节是实现者自检证据，不代替 Leader 的 Candidate 接受或独立复审。
+
+### 用户可读取的三种事实
+
+`yui task role session inspect <task> <role>` 的文本和 `--json` 入口现在同时保留：
+
+- Role／Profile 当前期望，仍由现有配置记录负责；
+- Session 固定的组件、model、effort、权限和 Profile intent，不随后续 Role
+  编辑改写；
+- 当前连接最后收到的对端报告：握手、Yui 支持的配置轴及其可用值、每个启动
+  请求的历史确认强度和该轴最新报告值。
+
+JSON 的原 `role`、`session.effective`、`providerBinding` 保留，新增只读
+`runConfiguration`。文本增加期望与固定请求对照表，并复用既有权限展示。
+`confirmation=already/observed/acknowledged` 表示启动配置时的证据；
+`current.status=observed/unobserved` 单独说明当前值。外层 `status=observed`
+表示有当前连接报告可读，**不表示每个请求都已观察到生效**；
+`observedAt` 是读取时间，不是独立测量执行效果的时间。
+
+没有 Session 时不探测；Host 不可达、已退出、身份不符或读取过大时明确
+`unknown`。Codex／Claude 的现有 Session 实现没有配置观察读取接口，因此
+返回 `unsupported`；不声称底层产品永远不支持，也不拿启动参数冒充观察。
+纯 Store 命令调用没有注入 live 读取时明确 `not queried`。
+
+### 单一描述来源与边界
+
+ACP 的产品特定 bypass 值归入 `executionComponents.ts`，通用配置代码
+仅消费该声明并检查对端实际提供的值；未知组件仍拒绝按 mode 名猜测授权。
+浏览器组件名称直接由既有两个目录生成到原脚本中，删除手工镜像表，
+不增加浏览器资源端点、插件注册系统或任意组合机制。
+
+能力探针与 Session 共用握手投影和展示。`config agent capabilities` 保留
+model／effort 延迟枚举的原因，只做 `initialize`，不为菜单创建 Session。
+认证方法列表仅证明对端声明了方法，不再据此声称认证未完成或 Session
+必然失败。公开配置轴仅限 Yui 支持的 model、effort、permission，复用
+配置解析的类别／ID 选择逻辑；不导出对端任意认证设置、完整环境或 token。
+
+`StructuredProviderSession → AgentEndpoint → Host status → CLI inspect`
+实际贯通；Host 每次 status 读取 getter，不缓存启动时的投影。
+现代配置响应在管道接收时应用，避免 `await` 后旧响应覆盖同批到达的新通知；
+最终配置校验仍保留，启动时已经漂移则失败而非发送 prompt。
+旧式 `set_mode` 使旧值暂不可观察，后续真实通知可提供当前值，
+但不会把历史 `acknowledged` 改成 `observed`。
+
+只新增运行时只读投影，没有持久 payload 变更，storage 保持 **11**，
+无需新增迁移。未增加 generation、代码版本管理、热加载、自动恢复或默认值副本；
+只澄清既有 `ImplementationRef.generation="1"` 不是代码版本或构建指纹，
+匹配此值本身也不证明原生 Session 可恢复。
+
+### 精确隔离证据
+
+先运行 `make install-local`，测试均使用绝对本地 launcher、一次性 HOME／
+YUI_HOME 和白名单环境，未继承当前受管 Session 环境。入口夹具通过本地
+`setup` 初始化隔离 Home，立即停止该隔离 Controller；后续仅使用无模型
+ACP 子进程和临时 Unix socket，结束时回收。
+
+临时检查命令：
+
+```text
+node --test test/core/tmp-run-configuration.test.js test/core/tmp-configuration-entrypoints.test.js
+```
+
+最终 **11/11 通过，0 跳过，约 7.61 秒**。其中 10 项覆盖实际 ACP Session
+类、确认强度、动态更新、未知产品拒绝、读取解析和生成的浏览器标签；
+另 1 项是多断言入口链路：
+
+- 真实 CLI 注册组件、查询能力、配置 Task Role；真实向导调用实时能力端口，
+  生成的命令实际执行并从 Store 读回；Profile 创建、绑定和 read intent 保留。
+- 实际 Task workspace 激活、Turn 和 Session 记录、`FileRoleLaunchPlanner`、
+  Endpoint factory 和 ACP Session 均执行；没有在夹具里补产品身份或期望值。
+- 通过真实 `openAgentHostControl`／`inspectAgentHost` socket 读取实际 Endpoint，
+  CLI 文本和 JSON 均读取到三轴请求与观察；对端方法记录证明 capabilities
+  只有 initialize，重复 inspect 无任何 ACP 消息。
+- 显式夹具输入引起 mode 更新后，CLI 读到新值，同时保留历史确认；真实
+  Planner resume 经 `session/load` 恢复原 ID 并重设原固定请求。记录中只有
+  一次 new、一次 load、一次显式夹具 prompt，无查询诱发的额外调用。
+- clear model／effort 和 default 权限只改变 Role 期望，Session 固定请求及
+  实际报告不被改写；断开 socket、替换 native ID、exited 和过大报告均不伪装
+  当前配置；额外认证选项及 wire 上额外 env/token 属性不进入公开投影。
+
+红→绿证据：新增旧式通知用例先失败（永久 unobserved），同批响应／通知检查
+复现旧响应覆盖更新；凭据选项检查先失败（任意轴被公开）。修复后均通过。
+能力文本检查还发现 model／effort 原被过滤掉，其延迟枚举原因现已显示。
+
+本轮没有重跑完整 Controller → `runAgentHost` 主生命周期 E2E；该分支的
+getter 消费、身份读取和无持久写入由完整差异追踪确认，socket 测试使用受控
+status dispatcher。未运行真实 Provider／模型、读取共享凭据、修改共享 Home、
+全局安装或共享 Controller，未 push／发布／归档。手册生成仍交由 Leader。
+
+收尾命令：`make install-local`（含 build）、`npm run build`、
+`npm run lint` 均通过。两个临时测试文件和无模型 ACP 夹具已移除，
+随后在白名单环境和一次性 Home 中仅运行一次 `npm run test:core`
+（含 pretest build）：**81/81 通过，0 跳过，测试阶段约 4.19 秒**。
+未增加永久测试，最终差异通过 `git diff --check`。
+
+## 14. 主线组合：integration-7
+
+2026-09-09，在 Leader 专属集成工作区重放 Task 提交，采用主线
+`bbb2e7ff3c2ebb94769bc57a3603faf178ca7ea8`（包含 T08、T11、T12）。
+原 Task base、W4 Candidate 和主线历史均保留；Task main 在集成验收前
+保持 `7fb000d22d44b05fecae0f33f4f450ef84d4d3d4`。
+
+### 语义采用
+
+- 保留主线 AgentRun、Draft planning、执行权限和环境／插件合同。
+  ACP 使用组件能力决定原生 Session ID 分配，不回退为产品名称判断。
+- 原生 Provider Turn 与 Yui AgentRun 不混用：恢复载荷保留接收端既有的
+  `ownedTurn` 字段，修正 Planner 写成 `ownedRun` 导致归属丢失的组合风险。
+- 沿用主线已合入的 Endpoint 实现身份机制，不添加第二套 generation。
+  开发 checkout 的现有指纹覆盖范围补入 ACP 相关模块；不保留旧分支
+  “固定 1”的过期说明，不以身份匹配冒充原生恢复成功。
+- 生成式手册文件在重放时保留主线版本，最后从合并后的 Markdown 重新生成，
+  不把某一分支的过期 HTML 当作合并后的文档。
+
+### 中央迁移链
+
+主线当前 storage 为 13。已发布迁移 **1–13 完全保留**；
+本 Task 尚未发布的 9／10／11 顺延为 **14／15／16**，分别对应 ACP
+工作区配置、明确执行组件、运行配置。新增迁移的 `introducedIn` 统一标记为
+下一计划版本 `0.15.10`，不代表本 Task 执行了发布或修改全局版本。
+业务对象虽改名 AgentRun，主线 SQLite 仍使用 `turns` 表，组件迁移继续
+处理该真实表，不创建第二份执行历史。迁移保留 `executionAuthority`。
+
+一次性旧 Home 由实际主线代码构建并写入 Role、Session 和已完成 AgentRun，
+不是通过改版本号伪造。实际 **13→16** 升级通过，前 13 项迁移名称和
+校验值逐项不变；输出文本、权限、原生 Session ID 和 delivery 权限均保留，
+组件按原计划回填。主线旧 reader 拒读升级后的 Home。
+
+### 隔离组合证据
+
+临时 `output/t19-combination.mjs` 和 `output/t19-runtime.mjs` 验证：
+
+- 实际旧 Store 写入、当前升级入口、当前 Store 重读与旧 reader 拒绝；
+- 实际 T12 Draft planning 的 ACP Planner 恢复，保留组件、transport、
+  原生 attempt/Turn 归属；
+- 实际 ACP Session、Endpoint factory 的 load／配置／查询／submit，
+  重复查询不发送 ACP 消息，恢复首 prompt 带 Manifest 指针，后续不重复。
+
+`make install-local`（包含 build）及后续 build 通过。
+三个原 core 文件共 81 项，初次 80 通过；唯一失败为集成依赖安装时禁用
+脚本，导致 `node-pty` 原生模块缺失、Controller 未就绪。按锁定依赖执行
+`npm rebuild node-pty` 后，仅复验该 Controller 用例，通过（约 1.17 秒）。
+主线新增 `test/core/plugin-smoke.test.js` 另行通过（约 0.30 秒）。
+因此当前四个 core 文件的 **82 项均有通过证据**，未新增或削弱永久测试。
+SQLite 原生依赖亦仅在集成工作区完成 rebuild。
+
+所有运行检查使用白名单环境、一次性 Home／socket／无模型协议对端；
+没有真实 Provider 调用、共享 Home／凭据／服务修改或远端写入。
+不宣称完整真实 Agent、工具授权或多客户端生命周期 E2E。
+临时测试、旧代码副本和测试 Home／备份在验证后清理。

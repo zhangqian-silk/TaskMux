@@ -43,6 +43,8 @@ export type AgentExecutionComponentEntry = Readonly<{
    * the generic entry, which exists precisely to record that Yui does not know.
    */
   identified: boolean;
+  /** Known unattended mode; absence forbids guessing authority from a mode name. */
+  bypassPermissionMode?: string;
 }>;
 
 export const AGENT_EXECUTION_COMPONENT_CATALOG:
@@ -74,13 +76,21 @@ export const AGENT_EXECUTION_COMPONENT_CATALOG:
       label: "Claude Agent SDK (ACP)",
       adapterId: "acp",
       kind: "sdk",
-      identified: true
+      identified: true,
+      // The bridge exposes Claude Code's own permission modes, where
+      // `bypassPermissions` is the documented mode that skips approval
+      // prompts. The bridge offers it only when its own preconditions hold, so
+      // its presence in a Session's option list is still checked rather than
+      // assumed.
+      bypassPermissionMode: "bypassPermissions"
     } as const),
     // Every other ACP Agent, and every binding made before components were
     // recorded. Yui does not know which product answers, and a command string
     // is not evidence: an executable named `claude-agent-acp` may be a wrapper,
     // a shim or something else entirely. Guessing a product here would attach a
     // confident label to an unverified fact, so the honest value is this one.
+    // It states no bypass mode for the same reason: not knowing the product
+    // means not knowing which of its modes, if any, grants that authority.
     Object.freeze({
       id: "unknown-acp-agent",
       label: "ACP Agent (unidentified)",

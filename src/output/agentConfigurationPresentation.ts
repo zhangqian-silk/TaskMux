@@ -2,6 +2,7 @@ import type {
   ResolvedAgentConfigurationCatalog
 } from "../executor/agentConfigurationCatalog.js";
 import { renderAgentConfigurationResolutionNotice } from "../cli/agentConfigurationPicker.js";
+import { agentHandshakeLine } from "./agentRunConfigurationPresentation.js";
 import { defaultTableWidth, renderTable } from "./table.js";
 
 export function renderAgentConfigurationCatalog(
@@ -17,13 +18,17 @@ export function renderAgentConfigurationCatalog(
     model.serviceTiers?.map((tier) => tier.value).join(", ") || "none reported"
   ]);
   const fieldRows = catalog.fields
-    .filter((field) => field.key !== "model" && field.key !== "effort")
+    .filter((field) => modelRows.length === 0 || (field.key !== "model" && field.key !== "effort"))
     .map((field) => [
       field.key,
       field.choices.map((choice) => choice.value).join(", ") || "none reported",
+      // An available field can still carry a reason, and for ACP it always does:
+      // the values are enumerated per Session, so the probe deliberately lists
+      // none. Dropping that sentence left "none reported" looking like a failed
+      // query rather than a deliberate boundary, so it is shown either way.
       field.available === false
         ? `unavailable${field.reason === undefined ? "" : `: ${field.reason}`}`
-        : "available",
+        : field.reason === undefined ? "available" : `available: ${field.reason}`,
       field.allowCustom ? "yes" : "no"
     ]);
   const sections = [
@@ -55,5 +60,7 @@ export function renderAgentConfigurationCatalog(
           defaultTableWidth()
         )])
   ];
-  return `${sections.join("\n\n")}\n${renderAgentConfigurationResolutionNotice(resolved)}`;
+  return `${sections.join("\n\n")}\n${agentHandshakeLine(catalog.handshake)}\n${
+    renderAgentConfigurationResolutionNotice(resolved)
+  }`;
 }

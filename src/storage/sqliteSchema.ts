@@ -966,9 +966,9 @@ CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
   {
     version: 14,
     name: "acp-session-workspace-configuration",
-    introducedIn: "0.15.8",
+    introducedIn: "0.15.10",
     // ACP is a new legal adapter/configuration value, including its optional
-    // additional workspace roots. The v8 baseline has no ACP bindings; existing
+    // additional workspace roots. The v13 baseline has no ACP bindings; existing
     // Codex/Claude configuration and Session history remain valid unchanged.
     // This widens the persistent contract without rewriting payloads or earlier
     // migration checksums. Workspace delivery is negotiated at initialize, not
@@ -976,9 +976,9 @@ CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
     sql: "SELECT 1; -- ACP bindings may carry additionalDirectories; history stays valid"
   },
   {
-    version: 10,
+    version: 15,
     name: "agent-execution-component",
-    introducedIn: "0.15.8",
+    introducedIn: "0.15.10",
     // Which product executes is now its own recorded fact, separate from the
     // connection plan that reaches it. The plan keeps its `adapterId` name and
     // its meaning; only the product identity is new.
@@ -986,7 +986,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
     // The backfill is a total function of the stored plan, never of a command
     // string. `codex` and `claude` each have exactly one component, so those
     // rows gain their true value. Every `acp` row becomes `unknown-acp-agent`:
-    // a v9 Home cannot say which product answered, and an executable named
+    // a v14 Home cannot say which product answered, and an executable named
     // `claude-agent-acp` is not evidence that it was the Claude Agent SDK. The
     // unidentified value is the honest one and stays correctable by hand.
     //
@@ -995,7 +995,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
     //
     // Every persisted effective snapshot must be reached, not only the ones on
     // Session sets: `validateEffectiveLaunchSnapshot` demands schemaVersion 4,
-    // and the upgrade verifier replays it over Turns, WorkItem ExecutionLanes
+    // and the upgrade verifier replays it over Runs, WorkItem ExecutionLanes
     // and ReviewRound ExecutionLanes too. A Home holding any of those would
     // otherwise fail the upgrade and roll back. The list below is the
     // verifier's own reachable set, not a scan for fields that look similar.
@@ -1103,9 +1103,9 @@ UPDATE review_rounds SET payload = json_set(payload, '$.executionGroup.lanes', j
 `
   },
   {
-    version: 11,
+    version: 16,
     name: "acp-session-run-configuration",
-    introducedIn: "0.15.8",
+    introducedIn: "0.15.10",
     // An ACP Role binding may now carry a model, a reasoning effort and a
     // permission strategy beyond `default`, because Yui's ACP client implements
     // `session/set_config_option` and pushes those values to the Session before

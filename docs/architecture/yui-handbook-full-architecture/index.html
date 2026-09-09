@@ -16,7 +16,7 @@ pre.diagram{font-size:14px;line-height:1.45}pre.diagram code{display:block;width
 p code,li code{background:#f0f3f6;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;display:block;overflow:auto;margin:20px 0;font-size:14px}th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}th{background:#edf3f7}blockquote{margin:20px 0;border-left:4px solid var(--accent);background:#f3f7fa;padding:8px 20px}ul,ol{padding-left:25px}li{margin:6px 0}
 @media(max-width:960px){nav{position:relative;width:100%;max-height:380px;border-bottom:1px solid var(--line)}main{margin:0;padding:12px}article{padding:18px}header{padding:20px}.quickmap{gap:6px}}
 @media print{nav,.source,.quickmap{display:none}main{margin:0;padding:0;max-width:none}body{background:white}article{border:0;break-before:page;padding:0}pre,table{overflow:visible}pre{font-size:10px}a{color:inherit}}
-</style></head><body><nav aria-label="文档目录"><h2>Yui 设计手册</h2><p>架构 · 模块 · 契约 · 实施</p><p class="full-diagram-nav"><a href="#full-architecture">完整架构分层图</a></p><details open><summary>入口</summary><ul><li><a href="#doc-README-md">Yui 架构与实施手册</a></li></ul></details><details open><summary>总体架构</summary><ul><li><a href="#doc-architecture-01-overview-md">总体架构</a></li><li><a href="#doc-architecture-02-authority-and-interaction-md">职责、交互与任务生命周期</a></li><li><a href="#doc-architecture-03-state-and-configuration-md">事实、配置与持久化</a></li><li><a href="#doc-architecture-04-runtime-and-replacement-md">执行、连接与实现替换</a></li><li><a href="#doc-architecture-05-capabilities-and-resources-md">能力、插件与资源</a></li><li><a href="#doc-architecture-06-working-flows-md">端到端工作逻辑</a></li><li><a href="#doc-architecture-07-session-run-contract-md">Leader Session、AgentRun 与通知合同</a></li></ul></details><details open><summary>模块设计</summary><ul><li><a href="#doc-modules-README-md">模块设计索引</a></li><li><a href="#doc-modules-01-kernel-md">Kernel：事实与执行边界</a></li><li><a href="#doc-modules-02-task-md">Task：任务事实与交付责任</a></li><li><a href="#doc-modules-03-agent-context-md">Agent 与 Context：职责配置及工作视图</a></li><li><a href="#doc-modules-04-execution-runtime-md">Execution 与 Runtime：一次执行的可靠承载</a></li><li><a href="#doc-modules-05-project-resource-md">Project 与 Resource：背景、环境和工作成果</a></li><li><a href="#doc-modules-06-plugin-capability-md">Plugin 与 Capability：发现、实现和替换能力</a></li><li><a href="#doc-modules-07-surface-md">Surface：一致的用户与 Agent 操作入口</a></li></ul></details><details open><summary>接口约定</summary><ul><li><a href="#doc-contracts-README-md">接口与数据契约</a></li></ul></details><details open><summary>实施路线</summary><ul><li><a href="#doc-implementation-README-md">实施路线</a></li></ul></details><details open><summary>任务定义</summary><ul><li><a href="#doc-implementation-tasks-T00-implementation-baseline-md">T00｜实施基线与模块契约</a></li><li><a href="#doc-implementation-tasks-T01-kernel-host-md">T01｜基础宿主与操作事实</a></li><li><a href="#doc-implementation-tasks-T02-capability-entry-md">T02｜能力入口与内建实现接入</a></li><li><a href="#doc-implementation-tasks-T03-task-context-md">T03｜任务事实、角色配置与 Context</a></li><li><a href="#doc-implementation-tasks-T04-agent-endpoint-md">T04｜统一 AgentEndpoint 与运行时适配</a></li><li><a href="#doc-implementation-tasks-T05-project-resource-md">T05｜Project、Resource 与成果保存</a></li><li><a href="#doc-implementation-tasks-T06-surface-md">T06｜统一 CLI 与 Web 入口</a></li><li><a href="#doc-implementation-tasks-T07-acp-agent-md">T07｜ACP 接入与第三 Agent 验证</a></li><li><a href="#doc-implementation-tasks-T08-draft-leader-md">T08｜Draft Leader 与正式执行</a></li><li><a href="#doc-implementation-tasks-T09-plugin-sdk-md">T09｜插件开发工具与受权执行</a></li><li><a href="#doc-implementation-tasks-T10-self-extension-md">T10｜原 Task 中的 Agent 自扩展</a></li><li><a href="#doc-implementation-tasks-T11-hot-reload-md">T11｜按使用边界热插拔</a></li></ul></details><details open><summary>技术方案</summary><ul><li><a href="#doc-implementation-designs-T00-current-baseline-md">T00 实施证据｜当前代码、共享边界与采用顺序</a></li><li><a href="#doc-implementation-designs-T00-evidence-md">T00 验证记录</a></li><li><a href="#doc-implementation-designs-T00-implementation-baseline-md">T00 技术方案｜实施基线与模块契约</a></li><li><a href="#doc-implementation-designs-T01-evidence-md">T01 实现、验证与 T02 交接</a></li><li><a href="#doc-implementation-designs-T01-kernel-host-md">T01 技术方案｜基础宿主与操作事实</a></li><li><a href="#doc-implementation-designs-T02-capability-entry-md">T02 技术方案｜能力入口与内建实现接入</a></li><li><a href="#doc-implementation-designs-T02-evidence-md">T02 能力入口、验证与后继交接</a></li><li><a href="#doc-implementation-designs-T03-evidence-md">T03 实现与采用说明</a></li><li><a href="#doc-implementation-designs-T03-task-context-md">T03 技术方案｜任务事实、角色配置与 Context</a></li><li><a href="#doc-implementation-designs-T04-agent-endpoint-md">T04 技术方案｜统一 AgentEndpoint 与运行时适配</a></li><li><a href="#doc-implementation-designs-T04-evidence-md">T04 执行接口、采用边界与验证记录</a></li><li><a href="#doc-implementation-designs-T05-evidence-md">T05 资源、环境与固定成果交接</a></li><li><a href="#doc-implementation-designs-T05-project-resource-md">T05 技术方案｜Project、Resource 与成果保存</a></li><li><a href="#doc-implementation-designs-T06-evidence-md">T06 Surface 实现与采用</a></li><li><a href="#doc-implementation-designs-T06-surface-md">T06 技术方案｜统一 CLI 与 Web 入口</a></li><li><a href="#doc-implementation-designs-T07-acp-agent-md">T07 技术方案｜ACP 接入与第三 Agent 验证</a></li><li><a href="#doc-implementation-designs-T08-draft-leader-md">T08 技术方案｜Draft Leader 与正式执行</a></li><li><a href="#doc-implementation-designs-T09-plugin-sdk-md">T09 技术方案｜插件开发工具与受权执行</a></li><li><a href="#doc-implementation-designs-T10-self-extension-md">T10 技术方案｜原 Task 中的 Agent 自扩展</a></li><li><a href="#doc-implementation-designs-T11-evidence-md">T11 Session 实现固定与使用边界热插拔</a></li><li><a href="#doc-implementation-designs-T11-hot-reload-md">T11 技术方案｜按使用边界热插拔</a></li></ul></details><details open><summary>参考与验收</summary><ul><li><a href="#doc-reference-acceptance-scenarios-md">验收场景</a></li><li><a href="#doc-reference-glossary-md">术语</a></li><li><a href="#doc-reference-implementation-principles-md">实现取舍原则</a></li><li><a href="#doc-reference-role-guidance-md">Role 行为指引</a></li></ul></details></nav><main id="top"><header><h1>Yui 架构与实施手册</h1><p>工作关系说明谁负责；逻辑分层说明能力如何承接；模块说明实现归属。</p><div class="quickmap"><a class="primary-link" href="#full-architecture">完整架构图</a><a href="full-architecture.html">单独打开完整架构图</a><a href="#doc-architecture-01-overview-md--工作关系图围绕-task-形成闭环">工作关系</a><a href="#doc-architecture-01-overview-md--逻辑分层图四个-plane一个内核横向插件机制">逻辑分层</a><a href="#doc-architecture-01-overview-md--逻辑层与七个代码模块的映射">模块映射</a><a href="#doc-architecture-01-overview-md--事实流与执行反馈">事实流</a><a href="#doc-architecture-01-overview-md--哪些实现可以替换">热重载边界</a></div></header><section id="full-architecture" class="full-architecture-section" aria-labelledby="full-architecture-title"><h2 id="full-architecture-title">完整架构分层图</h2><p class="diagram-intro">四个逻辑层、一个最小内核，以及贯穿各层的插件机制。图中能力是目标设计，实际可用范围以启用并验证的实现为准。</p><pre class="text diagram"><code>                                       User
+</style></head><body><nav aria-label="文档目录"><h2>Yui 设计手册</h2><p>架构 · 模块 · 契约 · 实施</p><p class="full-diagram-nav"><a href="#full-architecture">完整架构分层图</a></p><details open><summary>入口</summary><ul><li><a href="#doc-README-md">Yui 架构与实施手册</a></li></ul></details><details open><summary>总体架构</summary><ul><li><a href="#doc-architecture-01-overview-md">总体架构</a></li><li><a href="#doc-architecture-02-authority-and-interaction-md">职责、交互与任务生命周期</a></li><li><a href="#doc-architecture-03-state-and-configuration-md">事实、配置与持久化</a></li><li><a href="#doc-architecture-04-runtime-and-replacement-md">执行、连接与实现替换</a></li><li><a href="#doc-architecture-05-capabilities-and-resources-md">能力、插件与资源</a></li><li><a href="#doc-architecture-06-working-flows-md">端到端工作逻辑</a></li><li><a href="#doc-architecture-07-session-run-contract-md">Leader Session、AgentRun 与通知合同</a></li></ul></details><details open><summary>模块设计</summary><ul><li><a href="#doc-modules-README-md">模块设计索引</a></li><li><a href="#doc-modules-01-kernel-md">Kernel：事实与执行边界</a></li><li><a href="#doc-modules-02-task-md">Task：任务事实与交付责任</a></li><li><a href="#doc-modules-03-agent-context-md">Agent 与 Context：职责配置及工作视图</a></li><li><a href="#doc-modules-04-execution-runtime-md">Execution 与 Runtime：一次执行的可靠承载</a></li><li><a href="#doc-modules-05-project-resource-md">Project 与 Resource：背景、环境和工作成果</a></li><li><a href="#doc-modules-06-plugin-capability-md">Plugin 与 Capability：发现、实现和替换能力</a></li><li><a href="#doc-modules-07-surface-md">Surface：一致的用户与 Agent 操作入口</a></li></ul></details><details open><summary>接口约定</summary><ul><li><a href="#doc-contracts-README-md">接口与数据契约</a></li></ul></details><details open><summary>实施路线</summary><ul><li><a href="#doc-implementation-README-md">实施路线</a></li></ul></details><details open><summary>任务定义</summary><ul><li><a href="#doc-implementation-tasks-T00-implementation-baseline-md">T00｜实施基线与模块契约</a></li><li><a href="#doc-implementation-tasks-T01-kernel-host-md">T01｜基础宿主与操作事实</a></li><li><a href="#doc-implementation-tasks-T02-capability-entry-md">T02｜能力入口与内建实现接入</a></li><li><a href="#doc-implementation-tasks-T03-task-context-md">T03｜任务事实、角色配置与 Context</a></li><li><a href="#doc-implementation-tasks-T04-agent-endpoint-md">T04｜统一 AgentEndpoint 与运行时适配</a></li><li><a href="#doc-implementation-tasks-T05-project-resource-md">T05｜Project、Resource 与成果保存</a></li><li><a href="#doc-implementation-tasks-T06-surface-md">T06｜统一 CLI 与 Web 入口</a></li><li><a href="#doc-implementation-tasks-T07-acp-agent-md">T07｜ACP 接入与第三 Agent 验证</a></li><li><a href="#doc-implementation-tasks-T08-draft-leader-md">T08｜Draft Leader 与正式执行</a></li><li><a href="#doc-implementation-tasks-T09-plugin-sdk-md">T09｜插件开发工具与受权执行</a></li><li><a href="#doc-implementation-tasks-T10-self-extension-md">T10｜原 Task 中的 Agent 自扩展</a></li><li><a href="#doc-implementation-tasks-T11-hot-reload-md">T11｜按使用边界热插拔</a></li></ul></details><details open><summary>技术方案</summary><ul><li><a href="#doc-implementation-designs-T00-current-baseline-md">T00 实施证据｜当前代码、共享边界与采用顺序</a></li><li><a href="#doc-implementation-designs-T00-evidence-md">T00 验证记录</a></li><li><a href="#doc-implementation-designs-T00-implementation-baseline-md">T00 技术方案｜实施基线与模块契约</a></li><li><a href="#doc-implementation-designs-T01-evidence-md">T01 实现、验证与 T02 交接</a></li><li><a href="#doc-implementation-designs-T01-kernel-host-md">T01 技术方案｜基础宿主与操作事实</a></li><li><a href="#doc-implementation-designs-T02-capability-entry-md">T02 技术方案｜能力入口与内建实现接入</a></li><li><a href="#doc-implementation-designs-T02-evidence-md">T02 能力入口、验证与后继交接</a></li><li><a href="#doc-implementation-designs-T03-evidence-md">T03 实现与采用说明</a></li><li><a href="#doc-implementation-designs-T03-task-context-md">T03 技术方案｜任务事实、角色配置与 Context</a></li><li><a href="#doc-implementation-designs-T04-agent-endpoint-md">T04 技术方案｜统一 AgentEndpoint 与运行时适配</a></li><li><a href="#doc-implementation-designs-T04-evidence-md">T04 执行接口、采用边界与验证记录</a></li><li><a href="#doc-implementation-designs-T05-evidence-md">T05 资源、环境与固定成果交接</a></li><li><a href="#doc-implementation-designs-T05-project-resource-md">T05 技术方案｜Project、Resource 与成果保存</a></li><li><a href="#doc-implementation-designs-T06-evidence-md">T06 Surface 实现与采用</a></li><li><a href="#doc-implementation-designs-T06-surface-md">T06 技术方案｜统一 CLI 与 Web 入口</a></li><li><a href="#doc-implementation-designs-T07-acp-agent-md">T07 技术方案｜ACP 接入与第三 Agent 验证</a></li><li><a href="#doc-implementation-designs-T07-cli-probe-md">T07 第三产品选择与无模型 CLI 证据</a></li><li><a href="#doc-implementation-designs-T07-evidence-md">T07 ACP 接入实现与验证记录</a></li><li><a href="#doc-implementation-designs-T08-draft-leader-md">T08 技术方案｜Draft Leader 与正式执行</a></li><li><a href="#doc-implementation-designs-T09-plugin-sdk-md">T09 技术方案｜插件开发工具与受权执行</a></li><li><a href="#doc-implementation-designs-T10-self-extension-md">T10 技术方案｜原 Task 中的 Agent 自扩展</a></li><li><a href="#doc-implementation-designs-T11-evidence-md">T11 Session 实现固定与使用边界热插拔</a></li><li><a href="#doc-implementation-designs-T11-hot-reload-md">T11 技术方案｜按使用边界热插拔</a></li></ul></details><details open><summary>参考与验收</summary><ul><li><a href="#doc-reference-acceptance-scenarios-md">验收场景</a></li><li><a href="#doc-reference-glossary-md">术语</a></li><li><a href="#doc-reference-implementation-principles-md">实现取舍原则</a></li><li><a href="#doc-reference-role-guidance-md">Role 行为指引</a></li></ul></details></nav><main id="top"><header><h1>Yui 架构与实施手册</h1><p>工作关系说明谁负责；逻辑分层说明能力如何承接；模块说明实现归属。</p><div class="quickmap"><a class="primary-link" href="#full-architecture">完整架构图</a><a href="full-architecture.html">单独打开完整架构图</a><a href="#doc-architecture-01-overview-md--工作关系图围绕-task-形成闭环">工作关系</a><a href="#doc-architecture-01-overview-md--逻辑分层图四个-plane一个内核横向插件机制">逻辑分层</a><a href="#doc-architecture-01-overview-md--逻辑层与七个代码模块的映射">模块映射</a><a href="#doc-architecture-01-overview-md--事实流与执行反馈">事实流</a><a href="#doc-architecture-01-overview-md--哪些实现可以替换">热重载边界</a></div></header><section id="full-architecture" class="full-architecture-section" aria-labelledby="full-architecture-title"><h2 id="full-architecture-title">完整架构分层图</h2><p class="diagram-intro">四个逻辑层、一个最小内核，以及贯穿各层的插件机制。图中能力是目标设计，实际可用范围以启用并验证的实现为准。</p><pre class="text diagram"><code>                                       User
                                           <span class="dcell">│</span>
                                           <span class="dcell">▼</span>
 <span class="dcell">┌</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">┐</span>
@@ -3384,6 +3384,736 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <h2 id="doc-implementation-designs-T07-acp-agent-md--验收">6. 验收</h2>
 <p>S11、S12 覆盖身份与长等待；S24 覆盖 busy 与输入控制；S35 覆盖创建会话时选择实现。运行一条可控只读／本地资料任务，保存实际 CLI 版本、输入、终态、结果及权限处理证据。</p>
 <p>模拟测试通过只说明 adapter 处理结构正确；真实测试未执行时明确标注，不能以产品 manifest 注册成功作为集成交付。</p>
+</article><article id="doc-implementation-designs-T07-cli-probe-md"><div class="source"><a href="implementation/designs/T07-cli-probe.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T07-cli-probe-md--t07-第三产品选择与无模型-cli-证据">T07 第三产品选择与无模型 CLI 证据</h1>
+<p>Task：task-19。探测时间：2026-09-08（PRC；UTC 2026-09-07）。 源码基线：<code>97ad88849c9a496230b134d2955f5f23e96deaa3</code>。 本记录不是 ACP 适配器实现、完整集成或真实模型验收报告。</p>
+<h2 id="doc-implementation-designs-T07-cli-probe-md--选择与官方输入">选择与官方输入</h2>
+<p>选择本机已存在的 Kimi Code CLI，不安装新产品、不改变认证。 它不是旧 Python Kimi CLI；不能把两个项目的版本或支持矩阵混用。</p>
+<p>官方来源（本次读取，无模型调用）：</p>
+<ul>
+<li><code>https://raw.githubusercontent.com/MoonshotAI/kimi-code/main/README.md</code></li>
+<li><code>https://raw.githubusercontent.com/MoonshotAI/kimi-code/main/docs/en/reference/kimi-acp.md</code></li>
+<li><code>https://agentclientprotocol.com/protocol/v1/initialization.md</code></li>
+</ul>
+<p>产品 README 明确将 <code>kimi acp</code> 作为 ACP stdio 入口，使用已有登录。 产品文档描述 JSON-RPC、Session 生命周期、prompt、permission reverse RPC， 以及不支持方法的明确错误。ACP v1 规定初始化协商、未声明能力视为不支持。 在线 main 文档是阅读材料，不代表本机版本的已执行行为；以下以实际响应为准。</p>
+<h2 id="doc-implementation-designs-T07-cli-probe-md--已执行证据">已执行证据</h2>
+<p>可执行文件：<code>/data00/home/zhangqian.0326/.kimi-code/bin/kimi</code>。</p>
+<p>在新建临时 Home 中，以 <code>env -i</code> 清除继承环境、仅保留临时 HOME/XDG 和基础 PATH，分别执行：</p>
+<div class="sourceCode" id="doc-implementation-designs-T07-cli-probe-md--cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="doc-implementation-designs-T07-cli-probe-md--cb1-1"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb1-1" tabindex="-1"></a><span class="ex">kimi</span> <span class="at">--version</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb1-2"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb1-2" tabindex="-1"></a><span class="ex">kimi</span> acp <span class="at">--help</span></span></code></pre></div>
+<p>实际输出版本 <code>0.33.0</code>；help 明确表示 ACP server over stdio， 提供 <code>--login</code> 和 <code>--help</code>。没有执行 <code>--login</code>。 上述相对命令仅为易读展示，探测实际使用前述绝对可执行路径。</p>
+<p>随后用 Node 子进程和管道启动同一二进制 <code>["acp"]</code>：</p>
+<ul>
+<li><code>cwd</code>、HOME、XDG 配置和缓存均位于一个新建的临时目录；</li>
+<li>不继承用户认证或 YUI 环境；代理设置为 <code>127.0.0.1:1</code>，不连接真实服务； 代理不是网络沙箱，不据此宣称操作系统级网络隔离；</li>
+<li>stdin 只发送下面一条 JSON-RPC 请求，不发送 Session 或模型请求；</li>
+<li>取得响应后发送 SIGTERM，观察到进程关闭，stderr 为空；</li>
+<li>清理该子进程专属临时目录；没有修改用户 Home、登录、共享服务或仓库内容。</li>
+</ul>
+<div class="sourceCode" id="doc-implementation-designs-T07-cli-probe-md--cb2"><pre class="sourceCode json"><code class="sourceCode json"><span id="doc-implementation-designs-T07-cli-probe-md--cb2-1"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-1" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb2-2"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-2" tabindex="-1"></a>  <span class="dt">"jsonrpc"</span><span class="fu">:</span> <span class="st">"2.0"</span><span class="fu">,</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb2-3"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-3" tabindex="-1"></a>  <span class="dt">"id"</span><span class="fu">:</span> <span class="st">"t07-initialize-1"</span><span class="fu">,</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb2-4"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-4" tabindex="-1"></a>  <span class="dt">"method"</span><span class="fu">:</span> <span class="st">"initialize"</span><span class="fu">,</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb2-5"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-5" tabindex="-1"></a>  <span class="dt">"params"</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb2-6"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-6" tabindex="-1"></a>    <span class="dt">"protocolVersion"</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb2-7"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-7" tabindex="-1"></a>    <span class="dt">"clientInfo"</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">"name"</span><span class="fu">:</span> <span class="st">"yui-t07-probe"</span><span class="fu">,</span> <span class="dt">"version"</span><span class="fu">:</span> <span class="st">"1"</span><span class="fu">},</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb2-8"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-8" tabindex="-1"></a>    <span class="dt">"clientCapabilities"</span><span class="fu">:</span> <span class="fu">{}</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb2-9"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-9" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb2-10"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb2-10" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>响应同一个 request ID，<code>result.protocolVersion</code> 为 <code>1</code>， <code>agentInfo</code> 为 <code>{"name":"Kimi Code CLI","version":"0.33.0"}</code>。 原始能力声明如下：</p>
+<div class="sourceCode" id="doc-implementation-designs-T07-cli-probe-md--cb3"><pre class="sourceCode json"><code class="sourceCode json"><span id="doc-implementation-designs-T07-cli-probe-md--cb3-1"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-1" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-2"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-2" tabindex="-1"></a>  <span class="dt">"loadSession"</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-3"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-3" tabindex="-1"></a>  <span class="dt">"promptCapabilities"</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-4"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-4" tabindex="-1"></a>    <span class="dt">"image"</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-5"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-5" tabindex="-1"></a>    <span class="dt">"audio"</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-6"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-6" tabindex="-1"></a>    <span class="dt">"embeddedContext"</span><span class="fu">:</span> <span class="kw">true</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-7"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-7" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-8"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-8" tabindex="-1"></a>  <span class="dt">"sessionCapabilities"</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-9"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-9" tabindex="-1"></a>    <span class="dt">"list"</span><span class="fu">:</span> <span class="fu">{},</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-10"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-10" tabindex="-1"></a>    <span class="dt">"resume"</span><span class="fu">:</span> <span class="fu">{},</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-11"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-11" tabindex="-1"></a>    <span class="dt">"close"</span><span class="fu">:</span> <span class="fu">{},</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-12"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-12" tabindex="-1"></a>    <span class="dt">"delete"</span><span class="fu">:</span> <span class="fu">{},</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-13"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-13" tabindex="-1"></a>    <span class="dt">"fork"</span><span class="fu">:</span> <span class="fu">{},</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-14"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-14" tabindex="-1"></a>    <span class="dt">"additionalDirectories"</span><span class="fu">:</span> <span class="fu">{}</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-15"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-15" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-16"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-16" tabindex="-1"></a>  <span class="dt">"mcpCapabilities"</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">"http"</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">"sse"</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">},</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-17"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-17" tabindex="-1"></a>  <span class="dt">"auth"</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">"logout"</span><span class="fu">:</span> <span class="fu">{}}</span></span>
+<span id="doc-implementation-designs-T07-cli-probe-md--cb3-18"><a aria-hidden="true" href="#doc-implementation-designs-T07-cli-probe-md--cb3-18" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p><code>authMethods</code> 返回 <code>id: "login"</code>、<code>type: "terminal"</code>、 <code>name: "Login with Kimi account"</code> 和 <code>args: ["--login"]</code>， 并带 legacy <code>_meta["terminal-auth"]</code> 描述。 这仅是认证方法发现，不是认证成功证据；Yui 不自动执行它。</p>
+<h2 id="doc-implementation-designs-T07-cli-probe-md--支持与证据边界">支持与证据边界</h2>
+<table>
+<colgroup>
+<col style="width: 33%"/>
+<col style="width: 33%"/>
+<col style="width: 33%"/>
+</colgroup>
+<thead>
+<tr>
+<th>能力</th>
+<th>本机事实</th>
+<th>尚未证明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>executable/version/stdio</td>
+<td>help、版本和真实子进程响应通过</td>
+<td>Yui 产品目录与完整启动链</td>
+</tr>
+<tr>
+<td>ACP 初始化</td>
+<td>request ID 精确匹配，协商 v1</td>
+<td>模型可用性</td>
+</tr>
+<tr>
+<td>原生 Session 身份</td>
+<td>尚未创建 Session</td>
+<td>Session ID、跨进程恢复</td>
+</tr>
+<tr>
+<td>loadSession 等可选能力</td>
+<td>initialize 声明支持</td>
+<td>实际 load/resume 行为</td>
+</tr>
+<tr>
+<td>prompt/update/permission</td>
+<td>官方文档描述支持</td>
+<td>真实请求、输出和权限交互</td>
+</tr>
+<tr>
+<td>cancel</td>
+<td>官方文档描述支持</td>
+<td>真实取消、物理静止</td>
+</tr>
+<tr>
+<td>usage/native Turn ID/并发输入</td>
+<td>未取得实际证据</td>
+<td>不从产品名或注册成功推断</td>
+</tr>
+</tbody>
+</table>
+<p>适配器 fixture 可以证明解析、pending、unknown、local-correlation、 取消语义及结果归档，但不能把这些结果升级为本机真实模型证据。 本次授权不包含将第三 Provider/模型作为测试对象；没有发送 prompt， 没有消费模型的主动验证请求，不声明真实集成全量通过。 后续若获得特定资源授权，另行验证一条受控本地资料输入的原 Turn 结果归档，并按实际需要选择恢复、取消及权限交互的精确范围。 这不是索取验证授权的 InputRequest，也不是切换模型或重试的许可。</p>
+</article><article id="doc-implementation-designs-T07-evidence-md"><div class="source"><a href="implementation/designs/T07-evidence.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T07-evidence-md--t07-acp-接入实现与验证记录">T07 ACP 接入实现与验证记录</h1>
+<p>Task：task-19；基线：<code>97ad88849c9a496230b134d2955f5f23e96deaa3</code>。日期：2026-09-08。 本文件记录实现位置、采用入口与隔离证据。精确交付提交、独立 Review 裁定和 接受状态以 Task 持久记录为准；不表示远端合并、共享环境升级或真实模型验收。</p>
+<p>产品选择与无模型 CLI 探测证据由 Leader 单独记录在同目录的 <code>T07-cli-probe.md</code>（提交 <code>eeea9e8</code>，保留在集成分支）。本文件不重复也不改写 其结论，也不在本分支复制该文件。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--实现位置与唯一所有者">1. 实现位置与唯一所有者</h2>
+<p>新增一个 <code>acp</code> adapter，不是每个产品一个。哪个 executable 在管道另一端 是启动描述的事实，因此第二个 ACP 产品复用同一份代码，Task、Controller 与结果归档都不增加产品分支。</p>
+<ul>
+<li><code>src/runtime/acpProtocol.ts</code> 负责 v1 编解码与能力读取； <code>src/runtime/jsonLineChannel.ts</code> 是 NDJSON 载体； <code>src/runtime/acpSession.ts</code> 持有协议 Session 身份与提交／取消语义。</li>
+<li><code>src/executor/agentAdapter.ts</code> 的 <code>AcpAdapter</code> 编译启动； <code>src/executor/agentConfigurationProbe.ts</code> 用一次 <code>initialize</code> 发现配置， 不创建 Session、不发送 prompt。</li>
+<li>六处原先按 adapter 名字判断的边界改为读取声明能力，因此同一修复对三个 adapter 同时生效：<code>interruptDelivery</code>、<code>nativeSessionDiscovery</code>、 <code>agentHost</code> recoverability、<code>canonicalLifecycleEvent</code> fence、 <code>findAgentAdapter</code>、<code>defaultRoleAgentConfig</code>。</li>
+<li><code>agentAdapterLabel</code> 取代四处重复的三元展示分支。</li>
+</ul>
+<p>三个身份分开保存：JSON-RPC request id 只关联本管道上的一对消息； Yui <code>attemptId</code> 是持久的本地请求；ACP <code>sessionId</code> 是 Agent 自己的原生 Session 身份。ACP v1 没有原生 Turn 身份，因此不生成 ID 冒称 native。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--六项审查发现的处置">2. 六项审查发现的处置</h2>
+<p><code>turn-2</code> 候选（<code>7dc9fa8</code>、<code>8c67b7c</code>）被裁定未通过。以下修复在同一 WorkItem 内一次完成，逐项独立复核根因后取最小一致改法，不是让夹具变绿：</p>
+<table>
+<colgroup>
+<col style="width: 33%"/>
+<col style="width: 33%"/>
+<col style="width: 33%"/>
+</colgroup>
+<thead>
+<tr>
+<th>#</th>
+<th>发现</th>
+<th>根因与处置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P1-1</td>
+<td><code>agentAdapter</code> 拒绝 <code>additionalDirectories</code>，而 planner 对 Project 绑定的配置无条件加入</td>
+<td>拒绝改为 <code>validatePaths</code>。字段是 ACP 真实的 session 生命周期字段；是否发送由每次连接协商决定，在此拒绝会让所有多根 Project 启动在询问 Agent 之前就失败</td>
+</tr>
+<tr>
+<td>P1-2</td>
+<td>ACP <code>compileNew</code> 继承空 <code>launchContextArgs</code>，<code>developerInstructions</code>／manifest／skills 全部丢失</td>
+<td>ACP 不接受任何 Yui 参数，也没有 system prompt。新增 <code>acpSession.sessionBootstrap</code>，随首个 prompt 送达；manifest 形式仍是指针，正文经 manifest 自己的 Context API 读取</td>
+</tr>
+<tr>
+<td>P1-3</td>
+<td>terminal 不带 <code>output</code>，正常回答被归档为 <code>missing-result</code></td>
+<td><code>agent_message_chunk</code> 按 attempt 累积为该 Turn 的答案。thought／tool-call／plan 解码为其他 kind，不进入答案；超过持久上限整条丢弃而非截断</td>
+</tr>
+<tr>
+<td>P1-4</td>
+<td>管道写入被当作 <code>accepted</code>，断连后不更新为 unknown</td>
+<td>提交在收到 prompt 响应前不结算：长 Turn 由调用方自己的期限报 pending，先死的传输报 unknown。接受时 acceptance 由 <code>transport</code> 升为 <code>provider</code>——Agent 确实回答了这一请求</td>
+</tr>
+<tr>
+<td>P2-5</td>
+<td>静态 Driver <code>exact</code> resume 与协商出的 <code>loadSession=false</code> 矛盾</td>
+<td>静态表保留（<code>managedRuntimeAdmission</code> 在 adapter 级、握手之前运行，降级会挡住该 adapter 上的每个 Agent）；真实答案由 live Session 的 <code>conversationRecoverability</code> 在握手后给出，Endpoint 优先采用它</td>
+</tr>
+<tr>
+<td>P2-6</td>
+<td>只要本地 <code>cancelRequested</code> 为真，任何 RPC 错误都被改写成 <code>cancelled</code></td>
+<td>不再记忆本地取消意图。ACP 只有一种取消证据：成功响应上的 <code>stopReason: "cancelled"</code>。取消请求之后返回的错误仍是 Agent 报告的那个错误</td>
+</tr>
+</tbody>
+</table>
+<h2 id="doc-implementation-designs-T07-evidence-md--采用入口与能力矩阵">3. 采用入口与能力矩阵</h2>
+<p>adapter 通过 T02 能力目录发现，用 T04 的普通执行请求创建 Turn， 结果沿同一归档路径保存。注册使用原有命令，没有 ACP 专用入口：</p>
+<pre class="text diagram"><code>yui config agent add &lt;agent-id&gt; --component claude-agent-sdk --command &lt;acp-executable&gt;
+yui config agent add &lt;agent-id&gt; --adapter acp --command &lt;acp-executable&gt; --arg acp
+yui config agent capabilities &lt;agent-id&gt;
+yui task role add &lt;task&gt; &lt;role&gt; --agent &lt;agent-id&gt;</code></pre>
+<p>第一行是 WorkItem-2 之后的推荐写法：命名执行组件即可，连接方案由组件唯一 决定，无需再写 <code>--adapter</code>。第二行仍然有效，只声明连接方案而不声明产品， 记录为 <code>unknown-acp-agent</code>——这正是既有绑定的读法（见第 7 节）。</p>
+<p>开发验证必须把上面的 <code>yui</code> 换成本 checkout 的绝对 launcher 并使用隔离 Home。 <code>capabilities</code> 走一次真实 <code>initialize</code>，据此报告该 Agent 的实际字段可用性， 不发送 prompt 也不创建 Session。ACP 的 <code>additionalDirectories</code> 目前只由 planner 从 Task 的 Project 绑定自动填入，没有面向 ACP 的手工 CLI 开关： 既有 <code>--add-dir</code> Role 选项仍限于 codex/claude 两个 first-class adapter。</p>
+<table>
+<colgroup>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+</colgroup>
+<thead>
+<tr>
+<th></th>
+<th>codex</th>
+<th>claude</th>
+<th>acp</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>interruptDelivery</code></td>
+<td>native</td>
+<td>owned-process</td>
+<td>native</td>
+</tr>
+<tr>
+<td>steer</td>
+<td>fenced</td>
+<td>unsupported</td>
+<td>拒绝（ACP v1 无 Turn 内追加输入）</td>
+</tr>
+<tr>
+<td><code>nativeSessionDiscovery</code></td>
+<td>runtime</td>
+<td>preallocated</td>
+<td>runtime</td>
+</tr>
+<tr>
+<td>managed Session 原生 Turn ID</td>
+<td>有（<code>turn/started</code> 的 <code>turn.id</code>）</td>
+<td>无</td>
+<td>无</td>
+</tr>
+<tr>
+<td>Hook 路径原生 Turn ID</td>
+<td>有</td>
+<td>有（<code>prompt_id</code>）</td>
+<td>不适用（ACP 无 Hook）</td>
+</tr>
+<tr>
+<td>Conversation 恢复</td>
+<td>静态 exact</td>
+<td>静态</td>
+<td>按连接协商 <code>loadSession</code></td>
+</tr>
+<tr>
+<td>权限</td>
+<td>可配置</td>
+<td>可配置</td>
+<td>只能拒绝</td>
+</tr>
+<tr>
+<td><code>additionalDirectories</code></td>
+<td>支持</td>
+<td>支持</td>
+<td>按连接协商，未声明则不发送</td>
+</tr>
+</tbody>
+</table>
+<p><code>nativeTurnId</code> 一行更正 <code>turn-2</code> 的说法：它当时写作 codex/claude 都为 <code>yes</code>， 把 Hook 路径与 managed structured 路径混为一谈。实际上 <code>ClaudeStructuredProviderSession.activeTurnId</code> 恒为 <code>undefined</code>—— stream-json 的 <code>result.uuid</code> 是消息身份，不是执行身份。三者中只有 Codex 的 managed Session 有真正的原生 Turn 身份。ACP 的缺失因此不是该产品的短板， 而是协议事实：一个 Turn 就是一次 <code>session/prompt</code> 请求，它的响应就是终态。</p>
+<p>声明为不支持的部分按实际表现返回：长 prompt 保持 pending；连接丢失是 <code>unknown</code> 且永不重发（重复提交被拒：“Provider Conversation already has an unsettled Turn”）；cancel 返回 <code>requested</code> 而不是停止证明； 提供 <code>allow_always</code> 的权限请求一律回 <code>reject</code>。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--存储版本与并行集成边界">4. 存储版本与并行集成边界</h2>
+<p>本次新增可持久化的 <code>acp</code> adapter／配置合法值，包括可选的 <code>additionalDirectories</code>。Role 绑定与 effective launch 快照读取时会重新 校验，因此需要中央版本转换声明，不能以“没有 storage diff”代替版本判断。</p>
+<p>本分支基线为 storage 8，追加连续迁移 <strong>8 → 9</strong> <code>acp-session-workspace-configuration</code>（<code>introducedIn=0.15.8</code>，最低支持仍为 1）。 迁移不改写任何载荷：storage 8 基线尚无 ACP 绑定，既有 Codex／Claude 配置及 Session 历史无需转换，既有迁移的 checksum 不移动。额外目录是否 真的送达某个 Agent 由连接协商决定，不增加第二份持久配置事实。</p>
+<p><strong>编号 9 供并行集成协调</strong>：T06（task-18）、T09（task-20）与本 Task 并行， 最终合并后的迁移链必须连续，编号由 Operator 统一协调；不得重写已发布迁移。 本 Task 没有升级共享 Home，没有重启共享 Controller，没有手工修复数据。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--实际证据">5. 实际证据</h2>
+<p>全部验证使用一次性 SQLite Home、可丢弃 Git 仓库和本地子进程； <strong>零真实模型、零外部资源、零付费配额</strong>。临时夹具已在交付前删除， 不进入永久 suite；永久测试只更新当前存储版本预期。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--受控-acp-子进程链路">受控 ACP 子进程链路</h3>
+<p>一个手写的 ACP Agent 子进程（无模型、无网络、无凭据，模式由 <code>argv</code> 决定） 驱动真实 Planner → AgentHost/Endpoint → 既有 Controller 发布／inbox／fold → SQLite 原 Turn 结果。四个场景共 <strong>31/31</strong> 通过：</p>
+<ul>
+<li><strong>capable-normal（10/10）</strong>：planner 把两个真实 Git Project 根作为 ACP workspace roots 送达，Agent 实际收到；Manifest bootstrap 实际到达模型输入； Controller 把 Host 的真实 Session fold 进持久状态；原 Turn 记录归档 Agent 的真实答案（<code>status=completed</code>， <code>output="ACP-ANSWER-PART-1;ACP-ANSWER-PART-2"</code>），不是 <code>missing-result</code>； 内部思考从不进入持久记录；进程 cwd 为 Project 工作区根。</li>
+<li><strong>minimal-normal（7/7）</strong>：同一份 planner 输出、同一份代码，只换启动描述。 未声明 <code>additionalDirectories</code> 的 Agent 在协议报文里确实没有收到该字段 （<code>[wire] additionalDirectories=undefined</code>），<code>loadSession</code> 缺失被记为 <code>unknown</code> 而非 recoverable，答案仍正常归档，bootstrap 仍送达。 第二产品差异因此由协商能力产生，不是由产品名分支产生。</li>
+<li><strong>capable-hang（8/8）</strong>：沉默的 Agent 让提交控制悬空；60001ms 后按 Host 自己的 accept 期限结算为 <code>pending</code>（<code>state=starting</code>），从不报 accepted； 在途输入持久绑定到该 Turn 与 attempt （<code>{"turnId":"turn-1","attemptId":"run:task-1/turn-1","status":"submitting"}</code>）； pending 的 Turn 不归档任何结果。</li>
+<li><strong>capable-die（6/6）</strong>：Turn 中途断连报 <code>delivery-unknown</code>，不报“肯定未接受”； fold 自己写出的 <code>runtime.agent-error</code> 事件把 unknown 处置与该 Turn 持久关联 （<code>turnId=turn-1 disposition=unknown</code>）；未观察到的答案不被归档为结果。</li>
+</ul>
+<p>夹具不直接构造带 output 的 terminal，也不单独调用 SQLite store 伪造链路； 上述持久事实都是既有 fold 与 store 的输出。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--采用入口实测">采用入口实测</h3>
+<p>隔离 Home、绝对 launcher、<code>env -i</code> 清除继承环境，用真实 CLI 走完注册与发现：</p>
+<ul>
+<li><code>config agent add ... --adapter bogus</code> 报 <code>Supported adapters: acp, claude, codex</code>——<code>acp</code> 是一等 adapter 选项， 不是隐藏路径。</li>
+<li>同一份代码、同一条命令注册两个 ACP 产品，只有启动描述不同。 <code>config agent capabilities</code> 对声明 <code>additionalDirectories</code> 的产品报 <code>available</code>；对未声明的产品报 <code>unavailable: This ACP Agent does not advertise ...</code>，并附带 <code>session/load</code> 缺失的目录警告。差异完全来自握手协商，不来自产品名。</li>
+<li>指向一个不是 ACP Agent 的可执行文件时，注册仍成功但明确降级为 <code>Runtime capability request failed ... only fallback and custom values can be offered</code>，不伪装成一次成功探测。</li>
+</ul>
+<h3 id="doc-implementation-designs-T07-evidence-md--存储连续性">存储连续性</h3>
+<p>Worker 的模拟证据：在一个含内容的新 Home 上，删除迁移行 9 后运行 <code>runStorageUpgrade({mode:"apply"})</code>，实际完成 8 → 9；升级后账本读作 <code>1,2,3,4,5,6,7,8,9</code>，head 为 <code>acp-session-workspace-configuration</code>， 既有 Task 原样保留。这是模拟前版本账本，不是真实旧版生成的 Home。</p>
+<p>Leader 在 turn-5 补充了真实前版本证据：使用 Task main 的 storage 8 代码（<code>eeea9e8</code>）创建一次性 Home，保存 Task 和 Codex／Claude 两个配置， 关闭 Store 后由候选 <code>9fd17e2</code> 的升级入口执行 8 → 9。新 reader 在升级前 拒读；升级后 Task 标题与两种 Agent 配置均原样保留；旧 reader 拒读升级后的 Home。升级入口生成了备份。探针没有删除账本行，也没有操作共享 Home； 探针专属 Home 与备份已清理。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--常规验证">常规验证</h3>
+<p>最终候选上执行 <code>npm run build</code>、<code>npm run lint</code> 均通过； <code>npm run test:core</code> <strong>81/81</strong>（约 4.44 秒）。这些检查未发现旧路径回归， 不代表重新验证了全部 Codex／Claude 真实 Provider 场景。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--turn-5-独立复审">turn-5 独立复审</h3>
+<p>原独立审查者复核 <code>8c67b7c → 9fd17e2</code> 的修复及直接调用关系，关闭六项 发现，未发现修复引入的重大运行缺陷。其临时内存协议探针确认两轮输出 隔离、foreign／thought 排除、bootstrap、未声明目录不发送、live recovery unknown、响应前 pending、断连 unknown 和取消后保留真实 RPC 错误。 Leader 独立管道探针交叉验证了相同关键语义。两者均无模型调用。</p>
+<p>受控集成 <code>integration-2</code> 经依赖准备、lint 和目标引用 CAS 成功， 保留 Task main 的 CLI 探测文档。此前 <code>integration-1</code> 因新集成工作区 没有依赖、<code>tsc</code> 不存在而以 127 退出，未推进目标；失败记录未删除。 Leader 随后同步额外目录的 TypeScript 类型及规范化副本，补正文档矩阵。 最终 <code>make install-local</code>（含 build）与 <code>npm run lint</code> 通过； 清除继承 YUI 环境、使用临时 Home，分别运行 <code>node --test test/core/core-smoke.test.js</code>（47/47）与 <code>node --test test/core/checkoutSwap.test.js test/core/project-lifecycle.test.js</code> （34/34），覆盖全部 81 项而未重复已通过用例。额外目录规范化副本的 临时探针也通过。所有永久测试保持原规模。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--验收对照与未验证项">6. 验收对照与未验证项</h2>
+<p>S11、S12 由 capable-hang／capable-die 与身份分离覆盖；S24 的 busy 与输入控制 由 unsettled-Turn 拒绝覆盖；S35 的“新 Session 选择实现”由两个产品共用同一 adapter、按连接协商能力覆盖。这些是隔离夹具证据，按统一验收说明的口径， 场景状态仍不由本 Task 单方面改判。</p>
+<p>未验证项，按 T07 设计第 6 节“真实测试未执行时明确标注”如实列出：</p>
+<ol type="1">
+<li><strong>没有任何真实模型调用</strong>，也没有认证过的 ACP Turn。本批次未授权把真实 Provider／付费配额作为测试对象；task-16 的真实模型授权不转移到本批次。</li>
+<li><strong>Kimi 的实际证据止于 <code>initialize</code>。</strong> Leader 的 <code>T07-cli-probe.md</code> 记录了 真实进程的版本、help 与一次 <code>initialize</code> 响应，包括它声明的 <code>loadSession</code>、<code>sessionCapabilities.additionalDirectories</code> 与 <code>authMethods</code>。 <code>turn-2</code> 曾把 <code>session.new</code>／permission／cancel 也写成“real-process verified”，这是把真实 Kimi 证据与夹具证据混在了一起：这三条路径<strong>只有 fixture 证据</strong>，Kimi 上没有原始证据。产品文档描述支持，但文档不是本机 已执行行为。</li>
+<li><strong>Turn 归档的证据等级已提升但仍非真实产品。</strong> <code>turn-2</code> 称归档只在库级别 （<code>SqliteTaskStore</code> + <code>createCanonicalLifecycleEvent</code>）验证过，未跑 Controller； 本轮的链路夹具确实驱动了真实 Controller 与原 Turn 结果路径，该项不再成立。 但驱动它的仍是手写协议对端，不是任何真实产品。</li>
+<li><strong>pending／unknown／取消／无原生 Turn ID 的全部行为均为 fixture 证据。</strong> 手写 Agent 是忠实的协议对端，不等于真实产品在负载下的表现。</li>
+<li>未真实验证 <code>session/load</code> 的实际 resume 行为、并发原生输入竞态、 权限交互的真实产品往返，以及取消后的物理静止。</li>
+</ol>
+<p>如后续获得针对性资源授权，建议单独验证一条受控本地资料输入的真实 Turn 结果归档，并按需要选择恢复、取消与权限交互的精确范围。这不是索取授权的 请求，也不构成阻塞项。</p>
+<p>本节自查不代替独立最终 Review。本授权不包括 push、PR、merge、tag、release、 archive 或启动后续 Task。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--workitem-2执行组件与连接方案分离">7. WorkItem-2：执行组件与连接方案分离</h2>
+<p>基线 <code>e0fcd244fe659e155a50265747641d683ae3b9ee</code>。本节只记录本 WorkItem 的 改动，不改写前六节的裁定。</p>
+<p>本节为 turn-10 返工稿。turn-8 候选 <code>e8466d2f3a22da80818941cbd99085d3780fb25a</code> 被 message-10 以四项确定缺陷 驳回：迁移 10 漏掉 <code>turns.payload.effective</code> 与两处 ExecutionLane（真实 v9 Home 升级必失败回滚）、Role 创建／切换丢弃 component、component 变更 错绑、<code>handshake</code> 被 <code>validateCatalog</code> 丢弃。四项均已修复，且每一项都先在 改动前的构建上复现缺陷再验证消失；旧候选与审查记录保留。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--为什么加一个轴而不是改名">7.1 为什么加一个轴而不是改名</h3>
+<p><code>adapterId</code> 混装了两件事：产品是谁，以及 Yui 用什么协议／载体连上去。 第二件事它答得准确，第一件事答不了——Claude Code CLI、Claude Agent SDK 和任意第三方 Agent 都从 <code>acp</code> 进来。把 <code>adapterId</code> 改名成产品名会同时 损坏它答得准确的那件事，而它在 60 个文件、653 处被引用。</p>
+<p>因此保留 <code>adapterId</code> 作为<strong>连接方案 id</strong>，另加一条 <code>component</code> 轴。 组件唯一决定方案（单向、全量），所以<strong>只有一份权威绑定可写</strong>，不存在 可自由拼装的组合图。命名用实际执行的 CLI 或 SDK，不用 “native”。</p>
+<ul>
+<li><code>src/agent/executionComponents.ts</code>：<code>codex-cli</code>、<code>claude-code-cli</code>、 <code>claude-agent-sdk</code>、<code>unknown-acp-agent</code>，各自声明所属方案与 <code>identified</code>。</li>
+<li><code>src/agent/connectionPlan.ts</code>：protocol／protocolVersion／transport／ handshake 四元组。不协商的方案显式写 <code>handshake: "none"</code>，不是省略。 <code>launchBroker</code> 原本自带的 transport 表已删除，改为向该模块求值。</li>
+</ul>
+<p>Claude Code CLI 的 stream-json 与经 <code>claude-agent-acp</code> 的 Claude Agent SDK 是<strong>两套接入实现</strong>：不同可执行文件、不同启动与认证面。本改动只给它们各自 的身份，不假设两者配置或能力等价。Codex 目前只有 AppServer 一个运行时， 因此只登记 <code>codex-cli</code> 一个组件，不臆造第二个引擎。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--调用链">7.2 调用链</h3>
+<pre class="text diagram"><code>config agent add --component X
+  <span class="dcell">→</span> resolveAgentExecutionComponent(adapterId, X)   # <span class="dcell dwide">唯</span><span class="dcell dwide">一</span><span class="dcell dwide">解</span><span class="dcell dwide">析</span><span class="dcell dwide">点</span><span class="dcell dwide">，</span><span class="dcell dwide">跨</span><span class="dcell dwide">方</span><span class="dcell dwide">案</span><span class="dcell dwide">即</span><span class="dcell dwide">报</span><span class="dcell dwide">错</span>
+  <span class="dcell">→</span> createConfiguredAgent(... component)           # ConfiguredAgent.schemaVersion 3
+  <span class="dcell">→</span> createRoleAgentBinding(agent)                  # RoleAgentBinding.component
+  <span class="dcell">→</span> resolveEffectiveLaunch(role)                   # EffectiveLaunch.schemaVersion 4
+  <span class="dcell">→</span> sessionContinuitySnapshot(...)                 # <span class="dcell dwide">含</span> component <span class="dcell">→</span> <span class="dcell dwide">旧</span> Session <span class="dcell dwide">固</span><span class="dcell dwide">定</span>
+  <span class="dcell">→</span> roleSessionMayContinue(existing, desired)</code></pre>
+<h3 id="doc-implementation-designs-T07-evidence-md--字段与迁移契约">7.3 字段与迁移契约</h3>
+<table>
+<thead>
+<tr>
+<th>记录</th>
+<th>schemaVersion</th>
+<th>新字段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ConfiguredAgent</code></td>
+<td>2 → 3</td>
+<td><code>component</code></td>
+</tr>
+<tr>
+<td><code>RoleAgentBinding</code></td>
+<td>不变</td>
+<td><code>component</code></td>
+</tr>
+<tr>
+<td><code>EffectiveLaunchSnapshot</code></td>
+<td>3 → 4</td>
+<td><code>component</code></td>
+</tr>
+</tbody>
+</table>
+<p>storage <strong>9 → 10</strong> <code>agent-execution-component</code>（<code>introducedIn=0.15.8</code>）， 一条连续中央迁移，不改 1–9，不双读旧形状。回填规则只有三条： <code>codex→codex-cli</code>、<code>claude→claude-code-cli</code>、<strong>其余一律 <code>unknown-acp-agent</code></strong>。命令字符串不作为证据——名叫 <code>claude-agent-acp</code> 的 可执行文件可能是包装器或别的东西，据此猜成 ClaudeSDK 就是给未经验证的 事实贴确定标签。配置变更只影响<strong>新</strong> Session；旧 Session 由自己的 effective 快照固定，<code>component</code> 进入连续性快照正是为此。</p>
+<p>迁移覆盖面以<strong>升级校验器实际重放的校验器清单</strong>为准，共 8 张表： <code>configured_agents</code>、<code>task_roles</code>、<code>global_roles</code>、<code>role_session_sets</code>、 <code>global_role_session_sets</code>（<code>sessions</code> 与两种形状的 <code>history</code>）、<code>turns</code>、 <code>work_items.executionGroups[].lanes[]</code>、<code>review_rounds.executionGroup.lanes[]</code>。 <code>turns</code> 与两处 Lane 是 message-10 指出的遗漏：<code>validateEffectiveLaunchSnapshot</code> 要求 <code>schemaVersion 4</code>，任何存有 Turn 历史的真实 v9 Home 都会因此升级失败并回滚。 未派发的 Lane 没有 <code>effective</code>，必须保持缺席。<code>context_snapshots</code> 由摘要锁定， <code>AgentProfile</code> 与 <code>TaskFinalReviewContract</code> 不带 component，三者均不迁移。</p>
+<p><strong>变更与拒绝</strong>：<code>component</code> 与 <code>adapter</code> 同属身份轴。被 Role 绑定或 Profile 引用的 Agent <strong>拒绝</strong>变更任一者，提示新建 Agent 显式绑定；未被引用的可自由 变更。仅给 <code>--adapter</code> 时 component 按新方案重解（ACP 得 <code>unknown-acp-agent</code>）。schema 10 之后 loader 不再把缺失 component 当历史 兼容：<code>ConfiguredAgent</code> 与 <code>RoleAgentBinding</code> 各自在读取时拒绝该记录； 而构造函数仍允许省略参数——操作者只声明方案是受支持的请求，与读取已写入的 损坏记录是两回事。</p>
+<p><code>catalogFingerprint</code> 补入 <code>component</code>。<strong>更正</strong>：先前称”否则两个 ACP 产品会 共用同一条能力缓存”是错的——该指纹本就含 <code>command</code> 与 <code>baseArgs</code>，两个产品 只要可执行文件不同就已分属不同缓存条目（在改动前的构建上实测，缓存目录确为 两条）。<code>component</code> 的真实作用是覆盖命令相同而产品声明不同的情形，并让缓存 条目按产品身份显式失效，而不是修一个原本不存在的串用缺陷。</p>
+<p><code>handshake</code> 由 <code>validateCatalog</code> 校验并<strong>保留</strong>（此前被重建对象丢弃， live 与缓存回读两条路径都取不到）。三态显式区分：<code>unsupported</code>（该方案 不协商）、<code>observed</code>（已协商，能力可为空）、缺席（从未尝试）； 无法识别的 status 拒绝而非放行。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--协议事实更正">7.4 协议事实更正</h3>
+<p>原文案称 “ACP negotiates no model or reasoning effort” 与 “ACP does not expose a model catalog”。核对 ACP v1 规范后确认这是<strong>错的</strong>：协议定义了 <code>session/set_mode</code> 与 <code>session/set_config_option</code>，Session Setup 返回的 <code>configOptions</code> 含 <code>mode</code>／<code>model</code>／<code>model_config</code>／<code>thought_level</code> 语义类别。 当时限制在 Yui 这一侧，文案先改为陈述实现现状（“Yui’s ACP client does not implement session/set_config_option”）。</p>
+<p><strong>turn-13 起该实现限制已不存在</strong>：客户端接通了 <code>session/set_config_option</code>（旧式 Agent 走 <code>session/set_mode</code>）， <code>AcpAgentConfig</code> 因此接受 model／effort／<code>configured</code> 模式与显式 bypass。 推送点固定在 Session 建立之后、首个 prompt 之前——ACP 只在 Session 存在后 才报告可配置面，而 prompt 一旦先发就会以 Agent 默认值运行却显示用户的选择。 任一拒绝直接中止启动：<strong>被拒的配置对应零个 prompt</strong>，不降级、不换模型。 每个轴在轮到它时对 Agent 当前的完整选项列表解析，全部步骤落地后再按 Agent 最后一次报告的列表校验所有显式请求值；“调用成功但当前值不同”按替换 处理并失败。（turn-13 的实现只按初始列表一次性定好步骤，因此后一次调用重置 前一个轴时报告与事实不符——见 §10.1、§10.3。）</p>
+<p>权限同理：ACP 定义了权限选项，Yui 未接通交互式同意，因此<strong>保留对 <code>session/request_permission</code> 的显式拒绝，不自动放行</strong>——API 授权与工具 权限是两件事。bypass 仅在用户显式选择时生效；<code>default</code> 一律不发送任何 mode， 既有 <code>default</code> 绑定的语义不被加宽。bypass 的具体 mode id 是产品事实， 按执行组件声明为数据（<code>claude-agent-sdk</code> → <code>bypassPermissions</code>）； <code>unknown-acp-agent</code> 故意不在表内，因此对未识别产品请求 bypass 是显式拒绝， <strong>不按 mode 名称猜测</strong>。model 列表需要真实 Session 才能枚举， 普通能力查询因此停在 <code>initialize</code>，不为了填菜单制造可能计费的远端副作用。</p>
+<p><code>AgentHandshakeObservation</code> 把真实握手与静态支持分开：不协商的方案是 <code>{status:"unsupported", reason}</code>，ACP 是 <code>{status:"observed", ...}</code> 并带 protocolVersion／能力／authMethods；缺失值显式为 <code>unknown</code>，不留空。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--证据">7.5 证据</h3>
+<p>全部使用一次性 Home、绝对 launcher、<code>env -i</code> 清除继承 YUI 环境； <strong>零真实模型、零凭据、零外部资源</strong>。临时夹具已删除，未新增永久历史回归测试。</p>
+<p>验证方法统一为：<strong>先在改动前的构建上复现缺陷，再在改动后的构建上以同一串 命令确认缺陷消失</strong>。下文一律以”断言通过／断言失败”直述，不把失败的断言 写成通过的验收。</p>
+<p><strong>（1）迁移 10 —— 真实 v9 Home 原地升级</strong></p>
+<p>夹具用<strong>基线构建自己的工厂函数</strong>写入 3 个 Agent（含命令字面为 <code>claude-agent-acp</code> 的旧 ACP 绑定）、1 个全局 Role（对象形 history）、 2 个 Task Role、经 <code>resolveEffectiveLaunch → createTurn → saveTurn</code> 的 2 条真实 Turn、2 组 Task Session（数组形 history），以及 1 个含 双 Lane ExecutionGroup 的 WorkItem（两条 Lane 分属不同连接方案）。 不是”删账本行”的模拟。</p>
+<p>改动前：<code>upgrade</code> <strong>退出码 5</strong>， <code>Effective launch snapshot must use schemaVersion 4</code>，Home 从备份回滚， 复现了复审所述失败。改动后同一夹具：</p>
+<pre class="text diagram"><code>Storage upgraded through 9-&gt;10 agent-execution-component.
+TURN turn-1  sv=4 acp/unknown-acp-agent      TURN turn-2  sv=4 codex/codex-cli
+SESS  live+hist <span class="dcell">×</span>3 <span class="dcell dwide">组</span><span class="dcell dwide">（</span><span class="dcell dwide">数</span><span class="dcell dwide">组</span><span class="dcell dwide">形</span><span class="dcell dwide">与</span><span class="dcell dwide">对</span><span class="dcell dwide">象</span><span class="dcell dwide">形</span> history <span class="dcell dwide">各</span><span class="dcell dwide">自</span><span class="dcell dwide">覆</span><span class="dcell dwide">盖</span><span class="dcell dwide">）</span>  sv=4
+LANE work-item-1 acp-worker sv=4 acp/unknown-acp-agent
+LANE work-item-1 codex-worker sv=4 codex/codex-cli
+AGENT legacy-acp acp/unknown-acp-agent cmd=claude-agent-acp</code></pre>
+<p>应迁移的表由 <code>upgradeOrchestrator.validateCurrentStore</code> 实际重放的校验器 清单确定，不是按字段名扫描用户数据；<code>context_snapshots</code> 摘要锁定、 <code>AgentProfile</code>／<code>TaskFinalReviewContract</code> 不带 component，均<strong>未</strong>编造迁移。 未派发的 Lane 保持无 <code>effective</code>（<code>json_set</code> 会造出被 Lane 校验器判为残缺的 半快照）。命令字面为 <code>claude-agent-acp</code> 的旧绑定<strong>保持 <code>unknown-acp-agent</code></strong>。升级后 <code>doctor</code> 全绿 （<code>storage schema ok current=10 latest=10</code>，<code>agents=3 tasks=1 roles=2 globalRoles=1</code>），重跑幂等；专用差分器比对升级前后 8 张表 12 行： <strong>非 component 差异 0</strong>。</p>
+<p><strong>（2）Role 创建／切换保留 component —— 真实 CLI</strong></p>
+<p>经真实 <code>yui</code> 可执行文件而非构造对象：<code>config agent add sdk-agent --component claude-agent-sdk</code> → <code>task create</code> → <code>task role add</code>。 改动前，Agent 记录为 <code>claude-agent-sdk</code>，而 <code>leader</code> 与 <code>sdk-worker</code> 两条绑定均被降级为 <code>unknown-acp-agent</code>（复现）；改动后同一串命令， 两条绑定均为 <code>claude-agent-sdk</code>。<code>task role bind</code> 切换路径同样覆盖： 三个不同产品（<code>claude-agent-sdk</code>／<code>unknown-acp-agent</code>／<code>codex-cli</code>） 各自如实落库，通用 ACP Agent 未被命令字符串猜成产品。 <code>createRoleAgentBinding</code> 的参数由 <code>component?</code> 收紧为必填， 使遗漏调用点成为编译错误而非静默默认。</p>
+<p><strong>（3）component 变更：引用中拒绝，未引用可改</strong></p>
+<p>真实 CLI 矩阵（退出码为实测值）：</p>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>操作</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>被 Role 引用的 Agent 改 component</td>
+<td><strong>拒绝</strong>，退出码 2，库内 Agent 与绑定均未变</td>
+</tr>
+<tr>
+<td>被 Role 引用的 Agent 改 adapter</td>
+<td>拒绝，退出码 2（原有行为未回归）</td>
+</tr>
+<tr>
+<td>未被引用的 Agent 仅 <code>--adapter</code> 切换</td>
+<td>成功，退出码 0，component 按新方案重解</td>
+</tr>
+<tr>
+<td>未被引用的 Agent 改 component</td>
+<td>成功，退出码 0</td>
+</tr>
+<tr>
+<td>被引用 Agent 的非身份变更（<code>--arg</code>）</td>
+<td>成功，退出码 0</td>
+</tr>
+</tbody>
+</table>
+<p>改动前，前者静默成功——Agent 变为 <code>unknown-acp-agent</code> 而两条 Role 绑定 仍宣称 <code>claude-agent-sdk</code>（复现）；<code>--adapter</code> 单独使用则因保留旧 component 而报 <code>component codex-cli is reached over the codex connection plan, not claude</code>， 连未被引用的 Agent 也无法换方案（复现）。现改为：引用中一律拒绝并提示 新建 Agent 显式绑定，旧 Session 由自己的 effective 快照固定不变； <code>--adapter</code> 单独使用时按新方案重解 component（ACP 得 <code>unknown-acp-agent</code>，不从命令猜产品）。 <code>fileRoleLaunchPlanner.#compile</code> 增加 component 一致性检查， 使”新命令配旧产品标签”在启动前即失败。</p>
+<p><strong>（4）loader 不再把缺失 component 当历史兼容</strong></p>
+<p>schema 10 之后，缺 component 的记录是损坏而非陈旧。在真实升级后的 Home 上 剥掉字段实测：改动前 <code>config agent show</code> 照常输出且 <code>Component: undefined (undefined)</code>；现在 Agent 与 Role 绑定各自以自己的 消息拒绝（<code>Agent is missing its execution component</code>／ <code>Role Agent binding is missing its execution component</code>）， 仅剥绑定时 Agent 仍可正常读取，健康 Home 无误报，<code>test:core</code> 未因此失败。 构造函数允许省略参数是另一回事（操作者只报方案是受支持的请求）， 两者已分开处理。</p>
+<p><strong>（5）handshake 贯通 —— 真实 <code>CatalogService.resolve</code> 与缓存回读</strong></p>
+<p>注入 discovery 以免联网，其后的校验、缓存落盘、指纹、缓存回读全是发布代码； 共 11 条断言。改动前 <strong>6 条失败</strong>（live 与缓存回读均取不到 handshake、 <code>unsupported</code> 被抹去、非法 status 被原样放行）；改动后 <strong>11 条全部通过</strong>： live 与 cache 两条路径取到的 handshake 逐字节相同，<code>unsupported</code> 与”已观测但能力为空”保持可区分，“从未尝试”仍为缺席第三态， 无法识别的 status 被拒绝并降级为 fallback。</p>
+<p><strong>缓存条目更正</strong>：见 7.3。“两个 ACP 产品会共用同一条缓存”的原说法有误—— 在<strong>改动前</strong>的构建上实测，命令不同即已分属两条缓存条目（该断言在改动前后 均通过，因此它证明的是原说法有误，不是本次修复的成果）。</p>
+<p><strong>常规验证</strong>：<code>npm run build</code>、<code>npm run lint</code>（<code>tsc --noEmit</code>）通过； <code>npm run test:core</code> <strong>81/81 通过、0 失败</strong>，规模未变。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--本-workitem-未验证项">7.6 本 WorkItem 未验证项</h3>
+<ol type="1">
+<li><strong>没有任何真实 Provider 调用。</strong> 真实 Claude ACP 测试由 Leader 单独授权 与执行；本 WorkItem 只产出代码与隔离夹具，不安装、不认证、不调模型。 上文 ENOENT 降级来自本机确实没有这些可执行文件，属预期。</li>
+<li><code>claude-agent-sdk</code> 组件的真实握手、认证面与能力矩阵<strong>未经真实进程验证</strong>。 计划中的 <code>@agentclientprotocol/claude-agent-acp</code> 0.75.1 （ClaudeSDK 0.3.257 / ACP SDK 1.4.0）是届时的测试对象，<strong>不作为内核 永久版本限制</strong>写入代码。</li>
+<li>组件轴不改变任何 codec 行为，因此未重新验证 Codex／Claude 的真实 Provider 场景；<code>test:core</code> 通过只说明既有路径未回归。</li>
+<li>上一候选（turn-8）的 7.5 曾把”本改动 4/4 <strong>失败</strong>”写成验收通过。 该表述已删除：那是断言失败，不是验收。本次全部证据改为直述实测退出码与 通过／失败条数，并且每一条都在改动前的构建上先行复现过缺陷。</li>
+<li><code>review_rounds</code> 的 Lane 迁移由隔离 SQL 与真实升级校验器覆盖， 但夹具 Home 中没有 ReviewRound 行（WorkItem 组要求每条 Lane 都有 launch facts，未派发 Lane 的情形属于 review 组）；该路径<strong>未经真实 ReviewRound 数据端到端验证</strong>。</li>
+</ol>
+<h3 id="doc-implementation-designs-T07-evidence-md--手册-html-未重新生成">7.7 手册 HTML 未重新生成</h3>
+<p>本节只改了 Markdown 源与 <code>MANIFEST.json</code> 校验和。<code>index.html</code> 与 <code>full-architecture.html</code> 由 <code>tools/build_html.py</code> 从 Markdown 生成，需要 <code>pandoc</code> 与 <code>beautifulsoup4</code>，本机两者都不存在，本 WorkItem 也不安装系统包。 因此两个 HTML 仍是上一版内容，<strong>不包含第 7 节与第 3 节新增的 <code>--component</code> 采用行</strong>；Markdown 源是权威。 <code>tools/check_docs.py --write-manifest --typecheck --write-result</code> 通过 （<code>typescript: passed</code>，<code>errors: []</code>）——该校验核对包完整性与 Markdown 结构， 不比对 HTML 与 Markdown 的正文差异。取得 pandoc 后重新生成即可消除该滞后。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--turn-11集成复审与已授权-claude-acp-真实验证">8. turn-11：集成、复审与已授权 Claude ACP 真实验证</h2>
+<p>本节记录用户追加要求后的交付，不把此前无模型探测或 Worker 夹具升级为 真实证据。用户在原 Leader 会话明确要求按组件／协议划分修改并运行 Claude ACP 真实测试；该授权与第三方 API、模型及隔离边界记录在 task-19 message-7，Operator 的 message-6 要求按这一具体授权接续。 真实验证只使用 Claude，不继承其他 Task 授权，也没有使用 Kimi 资源。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--修复与最终代码候选">8.1 修复与最终代码候选</h3>
+<p><code>e8466d2</code> 的四项审查问题由原 Worker 在 <code>6e7cac6</code> 修复。 原独立审查者复核完整修复及直接关系，四项均关闭，未发现本修复引入的 重大问题。其内存 SQLite 验证覆盖 Turn、WorkItem Lane、Review Lane， 确认未派发 Lane 不会被制造出 effective，也不会被聚合为 JSON 字符串。</p>
+<p>Leader 另外使用真实 storage 9 构建创建带已完成 Turn 和 Role 的一次性 Home，再使用候选执行 9 → 10 升级：原 Turn 输出逐字保留，Role 和 Turn 均获得正确组件，旧 reader 拒读新版。原先同一场景的失败已消除。</p>
+<p><code>integration-3</code> 通过显式依赖准备、lint 后，以 CAS 快进至 <code>6e7cac6236daa379b49b8ceb6e312a78166c9067</code>。 本 checkout 的 <code>make install-local</code>（含 build）成功；清除继承的 YUI 变量、使用临时 Home，完整 <code>node --test test/core/*.test.js</code> 对应的三个 文件一次执行，<strong>81/81 通过，0 跳过</strong>（测试阶段约 4.28 秒）。 手册 HTML／Manifest 在 Leader 收尾时重新生成，消除 §7.7 的历史滞后。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--固定版本配置来源和测试范围">8.2 固定版本、配置来源和测试范围</h3>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>实际值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Yui 代码</td>
+<td><code>6e7cac6236daa379b49b8ceb6e312a78166c9067</code></td>
+</tr>
+<tr>
+<td>配置的执行组件</td>
+<td><code>claude-agent-sdk</code></td>
+</tr>
+<tr>
+<td>连接方案</td>
+<td><code>acp</code>，ACP v1，stdio</td>
+</tr>
+<tr>
+<td>ACP 实现包</td>
+<td><code>@agentclientprotocol/claude-agent-acp</code> <code>0.75.1</code></td>
+</tr>
+<tr>
+<td>SDK</td>
+<td><code>@anthropic-ai/claude-agent-sdk</code> <code>0.3.257</code></td>
+</tr>
+<tr>
+<td>SDK 捆绑的运行组件</td>
+<td>Claude Code <code>2.1.257</code></td>
+</tr>
+<tr>
+<td>用户既有模型选择</td>
+<td><code>opus[1m]</code></td>
+</tr>
+<tr>
+<td>用户既有 Opus 路由映射</td>
+<td><code>model_hub/es1_orange_o50</code></td>
+</tr>
+<tr>
+<td>两次实际选择回报</td>
+<td>均为 <code>opus[1m]</code></td>
+</tr>
+</tbody>
+</table>
+<p>依赖只安装在 Task main 的临时 <code>output</code> 工具目录，没有全局安装。 认证使用用户现有 Claude settings 的 API 环境项；在测试前只比较了 进程与该配置中的 API 地址／凭据一致性，没有输出密钥。测试子进程使用 空的独立 HOME、CLAUDE_CONFIG_DIR、TMPDIR 和工作目录；没有复制共享 hooks、插件、历史 Session 或 OAuth 登录。 API 环境值只在进程内传递，没有写进 Yui Agent 配置或证据文档。</p>
+<p>受控启动包装器调用已安装包公开的 <code>runAcp</code>，只通过该包的 <code>_meta.claudeCode.options</code> 配置 Session：固定标题、固定既有模型、 <code>settingSources: []</code>、<code>tools: []</code>、<code>maxTurns: 1</code> 和短测试 system prompt。 未修改已安装的 ACP／SDK 代码，也没有伪造任何 Provider 输出。 固定标题用于避免 ACP 包默认的额外小模型标题生成；原生 transcript 确实保存了测试标题。没有执行模型回退或更换网关。</p>
+<p>这验证的是明确配置的 SDK 接入路径，不是默认 Claude Code CLI 全部功能或全部配置等价性。因为禁用了工具，本次不验证编码工具权限交互。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--实际结果与归档链">8.3 实际结果与归档链</h3>
+<p>日期：2026-09-08；以下时间均为 UTC。 两次请求使用同一原生 Session： <code>ca8ecadf-cb8d-4ece-9a61-4ef1900f01d9</code>。</p>
+<table>
+<colgroup>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+</colgroup>
+<thead>
+<tr>
+<th>隔离 Turn</th>
+<th>行为</th>
+<th>接受／终态观测时间</th>
+<th>原 Turn 结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>task-1/turn-1</code></td>
+<td>新建会话，要求记住并输出指定标记</td>
+<td><code>07:08:08.984Z</code></td>
+<td>completed，输出精确为 <code>T07-CLAUDE-ACP-CEDAR-914</code></td>
+</tr>
+<tr>
+<td><code>task-1/turn-2</code></td>
+<td>第一进程退出后 <code>session/load</code> 原 Session，要求回忆标记</td>
+<td><code>07:08:12.347Z</code></td>
+<td>completed，输出精确为同一标记</td>
+</tr>
+</tbody>
+</table>
+<p>执行链为：实际 Agent 配置与编译器 → 原 AgentEndpoint／ACP codec → 上述受控启动的真实 ACP 包 → SDK／捆绑运行组件 → 既有第三方 API → 原 <code>publishStructuredProviderAccepted</code>／<code>publishStructuredProviderTerminal</code> → 真实隔离 Controller RPC → 原 <code>FileSchedulerStoreAdapter</code> fold → SQLite。 两个结果不是由夹具构造的 terminal，也没有直接向数据库填充输出。 关闭并重新打开 Store 后，两个原 Turn 均保留完整输出和 <code>component: claude-agent-sdk</code>；ACP 的 <code>nativeTurnId</code> 保持缺失，没有伪造。</p>
+<p>测试显式创建隔离 Task／Role 并调用编译器与 Endpoint；Controller 仅服务 真实 observation RPC 和生产 fold，没有启动自动调度。因此本次不声称 完整 Scheduler／AgentHost 自动派发或模型实际读取 Yui Context 的端到端验收。 这些与此前的受控完整链路夹具是不同的证据范围。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--用量清理与剩余边界">8.4 用量、清理与剩余边界</h3>
+<p>只提交了 <strong>两个真实主输入</strong>。原生 transcript 记录两个 assistant 消息， 回报模型标签均为 <code>claude-opus-5</code>，input/output tokens 分别为 <code>261/23</code> 和 <code>344/23</code>，没有 tool call、WebSearch 或 WebFetch。 这些是路由返回的标签和计数，不独立证明网关后端模型权重身份。 ACP 的两次结果分别回报费用 USD <code>0.00188</code> 和 <code>0.002295</code>； 这是 Provider 报告，不是账单确认，不据此推断完整账户消费。</p>
+<p>两个自有 ACP 进程退出码均为 0，隔离 Controller 已关闭； 进程检查未发现相关测试进程残留。测试 Home、原生测试历史、临时脚本和 工具依赖在保留本节脱敏证据后清理，未影响共享 Home、认证或服务。 前置夹具第一次因测试程序漏用 <code>saveActiveTurn</code> 而被 writer fence 拒绝， 发生在任何模型输入之前；修正夹具后先通过本地对端，再进行上述真实请求。</p>
+<p>已真实覆盖：初始化、同模型新会话输出、跨进程恢复原 Session、第二 Turn、 实际结果经 Controller 归档和 Store 重开读回。 仍未真实覆盖：取消／物理静止、工具权限往返、原生并发输入竞态、 长负载下的 pending／unknown、完整自动调度和共享配置等价性。 不将本次两请求验证描述为全场景 E2E，也没有开展 Codex 或 Kimi 模型测试。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--acp-运行配置接通turn-13work-item-3">9 ACP 运行配置接通（turn-13，work-item-3）</h2>
+<blockquote>
+<p>本节的候选已被独立复审驳回。§9.2、§9.5、§9.6 有越界结论， 已在 <strong>§10.1</strong> 逐条更正；返工与新证据见 §10。</p>
+</blockquote>
+<h3 id="doc-implementation-designs-T07-evidence-md--本轮改的是什么">9.1 本轮改的是什么</h3>
+<p>不是改名，是把普通 Yui 配置入口接到真实协议效果上。此前 <code>AcpAgentConfig</code> 一律拒绝 model／effort／非 <code>default</code> 权限，理由写成”Yui 的 ACP 客户端未实现 <code>session/set_config_option</code>“。本轮实现了该方法（旧式 Agent 走 <code>session/set_mode</code>），因此该限制不再存在，四条入口命令改为被接受并真实生效。</p>
+<p><code>selectedComponent</code>／<code>connectionPlan</code> 的唯一绑定未动，用户的 <code>Agent.id</code> 未变。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--推送点与拒绝语义">9.2 推送点与拒绝语义</h3>
+<p>配置在 <code>AcpStructuredProviderSession.open()</code> 内、<code>session/new</code>／<code>session/load</code> 之后、任何 <code>submitTurn</code> 之前推送。这不是巧合而是唯一正确的位置：ACP 只在 Session 存在后才报告可配置面，而先发 prompt 会以 Agent 默认值运行却显示 用户的选择。任一拒绝直接抛出，因此<strong>被拒配置对应零个 prompt</strong>。</p>
+<p>通用轴由 ACP 自己的 <code>category</code> 元数据解析（<code>model</code>／<code>thought_level</code>／<code>mode</code>， 以 id 兜底），Yui 从未见过的 Agent 走同一段代码。唯一的产品事实是 bypass 的 mode id，按执行组件声明为<strong>数据</strong>而非分支（<code>claude-agent-sdk</code> → <code>bypassPermissions</code>）；<code>unknown-acp-agent</code> 故意不在表内。Task／Controller 不含任何产品特判。</p>
+<p>Agent 返回的完整选项列表逐项确认；“调用成功但当前值不同”按替换处理并失败， 不吞字段、不静默换值、不靠显示伪造。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--存储迁移-10-11">9.3 存储迁移 10 → 11</h3>
+<p>持久契约确实变宽（ACP 绑定可携带 model／effort 与 <code>bypass</code>／<code>configured</code> +<code>mode</code>），因此追加迁移 11 <code>acp-session-run-configuration</code>，1–10 未改。</p>
+<p>按迁移 9 的先例做<strong>声明式加宽</strong>，不重写任何 payload——这是实质决定而非省略： v10 的 ACP 绑定持 <code>permission.strategy = "default"</code>，其含义原本就是”Yui 不发送 任何 mode，Agent 自己的默认成立”，改写它等于授予用户从未选择的权限。 effective 快照无需变更：<code>model</code>／<code>effort</code> 本就在共享基类上可选，ACP 权限就是 适配器规范化的同一对象，历史快照在 schemaVersion 4 下继续通过校验，覆盖 Session、Session history、Turn、WorkItem Lane 与 ReviewRound Lane。</p>
+<p>真实 v10 Home 原地升级（一次性 Home，<code>env -i</code>，绝对 launcher）：升级前 <code>doctor</code> 三项 <code>unsupported</code>（<code>current=10 latest=11 migration=available</code>）， <code>upgrade</code> 报 <code>10 → 11 acp-session-run-configuration</code> 并留备份；升级后账本 <code>1..11</code>，<code>doctor</code> 全绿（<code>current=11 latest=11</code>，<code>agents=1 tasks=1 roles=2</code>）， 重跑为 <code>already-current</code>（幂等）。关键一项：升级后经真实 Store 读回， <code>leader</code> 与 <code>worker</code> 两条既有 ACP 绑定仍为 <code>permission={"strategy":"default"}</code>、<code>model=undefined</code>、<code>effort=undefined</code> ——<strong>旧默认权限未被加宽</strong>。随后在同一升级后的 Home 上，用户显式 <code>--model opus --effort high --permission-strategy bypass</code> 被接受，而未被触碰的 <code>leader</code> 仍是 <code>default</code>。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--红绿同一串真实-cli-命令">9.4 红→绿（同一串真实 CLI 命令）</h3>
+<p>基线为 <code>git archive HEAD</code> 解出的<strong>干净 HEAD 构建</strong>，不是只回退两个文件的 半改动树（后者一度给出全部”接受”的假绿，已弃用）。两次均为一次性 Home。</p>
+<table>
+<colgroup>
+<col style="width: 33%"/>
+<col style="width: 33%"/>
+<col style="width: 33%"/>
+</colgroup>
+<thead>
+<tr>
+<th>命令</th>
+<th>改动前（HEAD，v10）</th>
+<th>改动后（v11）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--model opus</code></td>
+<td>拒绝：“does not implement session/set_config_option…”</td>
+<td>接受，<code>model=opus</code></td>
+</tr>
+<tr>
+<td><code>--effort high</code></td>
+<td>同上拒绝</td>
+<td>接受，<code>effort=high</code></td>
+</tr>
+<tr>
+<td><code>--permission-strategy bypass</code></td>
+<td>拒绝：“supports only the default permission strategy…”</td>
+<td>接受，<code>bypass</code></td>
+</tr>
+<tr>
+<td><code>--permission-mode acceptEdits</code></td>
+<td>拒绝：“only supported by Claude.”</td>
+<td>接受，<code>configured</code>+<code>mode</code></td>
+</tr>
+<tr>
+<td>不带选项</td>
+<td>接受，<code>default</code></td>
+<td>接受，<code>default</code>（未变）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="doc-implementation-designs-T07-evidence-md--隔离协议对端测试">9.5 隔离协议对端测试</h3>
+<p>临时对端 <code>fake-acp-agent.mjs</code>（无凭据、零模型），逐条记录收到的方法、 被要求应用的配置值，以及<strong>prompt 到达时生效的配置</strong>。每例都从真实入口出发 （<code>yui</code> 子进程或 <code>runTaskCommand</code>）→ 落库 → 重开 Home 读回 → 编译 → 对端实际所见，不用理想内存对象绕过入口。10 项全通过：</p>
+<p>CLI 配置的 model／effort／mode 三项均以 <code>session/set_config_option</code> 到达对端， 且顺序被断言为 transcript 事实（<code>session/new</code> &lt; 三次 set &lt; <code>session/prompt</code>）； <code>session/prompt under mode=acceptEdits,model=opus,effort=high</code>。 对端拒绝 effort 时零 prompt；对端”成功但保留旧值”被判为替换并失败； <code>default</code> 一个 set 都不发；显式 bypass 以 <code>bypassPermissions</code> 到达； 对端不提供 bypass 时显式拒绝；<code>unknown-acp-agent</code> 即使对端存在字面名为 <code>bypassPermissions</code> 的 mode 仍拒绝（不按名猜测）；旧式对端走 <code>set_mode</code> 而不发 <code>set_config_option</code>；<code>session/load</code> 恢复后两个 prompt 均在正确配置下； clear+<code>default</code> 回到”不发任何请求”；codex 专属选项在 ACP 上被 CLI 拒绝且未落库。</p>
+<p>绿测试单独不算证据，故做变异验证：给 <code>unknown-acp-agent</code> 加上 bypass 映射 → 仅”不按 mode 名猜测”一例失败；跳过配置推送 → 8 项协议用例失败、2 项纯 CLI 用例正确保持通过；吞掉 plan 拒绝 → 2 项 plan 侧拒绝用例失败（对端 JSON-RPC 错误走请求路径，由另一用例覆盖，两类拒绝各有归属）；跳过确认 → 仅替换用例失败。 四次变异后均已还原并复验全绿。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--一致性与边界">9.6 一致性与边界</h3>
+<p>能力面：model／effort／<code>permission.mode</code> 为 <code>degraded</code>（可配置，取值按 Session 协商），<code>permission.strategy</code> 为 <code>available</code> 且列出三值；ACP 无 <code>settingsFile</code>／<code>settingsSources</code>／工具规则字段。离线兜底目录返回 ACP 自身形状 （<code>adapterId: "acp"</code>），<code>permission.mode</code> 不预填候选——modeid 来自实时 Session， 在此列举等于凭构建期猜测编造 Agent 词汇表。向导对 ACP 只问 mode 且选项来自 目录，不再生成固定 bypass；权限策略取自能力字段而非硬编码。</p>
+<p>model 列表需要真实 Session 才能枚举，普通能力查询因此停在 <code>initialize</code>： 为填菜单去建 Session 会造成可能计费的真实远端副作用。这是”静态可配置”与 “协商后可用”的区别，按真实原因陈述，不伪装成产品无此能力，也不吞掉请求值。</p>
+<p>删除 <code>src/cli/roleOptionCatalog.ts</code>：经完整 importer 追踪，除 <code>orderRoleOptions</code> 外全部导出零引用，是无人读取的第二配置权威。仅存的展示助手移入 <code>roleOptionOrder.ts</code> 并注明不持有配置权威。真实权威仍是 <code>commands/roleConfiguration.ts</code>，未新增第二处。顺带修掉两个真实缺陷： <code>permissionPatch</code> 的兜底原为硬编码 <code>{strategy:"bypass"}</code>（改为 <code>defaultRoleAgentConfig(...).permission</code>），且 ACP 原会落入 Claude 分支被写入 工具数组；向导探测绑定原会对 ACP 构造非法配置。</p>
+<p><code>runtimeEventInbox</code> 对 ACP 的排除<strong>未改</strong>，经核为正确：<code>RuntimeTurnTerminalInput</code> 的 <code>adapterId</code> 类型为 <code>"codex" | "claude"</code>，ACP 按设计无原生 Turn id。</p>
+<p>本轮<strong>未做真实模型测试、未读共享凭据</strong>；此前两次 Claude ACP 真实测试不因本次 泛化而被重新授权。仅本 W3 工作区、本地 launcher 与隔离 Home；未改共享 Home、 Controller、认证或全局安装；未 push／PR／远端合并／打标签／发布。 不声称与产品完整功能等价：本轮验证的是配置推送与确认路径，工具权限往返、 取消与并发竞态仍未真实覆盖。</p>
+<p>收尾：<code>npm run lint</code> 干净，<code>npm test</code> <strong>81/81 通过</strong>（维持既有规模， 未新增永久回归测试），临时夹具与临时测试在交付前删除。 手册 HTML 由 Leader 重新生成，本节只更新 Markdown。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--turn-15驳回后的三处返工work-item-3">10 turn-15：驳回后的三处返工（work-item-3）</h2>
+<p>turn-13 的候选被独立完整复审驳回。本节先更正 §9 越界的结论，再给出穿透 Planner 的新证据。同 Role／同 Session，无新 WorkItem。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--对-9-结论的更正">10.1 对 §9 结论的更正</h3>
+<p>§9.5 称”每例都从真实入口出发……不用理想内存对象绕过入口”。<strong>这句话当时不成立</strong>， 必须按下列三点读：</p>
+<ol type="1">
+<li><strong>那 10 项测试没有穿透 Planner。</strong> 它们在 Session 夹具里手工提供了 <code>providerControl.component</code>。而真实的 <code>FileRoleLaunchPlanner</code> 两个分支 都没有填这个字段，<code>structuredProviderHost</code> 于是转发 <code>undefined</code>，ACP 侧解析为 未识别产品。也就是说：<strong>一份普通的 <code>claude-agent-sdk</code> + bypass 配置在真实 Session 里必然失败</strong>，而测试因为自己补了这个字段而看不到。§9.5 的”从真实入口 出发”只覆盖了 CLI 到落库这一段，没有覆盖落库到启动载荷这一段。</li>
+<li><strong>§9.2 的”逐项确认”只在单步内成立。</strong> 当时 <code>#applyConfiguration</code> 依据 <code>session/new</code> 的初始列表一次性定好全部步骤，之后不再重算。所以后一次调用 重置前一个轴时，每一步的确认都通过、<code>open</code> 成功、<code>appliedConfiguration</code> 仍报告用户请求的值——报告与事实不符。反向同样错：只有换了模型才出现的 effort 取值会被提前拒绝。</li>
+<li><strong>§9.6 关于能力面的描述与代码不一致。</strong> 探针把 model 轴报为 <code>models=[] + available=true</code>（延迟枚举、允许自定义输入），但 <code>validateCatalog</code> 仍以”models 为空”判定不完整，于是真实的 <code>AgentConfigurationCatalogService.resolve</code> 落到兜底目录并附 “Agent configuration model catalog is incomplete”，把实时握手与探针给出的 真实原因一起丢掉。§9.6 描述的是意图，不是当时的行为。</li>
+</ol>
+<p>另外，§9.5 缺少动态选项列表与目录校验两类覆盖，本轮补上。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--p11-planner-携带执行组件">10.2 P1(1) Planner 携带执行组件</h3>
+<p><code>fileRoleLaunchPlanner.ts</code> 的 start 与 restore 两个分支各补 <code>component: binding.component</code>。取值可信不靠约定：<code>binding</code> 来自本次启动 所依据的固定快照（<code>activeRoleAgentBinding</code>），且此前已有 <code>configured.component !== binding.component</code> 的显式校验。</p>
+<p>按要求遍历该字段的<strong>全部实际消费者</strong>，而不是只加一个接口字段。第三处消费者 <code>runtime/agentHost.ts</code> 的 Codex 重连路径原本从零重建 control 并丢掉该字段—— 一个 Session 生命周期中途悄悄丢掉产品身份——已一并修正为透传。 <code>launchBroker.validateProviderControl</code> 原有的一致性校验未动：非法组件、 或组件与 <code>adapterId</code> 相互矛盾，仍然拒绝。</p>
+<p><strong>未</strong>在测试里补 <code>component</code> 来掩盖问题：新证据一律从真实 CLI 配置取值。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--p12-按最新状态解析并在-prompt-前校验全部值">10.3 P1(2) 按最新状态解析，并在 prompt 前校验全部值</h3>
+<p><code>planAcpSessionConfiguration</code> 与 <code>AcpConfigurationPlan</code>（一次性计划）删除， 改为每个字段在<strong>轮到它时</strong>对当前完整列表解析 （<code>resolveAcpConfigurationField</code>），全部步骤落地后再按 Agent 最后一次报告的 列表校验<strong>所有显式请求值</strong>（<code>verifyAcpConfiguration</code>）。顺序是有界且固定的 <code>model → effort → permission</code>：model 会重定义其他轴，permission 放最后因为 它的错值等于授出权限。<strong>没有无界重试或自动修复循环</strong>——有界显式顺序加一次 最终确认即可。</p>
+<p>对只能应答的旧式 mode-only 对端，如实区分”确认过”与”仅被接受”： <code>confirmation</code> 有 <code>already</code>／<code>observed</code>／<code>acknowledged</code> 三态， <code>session/set_mode</code> 不返回选项列表，因此只记 <code>acknowledged</code>， 且<strong>不把请求值写回缓存列表</strong>——那样做等于制造协议本身拒绝给出的确认， 最终校验会把 Yui 自己的假设当成 Agent 的报告读回来。<strong>从不伪造 <code>observed</code>。</strong></p>
+<h3 id="doc-implementation-designs-T07-evidence-md--p23-目录完整性按当前字段契约判定">10.4 P2(3) 目录完整性按当前字段契约判定</h3>
+<p><code>validateCatalog</code> 中”models 为空即不完整”改为 <code>models.length === 0 &amp;&amp; !modelAxisIsAccountedFor(fields)</code>。判据是 <code>model</code> 字段<strong>是否明确陈述了 <code>available</code></strong>：</p>
+<ul>
+<li><code>available: false</code> —— 该轴不存在，<code>reason</code> 说明原因；</li>
+<li><code>available: true</code> —— 该轴存在但取值延迟枚举（ACP：列出模型需要真实 可能计费的 Session）；</li>
+<li><strong>未陈述</strong> —— Codex／Claude 的形状，它们成功时把模型写进 <code>models</code>， 所以空列表确实意味着发现失败，仍然拒绝。</li>
+</ul>
+<p>判据不能用 <code>allowCustom</code> 或”是否可自定义”：Codex（probe:113）与 Claude（probe:192）同样是 <code>allowCustom: true</code>，那样会把它们真正损坏的目录 判为合格。实时握手与 <code>reason</code> 的透传、以及缓存读回路径共用同一段校验， 因此三条路径一致。<strong>没有 all-catch 或兜底遮蔽</strong>：真正缺失的目录仍然落兜底 并带原因。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--证据穿透-planner共-21-项全部通过">10.5 证据（穿透 Planner，共 21 项，全部通过）</h3>
+<p>两个临时测试文件，均为一次性 Home、临时 HOME、绝对 launcher、无凭据对端； <strong>零真实模型、零凭据读取</strong>。命令：</p>
+<pre><code>node --test test/tmp/acp-run-configuration.test.mjs        # 14 项
+node --test test/tmp/acp-catalog-resolution.test.mjs        #  7 项</code></pre>
+<p>链路是完整的：真实 <code>yui config agent add --component</code> ／ <code>yui config system set</code> ／ <code>yui task create</code> ／ <code>yui task role update --model --effort --permission-strategy</code> → 重开 Store （<code>openConfiguredTaskStore</code>）→ 真实 <code>resolveEffectiveLaunch</code> → 落 Turn → <strong>真实 <code>FileRoleLaunchPlanner.plan</code></strong> → 真实 <code>validateAgentHostLaunchPayload</code> → 真实 <code>startStructuredProviderSession</code> → 无凭据 ACP 对端。<strong>start 与 resume 两半都走完</strong>（resume 通过真实 <code>createRoleSessionSet</code> + <code>recordRoleAgentSession</code> 记录 Session 后再规划， 因为 Planner 拒绝凭空造 Session）。</p>
+<p>P1(1)：真实规划的 start 载荷携带 <code>component=claude-agent-sdk</code> 与 <code>desiredConfiguration={model:b,effort:high,permissionBypass:true}</code>； resume 的 restore 载荷携带同一 component；broker 拒绝与 adapter 矛盾的组件； bypass 以该产品自己的 <code>bypassPermissions</code> 到达对端，三轴均 <code>observed</code>； <code>unknown-acp-agent</code> 请求 bypass 被显式拒绝。</p>
+<p>P1(2)：effort 先被满足、换 model 后被重置 → 以 <code>set model=b</code> 在前、<code>set effort=high</code> 在后重新下发，prompt 在 <code>&lt;model=b,effort=high,mode=normal&gt;</code> 下发生；只有新 model 才提供的 effort <strong>未被提前拒绝</strong>；<code>mode</code> 重置了已确认的 model → 报 <code>ACP Session run configuration did not hold.</code> 且 <strong>零 prompt</strong>； 替换值在其所在步骤失败；对端不提供的 mode 被拒并列出真实取值 （<code>Offered values: normal, plan</code>）；旧式对端得到且仅得到 <code>[["permission","acknowledged"]]</code>，<code>observed</code> 一次都没有出现。</p>
+<p>新增/resume 与报错覆盖：resume 经 <code>session/load</code> 后按重载 Session 的当前 状态应用配置，prompt 在 <code>&lt;model=b,effort=high,mode=bypassPermissions&gt;</code> 下 发生；resume 的失败与 start 同形且零 prompt；拒绝信息同时给出轴、请求值 与 Agent 自己的取值列表。</p>
+<p>P2(3)：真实 <code>AgentConfigurationCatalogService.resolve</code> 对 <code>models=[] + available=true</code> 返回 <code>source=live</code>（此前是 <code>fallback</code>）， <code>failure=undefined</code>，实时握手完整保留 （<code>agentName=fake-acp-agent</code>、<code>protocolVersion=1</code>、<code>capabilities=[loadSession]</code>）， 且不含兜底目录的 “Runtime configuration catalog is unavailable.”； 每个延迟轴的 <code>reason</code> 都到达调用方（<code>available: false</code> 与 <code>true</code> 都被接受， 且仍然是两种不同的答复）；缓存写盘后令发现失败 → <code>source=cache</code> 且握手与 <code>available</code> 原样读回；一份 Codex／Claude 形状（未陈述 <code>available</code> 且 <code>models</code> 为空）仍然被拒并落 <code>fallback</code>。 <strong>向导实测</strong>：真实 <code>resolveRoleWizardArguments</code> + 真实 <code>agent.capabilities</code> 端口，脚本化终端选到自定义模型，产出 <code>--agent acp-fake --model sonnet-x --effort high</code>（该命令随后真实执行并读回 生效），全程<strong>没有出现</strong> “Runtime capability request failed”／ “Runtime configuration catalog is unavailable”；同一段脚本在探针真的不可用时 <strong>会</strong>打印这两条警告——所以前一例的”没有出现”是解析结果的事实， 不是脚本化终端的假象。</p>
+<p>绿测试单独不算证据，故做六次变异，每次都重建 <code>dist</code> 后复跑：</p>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>变异</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>删掉 Planner 两处 <code>component</code></td>
+<td>11 项中 <strong>7 项失败</strong>（含 start／resume／bypass 到达／旧式对端）</td>
+</tr>
+<tr>
+<td>删掉最终全值校验</td>
+<td>仅”mode 重置已确认 model”失败</td>
+</tr>
+<tr>
+<td>改回按初始列表一次性解析</td>
+<td>恰好复审点名的两项失败（effort 被重置、effort 仅新 model 提供）</td>
+</tr>
+<tr>
+<td>旧式分支把 <code>acknowledged</code> 写成 <code>observed</code></td>
+<td>仅旧式对端一项失败</td>
+</tr>
+<tr>
+<td><code>validateCatalog</code> 恢复”models 为空即不完整”</td>
+<td>目录 7 项中 <strong>4 项失败</strong></td>
+</tr>
+<tr>
+<td>判据改用 <code>allowCustom</code></td>
+<td>仅”Codex／Claude 空目录仍被拒”失败</td>
+</tr>
+</tbody>
+</table>
+<p>第一次变异即是复审的结论本身：普通配置在真实 Session 里必然失败。 六次变异后全部还原并复验 21/21 全绿。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--边界">10.6 边界</h3>
+<p>迁移 11 经复审无缺陷（未重写 payload、旧 <code>default</code> 未加宽、快照往返与 方向明确），本轮<strong>未改动</strong>；1–10 未改。之前怀疑的 grouped options 本轮<strong>未被确认为缺陷</strong>，因此不处理，也不为推测中的未来矩阵扩面。 <code>runtimeEventInbox</code> 对 ACP 的排除仍然未改。</p>
+<p>本轮<strong>未读共享凭据、未调用真实模型、未改共享服务或全局配置、 未 push／PR／远端合并／发布／归档</strong>。默认权限未放宽，bypass 仍必须显式； model／effort／权限的 Session 副作用失败时不发 prompt、不换值、不换模型、 不换路由。仅本 W3 受管工作区、临时 HOME 与绝对本地 launcher。</p>
+<p>不声称与产品完整功能等价：本轮验证配置推送、确认与目录解析路径， 工具权限往返、取消与并发竞态仍未真实覆盖。</p>
+<p>收尾：<code>npm run lint</code> 与 <code>npm run build</code> 干净，<code>npm test</code> 81/81 通过 （未新增永久回归测试），临时夹具与临时测试在交付前删除。 手册 HTML 由 Leader 重新生成，本节只更新 Markdown。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--turn-16-配置链最终复审与采用">11. turn-16 配置链最终复审与采用</h2>
+<p>代码候选 <code>c12e22a6a729c11db67c29aa55a767a1da16c820</code> 已由原独立审查者 复核三项返修及直接影响，均关闭，未发现本修复引入的重大问题。 Leader 另以实际 Session 类和内存协议对端复现三种情形： 模型重置 effort 后补设成功；新模型才提供的 effort 能正确选择； 后续设置把模型重置时明确失败。实际 CatalogService 的 live 和 cache 读回均保留延迟枚举说明与握手事实。未调用模型或读取凭据。</p>
+<p>Leader 还用真实 storage 10 代码创建含 ACP Role 和已完成 Turn 的一次性 Home，再由候选升级到 11：旧 <code>default</code>、未设置的 model／effort、 组件身份和原始输出均保留；旧 reader 拒读新版。测试 Home 和升级备份 已经清理。此前两次 Claude ACP 真实模型验证仍仅属于 §8，不重复执行， 也不作为本次新增配置效果的真实 Provider 验收。</p>
+<p><code>integration-4</code> 完成依赖准备、lint 和目标引用 CAS 快进。 集成后 <code>make install-local</code>（含 build）通过；在清除继承 YUI 环境的 临时 Home 内，一次运行全部三个 <code>test/core/*.test.js</code> 文件： <strong>81/81 通过，0 跳过，测试阶段约 4.30 秒</strong>。临时检查不进入永久 suite。 手册 Markdown、HTML、Manifest 与检查报告在收尾时同步。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--当前配置入口">当前配置入口</h3>
+<p>Agent 注册仍只持有组件、可执行程序、启动参数和环境来源；model、effort、 权限策略由 Role 运行配置持有，不复制成第二套独立可写默认值。 以下展示的是新版本命令形式，不表示本 Task 已安装或切换共享配置：</p>
+<pre class="text diagram"><code>yui config agent add claude-sdk --component claude-agent-sdk --command claude-agent-acp
+yui task role add &lt;task&gt; sdk-worker --agent claude-sdk --model &lt;model-id&gt; --effort &lt;effort-id&gt; --permission-strategy bypass
+yui task role update &lt;task&gt; sdk-worker --clear-model --clear-effort --permission-strategy default</code></pre>
+<p><code>config role</code> 的同名运行选项及 Profile／Task Role 绑定使用相同配置规则。 模型和 effort 的值必须是对端 Session 实际提供的值；普通能力查询仅 initialize，不通过隐式新建 Session 来填充枚举，因此可先输入自定义值， 在启动／恢复时确认，不支持则不发送 prompt。</p>
+<p>权限语义明确分开：</p>
+<ul>
+<li><code>default</code> 不请求改变对端 mode，Yui 的 permission-request 回答仍保守拒绝； 旧配置升级后不自动成为 bypass。</li>
+<li>显式 <code>bypass</code> 只映射到已识别组件声明、且对端实际提供的免确认 mode； 不是修改 API 认证，也不是绕过 Yui 的 Task／workspace 权限边界。</li>
+<li><code>configured</code> 使用用户明确指定、对端提供的 mode id。</li>
+</ul>
+<p>现代 config-options 响应以完整状态确认所有显式期望。 旧式 mode-only 接口没有返回配置状态时仅记录 <code>acknowledged</code>，不制造 <code>observed</code> 值。未接通的客户端交互授权、未知产品的特殊选项，以及所有 产品的完整功能等价性不在本轮完成声明内。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--turn-17-两项已确认问题修复">12. turn-17 两项已确认问题修复</h2>
+<p>本轮在 Task main 直接修复两个可复现问题，不扩大架构范围：</p>
+<ul>
+<li><code>config agent update --adapter acp</code> 重述当前方案时保留明确的 <code>claude-agent-sdk</code> 身份；只有真正切换方案且未显式选择组件时才推导默认。 补丁依据事务内读到的现状生成；真实身份变更的引用保护不变。</li>
+<li>ACP 每次新建或恢复连接的首个 prompt 都携带短 Session Manifest 指针， 因为已创建的 Session 可能在第一条输入前断开。后续同连接输入不重复； 不增加持久确认状态，不重放 Task 全文。</li>
+</ul>
+<p>临时测试调用实际命令与 SQLite Store，以及实际 ACP Session 类和内存 协议对端。修改前 <strong>9 项中 4 失败、5 通过</strong>，分别复现身份被覆盖、 引用导致无变化操作误拒、连同命令更新时身份丢失，以及恢复时缺失引导。 修改后 <strong>9/9 通过</strong>，并确认实际方案切换、显式身份变更及引用保护仍有效。</p>
+<p><code>make install-local</code>（含 build）和 lint 通过；清除继承 YUI 环境后， 在临时 Home 中一次执行三个 core 文件，<strong>81/81 通过，0 跳过， 约 4.34 秒</strong>。原独立审查者只读复审差异及临时测试，未发现可达问题。 临时夹具交付前移除，永久 suite 不增长。</p>
+<p>无持久 schema 变化，storage 版本保持 11；未调用真实模型、读取凭据、 修改共享配置或服务。本轮不重新声明真实 Claude ACP 效果验证， 既有真实证据仍仅限 §8。Endpoint 配置展示、产品描述集中化和实现版本 固定等架构建议留待独立范围，不作为本轮已完成内容。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--w4组件描述与只读配置事实贯通">13. W4：组件描述与只读配置事实贯通</h2>
+<p>2026-09-09，<code>task-19/work-item-4</code>，基线 <code>1ddfc4b2b5da3f54a84909248aed4e70c4e5c24f</code>。<code>turn-25</code> 仅核对上下文并 报告已有改动；Leader 确认归属后，<code>turn-28</code> 在原 Session、原工作树接续完成。 本节是实现者自检证据，不代替 Leader 的 Candidate 接受或独立复审。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--用户可读取的三种事实">用户可读取的三种事实</h3>
+<p><code>yui task role session inspect &lt;task&gt; &lt;role&gt;</code> 的文本和 <code>--json</code> 入口现在同时保留：</p>
+<ul>
+<li>Role／Profile 当前期望，仍由现有配置记录负责；</li>
+<li>Session 固定的组件、model、effort、权限和 Profile intent，不随后续 Role 编辑改写；</li>
+<li>当前连接最后收到的对端报告：握手、Yui 支持的配置轴及其可用值、每个启动 请求的历史确认强度和该轴最新报告值。</li>
+</ul>
+<p>JSON 的原 <code>role</code>、<code>session.effective</code>、<code>providerBinding</code> 保留，新增只读 <code>runConfiguration</code>。文本增加期望与固定请求对照表，并复用既有权限展示。 <code>confirmation=already/observed/acknowledged</code> 表示启动配置时的证据； <code>current.status=observed/unobserved</code> 单独说明当前值。外层 <code>status=observed</code> 表示有当前连接报告可读，<strong>不表示每个请求都已观察到生效</strong>； <code>observedAt</code> 是读取时间，不是独立测量执行效果的时间。</p>
+<p>没有 Session 时不探测；Host 不可达、已退出、身份不符或读取过大时明确 <code>unknown</code>。Codex／Claude 的现有 Session 实现没有配置观察读取接口，因此 返回 <code>unsupported</code>；不声称底层产品永远不支持，也不拿启动参数冒充观察。 纯 Store 命令调用没有注入 live 读取时明确 <code>not queried</code>。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--单一描述来源与边界">单一描述来源与边界</h3>
+<p>ACP 的产品特定 bypass 值归入 <code>executionComponents.ts</code>，通用配置代码 仅消费该声明并检查对端实际提供的值；未知组件仍拒绝按 mode 名猜测授权。 浏览器组件名称直接由既有两个目录生成到原脚本中，删除手工镜像表， 不增加浏览器资源端点、插件注册系统或任意组合机制。</p>
+<p>能力探针与 Session 共用握手投影和展示。<code>config agent capabilities</code> 保留 model／effort 延迟枚举的原因，只做 <code>initialize</code>，不为菜单创建 Session。 认证方法列表仅证明对端声明了方法，不再据此声称认证未完成或 Session 必然失败。公开配置轴仅限 Yui 支持的 model、effort、permission，复用 配置解析的类别／ID 选择逻辑；不导出对端任意认证设置、完整环境或 token。</p>
+<p><code>StructuredProviderSession → AgentEndpoint → Host status → CLI inspect</code> 实际贯通；Host 每次 status 读取 getter，不缓存启动时的投影。 现代配置响应在管道接收时应用，避免 <code>await</code> 后旧响应覆盖同批到达的新通知； 最终配置校验仍保留，启动时已经漂移则失败而非发送 prompt。 旧式 <code>set_mode</code> 使旧值暂不可观察，后续真实通知可提供当前值， 但不会把历史 <code>acknowledged</code> 改成 <code>observed</code>。</p>
+<p>只新增运行时只读投影，没有持久 payload 变更，storage 保持 <strong>11</strong>， 无需新增迁移。未增加 generation、代码版本管理、热加载、自动恢复或默认值副本； 只澄清既有 <code>ImplementationRef.generation="1"</code> 不是代码版本或构建指纹， 匹配此值本身也不证明原生 Session 可恢复。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--精确隔离证据">精确隔离证据</h3>
+<p>先运行 <code>make install-local</code>，测试均使用绝对本地 launcher、一次性 HOME／ YUI_HOME 和白名单环境，未继承当前受管 Session 环境。入口夹具通过本地 <code>setup</code> 初始化隔离 Home，立即停止该隔离 Controller；后续仅使用无模型 ACP 子进程和临时 Unix socket，结束时回收。</p>
+<p>临时检查命令：</p>
+<pre class="text diagram"><code>node --test test/core/tmp-run-configuration.test.js test/core/tmp-configuration-entrypoints.test.js</code></pre>
+<p>最终 <strong>11/11 通过，0 跳过，约 7.61 秒</strong>。其中 10 项覆盖实际 ACP Session 类、确认强度、动态更新、未知产品拒绝、读取解析和生成的浏览器标签； 另 1 项是多断言入口链路：</p>
+<ul>
+<li>真实 CLI 注册组件、查询能力、配置 Task Role；真实向导调用实时能力端口， 生成的命令实际执行并从 Store 读回；Profile 创建、绑定和 read intent 保留。</li>
+<li>实际 Task workspace 激活、Turn 和 Session 记录、<code>FileRoleLaunchPlanner</code>、 Endpoint factory 和 ACP Session 均执行；没有在夹具里补产品身份或期望值。</li>
+<li>通过真实 <code>openAgentHostControl</code>／<code>inspectAgentHost</code> socket 读取实际 Endpoint， CLI 文本和 JSON 均读取到三轴请求与观察；对端方法记录证明 capabilities 只有 initialize，重复 inspect 无任何 ACP 消息。</li>
+<li>显式夹具输入引起 mode 更新后，CLI 读到新值，同时保留历史确认；真实 Planner resume 经 <code>session/load</code> 恢复原 ID 并重设原固定请求。记录中只有 一次 new、一次 load、一次显式夹具 prompt，无查询诱发的额外调用。</li>
+<li>clear model／effort 和 default 权限只改变 Role 期望，Session 固定请求及 实际报告不被改写；断开 socket、替换 native ID、exited 和过大报告均不伪装 当前配置；额外认证选项及 wire 上额外 env/token 属性不进入公开投影。</li>
+</ul>
+<p>红→绿证据：新增旧式通知用例先失败（永久 unobserved），同批响应／通知检查 复现旧响应覆盖更新；凭据选项检查先失败（任意轴被公开）。修复后均通过。 能力文本检查还发现 model／effort 原被过滤掉，其延迟枚举原因现已显示。</p>
+<p>本轮没有重跑完整 Controller → <code>runAgentHost</code> 主生命周期 E2E；该分支的 getter 消费、身份读取和无持久写入由完整差异追踪确认，socket 测试使用受控 status dispatcher。未运行真实 Provider／模型、读取共享凭据、修改共享 Home、 全局安装或共享 Controller，未 push／发布／归档。手册生成仍交由 Leader。</p>
+<p>收尾命令：<code>make install-local</code>（含 build）、<code>npm run build</code>、 <code>npm run lint</code> 均通过。两个临时测试文件和无模型 ACP 夹具已移除， 随后在白名单环境和一次性 Home 中仅运行一次 <code>npm run test:core</code> （含 pretest build）：<strong>81/81 通过，0 跳过，测试阶段约 4.19 秒</strong>。 未增加永久测试，最终差异通过 <code>git diff --check</code>。</p>
+<h2 id="doc-implementation-designs-T07-evidence-md--主线组合integration-7">14. 主线组合：integration-7</h2>
+<p>2026-09-09，在 Leader 专属集成工作区重放 Task 提交，采用主线 <code>bbb2e7ff3c2ebb94769bc57a3603faf178ca7ea8</code>（包含 T08、T11、T12）。 原 Task base、W4 Candidate 和主线历史均保留；Task main 在集成验收前 保持 <code>7fb000d22d44b05fecae0f33f4f450ef84d4d3d4</code>。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--语义采用">语义采用</h3>
+<ul>
+<li>保留主线 AgentRun、Draft planning、执行权限和环境／插件合同。 ACP 使用组件能力决定原生 Session ID 分配，不回退为产品名称判断。</li>
+<li>原生 Provider Turn 与 Yui AgentRun 不混用：恢复载荷保留接收端既有的 <code>ownedTurn</code> 字段，修正 Planner 写成 <code>ownedRun</code> 导致归属丢失的组合风险。</li>
+<li>沿用主线已合入的 Endpoint 实现身份机制，不添加第二套 generation。 开发 checkout 的现有指纹覆盖范围补入 ACP 相关模块；不保留旧分支 “固定 1”的过期说明，不以身份匹配冒充原生恢复成功。</li>
+<li>生成式手册文件在重放时保留主线版本，最后从合并后的 Markdown 重新生成， 不把某一分支的过期 HTML 当作合并后的文档。</li>
+</ul>
+<h3 id="doc-implementation-designs-T07-evidence-md--中央迁移链">中央迁移链</h3>
+<p>主线当前 storage 为 13。已发布迁移 <strong>1–13 完全保留</strong>； 本 Task 尚未发布的 9／10／11 顺延为 <strong>14／15／16</strong>，分别对应 ACP 工作区配置、明确执行组件、运行配置。新增迁移的 <code>introducedIn</code> 统一标记为 下一计划版本 <code>0.15.10</code>，不代表本 Task 执行了发布或修改全局版本。 业务对象虽改名 AgentRun，主线 SQLite 仍使用 <code>turns</code> 表，组件迁移继续 处理该真实表，不创建第二份执行历史。迁移保留 <code>executionAuthority</code>。</p>
+<p>一次性旧 Home 由实际主线代码构建并写入 Role、Session 和已完成 AgentRun， 不是通过改版本号伪造。实际 <strong>13→16</strong> 升级通过，前 13 项迁移名称和 校验值逐项不变；输出文本、权限、原生 Session ID 和 delivery 权限均保留， 组件按原计划回填。主线旧 reader 拒读升级后的 Home。</p>
+<h3 id="doc-implementation-designs-T07-evidence-md--隔离组合证据">隔离组合证据</h3>
+<p>临时 <code>output/t19-combination.mjs</code> 和 <code>output/t19-runtime.mjs</code> 验证：</p>
+<ul>
+<li>实际旧 Store 写入、当前升级入口、当前 Store 重读与旧 reader 拒绝；</li>
+<li>实际 T12 Draft planning 的 ACP Planner 恢复，保留组件、transport、 原生 attempt/Turn 归属；</li>
+<li>实际 ACP Session、Endpoint factory 的 load／配置／查询／submit， 重复查询不发送 ACP 消息，恢复首 prompt 带 Manifest 指针，后续不重复。</li>
+</ul>
+<p><code>make install-local</code>（包含 build）及后续 build 通过。 三个原 core 文件共 81 项，初次 80 通过；唯一失败为集成依赖安装时禁用 脚本，导致 <code>node-pty</code> 原生模块缺失、Controller 未就绪。按锁定依赖执行 <code>npm rebuild node-pty</code> 后，仅复验该 Controller 用例，通过（约 1.17 秒）。 主线新增 <code>test/core/plugin-smoke.test.js</code> 另行通过（约 0.30 秒）。 因此当前四个 core 文件的 <strong>82 项均有通过证据</strong>，未新增或削弱永久测试。 SQLite 原生依赖亦仅在集成工作区完成 rebuild。</p>
+<p>所有运行检查使用白名单环境、一次性 Home／socket／无模型协议对端； 没有真实 Provider 调用、共享 Home／凭据／服务修改或远端写入。 不宣称完整真实 Agent、工具授权或多客户端生命周期 E2E。 临时测试、旧代码副本和测试 Home／备份在验证后清理。</p>
 </article><article id="doc-implementation-designs-T08-draft-leader-md"><div class="source"><a href="implementation/designs/T08-draft-leader.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T08-draft-leader-md--t08-技术方案draft-leader-与正式执行">T08 技术方案｜Draft Leader 与正式执行</h1>
 <p>硬依赖：T03、T04、T05。</p>
 <p>任务定义：<a href="#doc-implementation-tasks-T08-draft-leader-md">交付范围与证据</a>。</p>

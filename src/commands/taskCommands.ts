@@ -53,8 +53,14 @@ import {
 } from "../executor/effectiveLaunch.js";
 import type { RoleAgentConfig } from "../executor/agentAdapter.js";
 import { defaultTableWidth, renderTable } from "../output/table.js";
+import { agentExecutionComponentLabel } from "../agent/executionComponents.js";
+import {
+  agentRunConfigurationLabel,
+  renderAgentRunConfiguration
+} from "../output/agentRunConfigurationPresentation.js";
+import type { AgentRunConfigurationObservation } from "../runtime/agentRunConfiguration.js";
 import { formatTimestamp } from "../output/timePresentation.js";
-import { renderRoleDetails } from "../output/rolePresentation.js";
+import { renderRoleDetails, renderRoleLaunchComparison } from "../output/rolePresentation.js";
 import {
   createTaskMessage,
   expandTaskMessageResult,
@@ -484,6 +490,16 @@ export type TaskCommandOptions = Readonly<{
   deltaRecheckPreflight?: DeltaRecheckPreflight;
   /** Issue 07: per-Project diff text for a delta-recheck dispatch, digest-verified. */
   deltaRecheckDiff?: Readonly<Record<string, string>>;
+  /**
+   * What the live Agent reported it is running under, read by the CLI before a
+   * Session inspect.
+   *
+   * Absent for every other command, and absent rather than empty when no Session
+   * has ever run — the inspect prints only persisted facts in that case. When
+   * present it is a reading, not a request: the Role's configuration remains the
+   * expectation, and this states what the Agent answered about it.
+   */
+  liveRunConfiguration?: AgentRunConfigurationObservation;
   /** CLI-prepared capability validation; throws before a Role mutation persists. */
   validateAgentConfiguration?: (
     input: Readonly<{
@@ -2432,17 +2448,36 @@ function taskRoleSessionCommand(
     const sessions = store.getTaskRoleSessionSet(task.id, role.name);
     const active = sessions?.sessions[sessions.activeAgentId] ?? null;
     const binding = sessions?.providerBinding ?? null;
+    // The live reading, when the CLI took one. Rendered under the persisted
+    // facts rather than merged into them: the Session's own record is what Yui
+    // launched, and this is what the Agent says about it now. An empty render
+    // means there was nothing an Agent reported, and the one-line label above
+    // still states which of the "no value" cases applies.
+    const runConfiguration = active === null ? undefined : options.liveRunConfiguration;
+    const runConfigurationDetail = renderAgentRunConfiguration(runConfiguration);
     return output(
       active === null
         ? `No Session exists for ${task.id}/${role.name}.\n`
         : [
             `Session ${task.id}/${role.name}`,
-            `Agent: ${active.agentId}/${active.adapterId}`,
+            // The component, not just the connection plan: several products are
+            // reached over `acp`, and the plan alone cannot say which one ran.
+            `Agent: ${active.agentId}/${agentExecutionComponentLabel(active.effective.component)}`
+              + ` (${active.adapterId} plan)`,
             `Native id: ${active.nativeSessionId}`,
             `Session: ${active.status}${active.endReason === undefined ? "" : `/${active.endReason}`}`,
-            `AgentRun: ${binding?.run?.status ?? "none"}`
-          ].join("\n") + "\n",
-      { task, role, session: active, providerBinding: binding }
+            `AgentRun: ${binding?.run?.status ?? "none"}`,
+            `Run configuration: ${agentRunConfigurationLabel(runConfiguration)}`
+          ].join("\n") + "\n"
+          + `\n${renderRoleLaunchComparison(role, active.effective)}\n`
+          + (runConfigurationDetail === "" ? "" : `\n${runConfigurationDetail}\n`),
+      {
+        task,
+        role,
+        session: active,
+        providerBinding: binding,
+        ...(runConfiguration === undefined ? {} : { runConfiguration })
+      }
     );
   }
   if (command === "stop") {

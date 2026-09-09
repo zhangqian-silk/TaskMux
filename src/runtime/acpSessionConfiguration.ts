@@ -13,21 +13,27 @@
  * has never seen is configured by the same code as one it ships knowledge of.
  *
  * The second is that a product-specific fact must be named, never inferred. One
- * such fact exists: which mode value means "act without asking". No ACP field
- * marks it, and its name is the Agent's own choice, so a value called
+ * such fact is needed here: which mode value means "act without asking". No ACP
+ * field marks it, and its name is the Agent's own choice, so a value called
  * `bypassPermissions` proves nothing on its own — a different Agent could use
  * the same word for something narrower, or a narrower word for the same power.
  * Guessing from the string would convert an unverified reading into granted
- * authority. So each identified component states its own value below, and a
- * component Yui cannot identify reports the request as unsupported instead.
- * That is a worse user experience and the only honest one.
+ * authority. So this module does not decide it: it asks the execution component
+ * catalog, where every product is described, and a component that names no
+ * bypass value has its request reported as unsupported instead. That is a worse
+ * user experience and the only honest one. Nothing here enumerates which
+ * components exist, so a new ACP product is added by describing it there rather
+ * than by editing this file.
  *
  * Nothing here performs I/O: the caller owns the transport, this module owns
  * the decision. That keeps the mapping testable against recorded option lists
  * without a live Agent, and keeps the Session free of product knowledge.
  */
 
-import type { AgentExecutionComponentId } from "../agent/executionComponents.js";
+import {
+  agentExecutionComponent,
+  type AgentExecutionComponentId
+} from "../agent/executionComponents.js";
 import {
   ACP_MODE_CONFIG_ID,
   type AcpConfigOption,
@@ -119,30 +125,22 @@ export type AcpConfigurationResolution =
   | Readonly<{ kind: "step"; step: AcpConfigurationStep }>
   | Readonly<{ kind: "rejection"; rejection: AcpConfigurationRejection }>;
 
-/**
- * The mode value each identified component uses for "act without asking".
- *
- * Declared per component rather than per protocol because it is a product
- * decision, and stated as data so adding a second ACP product means adding a
- * line here instead of a branch in the Session. A component absent from this
- * map has no known bypass value, and `unknown-acp-agent` is deliberately absent:
- * Yui does not know which product answered, so it cannot know which of its
- * modes — if any — grants that authority.
- */
-const BYPASS_MODE_BY_COMPONENT:
-  Readonly<Partial<Record<AgentExecutionComponentId, string>>> = Object.freeze({
-    // The Claude Agent SDK's ACP bridge exposes Claude Code's own permission
-    // modes, where `bypassPermissions` is the documented mode that skips
-    // approval prompts. The bridge offers it only when its own preconditions
-    // hold, so its presence in the option list is still checked rather than
-    // assumed.
-    "claude-agent-sdk": "bypassPermissions"
-  });
-
 /** ACP categories that name each configurable axis. */
 const MODEL_CATEGORY = "model";
 const EFFORT_CATEGORY = "thought_level";
 const MODE_CATEGORY = "mode";
+
+/** Only expose the axes Yui configures, never arbitrary peer credential/settings fields. */
+export function acpRunConfigurationOptions(
+  options: readonly AcpConfigOption[]
+): readonly AcpConfigOption[] {
+  const selected = [
+    findOption(options, MODEL_CATEGORY, "model"),
+    findOption(options, EFFORT_CATEGORY, "effort"),
+    findOption(options, MODE_CATEGORY, ACP_MODE_CONFIG_ID)
+  ];
+  return options.filter((option) => selected.includes(option));
+}
 
 /**
  * Find the option describing one axis.
@@ -289,7 +287,7 @@ function resolveRequest(
       + "requested mode cannot be applied."
     );
   }
-  const bypassValue = BYPASS_MODE_BY_COMPONENT[component];
+  const bypassValue = agentExecutionComponent(component).bypassPermissionMode;
   if (bypassValue === undefined) {
     // The user asked for real elevation and Yui cannot name the value that
     // grants it for this product. Selecting a mode by how its name reads would

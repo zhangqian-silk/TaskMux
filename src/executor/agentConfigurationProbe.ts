@@ -16,6 +16,7 @@ import {
   readAcpInitializeResult,
   type AcpInitializeResult
 } from "../runtime/acpProtocol.js";
+import { handshakeObservationFrom } from "../runtime/agentRunConfiguration.js";
 import { YUI_VERSION } from "../version.js";
 import type {
   AgentConfigurationCatalog,
@@ -383,7 +384,8 @@ export async function discoverAcpConfiguration(
     warnings.push(
       "This ACP Agent advertises authentication methods "
       + `(${negotiated.authMethods.map((method) => method.id).join(", ")}); `
-      + "sessions fail until it is authenticated with its own CLI."
+      + "this handshake does not establish whether authentication is required "
+      + "or already satisfied."
     );
   }
   return {
@@ -396,19 +398,11 @@ export async function discoverAcpConfiguration(
         ? {}
         : { cliVersion: semanticVersion(negotiated.agentVersion)! }),
     // What this Agent actually agreed to, kept separate from what Yui's client
-    // statically supports. An Agent that reports no name stays `unknown` here
-    // and is never resolved into a product by its command line.
-    handshake: {
-      status: "observed",
-      protocolVersion: negotiated.protocolVersion,
-      agentName: negotiated.agentName ?? "unknown",
-      agentVersion: negotiated.agentVersion ?? "unknown",
-      capabilities: Object.entries(negotiated.capabilities)
-        .filter(([, enabled]) => enabled)
-        .map(([name]) => name)
-        .sort(),
-      authMethods: negotiated.authMethods.map((method) => method.id).sort()
-    },
+    // statically supports. Projected by the same function a live Session uses,
+    // so this query and a Session inspect cannot describe one Agent's handshake
+    // differently. An Agent that reports no name stays `unknown` here and is
+    // never resolved into a product by its command line.
+    handshake: handshakeObservationFrom(negotiated),
     // Deliberately empty, and not because ACP cannot select a model. ACP
     // enumerates a Session's models in the `configOptions` returned by
     // `session/new` — which means listing them requires creating a real Session

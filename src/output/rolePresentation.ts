@@ -3,9 +3,42 @@ import {
   type RoleSessionSet
 } from "../executor/agentExecutor.js";
 import type { GlobalRole, Role, RoleAgentBinding } from "../role/role.js";
+import { effectiveRoleForLaunch, type EffectiveLaunchSnapshot } from "../executor/effectiveLaunch.js";
 import { defaultTableWidth, renderTable } from "./table.js";
 
 type PresentedRole = GlobalRole | Role;
+
+/** Desired configuration and the fixed Session request are not Provider evidence. */
+export function renderRoleLaunchComparison(
+  role: PresentedRole,
+  effective: EffectiveLaunchSnapshot
+): string {
+  const pinned = effectiveRoleForLaunch(role, effective);
+  return renderTable(
+    "Configuration intent (not observed Provider state)",
+    [
+      { header: "Source", minWidth: 14, maxWidth: 20 },
+      { header: "Agent / component", minWidth: 18, maxWidth: 32 },
+      { header: "Model", minWidth: 10, maxWidth: 20 },
+      { header: "Effort", minWidth: 8, maxWidth: 14 },
+      { header: "Permission", minWidth: 12, maxWidth: 34 },
+      { header: "Profile intent", minWidth: 14, maxWidth: 14 }
+    ],
+    ([[`Role desired r${role.launchRevision}`, role],
+      [`Session pinned r${effective.sourceDesiredRevision}`, pinned]] as const).map(([source, current]) => {
+      const binding = current.agentBindings[current.activeAgentId]!;
+      return [
+        source,
+        `${binding.agentId}/${binding.component}`,
+        binding.config.model ?? "Agent default",
+        binding.config.effort ?? "Agent default",
+        permission(binding),
+        current.defaultAccess
+      ];
+    }),
+    defaultTableWidth()
+  );
+}
 
 export function activeRoleSummary(role: PresentedRole): Readonly<{
   agent: string;

@@ -119,4 +119,3 @@ async function choose(
   }
   return choices.find((choice) => choice.value === answer)?.value;
 }
-

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 import { detectRunningRelease } from "../release/runtimeRelease.js";
+import { isAgentAdapterId } from "../agent/adapterCatalog.js";
 
 /**
  * The generation of the Endpoint code this process is actually executing.
@@ -30,7 +31,12 @@ const ENDPOINT_CHECKOUT_MODULES = Object.freeze([
   "agentEndpoint.js",
   "agentEndpointIdentity.js",
   "structuredProviderHost.js",
-  "codexAppServerRuntime.js"
+  "codexAppServerRuntime.js",
+  "acpSession.js",
+  "acpProtocol.js",
+  "acpSessionConfiguration.js",
+  "agentRunConfiguration.js",
+  "jsonLineChannel.js"
 ]);
 
 function resolveEndpointGeneration(): string {
@@ -48,9 +54,12 @@ function resolveEndpointGeneration(): string {
 }
 
 const ENDPOINT_GENERATION = resolveEndpointGeneration();
-import { isAgentAdapterId } from "../agent/adapterCatalog.js";
 
-/** Execution implementation revision, independent from the surrounding CLI release. */
+/**
+ * Built-in Endpoint identity under the existing ImplementationRef contract.
+ * Uses the adopted release/checkout identity; matching it does not by itself
+ * prove that the Provider can recover its native Session.
+ */
 export function builtinAgentEndpointImplementation(adapterId: string): ImplementationRef {
   // Every catalogued adapter has a managed Endpoint. Re-listing the adapter
   // names here would let the two lists drift, so the catalog is the only source.

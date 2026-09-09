@@ -4,6 +4,7 @@ import { builtinAgentEndpointImplementation, requireBuiltinAgentEndpointImplemen
 import { CodexPreSubmissionError } from "./codexAppServerRuntime.js";
 export { builtinAgentEndpointImplementation } from "./agentEndpointIdentity.js";
 import type { AgentHostLaunchPayload } from "./launchBroker.js";
+import type { AgentRunConfigurationObservation } from "./agentRunConfiguration.js";
 import {
   ProviderDeliveryUnknownError,
   ProviderTurnBusyError,
@@ -59,6 +60,16 @@ export interface AgentEndpoint {
   readonly capabilities: Readonly<{ steer: "native" | "unsupported"; cancel: "native-interrupt" | "owned-process" }>;
   /** What this live connection proved about rebinding its Conversation. */
   readonly conversationRecoverability: "recoverable" | "unknown";
+  /**
+   * What the Agent reports it is running under, read live on every access.
+   *
+   * Deliberately not part of `configuration` above: that record is the process
+   * invocation, frozen before startup is awaited, and it structurally cannot
+   * carry a fact the Agent only states afterwards. Keeping the two apart is also
+   * what keeps them honest — one is what Yui asked for, the other is what the
+   * Agent answered.
+   */
+  readonly runConfiguration: AgentRunConfigurationObservation;
   submit(input: AgentEndpointInput): Promise<AgentEndpointSubmission>;
   steer(input: AgentEndpointInput): Promise<AgentEndpointSubmission>;
   inspect(): Readonly<{
@@ -204,6 +215,15 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
   get nativeSessionId(): string { return this.driver.nativeSessionId; }
   get conversationId(): string { return this.driver.conversationId; }
   get processInstanceId(): string { return this.driver.processInstanceId; }
+
+  /**
+   * Delegated rather than copied at construction: the Session reads its own
+   * current state, and a value captured here would freeze the configuration as
+   * it stood when the connection opened.
+   */
+  get runConfiguration(): AgentRunConfigurationObservation {
+    return this.driver.runConfiguration;
+  }
 
   submit(input: AgentEndpointInput): Promise<AgentEndpointSubmission> {
     return this.deliver(input, "submit");
