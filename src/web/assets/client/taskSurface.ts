@@ -18,7 +18,13 @@ export function renderTaskSurface(container, data, t, locale, actions) {
   summary.append(node("span", "detail-kicker", task.id), node("h2", "detail-title", task.title), pill(t, "status", task.status));
   const conversation = node("button", "record-open", say("View Leader Session (read-only)", "查看 Leader Session（只读）"));
   conversation.type = "button";
-  conversation.disabled = task.status === "draft" || task.status === "archived";
+  // A Draft's planning Session is a real Leader Session, so it is viewable once it
+  // actually exists. The button is disabled only when there is no Session to show
+  // — not because the Task has yet to be activated. The Session lives in the
+  // runtime observation, which arrives separately from the Context snapshot.
+  const leaderRole = (data.runtime?.roles ?? []).find((role) => role.name === "leader") ?? null;
+  const hasLeaderSession = Boolean(leaderRole?.runtimeSession?.nativeSessionId);
+  conversation.disabled = task.status === "archived" || !hasLeaderSession;
   conversation.addEventListener("click", () => actions.openTerminal({ scope: "task", taskId: task.id, roleName: "leader" }));
   summary.append(conversation);
   const chat = node("form", "record-card");
@@ -45,7 +51,8 @@ export function renderTaskSurface(container, data, t, locale, actions) {
       const receipt = await actions.sendMessage(task.id, message.value, requestId);
       sent.textContent = (receipt.disposition === "queued"
         ? say("Queued for Leader; not proof of execution · ", "已为 Leader 排队，不代表已执行 · ")
-        : say("Saved as Draft context; planning Session unavailable · ", "已保存为 Draft 上下文；planning Session 不可用 · "))
+        : say("Saved to Task context; this Task's Leader is not waking · ",
+          "已保存到 Task 上下文；该 Task 的 Leader 不会被唤醒 · "))
         + receipt.record.id;
       message.value = "";
       chat.dataset.unsent = "false";
@@ -61,9 +68,68 @@ export function renderTaskSurface(container, data, t, locale, actions) {
     }
   });
   summary.append(chat);
-  if (task.status === "draft") summary.append(node("p", "muted", say(
-    "Draft planning Session is not available yet. No runtime has been started.",
-    "Draft planning Session 尚不可用；此入口没有启动运行时。")));
+  // A Draft's Leader conversation IS its planning Turn, so this entry point does
+  // reach a Leader. Report the real planning facts the snapshot carries — Turn,
+  // Session, environment and the time they were observed — instead of asserting
+  // that no runtime exists. When nothing has been dispatched yet, say exactly
+  // that rather than implying the entry point is inert.
+  if (task.status === "draft") {
+    // Planning facts come from the Context snapshot, which is the authoritative
+    // durable read and the one that drives re-rendering. The runtime observation
+    // is explicitly optional (it may time out and only ever enriches a live
+    // Session), so it must not decide whether a planning Turn is reported.
+    const turnEntries = records("turn");
+    const planningTurns = values("turn").filter((turn) =>
+      turn.roleName === "leader" && turn.purpose === "planning");
+    // The latest planning Turn, whatever state it reached. A completed planning
+    // Turn is still the real observed fact; reporting only active ones would call
+    // a Draft that has genuinely talked to its Leader "not dispatched".
+    const planningTurn = planningTurns[planningTurns.length - 1] ?? null;
+    // A bounded snapshot may withhold Turn values. That is not evidence that no
+    // Turn exists, so it is reported as withheld rather than as "not dispatched".
+    const withheldTurns = planningTurn === null && turnEntries.some((entry) => entry.omitted);
+    const environment = planningTurn?.effective?.executionEnvironment ?? null;
+    const liveLeader = (data.runtime?.roles ?? []).find((role) => role.name === "leader") ?? null;
+    const planning = node("div", "record-card");
+    planning.dataset.planning = planningTurn !== null
+      ? planningTurn.status
+      : withheldTurns ? "withheld" : "not-dispatched";
+    planning.append(node("p", "muted", withheldTurns
+      ? say("This bounded snapshot withholds Turn detail; read the Turn directly to see planning state.",
+        "当前受限快照未展开 Turn 详情；请直接读取 Turn 查看规划状态。")
+      : planningTurn === null
+      ? say("No planning Turn has been dispatched yet. Sending a message queues the Leader.",
+        "尚未派发 planning Turn；发送消息会为 Leader 排队。")
+      : planningTurn.status === "active"
+      ? say("Planning Turn is active; messages reach the Task Leader.",
+        "planning Turn 正在进行；消息会送达 Task Leader。")
+      : say("Planning Turn reached " + planningTurn.status
+        + "; messages reach the same Task Leader and queue the next Turn.",
+        "planning Turn 已" + planningTurn.status + "；消息仍送达同一 Task Leader 并为下一个 Turn 排队。")));
+    const facts = [
+      [say("Planning Turn", "planning Turn"), planningTurn
+        ? planningTurn.id + " (" + planningTurn.status + ")"
+        : withheldTurns ? say("withheld by this snapshot", "本快照未展开") : say("none", "无")],
+      [say("Provider terminal", "Provider 终态"),
+        planningTurn?.result?.provider?.status ?? say("not reported", "未上报")],
+      // The Provider conversation is the durable transport identity of the
+      // Session this Turn actually ran on; the live Session, when observed,
+      // is reported separately so a stale read is never dressed up as current.
+      [say("Provider conversation", "Provider 会话"),
+        planningTurn?.result?.provider?.conversationId ?? say("not reported", "未上报")],
+      [say("Live Leader Session", "在线 Leader Session"),
+        liveLeader?.runtimeSession?.nativeSessionId
+          ?? say("not currently running", "当前未在运行")],
+      [say("Environment", "环境"), environment?.environmentRef
+        ?? say("empty (legal for planning)", "空环境（规划阶段合法）")],
+      [say("Turn observed at", "Turn 观测时间"),
+        planningTurn?.result?.completedAt ?? planningTurn?.updatedAt ?? say("unknown", "未知")]
+    ];
+    for (const [label, value] of facts) {
+      planning.append(node("p", "muted", label + ": " + value));
+    }
+    summary.append(planning);
+  }
   if (task.description) summary.append(richText(say("Current requirements", "当前要求"), task.description, t));
   if (task.completionSummary) summary.append(richText(t("detail.conclusion"), task.completionSummary, t));
   const edit = node("details", "record-card");

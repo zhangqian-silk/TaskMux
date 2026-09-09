@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { assertExecutionEnvironmentCurrent } from "../runtime/executionEnvironment.js";
+import { turnPurposeAdmitsTaskState } from "../turn/turn.js";
+import { taskOwnsManagedWorkspace } from "../task/task.js";
 
 import {
   configuredAgentToDefinition,
@@ -164,20 +166,42 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
   plan(input: TaskRoleLaunchPlanInput): PlannedRoleSession {
     const task = this.store.getTask(input.taskId);
     if (task === null) throw new Error(`Task not found: ${input.taskId}.`);
-    if (task.status !== "active" || task.executionGate.state !== "enabled") {
-      throw new Error(`Task execution is not enabled: ${input.taskId}.`);
-    }
     const role = this.store.getRole(input.taskId, input.roleName);
     if (role === null) throw new Error(`Role not found: ${input.taskId}/${input.roleName}.`);
     const activeTurn = this.store.getActiveTurn(task.id, role.name);
     if (input.turnId !== undefined && activeTurn?.id !== input.turnId) {
       throw new Error(`Role Turn is no longer current: ${input.turnId}.`);
     }
+    const purpose = activeTurn?.purpose ?? "execution";
+    if (!turnPurposeAdmitsTaskState(purpose, task)) {
+      throw new Error(`Task execution is not enabled: ${input.taskId}.`);
+    }
+    // A launch owns no managed workspace in two cases: a Draft planning
+    // conversation, and a Task activated with an empty environment plan. Both
+    // run with no Project entries, so there is nothing to preflight and no
+    // worktree to wait for. Every other fence — live Session, replaceable
+    // Conversation, configured Agent, Context protocol identity, adopted
+    // execution environment — still applies.
+    const planningDraft = purpose === "planning" && task.status === "draft";
+    const workspaceFree = planningDraft || !taskOwnsManagedWorkspace(task);
+    // An empty resource plan is a legal Task shape, but it does not make a
+    // shared directory a legal cwd. Once such a Task is active it can name the
+    // directory it means through the existing environment plan, so require that
+    // instead of silently running in whatever workspace the Role inherited with
+    // isolation skipped.
+    if (workspaceFree && !planningDraft && role.executionEnvironment === undefined) {
+      throw new Error(
+        `Task ${task.id} owns no workspace and no adopted execution environment, so Role `
+        + `${role.name} has no directory of its own to run in. Request activation with a `
+        + "`scratch` or `local` environment plan, or bind an adopted environment with "
+        + "`environment.bind`, instead of inheriting a shared workspace."
+      );
+    }
     const runWorkspace = activeTurn?.workspace;
     const main = this.store.getTaskWorkspace(task.id);
     // Quick Win (EXE-04/EXE-08): classify workspace preflight failures so
     // split-brain state is never reported as a transient Provider failure.
-    const preflight = classifyWorkspacePreflight(
+    const preflight = workspaceFree ? null : classifyWorkspacePreflight(
       this.store,
       task,
       input.roleName,
@@ -202,7 +226,11 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         : assignedWorkItem === undefined
           ? main
           : this.store.getWorkItemWorkspace(task.id, assignedWorkItem.id);
-    if (task.projectBindings.length === 0) {
+    if (workspaceFree) {
+      if (workspace !== null && !isDeepStrictEqual(workspace, main)) {
+        throw new Error(`Role workspace is not ready: ${input.taskId}/${input.roleName}.`);
+      }
+    } else if (task.projectBindings.length === 0) {
       if (workspace === null || !isDeepStrictEqual(workspace, main)) {
         throw new Error(`Role workspace is not ready: ${input.taskId}/${input.roleName}.`);
       }
@@ -247,7 +275,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const sessionSet = this.store.getTaskRoleSessionSet(task.id, role.name);
     const resolvedEffective = activeTurn?.effective
       ?? activeLiveRoleAgentSession(sessionSet)?.effective
-      ?? resolveTaskRoleEffectiveLaunch(this.store, role);
+      ?? resolveTaskRoleEffectiveLaunch(this.store, role, planningDraft ? "planning" : "execution");
     if (input.effective !== undefined
       && !isDeepStrictEqual(resolvedEffective, input.effective)) {
       throw new Error(`Role launch effective Turn snapshot changed: ${input.taskId}/${input.roleName}.`);
@@ -290,7 +318,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       runWorkspace,
       effective,
       {
-        purpose: activeTurn?.purpose ?? "execution"
+        purpose
       }
     );
   }
@@ -341,7 +369,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     knownNativeSessionId: string | undefined,
     workspaceOverride: ManagedWorkspace | undefined,
     effective: EffectiveLaunchSnapshot,
-    sessionPolicy: Readonly<{ purpose: "execution" | "review" }>
+    sessionPolicy: Readonly<{ purpose: "execution" | "review" | "planning" }>
   ): PlannedRoleSession {
     const launchRole = effectiveRoleForLaunch(role, effective);
     const binding = activeRoleAgentBinding(launchRole);
@@ -844,8 +872,14 @@ export function withNativeProjectDirectories<T extends RoleAgentConfig>(
 
 function resolveTaskRoleEffectiveLaunch(
   store: TaskStore,
-  role: TaskRole
+  role: TaskRole,
+  purpose: "execution" | "planning" = "execution"
 ): EffectiveLaunchSnapshot {
+  if (purpose === "planning") {
+    // Planning has no WorkItem assignment and no managed workspace, so it
+    // resolves the Role's own configured workspace with no writable Project.
+    return resolveEffectiveLaunch({ role, purpose: "planning" });
+  }
   const item = store.listWorkItems(role.taskId).find((candidate) => (
     candidate.assignee === role.name
       && !["accepted", "retired"].includes(candidate.status)

@@ -9,6 +9,10 @@ import {
 } from "./ports.js";
 import { formatTaskRecordReference } from "../task/taskRecordReference.js";
 import {
+  turnPurposeAdmitsTaskState,
+  type TurnPurpose
+} from "../turn/turn.js";
+import {
   currentRoleTurnProgressAt,
   DEFAULT_WORKFLOW_STALL_CANDIDATE_AGE_MS
 } from "./roleTurnStall.js";
@@ -39,7 +43,11 @@ export async function reconcileExitedRoleTurns(
   targetedInventory = selection !== undefined && !selection.full
 ): Promise<string[]> {
   const failed: string[] = [];
-  const candidates = selectedActiveSchedulerTasks(store, selection).flatMap((task) => (
+  // A Draft planning Turn is an admitted Turn with a real Host, so liveness must
+  // resolve it too; otherwise a lost planning host would never be reaped.
+  const candidates = selectedActiveSchedulerTasks(store, selection, {
+    includePlanningDrafts: true
+  }).flatMap((task) => (
     selectedSchedulerRoles(store, task.id, selection).flatMap((role) => {
       const run = store.getActiveTurn(task.id, role.name);
       if (run === null) return [];
@@ -275,14 +283,10 @@ function exactBatchInventory(
 
 function isResourceCandidate(
   task: Readonly<{ status: string; executionGate: { state: "enabled" | "stopped" } }>,
-  run: Readonly<{ status: string; createdAt: string }>,
+  run: Readonly<{ status: string; createdAt: string; purpose: TurnPurpose }>,
   now: Date
 ): boolean {
-  if (
-    task.status !== "active"
-    || task.executionGate.state !== "enabled"
-    || run.status !== "active"
-  ) {
+  if (!turnPurposeAdmitsTaskState(run.purpose, task) || run.status !== "active") {
     return false;
   }
   const createdAt = Date.parse(run.createdAt);

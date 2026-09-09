@@ -31,7 +31,12 @@ export {
 
 export type DispatchMode = "new" | "resume";
 export type TurnStatus = "active" | "completed" | "failed";
-export type TurnPurpose = "execution" | "review";
+/**
+ * A planning Turn is the Draft Leader's own conversation. It carries no
+ * WorkItem, ReviewRound, Lane or workspace, so it never becomes delivery
+ * evidence and never turns its result into a Candidate.
+ */
+export type TurnPurpose = "execution" | "review" | "planning";
 export type TurnFailureReason =
   | "startup-failed"
   | "runtime-failed"
@@ -171,6 +176,25 @@ export function isActiveTurn(run: Turn): boolean {
   return run.status === "active";
 }
 
+/**
+ * The Task lifecycle a Turn of this purpose may run in.
+ *
+ * Delivery requires an active Task with execution admitted. Planning is the
+ * Draft Leader's own conversation, so it is also admitted while the Task is
+ * still a Draft; the execution gate still applies, because a stopped Task must
+ * not gain a live process through the planning door. Nothing here relaxes the
+ * workspace fence — a planning Turn simply has no workspace to be ready.
+ */
+export function turnPurposeAdmitsTaskState(
+  purpose: TurnPurpose,
+  task: Readonly<{ status: string; executionGate: Readonly<{ state: string }> }>
+): boolean {
+  if (task.executionGate.state !== "enabled") return false;
+  return purpose === "planning"
+    ? task.status === "draft" || task.status === "active"
+    : task.status === "active";
+}
+
 /** Binds a freshly created, not-yet-persisted Turn to its frozen Context. */
 export function withTurnContextSnapshot(
   run: Turn,
@@ -252,7 +276,7 @@ export function validateTurn(run: Turn): Turn {
       throw new Error("Turn input timestamps moved backwards.");
     }
   }
-  if (!["execution", "review"].includes(run.purpose)) {
+  if (!["execution", "review", "planning"].includes(run.purpose)) {
     throw new Error(`Turn purpose is invalid: ${String(run.purpose)}.`);
   }
   if (run.workItemId !== undefined) {
@@ -270,12 +294,32 @@ export function validateTurn(run: Turn): Turn {
   }
   if (run.sourceExecutionGroupId !== undefined) {
     requireSafeIdentity(run.sourceExecutionGroupId, "Source ExecutionGroup id");
+    if (run.purpose === "planning") {
+      throw new Error("A planning Turn cannot aggregate an Execution Lane group.");
+    }
     if ((run.purpose === "execution" && run.workItemId === undefined)
       || (run.purpose === "review" && run.reviewRoundId === undefined)) {
       throw new Error("A source ExecutionGroup requires a main execution or review Turn.");
     }
     if (run.executionGroupId !== undefined || run.executionLaneId !== undefined) {
       throw new Error("A main Turn cannot also be an Execution Lane Turn.");
+    }
+  }
+  if (run.purpose === "planning") {
+    // Draft planning is deliberately delivery-free: no WorkItem, ReviewRound,
+    // Lane or workspace. That is what keeps a planning result from ever being
+    // read as execution evidence or promoted into a Candidate.
+    if (run.workItemId !== undefined) {
+      throw new Error("A planning Turn cannot reference a Work Item.");
+    }
+    if (run.reviewRoundId !== undefined) {
+      throw new Error("A planning Turn cannot reference a ReviewRound.");
+    }
+    if (run.executionGroupId !== undefined || run.executionLaneId !== undefined) {
+      throw new Error("A planning Turn cannot be an Execution Lane Turn.");
+    }
+    if (run.workspace !== undefined) {
+      throw new Error("A planning Turn cannot own a managed workspace.");
     }
   }
   if (run.workspace !== undefined) {

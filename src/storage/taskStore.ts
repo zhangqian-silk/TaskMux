@@ -286,6 +286,17 @@ export type TaskStore = {
   listTasks(): Task[];
   /** Active Task ids only; production SQLite uses its bounded catalog index. */
   listActiveTaskIds(): string[];
+  /**
+   * Draft Task ids that hold an active planning Turn — the one purpose admitted
+   * before activation. Bounded by the active-Turn pointers, never Task history.
+   */
+  listPlanningDraftTaskIds(): string[];
+  /**
+   * Draft Task ids whose activation request is still pending, so a Controller
+   * that restarts can find work whose releasing signal it never saw. Bounded by
+   * a partial index on the pending disposition, never Task history.
+   */
+  listPendingActivationRequestTaskIds(): string[];
   /** Current durable state revision; advances once per committed mutation. */
   getStateRevision(): number;
   getTask(id: string): Task | null;

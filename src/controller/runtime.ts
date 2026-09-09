@@ -132,6 +132,8 @@ import {
   runtimeObservationFromTaskEvent
 } from "../runtime/runtimeObservation.js";
 import { createTaskEvent } from "../event/taskEvent.js";
+import { turnPurposeAdmitsTaskState } from "../turn/turn.js";
+import { taskOwnsManagedWorkspace } from "../task/task.js";
 
 export type FileTaskControllerFactoryOptions = ControllerRuntimeOptions & Readonly<{
   store?: TaskStore;
@@ -887,8 +889,20 @@ export function createRuntimeLifecycleDispatcher(
     const task = request.scope === "task"
       ? store.getTask(request.taskId)
       : null;
+    // Resolve the admitted Turn first: its purpose decides which Task
+    // lifecycle and workspace fences apply. A Draft Leader planning Turn runs
+    // without a Task workspace; every delivery Turn keeps the full fence.
+    const activeTurn = request.scope === "task"
+      ? store.getActiveTurn(request.taskId, request.roleName)
+      : null;
+    if (request.scope === "task" && activeTurn === null) {
+      throw applicationError(
+        "INVALID_PARAMS",
+        "Task Role runtime attachment requires an admitted active Turn; it cannot create an empty Provider Conversation."
+      );
+    }
     if (request.scope === "task"
-      && (task?.status !== "active" || task.executionGate.state !== "enabled")) {
+      && (task === null || !turnPurposeAdmitsTaskState(activeTurn!.purpose, task))) {
       throw applicationError(
         "INVALID_PARAMS",
         task === null
@@ -896,7 +910,16 @@ export function createRuntimeLifecycleDispatcher(
           : `Task execution is not enabled: ${request.taskId}.`
       );
     }
-    if (request.scope === "task" && task !== null) {
+    const planningDraft = request.scope === "task"
+      && activeTurn?.purpose === "planning"
+      && task?.status === "draft";
+    // A Task activated with an empty environment plan owns no managed
+    // workspace, so there is nothing to prove ready. Every Task that does own
+    // one keeps the full ownership fence.
+    if (request.scope === "task"
+      && task !== null
+      && !planningDraft
+      && taskOwnsManagedWorkspace(task)) {
       const taskWorkspace = store.getTaskWorkspace(task.id);
       if (!isTaskOwnedWorkspace(
         taskWorkspace,
@@ -934,19 +957,20 @@ export function createRuntimeLifecycleDispatcher(
           : `Global Role not found: ${request.roleName}.`
       );
     }
-    const activeTurn = request.scope === "task"
-      ? store.getActiveTurn(request.taskId, request.roleName)
-      : null;
-    if (request.scope === "task" && activeTurn === null) {
-      throw applicationError(
-        "INVALID_PARAMS",
-        "Task Role runtime attachment requires an admitted active Turn; it cannot create an empty Provider Conversation."
-      );
-    }
     const managedWorkspace = request.scope === "task"
       ? activeTurn?.workspace
         ?? currentDesiredManagedWorkspace(store, request.taskId, request.roleName)
       : undefined;
+    // Distinguish "this Task owns no workspace by design" from "the
+    // authoritative workspace is missing". Only the former may launch without
+    // one. Two cases qualify: an empty plan binding no Project, and a Draft
+    // planning conversation, which may bind a Project but has not activated, so
+    // no worktree exists or is owed. Without the planning term a Project-bound
+    // Draft fails closed on a workspace activation was never asked to create.
+    const workspaceFree = request.scope === "task"
+      && managedWorkspace === undefined
+      && task !== null
+      && (planningDraft || !taskOwnsManagedWorkspace(task));
     const sessions = request.scope === "task"
       ? store.getTaskRoleSessionSet(request.taskId, request.roleName)
       : store.getGlobalRoleSessionSet(request.roleName);
@@ -993,6 +1017,7 @@ export function createRuntimeLifecycleDispatcher(
       effective,
       workspace: effective.workspace.root,
       ...(managedWorkspace === undefined ? {} : { managedWorkspace }),
+      ...(workspaceFree ? { workspaceFree: true as const } : {}),
       ...(activeTurn === null ? {} : { turnId: activeTurn.id }),
       ...(request.environment === undefined
         ? {}
@@ -1062,15 +1087,16 @@ function assertRuntimeLaunchRequestCurrent(
   let activeTurn: ReturnType<TaskStore["getActiveTurn"]> = null;
   if (request.owner.scope === "task") {
     const task = store.getTask(request.owner.taskId);
-    if (task === null
-      || task.status !== "active"
-      || task.executionGate.state !== "enabled") {
+    if (task === null) {
       throw new Error(`Task is no longer active: ${request.owner.taskId}.`);
     }
     activeTurn = store.getActiveTurn(
       request.owner.taskId,
       request.owner.roleName
     );
+    if (!turnPurposeAdmitsTaskState(activeTurn?.purpose ?? "execution", task)) {
+      throw new Error(`Task is no longer active: ${request.owner.taskId}.`);
+    }
     if (
       request.turnId !== undefined
       && activeTurn?.id !== request.turnId

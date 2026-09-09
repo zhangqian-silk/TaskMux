@@ -243,6 +243,32 @@ export const INTERACTION_POLICIES: readonly InteractionPolicy[] = Object.freeze(
   },
   taskTarget("activate", 2, ["draft"]),
   {
+    commandPath: ["task", "activation", "request"],
+    selectors: [{
+      argumentIndex: 3,
+      entity: "task",
+      provider: "tasks",
+      actionTarget: true,
+      statuses: ["draft"]
+    }],
+    trailingOptions: { "--request-id": "value", "--environment": "value" }
+  },
+  {
+    commandPath: ["task", "activation", "cancel"],
+    selectors: [{
+      argumentIndex: 3,
+      entity: "task",
+      provider: "tasks",
+      actionTarget: true,
+      statuses: ["draft"]
+    }],
+    trailingOptions: { "--request-id": "value", "--reason": "value" }
+  },
+  {
+    commandPath: ["task", "activation", "show"],
+    selectors: [{ argumentIndex: 3, entity: "task", provider: "tasks", actionTarget: true }]
+  },
+  {
     ...taskTarget("complete", 2, ["active"]),
     trailingOptions: { "--summary": "value" }
   },
