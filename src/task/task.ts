@@ -2,6 +2,12 @@ import {
   validateTaskWorkspaceIdentity,
   type TaskWorkspaceIdentity
 } from "../repository/taskWorkspaceIdentity.js";
+import {
+  cancelTaskActivationRequest,
+  recordTaskActivationEvidence,
+  validateTaskActivationRequest,
+  type TaskActivationRequest
+} from "./taskActivation.js";
 
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 export type TaskStatus =
@@ -67,6 +73,27 @@ export type Task = {
   status: TaskStatus;
   /** Independent execution admission gate; semantic Task progress is preserved while stopped. */
   executionGate: Readonly<{ state: TaskExecutionState }>;
+  /**
+   * Latest explicit activation request. It records the intent to start delivery
+   * — never the fact that delivery started, which remains `status` alone. A
+   * Draft therefore survives its planning Session with the request intact, and
+   * a deferred request is re-checked against current facts before adoption.
+   */
+  activationRequest?: TaskActivationRequest;
+  /**
+   * Bounded history of activation requests that already reached a terminal
+   * disposition, oldest first, excluding whichever one currently occupies
+   * `activationRequest`.
+   *
+   * This exists because the single latest slot cannot answer the question
+   * adoption has to ask: "was this exact requestId already cancelled?" Without
+   * the history, cancelling A and then requesting B evicts A's cancellation, so
+   * replaying A afterwards creates a fresh pending request and the explicit
+   * withdrawal is silently undone. `status` remains the only statement about
+   * whether delivery started; this is per-request evidence, not a second
+   * lifecycle or scheduling ledger.
+   */
+  settledActivationRequests?: readonly TaskActivationRequest[];
   completedAt?: string;
   completedBy?: TaskCompletedBy;
   completionSummary?: string;
@@ -126,6 +153,119 @@ export function bindTaskWorkspaceIdentity(
   return validateTask({
     ...task,
     workspaceIdentity: valid,
+    updatedAt: now.toISOString()
+  });
+}
+
+/**
+ * How many terminal activation requests the Task payload *displays* beside its
+ * latest one.
+ *
+ * This is a display bound, not an authority. Whether a requestId was already
+ * cancelled or adopted is answered from the durable activation event ledger,
+ * which is never compacted, so overflow trims only what the payload shows, never
+ * what replay enforcement can see: an evicted entry is still refused. The oldest
+ * request is not "least likely to be replayed" — it is simply the oldest, and it
+ * keeps its authority exactly like the newest.
+ */
+export const MAX_SETTLED_ACTIVATION_REQUESTS = 16;
+
+/** Terminal dispositions: the request will never adopt again on its own. */
+function isSettledActivationRequest(request: TaskActivationRequest): boolean {
+  return request.disposition === "cancelled" || request.disposition === "adopted";
+}
+
+/**
+ * Persists the Task's latest activation request.
+ *
+ * The request is intent only, so this never touches `status`: a Draft stays a
+ * continuable Draft after a request is recorded, cancelled, or failed. Only
+ * `activateTask` inside the adoption transaction moves the lifecycle.
+ *
+ * A request being displaced from the slot is projected into the bounded settled
+ * history when its outcome was terminal, so the recent decisions stay visible on
+ * the Task payload. This history is a display projection, not the authority:
+ * whether a cancelled or adopted id may be replayed is decided from the durable
+ * activation event ledger, so trimming the oldest entries here never lets a
+ * decided outcome be replayed away. A `failed` request is deliberately not
+ * projected: it stays replayable by contract, and it is still in the slot until
+ * something replaces it.
+ */
+export function setTaskActivationRequest(
+  task: Task,
+  request: TaskActivationRequest,
+  now: Date
+): Task {
+  validateTask(task);
+  const valid = validateTaskActivationRequest(request);
+  if (valid.operation.targetId !== task.id) {
+    throw new Error(`Activation request belongs to another Task: ${valid.operation.targetId}.`);
+  }
+  const existing = task.activationRequest;
+  if (existing !== undefined
+    && existing.operation.requestId === valid.operation.requestId
+    && existing.operation.inputDigest !== valid.operation.inputDigest) {
+    throw new Error(
+      `Activation requestId ${valid.operation.requestId} was already used for different inputs.`
+    );
+  }
+  // Replacing the slot: keep the outgoing terminal outcome as evidence. The
+  // incoming request's own id is dropped from the history because it is now the
+  // slot's occupant, so exactly one record per id exists.
+  const displaced = existing !== undefined
+    && existing.operation.requestId !== valid.operation.requestId
+    && isSettledActivationRequest(existing)
+    ? [existing]
+    : [];
+  const retained = [
+    ...(task.settledActivationRequests ?? []),
+    ...displaced
+  ].filter(({ operation }) => operation.requestId !== valid.operation.requestId)
+    .slice(-MAX_SETTLED_ACTIVATION_REQUESTS);
+  return validateTask({
+    ...task,
+    activationRequest: valid,
+    ...(retained.length === 0 ? {} : { settledActivationRequests: retained }),
+    updatedAt: now.toISOString()
+  });
+}
+
+/**
+ * Records operation evidence against one activation request by id, wherever the
+ * Task still holds it — the live slot or the settled history.
+ *
+ * Evidence has to survive the request losing the slot: resources adopted for A
+ * remain adopted after A is cancelled and B is requested, and that effect must
+ * stay attached to A rather than following the slot to B. The underlying ratchet
+ * only raises `effect` and adds refs, so this never rewrites an outcome.
+ */
+export function recordTaskActivationRequestEvidence(
+  task: Task,
+  requestId: string,
+  evidence: Readonly<{
+    effect?: TaskActivationRequest["operation"]["effect"];
+    receiptRefs?: readonly string[];
+    partialResultRefs?: readonly string[];
+  }>,
+  now: Date
+): Task {
+  const current = task.activationRequest;
+  if (current?.operation.requestId === requestId) {
+    const updated = recordTaskActivationEvidence(current, evidence, now);
+    if (updated === current) return task;
+    return validateTask({ ...task, activationRequest: updated, updatedAt: now.toISOString() });
+  }
+  const settled = task.settledActivationRequests;
+  if (settled?.some(({ operation }) => operation.requestId === requestId) !== true) {
+    throw new Error(`Activation request not found on Task ${task.id}: ${requestId}.`);
+  }
+  return validateTask({
+    ...task,
+    settledActivationRequests: settled.map((request) => (
+      request.operation.requestId === requestId
+        ? recordTaskActivationEvidence(request, evidence, now)
+        : request
+    )),
     updatedAt: now.toISOString()
   });
 }
@@ -335,9 +475,26 @@ export function reopenTask(task: Task, now: Date): Task {
     retirementIsolation: _retirementIsolation,
     ...reopened
   } = task;
-  return validateTask({ ...reopened, status: "active",
+  // A request that never adopted is superseded by the completion it predates:
+  // it is cancelled rather than deleted, so it cannot be replayed into the new
+  // delivery cycle and the intent stays visible. An adopted request records a
+  // real environment and status change and is left exactly as it is.
+  const request = reopened.activationRequest;
+  return validateTask({
+    ...reopened,
+    ...(request?.disposition === "pending"
+      ? {
+          activationRequest: cancelTaskActivationRequest(
+            request,
+            `Task was completed and reopened at ${now.toISOString()}; request superseded.`,
+            now
+          )
+        }
+      : {}),
+    status: "active",
     executionGate: { state: "enabled" },
-    updatedAt: now.toISOString() });
+    updatedAt: now.toISOString()
+  });
 }
 
 export function archiveTask(
@@ -418,6 +575,21 @@ export function isTaskExecutionEnabled(task: Task): boolean {
   return task.executionGate.state === "enabled";
 }
 
+/**
+ * Whether this Task owns a managed Git workspace at all.
+ *
+ * A Task activated with an empty environment plan legitimately owns none: it
+ * binds no Project and adopted no directory, so there is no worktree to be
+ * ready and no cwd to verify. Workspace fences use this to distinguish "not
+ * prepared yet" from "correctly owns nothing", instead of creating a workspace
+ * only to satisfy the fence.
+ */
+export function taskOwnsManagedWorkspace(
+  task: Readonly<Pick<Task, "projectBindings" | "cwd">>
+): boolean {
+  return task.projectBindings.length > 0 || task.cwd !== undefined;
+}
+
 export function stopTaskExecution(task: Task, now: Date): Task {
   validateTask(task);
   if (task.status !== "active") {
@@ -473,6 +645,47 @@ export function validateTask(task: Task): Task {
     const identity = validateTaskWorkspaceIdentity(task.workspaceIdentity);
     if (identity.taskId !== task.id) {
       throw new Error(`Task workspace identity belongs to another Task: ${identity.taskId}.`);
+    }
+  }
+  if (task.activationRequest !== undefined) {
+    const request = validateTaskActivationRequest(task.activationRequest);
+    if (request.operation.targetId !== task.id) {
+      throw new Error(
+        `Task activation request belongs to another Task: ${request.operation.targetId}.`
+      );
+    }
+  }
+  if (task.settledActivationRequests !== undefined) {
+    const settled = task.settledActivationRequests;
+    if (!Array.isArray(settled)) {
+      throw new Error("Task settled activation requests are invalid.");
+    }
+    if (settled.length > MAX_SETTLED_ACTIVATION_REQUESTS) {
+      throw new Error("Task settled activation requests exceed the bounded limit.");
+    }
+    const seen = new Set<string>();
+    for (const entry of settled) {
+      const request = validateTaskActivationRequest(entry);
+      if (request.operation.targetId !== task.id) {
+        throw new Error(
+          `Task settled activation request belongs to another Task: ${request.operation.targetId}.`
+        );
+      }
+      if (!isSettledActivationRequest(request)) {
+        throw new Error(
+          "Task settled activation history retains only terminal requests: "
+          + `${request.operation.requestId}/${request.disposition}.`
+        );
+      }
+      // One record per id, and never a stale copy of the live slot: the slot is
+      // the only place a request that can still change is allowed to live.
+      if (seen.has(request.operation.requestId)
+        || request.operation.requestId === task.activationRequest?.operation.requestId) {
+        throw new Error(
+          `Task activation request is duplicated: ${request.operation.requestId}.`
+        );
+      }
+      seen.add(request.operation.requestId);
     }
   }
   if (task.priority !== undefined

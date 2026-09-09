@@ -154,9 +154,9 @@ export async function getSelectionCandidates(
         qualifyTaskRecords(await listAllWorkItems(ports)),
         ["qualifiedId", "title", "status"]
       );
-    case "turns": {
+    case "runs": {
       const workItemId = dependencyValue(selector, args);
-      const runs = await listAllByTask(ports, "task.turn.list", "turns");
+      const runs = await listAllByTask(ports, "task.run.list", "runs");
       return entities(
         "run",
         workItemId === undefined ? "Select AgentRun" : `Select AgentRun: ${workItemId}`,

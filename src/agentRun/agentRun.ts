@@ -54,7 +54,7 @@ export function runExecutionObservation(run: AgentRun, binding: ProviderRuntimeB
     })
   };
 }
-export type AgentRunPurpose = "execution" | "review";
+export type AgentRunPurpose = "execution" | "review" | "planning";
 export type AgentRunFailureReason =
   | "startup-failed"
   | "runtime-failed"
@@ -194,7 +194,26 @@ export function isActiveRun(run: AgentRun): boolean {
   return run.status === "active";
 }
 
-/** Binds a freshly created, not-yet-persisted AgentRun to its frozen Context. */
+/**
+ * The Task lifecycle a Turn of this purpose may run in.
+ *
+ * Delivery requires an active Task with execution admitted. Planning is the
+ * Draft Leader's own conversation, so it is also admitted while the Task is
+ * still a Draft; the execution gate still applies, because a stopped Task must
+ * not gain a live process through the planning door. Nothing here relaxes the
+ * workspace fence — a planning Turn simply has no workspace to be ready.
+ */
+export function runPurposeAdmitsTaskState(
+  purpose: AgentRunPurpose,
+  task: Readonly<{ status: string; executionGate: Readonly<{ state: string }> }>
+): boolean {
+  if (task.executionGate.state !== "enabled") return false;
+  return purpose === "planning"
+    ? task.status === "draft" || task.status === "active"
+    : task.status === "active";
+}
+
+/** Binds a freshly created, not-yet-persisted Turn to its frozen Context. */
 export function withRunContextSnapshot(
   run: AgentRun,
   snapshot: ContextSnapshotRef,
@@ -275,7 +294,7 @@ export function validateRun(run: AgentRun): AgentRun {
       throw new Error("AgentRun input timestamps moved backwards.");
     }
   }
-  if (!["execution", "review"].includes(run.purpose)) {
+  if (!["execution", "review", "planning"].includes(run.purpose)) {
     throw new Error(`AgentRun purpose is invalid: ${String(run.purpose)}.`);
   }
   if (run.workItemId !== undefined) {
@@ -293,12 +312,35 @@ export function validateRun(run: AgentRun): AgentRun {
   }
   if (run.sourceExecutionGroupId !== undefined) {
     requireSafeIdentity(run.sourceExecutionGroupId, "Source ExecutionGroup id");
+    if (run.purpose === "planning") {
+      throw new Error("A planning Turn cannot aggregate an Execution Lane group.");
+    }
     if ((run.purpose === "execution" && run.workItemId === undefined)
       || (run.purpose === "review" && run.reviewRoundId === undefined)) {
       throw new Error("A source ExecutionGroup requires a main execution or review AgentRun.");
     }
     if (run.executionGroupId !== undefined || run.executionLaneId !== undefined) {
       throw new Error("A main AgentRun cannot also be an Execution Lane AgentRun.");
+    }
+  }
+  if (run.purpose === "planning") {
+    if (run.effective.executionAuthority !== "planning") {
+      throw new Error("A planning AgentRun cannot hold delivery authority.");
+    }
+    // Draft planning is deliberately delivery-free: no WorkItem, ReviewRound,
+    // Lane or workspace. That is what keeps a planning result from ever being
+    // read as execution evidence or promoted into a Candidate.
+    if (run.workItemId !== undefined) {
+      throw new Error("A planning Turn cannot reference a Work Item.");
+    }
+    if (run.reviewRoundId !== undefined) {
+      throw new Error("A planning Turn cannot reference a ReviewRound.");
+    }
+    if (run.executionGroupId !== undefined || run.executionLaneId !== undefined) {
+      throw new Error("A planning Turn cannot be an Execution Lane Turn.");
+    }
+    if (run.workspace !== undefined) {
+      throw new Error("A planning Turn cannot own a managed workspace.");
     }
   }
   if (run.workspace !== undefined) {
@@ -546,7 +588,7 @@ function validateRunProviderResult(
     throw new Error("Provider result requires a native Turn or exact attempt identity.");
   }
   if (!["completed", "failed", "cancelled"].includes(provider.status)) {
-    throw new Error(`Provider Turn result status is invalid: ${String(provider.status)}.`);
+    throw new Error(`Provider AgentRun result status is invalid: ${String(provider.status)}.`);
   }
   return provider;
 }

@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { assertExecutionEnvironmentCurrent } from "../runtime/executionEnvironment.js";
+import { runPurposeAdmitsTaskState } from "../agentRun/agentRun.js";
+import { taskOwnsManagedWorkspace } from "../task/task.js";
 
 import {
   configuredAgentToDefinition,
@@ -67,7 +69,7 @@ import {
 import { managedRuntimeAdmission } from "../runtime/agentDriver.js";
 import {
   builtinAgentEndpointImplementation,
-  requireBuiltinAgentEndpointImplementation
+  validateAgentEndpointImplementation
 } from "../runtime/agentEndpointIdentity.js";
 import type {
   AgentHostProviderControl,
@@ -164,20 +166,43 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
   plan(input: TaskRoleLaunchPlanInput): PlannedRoleSession {
     const task = this.store.getTask(input.taskId);
     if (task === null) throw new Error(`Task not found: ${input.taskId}.`);
-    if (task.status !== "active" || task.executionGate.state !== "enabled") {
-      throw new Error(`Task execution is not enabled: ${input.taskId}.`);
-    }
     const role = this.store.getRole(input.taskId, input.roleName);
     if (role === null) throw new Error(`Role not found: ${input.taskId}/${input.roleName}.`);
     const activeRun = this.store.getActiveRun(task.id, role.name);
     if (input.runId !== undefined && activeRun?.id !== input.runId) {
       throw new Error(`Role AgentRun is no longer current: ${input.runId}.`);
     }
+    const purpose = activeRun?.purpose
+      ?? (task.status === "draft" && role.name === "leader" ? "planning" : "execution");
+    if (!runPurposeAdmitsTaskState(purpose, task)) {
+      throw new Error(`Task execution is not enabled: ${input.taskId}.`);
+    }
+    // A launch owns no managed workspace in two cases: a Draft planning
+    // conversation, and a Task activated with an empty environment plan. Both
+    // run with no Project entries, so there is nothing to preflight and no
+    // worktree to wait for. Every other fence — live Session, replaceable
+    // Conversation, configured Agent, Context protocol identity, adopted
+    // execution environment — still applies.
+    const planningDraft = purpose === "planning" && task.status === "draft";
+    const workspaceFree = planningDraft || !taskOwnsManagedWorkspace(task);
+    // An empty resource plan is a legal Task shape, but it does not make a
+    // shared directory a legal cwd. Once such a Task is active it can name the
+    // directory it means through the existing environment plan, so require that
+    // instead of silently running in whatever workspace the Role inherited with
+    // isolation skipped.
+    if (workspaceFree && !planningDraft && role.executionEnvironment === undefined) {
+      throw new Error(
+        `Task ${task.id} owns no workspace and no adopted execution environment, so Role `
+        + `${role.name} has no directory of its own to run in. Request activation with a `
+        + "`scratch` or `local` environment plan, or bind an adopted environment with "
+        + "`environment.bind`, instead of inheriting a shared workspace."
+      );
+    }
     const runWorkspace = activeRun?.workspace;
     const main = this.store.getTaskWorkspace(task.id);
     // Quick Win (EXE-04/EXE-08): classify workspace preflight failures so
     // split-brain state is never reported as a transient Provider failure.
-    const preflight = classifyWorkspacePreflight(
+    const preflight = workspaceFree ? null : classifyWorkspacePreflight(
       this.store,
       task,
       input.roleName,
@@ -202,7 +227,11 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         : assignedWorkItem === undefined
           ? main
           : this.store.getWorkItemWorkspace(task.id, assignedWorkItem.id);
-    if (task.projectBindings.length === 0) {
+    if (workspaceFree) {
+      if (workspace !== null && !isDeepStrictEqual(workspace, main)) {
+        throw new Error(`Role workspace is not ready: ${input.taskId}/${input.roleName}.`);
+      }
+    } else if (task.projectBindings.length === 0) {
       if (workspace === null || !isDeepStrictEqual(workspace, main)) {
         throw new Error(`Role workspace is not ready: ${input.taskId}/${input.roleName}.`);
       }
@@ -247,7 +276,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const sessionSet = this.store.getTaskRoleSessionSet(task.id, role.name);
     const resolvedEffective = activeRun?.effective
       ?? activeLiveRoleAgentSession(sessionSet)?.effective
-      ?? resolveTaskRoleEffectiveLaunch(this.store, role);
+      ?? resolveTaskRoleEffectiveLaunch(this.store, role, planningDraft ? "planning" : "execution");
     if (input.effective !== undefined
       && !isDeepStrictEqual(resolvedEffective, input.effective)) {
       throw new Error(`Role launch effective AgentRun snapshot changed: ${input.taskId}/${input.roleName}.`);
@@ -290,7 +319,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       runWorkspace,
       effective,
       {
-        purpose: activeRun?.purpose ?? "execution"
+        purpose
       }
     );
   }
@@ -341,7 +370,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     knownNativeSessionId: string | undefined,
     workspaceOverride: ManagedWorkspace | undefined,
     effective: EffectiveLaunchSnapshot,
-    sessionPolicy: Readonly<{ purpose: "execution" | "review" }>
+    sessionPolicy: Readonly<{ purpose: "execution" | "review" | "planning" }>
   ): PlannedRoleSession {
     const launchRole = effectiveRoleForLaunch(role, effective);
     const binding = activeRoleAgentBinding(launchRole);
@@ -351,8 +380,17 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const existingSession = owner.scope === "task"
       ? this.store.getTaskRoleSessionSet(owner.taskId, role.name)?.sessions[input.agentId]
       : this.store.getGlobalRoleSessionSet(role.name)?.sessions[input.agentId];
+    // A resume carries the Session's recorded generation forward unchanged. This
+    // planner runs in the Controller, which after an upgrade is already the new
+    // code, so it cannot speak for the still-running Agent Host that owns the
+    // Session: rejecting here would end live Sessions on Controller upgrade,
+    // while rewriting to current code would silently move a Session onto code it
+    // never started on. The Host that actually executes the implementation makes
+    // the decision — a reused live Host accepts its own generation, and a newly
+    // started Host running different code fails closed
+    // (`agentEndpointOwnership.pin` -> `requireBuiltinAgentEndpointImplementation`).
     const endpointImplementation = input.mode === "resume"
-      ? requireBuiltinAgentEndpointImplementation(binding.adapterId, existingSession!.endpointImplementation)
+      ? validateAgentEndpointImplementation(existingSession!.endpointImplementation)
       : builtinAgentEndpointImplementation(binding.adapterId);
     const configured = this.store.getConfiguredAgent(input.agentId);
     if (configured === null) throw new Error(`Configured Agent not found: ${input.agentId}.`);
@@ -551,7 +589,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       // no Yui Hook config is installed.
       if (owner.scope === "task" && input.runId !== undefined) {
         if (managedRun === null || managedRun.status !== "active") {
-          throw new Error(`Managed Codex Turn is no longer active: ${input.runId}.`);
+          throw new Error(`Managed Codex AgentRun is no longer active: ${input.runId}.`);
         }
       }
       session = launchMode === "resume"
@@ -572,7 +610,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
       && owner.scope === "task"
       && input.runId !== undefined;
     if (managedClaudeRun && (managedRun === null || managedRun.status !== "active")) {
-      throw new Error(`Managed Claude Turn is no longer active: ${input.runId}.`);
+      throw new Error(`Managed Claude AgentRun is no longer active: ${input.runId}.`);
     }
 
     // Session lifecycle and AgentRun submission are separate atomic operations.
@@ -749,7 +787,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     const run = binding.run;
     if (run === null || run.status !== "accepted") return undefined;
     if (run.nativeTurnId === undefined) {
-      throw new Error(`Active Provider Turn has no native identity: ${taskId}/${roleName}.`);
+      throw new Error(`Active Provider AgentRun has no native identity: ${taskId}/${roleName}.`);
     }
     return { attemptId: run.attemptId, turnId: run.nativeTurnId };
   }
@@ -843,8 +881,14 @@ export function withNativeProjectDirectories<T extends RoleAgentConfig>(
 
 function resolveTaskRoleEffectiveLaunch(
   store: TaskStore,
-  role: TaskRole
+  role: TaskRole,
+  purpose: "execution" | "planning" = "execution"
 ): EffectiveLaunchSnapshot {
+  if (purpose === "planning") {
+    // Planning has no WorkItem assignment and no managed workspace, so it
+    // resolves the Role's own configured workspace with no writable Project.
+    return resolveEffectiveLaunch({ role, purpose: "planning" });
+  }
   const item = store.listWorkItems(role.taskId).find((candidate) => (
     candidate.assignee === role.name
       && !["accepted", "retired"].includes(candidate.status)

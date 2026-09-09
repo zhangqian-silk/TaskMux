@@ -632,7 +632,11 @@ export async function reconcileStalledRoleRuns(
   // existing mailbox work without manufacturing another episode.
   if (selection !== undefined && !selection.full) return [];
   if (store.recordRoleRunStall === undefined) return [];
-  const candidates = selectedActiveSchedulerTasks(store, selection).flatMap((task) => (
+  // A Draft planning Turn can stall exactly like any other admitted Turn, so it
+  // is selected here too; the episode stays diagnostic-only either way.
+  const candidates = selectedActiveSchedulerTasks(store, selection, {
+    includePlanningDrafts: true
+  }).flatMap((task) => (
     selectedSchedulerRoles(store, task.id, selection).flatMap((role) => {
       const run = store.getActiveRun(task.id, role.name);
       if (run === null || run.status !== "active") return [];

@@ -115,15 +115,17 @@ Yui steer receipt 可追加 `yui/input-response` 来源。原始请求不被改�
 兼容 Session 检查包含此字段。普通本地规划写入仍可用；正式派发、候选采用、
 集成和 managed-workspace Job 检查 delivery 权限。
 
-T08 可用 `resolveEffectiveLaunch({ ..., executionAuthority: "planning" })`
-捕获规划权限。合法的 Leader planning Session/Run 不再被当作 Draft 中的非法
-正式交付事实。当前 planning 执行可以发起原子的 workspace activation，
-不等待自己的 Run 结束：只有交付目录与 planning 目录不重叠时才允许采用。
-采用 Task main 不移动、撤销或热升权该 planning Session，也不产生自 wake。
-目录重叠时返回资源冲突，由 Agent 选择隔离路径或后续时机。
+采用 T08 后，`resolveEffectiveLaunch({ ..., purpose: "planning" })` 自动捕获
+planning 权限，并拒绝显式请求 delivery。首次 Draft 讨论建立 planning AgentRun；
+后续已有会话上的普通消息保持通知语义，不强制创建执行报告。
+当前 planning 执行通过 `task activation request` 原子保存意图，立即返回
+`afterPlanningRun` 引用，不同步等待自己结束。准确终态释放激活请求，Controller
+重新检查当前意图、资源与权限后采用；取消的请求不会恢复。
 
-Draft 的 planning 启动产品入口、scratch 实验策略和交付 Session 采用体验仍由
-T08 负责；本合同提供共用的身份、权限及 activation 边界，不复制未合入的 T08 实现。
+采用环境与 Task 激活沿 T08 唯一事务边界完成。需要改变物理启动配置时，
+保留原始执行和 planning 权限快照，通过现有 Host detach/handover 边界准备
+delivery Session；不能直接修改活跃 Session 的实际权限。Leader 发起的请求
+采用时保留来源，不添加自唤醒。scratch/local/empty 资源计划复用现有资源能力。
 此权限不是 OS sandbox 声明；用户选用宽权限 native Agent 时，不能声称 Core
 能够阻止它绕过 CLI 直接操作用户文件。
 
@@ -156,11 +158,12 @@ Host 控制协议升级至 v5，拒绝旧协议连接；存储升级需使用既
 
 ## 存储迁移与回退
 
-本任务使用一个中央迁移：storage **9 → 10**；最低支持版本仍为 **1**，
-既有 1–9 迁移不变。迁移重命名结构化引用、重算受影响的 ContextSnapshot
-resource/parent digest，并为历史实际 launch 保留 delivery 权限。
-此前合法的 managed launch 不含 planning Session，不能用现在的 Task 状态推测历史权限。
-Message 可选的 recipient/continuation/handovers 也属于同一未发布的 9→10 合同；
+本任务采用主线 `48ffca4` 后使用中央迁移：storage **12 → 13**；
+最低支持版本仍为 **1**，主线既有 1–12 迁移不变。迁移重命名结构化引用、
+重算受影响的 ContextSnapshot resource/parent digest。T08 已存在合法 planning
+记录，因此 Run 以原 purpose 判定，Session 以同 Task 的准确 planning launch
+证据保留 planning；不能统一回填 delivery 或从 Task 当前状态推测权限。
+Message 可选的 recipient/continuation/handovers 也属于同一未发布的 12→13 合同；
 旧消息不猜负责人、不补发、不产生历史续作。
 
 历史 `turn-N`、receipt ID、native ID、原始报告和正文保持原值；新记录分配 `run-N`。
@@ -235,3 +238,20 @@ TypeScript 检查通过。正式 Claude Opus 固定候选审查由 Leader 在集
 测试阶段约 4.34 秒。新增消息卡片元信息复用现有布局；本增量未追加浏览器交互验证。
 临时 fixture/scripts 与私有测试进程在交付前清理，未增加永久回归矩阵。
 组合候选的正式独立审查仍由 Leader 在固定新 commit 后安排；旧审查不覆盖此增量。
+
+### 采用最新主线后的边界验证（2026-09-09）
+
+采用 `48ffca457d40e8be394d81bbb3435064fa5c31c7`（T08/T09/T10/T11）时，
+将本分支未发布的迁移移至 13，原 1–12 的内容与校验保持不变。
+用该主线真实构建生成 storage 12 Home 后验证升级：旧 planning Run、其 Session
+快照保持 planning，延后激活的 `afterPlanningRun` 仍指向原不透明 ID，
+重复 requestId 仍返回原请求。新 planning launch 拒绝 delivery 覆盖。
+首次 Draft 请求产生 planning Run，已有 planning Session 的后续通知不新增 Run。
+
+Controller 只携带 Session 已记录的 Endpoint pin；实际 Host 才验证该 pin 是否
+属于自己加载的代码。隔离检查覆盖原 pin 重用、异版本 pin 拒绝和引用释放，
+未调用真实 Provider。激活遇到已知未结清的原生输入时保留请求并返回冲突，
+不以“没有 active Run”冒充原生已经静止。
+
+本轮核心 smoke 为主线已有的 82 项（含插件主路径），未增加永久异常矩阵。
+早先 9→10 的验证记录只描述当时的独立开发候选，不是当前部署升级指引。

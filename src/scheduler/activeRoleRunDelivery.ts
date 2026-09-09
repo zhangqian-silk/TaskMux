@@ -18,6 +18,7 @@ import {
   type RuntimeLaunchPreflight
 } from "../runtime/ports.js";
 import { formatRunReceiptId } from "../task/taskRecordReference.js";
+import { taskOwnsManagedWorkspace } from "../task/task.js";
 import { runInputEnvelope } from "../agentRun/agentRun.js";
 import {
   captureRoleRunDispatch,
@@ -33,6 +34,7 @@ import type {
   TmuxDeliveryPort
 } from "./ports.js";
 import {
+  isSchedulerPlanningDraft,
   isSchedulerTaskWorkspaceReady,
   selectedActiveSchedulerTasks,
   selectedSchedulerRoles,
@@ -62,7 +64,12 @@ export async function processActiveRoleRunDeliveries(
   selection?: SchedulerReconcileSelection
 ): Promise<ActiveRoleRunDeliveryResult[]> {
   const results: ActiveRoleRunDeliveryResult[] = [];
-  for (const task of selectedActiveSchedulerTasks(store, selection)) {
+  // Planning Turns are admitted on a Draft, so delivery must be able to see
+  // that Draft or an admitted planning Turn would never be delivered, resumed
+  // or terminalized. Selection still admits it only on its durable Turn.
+  for (const task of selectedActiveSchedulerTasks(store, selection, {
+    includePlanningDrafts: true
+  })) {
     store.prepareMessageContinuations?.(task.id, now);
     for (const role of selectedSchedulerRoles(store, task.id, selection)) {
       const run = store.getActiveRun(task.id, role.name);
@@ -82,7 +89,11 @@ async function deliverActiveRun(
   now: Date
 ): Promise<ActiveRoleRunDeliveryResult> {
   const base = { taskId: task.id, roleName: role.name, runId: run.id };
-  if (!isSchedulerTaskWorkspaceReady(task, store.getTaskWorkspace(task.id))) {
+  if (!isSchedulerTaskWorkspaceReady(
+    task,
+    store.getTaskWorkspace(task.id),
+    run.purpose
+  )) {
     return { ...base, status: "skipped", reason: "workspace-not-ready" };
   }
 
@@ -171,6 +182,18 @@ async function deliverActiveRun(
       effective: run.effective,
       workspace: run.effective.workspace.root,
       ...(run.workspace === undefined ? {} : { managedWorkspace: run.workspace }),
+      // A Task owning no workspace by design states that explicitly, so the
+      // launch does not read the absent workspace as a missing one and fail
+      // closed (S27). Two distinct cases qualify: a Task activated with an
+      // empty plan and binding no Project, and a Draft planning conversation,
+      // which may already bind a Project but has not activated, so no worktree
+      // exists or is owed yet. Declaring it free is what keeps the isolation
+      // fence honest instead of letting it fail on a workspace nobody promised.
+      ...(run.workspace === undefined
+        && (isSchedulerPlanningDraft(task, run.purpose)
+          || !taskOwnsManagedWorkspace(task))
+        ? { workspaceFree: true as const }
+        : {}),
       mode,
       runId: run.id,
       ...(nativeSessionId === undefined ? {} : { nativeSessionId }),

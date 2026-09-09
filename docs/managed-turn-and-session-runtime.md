@@ -95,9 +95,12 @@ another process with the same user's filesystem access.
 AgentRun is the current API vocabulary. Historical IDs and provider-native
 terms remain opaque. The private inbox v1 codec retains pending wire facts;
 the CLI's old `task turn` spelling is a bounded alias for existing Manifests.
-There is one current domain schema, migrated centrally from storage 9 to 10.
+There is one current domain schema, migrated centrally from storage 12 to 13
+after adopting the upstream plugin and Draft-planning migrations (1–12 unchanged).
 Optional Message ownership/continuation/handover fields belong to that same
-unreleased transition. Existing Messages remain unchanged and never acquire
+unreleased transition. Historical planning Runs and their exact Session snapshots
+retain planning authority; Task activation never backfills them as delivery.
+Existing Messages remain unchanged and never acquire
 guessed recipients or automatic executions during migration.
 See the detailed contract for migration, Host protocol v5, rollback and the
 T07/T08/T09 adoption boundary.

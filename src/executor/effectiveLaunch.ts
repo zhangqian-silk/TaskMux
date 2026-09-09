@@ -83,7 +83,7 @@ export type EffectiveLaunchRole = TaskRole | GlobalRole;
 export type ResolveEffectiveLaunchInput = Readonly<{
   executionAuthority?: "planning" | "delivery";
   role: EffectiveLaunchRole;
-  purpose: "execution" | "review";
+  purpose: "execution" | "review" | "planning";
   workspace?: ManagedWorkspace;
   /** Undefined means a non-WorkItem run; [] is an explicit read-only WorkItem scope. */
   workItemWriteProjectIds?: readonly string[];
@@ -94,6 +94,9 @@ export type ResolveEffectiveLaunchInput = Readonly<{
 export function resolveEffectiveLaunch(
   input: ResolveEffectiveLaunchInput
 ): EffectiveLaunchSnapshot {
+  if (input.purpose === "planning" && input.executionAuthority === "delivery") {
+    throw new Error("Planning cannot request delivery authority.");
+  }
   validateDesiredRole(input.role);
   const binding = input.role.agentBindings[input.role.activeAgentId]!;
   const workspace = snapshotWorkspace(input.role.workspace, input.workspace);
@@ -102,7 +105,7 @@ export function resolveEffectiveLaunch(
     clone(binding.config) as never
   ) as RoleAgentConfig;
   return snapshotFromConfig({
-    executionAuthority: input.executionAuthority ?? "delivery",
+    executionAuthority: input.executionAuthority ?? (input.purpose === "planning" ? "planning" : "delivery"),
     sourceDesiredRevision: input.role.launchRevision,
     agentId: binding.agentId,
     config,

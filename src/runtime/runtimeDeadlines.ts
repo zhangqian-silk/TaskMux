@@ -17,3 +17,12 @@ export const RELEASE_HANDOVER_OLD_OWNER_GRACE_MS =
   CONTROLLER_SHUTDOWN_TIMEOUT_MS + RUNTIME_ENVELOPE_MARGIN_MS;
 export const RELEASE_HANDOVER_PROMOTION_TIMEOUT_MS =
   RELEASE_HANDOVER_OLD_OWNER_GRACE_MS + RUNTIME_ENVELOPE_MARGIN_MS;
+/** Grace for an owned Provider client to exit after the Host asks it to stop. */
+export const AGENT_HOST_CLIENT_EXIT_GRACE_MS = 10_000;
+/**
+ * Bounded wait for Endpoint implementation references to drain during shutdown.
+ * Strictly inside the owned client's exit grace, so reporting the remaining
+ * references never delays the Host past the point where it stops waiting for
+ * that client. Expiry reports what is still in use; it never kills anything.
+ */
+export const ENDPOINT_DRAIN_TIMEOUT_MS = AGENT_HOST_CLIENT_EXIT_GRACE_MS / 2;

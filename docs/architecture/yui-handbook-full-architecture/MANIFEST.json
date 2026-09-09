@@ -43,8 +43,8 @@
     },
     {
       "path": "architecture/07-session-run-contract.md",
-      "bytes": 16223,
-      "sha256": "64084d7402cbd37577a1100c604b9cc6af949df1230dc2faa5bd7c122813a486"
+      "bytes": 17644,
+      "sha256": "7e86be0c85c326987867d0d42ba2a7739165be3511b181cf158ce8df1a6d509b"
     },
     {
       "path": "contracts/README.md",
@@ -172,6 +172,11 @@
       "sha256": "c2a165e46d8639580fedefab12e8444dcdf119ad06f03c91a6e9f535cd791e56"
     },
     {
+      "path": "implementation/designs/T11-evidence.md",
+      "bytes": 35863,
+      "sha256": "a9415bcd241249a915301297568448cdaa5a307462cad4b4506c14ecaa7e014a"
+    },
+    {
       "path": "implementation/designs/T11-hot-reload.md",
       "bytes": 3760,
       "sha256": "d9dd9248f8235491575a106e0957c5856172861c470e75609befe63ed01b7118"
@@ -243,8 +248,8 @@
     },
     {
       "path": "index.html",
-      "bytes": 562623,
-      "sha256": "bd233a78dcb0d4430ef5833b8d69e254efc78224df299601351660bbfd63f5ce"
+      "bytes": 609742,
+      "sha256": "c7c6e80b8e17022c2198b224fdefe439250c63791294e5807c6540507a21b7cb"
     },
     {
       "path": "modules/01-kernel.md",

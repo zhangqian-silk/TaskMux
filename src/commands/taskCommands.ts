@@ -127,6 +127,7 @@ import { createTaskBrief, updateTaskBrief } from "../brief/taskBrief.js";
 import { createDecision, supersedeDecision } from "../decision/decision.js";
 import { createMilestone } from "../milestone/milestone.js";
 import { runPublicationCommand } from "./taskPublicationCommands.js";
+import { runTaskActivationCommand } from "./taskActivationCommands.js";
 import {
   assertTaskRemoteDeliveryProof,
   type TaskRemoteDeliveryProof,
@@ -157,13 +158,15 @@ import {
   createTask,
   retireTask,
   reopenTask,
+  taskOwnsManagedWorkspace,
   updateTaskMetadata,
   type TaskCompletedBy,
   type Task,
   type TaskMetadata,
   type TaskMetadataUpdate,
   type TaskProjectBinding,
-  type TaskPriority
+  type TaskPriority,
+  type TaskStatus
 } from "../task/task.js";
 import {
   resolveTaskRecordReference
@@ -714,7 +717,7 @@ export function runTaskCommand(
   const delivery = command === "complete"
     || (command === "work" && ["dispatch", "synthesize", "review", "accept"].includes(rest[0] ?? ""))
     || (command === "review" && !["list", "show"].includes(rest[0] ?? ""))
-    || ((command === "run" || command === "turn") && rest[0] === "retry");
+    || ((command === "run" || command === "run") && rest[0] === "retry");
   if (delivery && options.environment?.YUI_SESSION_SCOPE === "task"
     && options.environment.YUI_TASK_ID !== undefined) {
     assertTaskDeliveryAuthority(store, options.environment, options.environment.YUI_TASK_ID);
@@ -771,6 +774,7 @@ export function runTaskCommand(
       options.actualTaskReviewCandidate ?? null
     );
     case "activate": return output(activateTaskCommand(rest, store, options));
+    case "activation": return runTaskActivationCommand(rest, store, options);
     case "complete": return completeTaskCommand(rest, store, options);
     case "reopen": return output(reopenTaskCommand(rest, store, options));
     case "archive": return output(archiveTaskCommand(rest, store, options));
@@ -790,7 +794,7 @@ export function runTaskCommand(
     case "role": return taskRoleCommand(rest, store, options);
     case "work": return taskWorkCommand(rest, store, options);
     case "review": return taskReviewCommand(rest, store, options);
-    case "turn":
+    case "run":
     case "run": return taskRunCommand(rest, store, options);
     case "brief": return taskBriefCommand(rest, store, options);
     case "decision": return taskDecisionCommand(rest, store, options);
@@ -1329,12 +1333,26 @@ function activateTaskCommand(
         || activation.task.id !== task.id
         || activation.task.status !== "active"
         || !isDeepStrictEqual(activation.task.workspaceIdentity, task.workspaceIdentity)
-        || activation.path !== task.cwd
-        || workspace === null
-        || workspace.owner.type !== "task"
-        || workspace.owner.taskId !== task.id
-        || workspace.root !== task.cwd) {
+        || activation.path !== task.cwd) {
         throw usageError(`Task workspace activation proof does not match ${task.id}.`);
+      }
+      // An empty environment plan over no bound Project is a legal Task shape,
+      // so the proof of adoption is the *absence* of a workspace rather than a
+      // ManagedWorkspace record. Demanding one here would have forced every
+      // such activation to create a worktree purely to satisfy this check.
+      if (taskOwnsManagedWorkspace(task)) {
+        if (workspace === null
+          || workspace.owner.type !== "task"
+          || workspace.owner.taskId !== task.id
+          || workspace.root !== task.cwd) {
+          throw usageError(`Task workspace activation proof does not match ${task.id}.`);
+        }
+      } else if (workspace !== null
+        || task.workspaceIdentity !== undefined
+        || activation.path !== undefined) {
+        throw usageError(
+          `Workspace-free Task activation proof claims a workspace: ${task.id}.`
+        );
       }
       return { task, changed: activation.changed } as const;
     }
@@ -2133,6 +2151,22 @@ function taskMessageCommand(
 
 /** CLI and authenticated user Surface share the same message and mailbox
  * transaction. Talking to Leader does not impersonate Leader authority. */
+/**
+ * The one transaction that turns an inbound Task Message into durable facts and,
+ * when the Task's own lifecycle calls for it, Leader work.
+ *
+ * CLI `task message send` and the Web Task surface both call this, so neither
+ * owns a private notion of what "sending a message" means. The Draft case is the
+ * reason that matters here: a Draft's Leader conversation is its planning Turn,
+ * so a Draft must wake its Leader exactly like an active Task does. Gating the
+ * wake on `active` would leave the Draft entry point saving text that no Leader
+ * ever reads — the message would be persisted and silently go nowhere, which is
+ * indistinguishable to the user from a Provider that never answered.
+ *
+ * The wake carries intent only. Whether the resulting Turn is planning or
+ * execution is decided by the Controller from the Task's own status, so this
+ * function never names a purpose and no second planning path exists.
+ */
 export function sendTaskMessageCommand(
   store: TaskWorkflowStore, taskId: string, body: string,
   wakePolicy: "leader" | "none" | undefined, options: TaskCommandOptions = {},
@@ -2176,6 +2210,8 @@ export function sendTaskMessageCommand(
       : actor === "operator"
         ? appendMessage(tx, task.id, body, "operator", { type: "operator" }, now, context)
         : appendMessage(tx, task.id, body, "user", { type: "user" }, now, context);
+    const queuedForLeader = target?.ownerRunId === undefined
+      && leaderWakingTaskStatus(task.status) && actor !== "leader" && wakePolicy !== "none";
     if (target?.ownerRunId !== undefined) {
       const reason = messageContinuationBlocker(tx, message);
       if (reason !== undefined) {
@@ -2184,19 +2220,29 @@ export function sendTaskMessageCommand(
       }
       enqueueWork(tx, taskMailbox(task.id), "message-continuation", now,
         [messageRef(task.id, message.id)], { dedupeKey: `message:${task.id}:${message.id}` });
-    } else if (task.status === "active" && actor !== "leader" && wakePolicy !== "none") {
+    } else if (queuedForLeader) {
       enqueueWork(tx, leaderMailbox(task.id), actor === "operator" ? "operator-input" : "user-message",
         now, [messageRef(task.id, message.id)], { source: actor, dedupeKey: `message:${task.id}:${message.id}` });
     }
-    return { task, message, actor };
+    return { task, message, actor, queuedForLeader };
   });
   if (recipient !== undefined) {
     notifyMailbox(options.runtime, taskMailbox(result.task.id), result.task.id);
   } else if (result.actor !== "leader") {
-    notifyMailbox(options.runtime, result.task.status === "active"
+    notifyMailbox(options.runtime, result.queuedForLeader
       ? leaderMailbox(result.task.id) : taskMailbox(result.task.id), result.task.id);
   }
   return result;
+}
+
+/**
+ * Whether an inbound Message on a Task in this status is delivered to its
+ * Leader. Draft qualifies because planning is a Leader conversation that
+ * deliberately precedes any delivery environment or Activation (S01); a
+ * terminal Task has no Leader lane and keeps the message as context only.
+ */
+export function leaderWakingTaskStatus(status: TaskStatus): boolean {
+  return status === "active" || status === "draft";
 }
 
 function updateMessage(
@@ -3532,7 +3578,7 @@ function dispatchWork(
     const roles = lanePlan.roles.map((name) => requireRole(tx, task.id, name));
     for (const role of roles) {
       if (tx.getActiveRun(task.id, role.name) !== null) {
-        throw usageError(`${task.id}/${role.name} already has an active turn.`);
+        throw usageError(`${task.id}/${role.name} already has an active run.`);
       }
     }
     const rawInput = trimmed(parsed.options.get("--input")) ?? item.objective;
@@ -3540,7 +3586,7 @@ function dispatchWork(
     if (lanePlan.roles.length === 0) {
       const role = requireRole(tx, task.id, item.assignee);
       if (tx.getActiveRun(task.id, role.name) !== null) {
-        throw usageError(`${task.id}/${role.name} already has an active turn.`);
+        throw usageError(`${task.id}/${role.name} already has an active run.`);
       }
       const effective = resolveEffectiveLaunch({
         role,
@@ -4122,7 +4168,7 @@ function renderWorkItemExecutionProjection(
           `Lanes: running=${projection.laneCounts.running}, succeeded=${projection.laneCounts.succeeded}, needs-attention=${projection.laneCounts.needsAttention}, failed=${projection.laneCounts.failed}, unknown=${projection.laneCounts.unknown}`,
           ...projection.lanes.map((lane) => (
             `  ${lane.laneId} (#${lane.ordinal}, ${lane.roleName}): ${lane.status}; `
-            + `turn=${lane.currentRunId ?? "unknown"}; session=${lane.session}; `
+            + `run=${lane.currentRunId ?? "unknown"}; session=${lane.session}; `
             + `retry=${lane.retryRunId ?? "none"}; settle=${lane.settleRunId ?? "none"}`
           ))
         ]),
@@ -4271,7 +4317,7 @@ function reviewWork(
 
 /**
  * Task-control recovery for a failed Task-final ReviewRound that never
- * created a Reviewer AgentRun. This is deliberately separate from `task turn retry`:
+ * created a Reviewer AgentRun. This is deliberately separate from `task run retry`:
  * that command requires an exact failed AgentRun and remains the only retry
  * path for a failed provider execution. Here the old terminal Round is an
  * immutable anchor and one fresh Round is created only after the same frozen
@@ -5331,7 +5377,7 @@ function retryRun(
     assertTaskExecutionEnabled(task, "retrying a AgentRun");
     const role = requireRole(tx, task.id, previous.roleName);
     if (tx.getActiveRun(task.id, role.name) !== null) {
-      throw usageError(`${task.id}/${role.name} already has an active turn.`);
+      throw usageError(`${task.id}/${role.name} already has an active run.`);
     }
     const sessions = tx.getTaskRoleSessionSet(task.id, role.name);
     const retryItem = previous.workItemId === undefined
@@ -6849,7 +6895,7 @@ export function dispatchPreparedReviewRound(
       const diffByProject = options.deltaRecheckDiff;
       if (diffByProject === undefined) {
         throw new TaskFinalReviewDispatchDriftError(
-          `Delta-recheck diff is missing for ${round.id}; the CLI preflight did not turn.`
+          `Delta-recheck diff is missing for ${round.id}; the CLI preflight did not run.`
         );
       }
       try {

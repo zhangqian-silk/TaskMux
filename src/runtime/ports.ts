@@ -71,6 +71,13 @@ export type RuntimeLaunchPreparationRequest = Readonly<{
   workspace: string;
   /** Authoritative runtime owner; a Role is only transport/session addressing. */
   managedWorkspace?: ManagedWorkspace;
+  /**
+   * Set when the Task legitimately owns no workspace: an empty environment plan
+   * over no bound Project (S27). Absent `managedWorkspace` otherwise still means
+   * "the authoritative workspace is missing" and fails the launch closed, so
+   * the two cases stay distinguishable rather than collapsing into `undefined`.
+   */
+  workspaceFree?: true;
   runtimePolicy?: TaskRuntimeLaunchPolicy;
   environment?: Readonly<Record<string, string>>;
   mode: "new" | "resume";

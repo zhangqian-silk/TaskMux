@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 import { createTaskMessage } from "../message/message.js";
-import { enqueueWork } from "../coordination/workMailboxQueue.js";
 
 import {
   captureRoleRunDispatch,
+  enqueueWork,
   settleRoleRunDispatch
 } from "../coordination/workMailboxQueue.js";
 import {
@@ -14,6 +14,7 @@ import {
 import {
   completeRun,
   failRun,
+  runPurposeAdmitsTaskState,
   type AgentRun,
   type AgentRunSystemEvidence,
   type AgentRunProviderResult
@@ -295,9 +296,14 @@ export function retireExactActiveRun(
   });
   const task = store.getTask(input.taskId);
   if (task === null) return stateChanged("task-missing");
-  if (task.status !== "active") return stateChanged("task-terminal");
   if (current === null) return stateChanged("turn-missing");
   if (current.status !== "active") return stateChanged("turn-terminal");
+  // The Turn's purpose decides which Task lifecycle admits it: a planning Turn
+  // is admitted on a Draft, so its retirement must land there too. Otherwise a
+  // Draft planning Turn could never be retired and would leak an active Turn.
+  if (!runPurposeAdmitsTaskState(current.purpose, task)) {
+    return stateChanged("task-terminal");
+  }
   if (current.taskId !== input.taskId || current.roleName !== input.roleName) {
     return stateChanged("turn-owner-mismatch");
   }
@@ -557,7 +563,33 @@ export function terminalizeExactTaskRun(
   } else {
     store.clearActiveRun(input.taskId, input.roleName);
   }
+  releaseDeferredTaskActivation(store, terminal, now);
   return { disposition: "applied", run: terminal };
+}
+
+/**
+ * A planning Turn that deferred an activation has just ended, so signal the
+ * Task mailbox to look at the request now.
+ *
+ * The signal carries no decision. Whether the request still applies is re-read
+ * at the adoption boundary from facts that are current then, so a request
+ * cancelled or a Task retired while this Turn was still running is never
+ * replayed. Enqueuing inside the terminalization transaction keeps the release
+ * atomic with the Turn becoming non-active: there is no window in which the
+ * deferral is unblocked but nothing will look at it.
+ */
+function releaseDeferredTaskActivation(store: TaskStore, terminal: AgentRun, now: Date): void {
+  if (terminal.purpose !== "planning") return;
+  const request = store.getTask(terminal.taskId)?.activationRequest;
+  if (request?.disposition !== "pending") return;
+  if (request.afterPlanningRun !== terminal.id) return;
+  enqueueWork(
+    store,
+    { kind: "task", taskId: terminal.taskId },
+    "activation-deferral-released",
+    now,
+    [{ type: "task", id: terminal.taskId }]
+  );
 }
 
 function obsolete(

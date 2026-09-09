@@ -5,7 +5,8 @@ import type { Milestone } from "../milestone/milestone.js";
 import type { LeaderFailure } from "./leaderFailure.js";
 import type { PendingWakeup } from "./pendingWakeup.js";
 import type { AgentRun } from "../agentRun/agentRun.js";
-import type { AgentRunFailureReason } from "../agentRun/agentRun.js";
+import type { AgentRunFailureReason, AgentRunPurpose } from "../agentRun/agentRun.js";
+import type { AgentRunInput } from "../context/runInputContract.js";
 import type {
   MailboxEntityRef,
   MailboxTarget,
@@ -38,6 +39,7 @@ import {
   isTaskOwnedWorkspace,
   type ManagedWorkspace
 } from "../worktree/managedWorkspace.js";
+import { taskOwnsManagedWorkspace } from "../task/task.js";
 import type { TaskRuntimeLaunchPolicy } from "../runtime/taskRuntimeIsolation.js";
 import type {
   RuntimeSessionCandidate,
@@ -49,7 +51,10 @@ export type { RuntimeSessionCandidate } from "../runtime/runtimeSessionCandidate
 export type SchedulerTask = Readonly<Pick<
   Task,
   "id" | "title" | "status" | "executionGate" | "projectBindings" | "cwd"
->>;
+> & {
+  /** Explicit Activation intent, so a released deferral is visible to a pass. */
+  activationRequest?: Task["activationRequest"];
+}>;
 
 export type SchedulerRole = Readonly<{
   taskId: string;
@@ -260,6 +265,27 @@ export interface SchedulerStorePort {
    * production SQLite storage provides it directly from `tasks_catalog`.
    */
   listActiveTaskIds?(): readonly string[];
+  /**
+   * Draft Task ids that already carry an active planning Turn. Planning is the
+   * one purpose admitted before activation, so the phases that keep an admitted
+   * Turn converging can resolve those Drafts without scanning Task history.
+   * Optional: a store without the projection falls back to the full scan, which
+   * still consults the durable Turn before admitting anything.
+   */
+  listPlanningDraftTaskIds?(): readonly string[];
+  /**
+   * Draft Task ids whose activation request is still pending. A deferral is
+   * released by its planning Turn ending, which enqueues a mailbox signal — but
+   * a Controller that was not running then, or that restarts before the signal
+   * is acted on, has no dirty key to reconcile from. Full reconciliation reads
+   * this projection instead, so a released request is recovered rather than
+   * waiting for unrelated traffic on the Task.
+   *
+   * Optional: a store without the projection falls back to the full scan. The
+   * request itself is still re-read at the adoption boundary, so this only
+   * decides which Tasks are looked at, never whether one is adopted.
+   */
+  listPendingActivationRequestTaskIds?(): readonly string[];
   getTask(taskId: string): SchedulerTask | null;
   /** Durable Task-owned main workspace used to fence every active launch. */
   getTaskWorkspace(taskId: string): ManagedWorkspace | null;
@@ -453,6 +479,7 @@ export interface SchedulerStorePort {
   ): import("../context/wakeNotification.js").WakeEnvelope | null;
   claimLeaderNotification(taskId: string, now: Date): LeaderNotification | null;
   prepareMessageContinuations?(taskId: string, now: Date): void;
+  prepareDraftPlanning?(taskId: string, now: Date): boolean;
   settleLeaderNotification(taskId: string, attemptId: string,
     outcome: "accepted" | "deferred" | "rejected" | "unknown", now: Date, detail?: string): void;
   /** Persist a fixed Session discovered while preparing an undelivered AgentRun. */
@@ -463,16 +490,51 @@ export interface SchedulerStorePort {
   ): "failed" | "state-changed";
 }
 
+/**
+ * Whether the Task's workspace state admits a launch.
+ *
+ * A Task that owns no managed workspace — activated with an empty environment
+ * plan, binding no Project — is admitted with no workspace record at all. The
+ * scheduler must not wait for a worktree that was deliberately never created.
+ * Every Task that does own one still needs the full ownership proof.
+ *
+ * A Draft planning conversation is a third case: the Task may already bind a
+ * Project, yet activation has not run, so no worktree exists or is owed. It is
+ * admitted with no workspace at all, and precisely because it has none it must
+ * never be handed one implicitly — workspace preparation keeps the strictly
+ * active selection, so a planning Draft never enters it.
+ */
 export function isSchedulerTaskWorkspaceReady(
   task: SchedulerTask,
-  workspace: ManagedWorkspace | null | undefined
-): workspace is ManagedWorkspace {
+  workspace: ManagedWorkspace | null | undefined,
+  purpose?: AgentRunPurpose
+): boolean {
+  if (isSchedulerPlanningDraft(task, purpose)) {
+    return workspace === null || workspace === undefined;
+  }
+  if (!taskOwnsManagedWorkspace(task)) {
+    return workspace === null || workspace === undefined;
+  }
   return isTaskOwnedWorkspace(
     workspace,
     task.id,
     task.cwd,
     task.projectBindings.map(({ projectId, directory }) => ({ projectId, directory }))
   );
+}
+
+/**
+ * A Draft running a planning Turn: durable planning before activation.
+ *
+ * This is the single predicate every scheduler phase uses to tell that third
+ * case apart, so admitting planning never widens to "a Draft is active". The
+ * purpose comes from the durable Turn, never from a caller argument.
+ */
+export function isSchedulerPlanningDraft(
+  task: Readonly<{ status: string }>,
+  purpose: AgentRunPurpose | undefined
+): boolean {
+  return purpose === "planning" && task.status === "draft";
 }
 
 /** Resolves Tasks without a global scan for a dirty reconciliation pass. */
@@ -497,31 +559,77 @@ export function selectedSchedulerTasks(
  * the durable active index, so terminal history never enters Role, delivery,
  * workspace, or liveness projections. Dirty passes keep their exact-key
  * semantics and simply discard a Task that is no longer active.
+ *
+ * With `includePlanningDrafts`, a Draft that already carries an active planning
+ * Turn is resolved too. Planning is durable work owed to a Role, so the phases
+ * that keep an admitted Turn converging — delivery, liveness, stall — must be
+ * able to see it, or a Draft planning Turn could be dispatched and then never
+ * re-delivered, resumed, or terminalized. The Draft is admitted only on the
+ * evidence of its own durable planning Turn: `listPlanningDraftTaskIds` reads
+ * the Turn, never the Task status alone, so an ordinary Draft with no planning
+ * Turn stays invisible exactly as before. Phases that act on execution facts
+ * (workspace preparation, integration, completion) keep the default and
+ * therefore keep seeing active Tasks only.
  */
 export function selectedActiveSchedulerTasks(
-  store: Pick<SchedulerStorePort, "listTasks" | "listActiveTaskIds" | "getTask">,
-  selection?: SchedulerReconcileSelection
+  store: Pick<
+    SchedulerStorePort,
+    "listTasks" | "listActiveTaskIds" | "getTask" | "listPlanningDraftTaskIds"
+  >,
+  selection?: SchedulerReconcileSelection,
+  options?: Readonly<{ includePlanningDrafts?: boolean }>
 ): SchedulerTask[] {
+  const planningDrafts = options?.includePlanningDrafts === true;
+  const admits = (task: SchedulerTask | null): boolean => {
+    if (task === null || task.executionGate.state !== "enabled") return false;
+    if (task.status === "active") return true;
+    return planningDrafts && hasActivePlanningRun(store, task);
+  };
   if (selection === undefined || selection.full) {
     const indexedTaskIds = store.listActiveTaskIds?.();
     if (indexedTaskIds === undefined) {
       return store.listTasks().filter((task) => (
-        task.status === "active"
-        && task.executionGate.state === "enabled"
-        && !selection?.blockedTaskIds?.has(task.id)
+        admits(task) && !selection?.blockedTaskIds?.has(task.id)
       ));
     }
-    return [...indexedTaskIds].flatMap((taskId) => {
-      if (selection?.blockedTaskIds?.has(taskId)) return [];
+    // The active index is bounded and authoritative for active Tasks; planning
+    // Drafts come from their own bounded index rather than a full-history scan.
+    const taskIds = planningDrafts
+      ? [...indexedTaskIds, ...(store.listPlanningDraftTaskIds?.() ?? [])]
+      : [...indexedTaskIds];
+    const seen = new Set<string>();
+    return taskIds.flatMap((taskId) => {
+      if (seen.has(taskId) || selection?.blockedTaskIds?.has(taskId)) return [];
+      seen.add(taskId);
       const task = store.getTask(taskId);
-      return task?.status === "active" && task.executionGate.state === "enabled" ? [task] : [];
+      return admits(task) ? [task!] : [];
     });
   }
   const taskIds = selection.taskIds;
   return [...taskIds].flatMap((taskId) => {
     if (selection.blockedTaskIds?.has(taskId)) return [];
     const task = store.getTask(taskId);
-    return task?.status === "active" && task.executionGate.state === "enabled" ? [task] : [];
+    return admits(task) ? [task!] : [];
+  });
+}
+
+/**
+ * Whether a Draft carries an active planning Turn on any of its Roles. Read
+ * from the durable active-Turn pointers, so a Draft is never admitted on its
+ * status alone.
+ */
+function hasActivePlanningRun(
+  store: Pick<SchedulerStorePort, "getTask">
+    & Partial<Pick<SchedulerStorePort, "listRoles" | "getActiveRun">>,
+  task: SchedulerTask
+): boolean {
+  if (task.status !== "draft") return false;
+  const roles = store.listRoles?.(task.id) ?? [];
+  return roles.some((role) => {
+    const run = store.getActiveRun?.(task.id, role.name) ?? null;
+    return run !== null
+      && run.status === "active"
+      && isSchedulerPlanningDraft(task, run.purpose);
   });
 }
 
@@ -610,6 +718,8 @@ export interface TmuxDeliveryPort {
     effective: EffectiveLaunchSnapshot;
     workspace: string;
     managedWorkspace?: ManagedWorkspace;
+    /** The Task owns no workspace by design; see RuntimeLaunchPreparationRequest. */
+    workspaceFree?: true;
     runtimePolicy?: TaskRuntimeLaunchPolicy;
     mode: RoleSessionLaunchMode;
     runId?: string;

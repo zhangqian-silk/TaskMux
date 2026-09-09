@@ -1274,8 +1274,8 @@ test("a direct Provider Turn records visible input and output without workflow s
   };
   const observation = (kind, ordinal, extra = {}) => ({
     schemaVersion: 4,
-    eventId: `direct-turn-${ordinal}`,
-    semanticKey: `direct-turn-${kind}-${ordinal}`,
+    eventId: `direct-run-${ordinal}`,
+    semanticKey: `direct-run-${kind}-${ordinal}`,
     kind,
     authority: "provider-structured",
     receivedAt: `2026-08-31T00:30:0${ordinal}.000Z`,
@@ -1430,7 +1430,7 @@ test("a wake names a completed Turn even when that Turn predates the delta curso
 
   const wideRuns = Array.from({ length: 6 }, (_, index) => ({
     ...run,
-    id: `turn-${index + 2}`
+    id: `run-${index + 2}`
   }));
   const wideEvents = wideRuns.map((candidate, index) => createTaskEvent(
     `event-${index + 10}`,
@@ -3330,7 +3330,7 @@ test("runtime terminalization preserves Agent output across dirty and wrong-bran
     store.saveActiveExecutionLaneRun(run);
 
     const nativeSessionId = `session-${ordinal}`;
-    const nativeTurnId = `native-turn-${ordinal}`;
+    const nativeTurnId = `native-run-${ordinal}`;
     const attemptId = `run:${task.id}/${run.id}`;
     let sessions = recordRoleAgentSession(createRoleSessionSet(
       { scope: "task", taskId: task.id, roleName: role.name },
@@ -3458,7 +3458,7 @@ test("Controller begin-handover accepts a null fromReleaseId", async (t) => {
 
 test("production storage exposes one current version and one migration floor", () => {
   assert.equal(MIN_SUPPORTED_STORAGE_VERSION, 1);
-  assert.equal(CURRENT_STORAGE_VERSION, 10);
+  assert.equal(CURRENT_STORAGE_VERSION, 13);
   for (const retiredExport of [
     "FileTaskStore",
     "STORAGE_STATE_FILE",

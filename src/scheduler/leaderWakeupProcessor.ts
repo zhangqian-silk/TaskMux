@@ -2,6 +2,7 @@ import { roleSessionMayContinue } from "../executor/effectiveLaunch.js";
 import { roleAgentSessionResumeMode } from "../executor/agentExecutor.js";
 import type { SchedulerReconcileSelection, SchedulerStorePort, TmuxDeliveryPort } from "./ports.js";
 import { isSchedulerTaskWorkspaceReady } from "./ports.js";
+import { taskOwnsManagedWorkspace } from "../task/task.js";
 
 export type LeaderWakeupProcessingResult = Readonly<{
   taskId: string;
@@ -28,14 +29,17 @@ export async function processLeaderWakeups(
     const task = store.getTask(wakeup.taskId);
     const role = store.getRole(wakeup.taskId, "leader");
     const base = { taskId: wakeup.taskId };
-    if (task?.status !== "active" || task.executionGate.state !== "enabled" || role === null) {
+    if (task == null || !["active", "draft"].includes(task.status) || task.executionGate.state !== "enabled" || role === null) {
       results.push({ ...base, status: "skipped", reason: "unavailable" }); continue;
     }
-    if (!isSchedulerTaskWorkspaceReady(task, store.getTaskWorkspace(task.id))) {
+    if (!isSchedulerTaskWorkspaceReady(task, store.getTaskWorkspace(task.id), task.status === "draft" ? "planning" : "execution")) {
       results.push({ ...base, status: "skipped", reason: "workspace-not-ready" }); continue;
     }
     if (now.getTime() - Date.parse(wakeup.firstRequestedAt) < LEADER_WAKE_AGGREGATION_MS) {
       results.push({ ...base, status: "skipped", reason: "aggregating" }); continue;
+    }
+    if (task.status === "draft" && store.prepareDraftPlanning?.(task.id, now)) {
+      results.push({ ...base, status: "skipped", reason: "not-ready" }); continue;
     }
     const sessions = store.getTaskRoleSessionSet?.(task.id, role.name) ?? null;
     const provider = sessions?.providerBinding;
@@ -68,6 +72,7 @@ export async function processLeaderWakeups(
         taskId: task.id, roleName: role.name, agentId: effective.agentId,
         adapterId: effective.adapterId, effective, workspace: effective.workspace.root,
         ...(role.managedWorkspace === undefined ? {} : { managedWorkspace: role.managedWorkspace }),
+        ...(!taskOwnsManagedWorkspace(task) ? { workspaceFree: true as const } : {}),
         mode, ...(mode === "resume" && session?.nativeSessionId !== undefined
           ? { nativeSessionId: session.nativeSessionId } : {})
       });

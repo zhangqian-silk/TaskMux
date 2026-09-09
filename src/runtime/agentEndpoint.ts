@@ -78,6 +78,13 @@ export type OpenedAgentEndpoint = Readonly<{
   goal?: StructuredProviderGoal | null;
 }>;
 
+/** One code generation's opener pair. This is the implementation an Instance
+ * Host owns and a Session pins; the clients it opens are owned by that Session. */
+export type AgentEndpointFactory = Readonly<{
+  open(payload: AgentHostLaunchPayload): Promise<OpenedAgentEndpoint>;
+  resume(payload: AgentHostLaunchPayload): Promise<OpenedAgentEndpoint>;
+}>;
+
 /**
  * The only built-in managed execution factory. Product/protocol codecs remain
  * private to runtime; the Host consumes the same boundary for both providers.
@@ -85,10 +92,7 @@ export type OpenedAgentEndpoint = Readonly<{
  */
 export function createAgentEndpointFactory(
   start: typeof startStructuredProviderSession = startStructuredProviderSession
-): Readonly<{
-  open(payload: AgentHostLaunchPayload): Promise<OpenedAgentEndpoint>;
-  resume(payload: AgentHostLaunchPayload): Promise<OpenedAgentEndpoint>;
-}> {
+): AgentEndpointFactory {
   const connect = async (payload: AgentHostLaunchPayload, mode: "new" | "resume"): Promise<OpenedAgentEndpoint> => {
     const control = payload.providerControl;
     if (control === undefined || control.mode !== mode) {

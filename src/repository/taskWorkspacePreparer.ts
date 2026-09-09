@@ -16,12 +16,19 @@ import {
 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { retireTaskRoleSessionsForWorkspace } from "../executor/agentExecutor.js";
+import {
+  retireTaskRoleSessionsForWorkspace,
+  updateRoleAgentSessionStatus
+} from "../executor/agentExecutor.js";
 import { formatWorkspacePreflightError } from "../executor/workspacePreflightClassification.js";
 import { updateRole, type TaskRole } from "../role/role.js";
 import { taskRoleRuntimeIdentity } from "../runtime/managedCaller.js";
+import {
+  hasRuntimeCleanupObligation,
+  runtimeLifecycleTarget,
+  RUNTIME_HOST_DETACH_REQUIRED_REASON
+} from "../runtime/lifecycleReservation.js";
 import { taskLocalActor } from "../commands/taskActor.js";
-import { hasRuntimeCleanupObligation, runtimeLifecycleTarget } from "../runtime/lifecycleReservation.js";
 import {
   attachReviewRoundWorkspace,
   recordReviewWorkspaceDisposition,
@@ -33,9 +40,17 @@ import {
   bindTaskProjectCommits,
   bindTaskWorkspaceIdentity,
   synchronizeTaskProjectCommits,
+  taskOwnsManagedWorkspace,
   type Task
 } from "../task/task.js";
+import {
+  admitStoredTaskActivation,
+  adoptTaskActivationResources,
+  recordAdoptedTaskActivation
+} from "../task/taskActivationService.js";
+import type { TaskActivationRequest } from "../task/taskActivation.js";
 import { validateDraftTaskForActivation } from "../task/draftPlan.js";
+import { createProjectResources } from "../resources/projectResourceService.js";
 import { createTaskEvent } from "../event/taskEvent.js";
 import { enqueueWork } from "../coordination/workMailboxQueue.js";
 import {
@@ -110,6 +125,21 @@ export type TaskWorkspacePreparation = Readonly<{
 export type TaskWorkspaceActivation = TaskWorkspacePreparation & Readonly<{
   task: Task;
   changed: boolean;
+}>;
+
+/**
+ * What resource adoption established, carried to the status transaction.
+ *
+ * Both halves matter there: `preparationId` is the environment to record and
+ * bind, and `request` is the identity that adopted it. Keeping them together is
+ * what lets the transaction refuse to write one request's preparation onto
+ * another request that took the slot meanwhile. Absent `request` means the Task
+ * had no explicit activation request at all.
+ */
+type AdoptedActivationEnvironment = Readonly<{
+  workspaceFree: boolean;
+  preparationId?: string;
+  request?: TaskActivationRequest;
 }>;
 
 export type TaskWorkspaceCleanup = Readonly<{
@@ -208,21 +238,31 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
    * transaction that moves the Task from Draft to active. A Draft never owns a
    * durable writable workspace before this boundary, and any failed attempt
    * discards its unadopted refs/worktrees.
+   *
+   * An explicit activation request drives the resource configuration. Its
+   * environment is prepared and adopted before this boundary, and the request
+   * is marked adopted inside the same transaction as the status change, so a
+   * later launch failure can never present itself as "activation never
+   * happened".
    */
   async activateTaskWorkspace(taskId: string, environment: NodeJS.ProcessEnv = {}): Promise<TaskWorkspaceActivation> {
     for (let attempt = 0; ; attempt += 1) {
       try {
         const task = requireTask(this.store, taskId);
-        taskLocalActor(this.store, environment, task.id);
+        const caller = taskLocalActor(this.store, environment, task.id);
+        const actor = task.activationRequest?.operation.actorId === `task:${task.id}/role:leader`
+          ? "leader" : caller;
         if (task.status === "active") {
-          const workspace = this.store.getTaskWorkspace(task.id);
-          if (!isTaskOwnedWorkspace(
-            workspace,
-            task.id,
-            task.cwd,
-            task.projectBindings.map(({ projectId, directory }) => ({ projectId, directory }))
-          )) {
-            throw new Error(`Active Task workspace adoption is invalid: ${task.id}.`);
+          if (taskOwnsManagedWorkspace(task)) {
+            const workspace = this.store.getTaskWorkspace(task.id);
+            if (!isTaskOwnedWorkspace(
+              workspace,
+              task.id,
+              task.cwd,
+              task.projectBindings.map(({ projectId, directory }) => ({ projectId, directory }))
+            )) {
+              throw new Error(`Active Task workspace adoption is invalid: ${task.id}.`);
+            }
           }
           return {
             task,
@@ -233,12 +273,15 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
           };
         }
         validateDraftTaskForActivation(this.store, task);
-        const { release, current } = this.#acquireTaskProjectMaintenanceLocks(task);
-        try {
-          return await this.#prepareTaskWorkspaceLocked(current.id, true, environment);
-        } finally {
-          release();
+        const provider = this.store.getTaskRoleSessionSet(task.id, LEADER_ROLE)?.providerBinding;
+        if (provider?.run != null
+          && ["submitting", "accepted", "delivery-unknown"].includes(provider.run.status)) {
+          throw new Error("Planning native input is unsettled; preserve activation intent and retry after its exact terminal.");
         }
+        const adopted = await this.#adoptActivationEnvironment(task);
+        return adopted.workspaceFree
+          ? this.#activateWorkspaceFreeTask(task.id, adopted, actor)
+          : await this.#prepareActivatedTaskWorkspace(task, adopted, actor);
       } catch (error) {
         if (error instanceof StorageConflictError
           && attempt < TASK_WORKSPACE_PREPARE_MAX_CONFLICT_RETRIES) {
@@ -246,6 +289,188 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
         }
         throw error;
       }
+    }
+  }
+
+  /** Prepares the managed workspace of a Task being activated, under its fences. */
+  async #prepareActivatedTaskWorkspace(
+    task: Task,
+    environment: AdoptedActivationEnvironment,
+    actor: "user" | "operator" | "leader"
+  ): Promise<TaskWorkspaceActivation> {
+    const { release, current } = this.#acquireTaskProjectMaintenanceLocks(task);
+    try {
+      return await this.#prepareTaskWorkspaceLocked(current.id, true, environment, actor);
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Prepares and adopts the resource configuration an explicit activation
+   * request named, before any status change.
+   *
+   * A Task with no request keeps the historical behavior: its managed workspace
+   * is the whole environment. A request whose plan is empty and whose Task
+   * binds no Project owns nothing physical, and is reported as workspace-free
+   * so activation creates no directory at all.
+   *
+   * The exact request that was adopted travels with the result, so the later
+   * status transaction can prove it is completing that request rather than
+   * whichever one occupies the slot by then.
+   */
+  async #adoptActivationEnvironment(
+    task: Task
+  ): Promise<AdoptedActivationEnvironment> {
+    const admission = admitStoredTaskActivation(this.store, task.id);
+    if (admission.disposition === "absent") return { workspaceFree: false };
+    if (admission.disposition !== "ready") {
+      throw new Error(
+        `Task activation is not adoptable: ${task.id}/${admission.disposition}`
+        + (admission.disposition === "unavailable" ? ` (${admission.reason})` : "")
+        + "."
+      );
+    }
+    // Resource adoption owns its own grant, directory-identity and conflict
+    // rechecks. A failure here leaves the Task a continuable Draft.
+    const adopted = adoptTaskActivationResources(this.store, task.id, this.now);
+    return {
+      workspaceFree: admission.plan.kind === "empty"
+        && task.projectBindings.length === 0,
+      // The request whose resources were actually adopted, re-checked at the
+      // status transaction: a cancel or replacement landing during workspace
+      // preparation must fail rather than silently swap requests.
+      request: adopted.request,
+      // The exact preparation this request consumed, so the adopted record
+      // names the environment it adopted rather than the latest one present.
+      ...(adopted.preparation === undefined
+        ? {}
+        : { preparationId: adopted.preparation.id })
+    };
+  }
+
+  /**
+   * Moves a Task that owns nothing physical from Draft to active.
+   *
+   * An empty environment plan with no bound Project is a legal Task shape, so
+   * no workspace view, worktree or cwd is created to satisfy the framework's
+   * own model. The status change and the adopted request commit together.
+   */
+  #activateWorkspaceFreeTask(
+    taskId: string,
+    environment: AdoptedActivationEnvironment,
+    actor: "user" | "operator" | "leader"
+  ): TaskWorkspaceActivation {
+    const task = this.store.transaction((tx) => {
+      const latest = requireTask(tx, taskId);
+      if (latest.status !== "draft") {
+        throw new Error(`Task changed while activating it: ${taskId}/${latest.status}.`);
+      }
+      if (latest.projectBindings.length !== 0
+        || latest.cwd !== undefined
+        || latest.workspaceIdentity !== undefined
+        || tx.getTaskWorkspace(taskId) !== null) {
+        throw new Error(`Task acquired workspace state while activating it: ${taskId}.`);
+      }
+      validateDraftTaskForActivation(tx, latest);
+      const timestamp = this.now();
+      // Bind before the handover below: the desired environment must be the
+      // adopted one before the obligation that ends the old physical Host
+      // exists.
+      if (environment.preparationId !== undefined) {
+        this.#bindAdoptedActivationEnvironment(tx, taskId, environment.preparationId);
+      }
+      // The physical launch is unchanged, but "unchanged" is not "compatible":
+      // the Draft's planning Session runs in the Role's inherited workspace,
+      // which is exactly the shared cwd an active Task may not execute in. Hand
+      // the conversation over instead of asserting continuity, so the next
+      // launch is re-planned under the execution rules and must name a real
+      // environment. Its plan and grants are re-proven there, not assumed here.
+      handOverPlanningSession(tx, taskId, timestamp);
+      const activated = this.#recordAdoptedActivation(
+        tx,
+        activateTask(latest, timestamp),
+        environment,
+        timestamp
+      );
+      tx.saveTask(activated);
+      recordTaskActivation(tx, latest, activated, timestamp, actor);
+      return activated;
+    });
+    return { task, taskId, status: "ready", changed: true };
+  }
+
+  /**
+   * Marks the Task's activation request adopted, inside the caller's activation
+   * transaction. Returns the Task unchanged when no explicit request exists.
+   *
+   * The adopted environment and the request identity travel together, so the
+   * record can never name a preparation that a different request produced.
+   */
+  #recordAdoptedActivation(
+    store: TaskStore,
+    task: Task,
+    environment: AdoptedActivationEnvironment,
+    now: Date
+  ): Task {
+    if (task.activationRequest === undefined) return task;
+    // Re-prove the adopted environment inside the status transaction. Between
+    // resource adoption and here a worktree was prepared, which takes real time:
+    // a grant may have been revoked or bounded away, or the directory may no
+    // longer be the Resource it was adopted as. `resolveExecutionEnvironment` is
+    // the same check every launch performs, including the per-resourceRef grant
+    // recheck against the reservation adoption charged, so a Task can never go
+    // active claiming an environment its authority no longer covers.
+    if (environment.preparationId !== undefined) {
+      createProjectResources(store, this.now)
+        .resolveExecutionEnvironment(task.id, environment.preparationId);
+    }
+    return recordAdoptedTaskActivation(
+      store,
+      task,
+      {
+        ...(environment.preparationId === undefined
+          ? {}
+          : { preparationId: environment.preparationId }),
+        ...(environment.request === undefined ? {} : { expected: environment.request })
+      },
+      now
+    );
+  }
+
+  /**
+   * Selects the adopted environment for every Role of a Task, so
+   * `preparationId` is the Role's actual `executionEnvironment` rather than a
+   * record no launch ever reads.
+   *
+   * This is the existing public `bindEnvironment` path, so the atomic Role
+   * update, its event and its mailbox notification are the ones task-21
+   * established — the adopted directory, its ownership, its access and its
+   * per-resource grant reservation are rechecked there and shown truthfully at
+   * launch.
+   *
+   * Runs inside the caller's activation transaction (the Store is re-entrant),
+   * and specifically *before* the planning-Session handover queues the Host
+   * detach. That order is required in both directions: the desired
+   * configuration must change before the obligation that ends the old physical
+   * Host exists, so runtime cleanup never acts on a launch configuration the
+   * Task has already replaced — which is exactly what the runtime-lifecycle
+   * guard refuses when the two are inverted. Committing with the status change
+   * also means a Task can never be observed active holding an adopted
+   * preparation that no Role executes in.
+   */
+  #bindAdoptedActivationEnvironment(
+    store: TaskStore,
+    taskId: string,
+    preparationId: string
+  ): void {
+    const resources = createProjectResources(store, this.now);
+    for (const role of store.listRoles(taskId)) {
+      if (role.executionEnvironment?.preparationId === preparationId) continue;
+      resources.bindEnvironment(taskId, role.name, preparationId, {
+        source: "task.activation-adopted",
+        preparationId
+      });
     }
   }
 
@@ -303,7 +528,9 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
   async #prepareTaskWorkspaceLocked(
     taskId: string,
     activate: boolean,
-    environment: NodeJS.ProcessEnv = {}
+    /** Environment and request identity the activation adopted, when one exists. */
+    activationEnvironment: AdoptedActivationEnvironment = { workspaceFree: false },
+    actor: "user" | "operator" | "leader" = "user"
   ): Promise<TaskWorkspaceActivation> {
     const task = requireTask(this.store, taskId);
     if (activate && task.status !== "draft") {
@@ -385,10 +612,26 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
             throw new Error(`Gitless Task workspace changed during preparation: ${task.id}.`);
           }
           const timestamp = this.now();
+          // Activation moves the Leader out of the Draft planning cwd, so its
+          // planning Session cannot continue. Hand it over explicitly before
+          // the migration below, which refuses to retire a live Session. The
+          // adopted environment is bound first, so the desired configuration is
+          // already correct when the Host detach is queued.
+          if (activate && activationEnvironment.preparationId !== undefined) {
+            this.#bindAdoptedActivationEnvironment(
+              tx, task.id, activationEnvironment.preparationId
+            );
+          }
+          if (activate) handOverPlanningSession(tx, task.id, timestamp);
           let next = latest.cwd === root
             ? latest
             : { ...latest, cwd: root, updatedAt: timestamp.toISOString() };
-          if (activate) next = activateTask(next, timestamp);
+          if (activate) next = this.#recordAdoptedActivation(
+            tx,
+            activateTask(next, timestamp),
+            activationEnvironment,
+            timestamp
+          );
           if (!isDeepStrictEqual(next, latest)) tx.saveTask(next);
           if (current === null) tx.saveManagedWorkspace(workspace);
           for (const role of tx.listRoles(task.id)) {
@@ -398,7 +641,7 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
               tx.saveRole(task.id, updateRole(role, { workspace: root }, timestamp));
             }
           }
-          if (activate) recordTaskActivation(tx, latest, next, timestamp, environment);
+          if (activate) recordTaskActivation(tx, latest, next, timestamp, actor);
           return next;
         });
         return {
@@ -600,6 +843,17 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
         const timestamp = this.now();
         let persistedTask = latest;
         if (activate) {
+          // Activation moves the Leader out of the Draft planning cwd, so its
+          // planning Session cannot continue. Hand it over explicitly before
+          // the migration below, which refuses to retire a live Session. The
+          // adopted environment is bound first, so the desired configuration is
+          // already correct when the Host detach is queued.
+          if (activationEnvironment.preparationId !== undefined) {
+            this.#bindAdoptedActivationEnvironment(
+              tx, task.id, activationEnvironment.preparationId
+            );
+          }
+          handOverPlanningSession(tx, task.id, timestamp);
           persistedTask = bindTaskProjectCommits(
             persistedTask,
             prepared.map(({ entry }) => ({
@@ -627,7 +881,12 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
         if (persistedTask.cwd !== root) {
           persistedTask = { ...persistedTask, cwd: root, updatedAt: timestamp.toISOString() };
         }
-        if (activate) persistedTask = activateTask(persistedTask, timestamp);
+        if (activate) persistedTask = this.#recordAdoptedActivation(
+          tx,
+          activateTask(persistedTask, timestamp),
+          activationEnvironment,
+          timestamp
+        );
         if (!isDeepStrictEqual(persistedTask, latest)) {
           tx.saveTask(persistedTask);
         }
@@ -705,7 +964,7 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
             tx.saveRole(task.id, updateRole(role, { workspace: target }, timestamp));
           }
         }
-        if (activate) recordTaskActivation(tx, latest, persistedTask, timestamp, environment);
+        if (activate) recordTaskActivation(tx, latest, persistedTask, timestamp, actor);
         return persistedTask;
       });
       return {
@@ -2492,9 +2751,8 @@ function recordTaskActivation(
   previous: Task,
   active: Task,
   now: Date,
-  environment: NodeJS.ProcessEnv
+  actor: "user" | "operator" | "leader"
 ): void {
-  const actor = taskLocalActor(store, environment, active.id);
   if (actor !== "leader") enqueueWork(
     store,
     { kind: "role", taskId: active.id, roleName: LEADER_ROLE },
@@ -2682,6 +2940,73 @@ function retireWorkspaceBoundSession(
   if (sessions !== null) {
     store.saveTaskRoleSessionSet(retireTaskRoleSessionsForWorkspace(sessions, now));
   }
+}
+
+/**
+ * Hands a Draft planning Session over to the activated Task.
+ *
+ * A Leader plans and executes as the same logical Role, so activation never
+ * changes the Leader or Task identity. It can change the *physical* launch
+ * though: adopting a workspace or an execution environment moves the Session's
+ * cwd, and a native conversation is bound to the cwd it started in. Such a
+ * Session cannot continue, and that is not a failure to report — the plan lives
+ * in the Task's own durable facts, so the next Turn takes over from persistent
+ * Context instead of the old terminal or its full tool log.
+ *
+ * Ending the record here is what makes the takeover explicit rather than
+ * silent: the next Leader wake resolves `new`, and the queued cleanup ends the
+ * physical Host that the ended record no longer represents. Without this, a
+ * live planning Session would make workspace migration throw and leave the
+ * Task an un-activatable Draft forever.
+ */
+function handOverPlanningSession(
+  store: TaskStore,
+  taskId: string,
+  now: Date
+): void {
+  const sessions = store.getTaskRoleSessionSet(taskId, LEADER_ROLE);
+  if (sessions === null) return;
+  const live = Object.values(sessions.sessions).find(({ status }) => status !== "ended");
+  if (live === undefined) return;
+  // A planning Turn that is still running owns this Session. Deferred
+  // activation is adopted only after it ends, so reaching here with an active
+  // Turn means the caller raced it; fail closed rather than cut it off.
+  if (store.getActiveRun(taskId, LEADER_ROLE) !== null) {
+    throw new Error(
+      `Leader has an active AgentRun while activating its Task: ${taskId}/${LEADER_ROLE}.`
+    );
+  }
+  let next = sessions;
+  for (const session of Object.values(sessions.sessions)) {
+    if (session.status === "ended") continue;
+    next = updateRoleAgentSessionStatus(next, session.agentId, "ended", now, "stopped");
+  }
+  store.saveTaskRoleSessionSet(next);
+  // The durable record is ended; the physical Host still exists. Queue the
+  // explicit detach so the runtime lane closes it instead of leaking it.
+  enqueueWork(
+    store,
+    runtimeLifecycleTarget({ scope: "task", taskId, roleName: LEADER_ROLE }),
+    RUNTIME_HOST_DETACH_REQUIRED_REASON,
+    now,
+    [{ type: "task", id: taskId }]
+  );
+  store.saveEvent(taskId, createTaskEvent(
+    store.nextEventId(taskId),
+    taskId,
+    "task.planning-session-handover",
+    {
+      roleName: LEADER_ROLE,
+      agentId: live.agentId,
+      adapterId: live.adapterId,
+      ...(live.nativeSessionId === undefined
+        ? {}
+        : { nativeSessionId: live.nativeSessionId }),
+      reason: "activation-changed-physical-launch",
+      continuity: "persistent-context"
+    },
+    now
+  ));
 }
 
 function canCorrectActiveWorkItemRoleWorkspaceHint(

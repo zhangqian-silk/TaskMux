@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { prepareMessageContinuations } from "../message/messageContinuation.js";
+import { freezeRunContextSnapshot } from "../context/runContextPack.js";
+import { contextSnapshotRef } from "../context/contextSnapshot.js";
 import { isDeepStrictEqual } from "node:util";
 import { assertExecutionEnvironmentCurrent } from "../runtime/executionEnvironment.js";
 
@@ -62,6 +64,9 @@ import {
 import { SYSTEM_OPERATOR_ROLE } from "../role/systemRoles.js";
 import {
   appendRunInput,
+  createRun,
+  withRunContextSnapshot,
+  runPurposeAdmitsTaskState,
   type AgentRun
 } from "../agentRun/agentRun.js";
 import { transportAgentResult } from "../domain/agentResultTransport.js";
@@ -134,6 +139,7 @@ import {
 } from "../coordination/workMailbox.js";
 import {
   enqueueWork,
+  enqueueRoleRunDispatch,
   settleRoleRunDispatch as settleRoleRunDispatchMailbox
 } from "../coordination/workMailboxQueue.js";
 import type { SchedulerMailboxClaimInput, SchedulerMailboxClaimResult } from "../scheduler/ports.js";
@@ -871,6 +877,16 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       left.localeCompare(right, undefined, { numeric: true })
     ));
   }
+  listPlanningDraftTaskIds(): readonly string[] {
+    return [...this.store.listPlanningDraftTaskIds()].sort((left, right) => (
+      left.localeCompare(right, undefined, { numeric: true })
+    ));
+  }
+  listPendingActivationRequestTaskIds(): readonly string[] {
+    return [...this.store.listPendingActivationRequestTaskIds()].sort((left, right) => (
+      left.localeCompare(right, undefined, { numeric: true })
+    ));
+  }
   getTask(taskId: string) { return this.store.getTask(taskId); }
   getTaskWorkspace(taskId: string) { return this.store.getTaskWorkspace(taskId); }
   getTaskBrief(taskId: string) { return this.store.getTaskBrief(taskId); }
@@ -1064,8 +1080,8 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
     return this.store.transaction((store) => {
       const task = store.getTask(input.taskId);
       const run = store.getActiveRun(input.taskId, input.roleName);
-      if (task === null || task.status !== "active" || task.executionGate.state !== "enabled"
-        || run === null || run.id !== input.runId || run.status !== "active") {
+      if (task === null || run === null || !runPurposeAdmitsTaskState(run.purpose, task)
+        || run.id !== input.runId || run.status !== "active") {
         return "state-changed";
       }
       const latest = latestRunEventTime(
@@ -1101,10 +1117,9 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const run = store.getActiveRun(input.taskId, input.roleName);
       if (
         task === null
-        || task.status !== "active"
-        || task.executionGate.state !== "enabled"
         || role === null
         || run === null
+        || !runPurposeAdmitsTaskState(run.purpose, task)
         || run.id !== input.runId
         || run.status !== "active"
         || run.effective.agentId !== input.agentId
@@ -1154,9 +1169,8 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const run = store.getActiveRun(input.taskId, input.roleName);
       if (
         task === null
-        || task.status !== "active"
-        || task.executionGate.state !== "enabled"
         || run === null
+        || !runPurposeAdmitsTaskState(run.purpose, task)
         || run.id !== input.runId
         || run.status !== "active"
       ) return "state-changed";
@@ -1869,10 +1883,40 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
     }
   }
 
+  /** The first Draft conversation is an explicit planning execution. Later
+   * messages use the same notification path as direct Leader collaboration. */
+  prepareDraftPlanning(taskId: string, now: Date): boolean {
+    return this.store.transaction((store) => {
+      const task = store.getTask(taskId);
+      if (task?.status !== "draft" || task.executionGate.state !== "enabled") return false;
+      if (store.getActiveRun(taskId, "leader") !== null) return true;
+      const sessions = store.getTaskRoleSessionSet(taskId, "leader");
+      if (activeLiveRoleAgentSession(sessions) !== null) return false;
+      const role = requireRole(store, taskId, "leader");
+      const target = { kind: "role", taskId, roleName: "leader" } as const;
+      const mailbox = store.getWorkMailbox(target);
+      if (mailbox?.pending == null || mailbox.processing !== null) return false;
+      const run = createRun(store.nextRunId(taskId), taskId, "leader", "new",
+        createRunInput({ source: { type: "yui", channel: "task-dispatch" },
+          directive: `Plan Task ${taskId} with the user. Persist requirements and decisions. Request activation explicitly; planning grants no delivery authority.`,
+          deltaRefIds: [] }), now, {
+          purpose: "planning", effective: resolveEffectiveLaunch({ role, purpose: "planning" })
+        });
+      const snapshot = freezeRunContextSnapshot(store, run, now);
+      const frozen = withRunContextSnapshot(run, contextSnapshotRef(snapshot));
+      store.saveRun(frozen);
+      store.saveActiveRun(frozen);
+      // Associate the existing pending prefix with this first execution.
+      enqueueRoleRunDispatch(store, { taskId, roleName: "leader", runId: run.id,
+        reason: "planning-requested", occurredAt: now });
+      return true;
+    });
+  }
+
   claimLeaderNotification(taskId: string, now: Date): import("../scheduler/ports.js").LeaderNotification | null {
     return this.store.transaction((store) => {
       const task = store.getTask(taskId);
-      if (task?.status !== "active" || task.executionGate.state !== "enabled") return null;
+      if (task == null || !["active", "draft"].includes(task.status) || task.executionGate.state !== "enabled") return null;
       const target = { kind: "role", taskId, roleName: "leader" } as const;
       let mailbox = store.getWorkMailbox(target);
       if (mailbox === null) return null;
@@ -1958,13 +2002,17 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
   saveRoleRunPrepared(input: RoleRunDeliveryPersistence): void {
     this.store.transaction((store) => {
       const task = store.getTask(input.task.id);
-      if (task === null || task.status !== "active" || task.executionGate.state !== "enabled") {
-        throw new Error(`Task is not active: ${input.task.id}.`);
-      }
       const role = requireRole(store, input.task.id, input.role.name);
       const active = store.getActiveRun(input.task.id, input.role.name);
       if (active === null || active.id !== input.run.id) {
         throw new Error(`Active AgentRun changed before preparation was persisted: ${input.run.id}.`);
+      }
+      // The Turn's own purpose decides which Task lifecycle admits it, so a
+      // planning Turn on a Draft persists its Session while every other purpose
+      // still requires an active Task. Read the durable active Turn, never the
+      // caller's copy, so admission cannot be widened by a stale input.
+      if (task === null || !runPurposeAdmitsTaskState(active.purpose, task)) {
+        throw new Error(`Task is not active: ${input.task.id}.`);
       }
       if (store.getTaskRoleSessionSet(input.task.id, input.role.name) === null) {
         store.saveTaskRoleSessionSet(createRoleSessionSet(
@@ -2011,10 +2059,9 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const session = sessions?.sessions[input.agentId];
       if (
         task === null
-        || task.status !== "active"
-        || task.executionGate.state !== "enabled"
-        || role === null
         || active === null
+        || !runPurposeAdmitsTaskState(active.purpose, task)
+        || role === null
         || active.id !== input.runId
         || active.status !== "active"
         || active.effective.agentId !== input.agentId
@@ -2201,7 +2248,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const task = store.getTask(input.taskId);
       if (task === null) throw new Error(`Task not found: ${input.taskId}.`);
       if (task.status === "archived") {
-        throw new Error(`Cannot complete a runtime turn for unavailable Task: ${input.taskId}.`);
+        throw new Error(`Cannot complete a runtime run for unavailable Task: ${input.taskId}.`);
       }
       const resolved = resolveTerminalExecution(store, input);
       if (resolved === null) throw new Error("Runtime terminal has no exact execution binding.");
@@ -2326,7 +2373,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         }, now);
         if (terminalized.disposition !== "applied" || terminalized.run === null) {
           throw new Error(
-            `Provider Turn terminal could not complete its exact AgentRun: ${
+            `Provider AgentRun terminal could not complete its exact AgentRun: ${
               terminalized.reason ?? "obsolete"
             }.`
           );
@@ -3197,8 +3244,7 @@ function preallocatedRuntimeReadyAwaitingProjection(
   const role = store.getRole(taskId, observation.fence.roleName);
   const run = store.getActiveRun(taskId, observation.fence.roleName);
   const sessions = store.getTaskRoleSessionSet(taskId, observation.fence.roleName);
-  if (task?.status !== "active"
-    || task.executionGate.state !== "enabled"
+  if (task == null || run == null || !runPurposeAdmitsTaskState(run.purpose, task)
     || role?.activeAgentId !== observation.fence.agentId
     || run?.id !== runId
     || run.status !== "active"
@@ -3360,7 +3406,18 @@ function recordTaskRuntimeNativeSession(
   if (task.status === "archived") {
     throw new Error(`Cannot register a native session for archived Task: ${input.taskId}.`);
   }
-  if (task.status !== "active" || task.executionGate.state !== "enabled") {
+  // A Draft registers a Session only for its planning Turn. Admission is decided
+  // by the active Turn's purpose through the one shared invariant, so a Draft
+  // still cannot open an execution Session before activation.
+  const admittingRun = store.getActiveRun(input.taskId, input.roleName);
+  const existingPlanning = activeLiveRoleAgentSession(store.getTaskRoleSessionSet(input.taskId, input.roleName));
+  if (!(admittingRun !== null
+    && admittingRun.purpose === "planning"
+    && runPurposeAdmitsTaskState(admittingRun.purpose, task))
+    && !(task.status === "draft" && task.executionGate.state === "enabled" && input.roleName === "leader"
+      && existingPlanning?.effective.executionAuthority === "planning"
+      && existingPlanning.nativeSessionId === input.nativeSessionId)
+    && (task.status !== "active" || task.executionGate.state !== "enabled")) {
     throw new Error(
       `Cannot register a native session for a Task that is not active: ${input.taskId}.`
     );
@@ -3493,6 +3550,7 @@ function mapRole(
   role: NonNullable<ReturnType<TaskStore["getRole"]>>
 ): SchedulerRole {
   const binding = activeRoleAgentBinding(role);
+  const purpose = store.getTask(role.taskId)?.status === "draft" ? "planning" as const : "execution" as const;
   const item = store.listWorkItems(role.taskId).find((candidate) => (
     candidate.assignee === role.name
       && !["accepted", "retired"].includes(candidate.status)
@@ -3513,14 +3571,14 @@ function mapRole(
   const effective = reopened || (liveSession !== null && liveSession.agentId !== role.activeAgentId)
     ? resolveEffectiveLaunch({
         role,
-        purpose: "execution",
+        purpose,
         ...(workspace === undefined ? {} : { workspace })
       })
     : liveSession !== null && workspace?.owner.type === "task"
       ? effectiveLaunchWithTaskMainWorkspace(liveSession.effective, workspace)
       : liveSession?.effective ?? resolveEffectiveLaunch({
           role,
-          purpose: "execution",
+          purpose,
           ...(workspace === undefined ? {} : { workspace })
         });
   return {

@@ -5,7 +5,10 @@ import {
 } from "../context/taskContext.js";
 import { BUILTIN_CAPABILITIES } from "../kernel/builtinCapabilities.js";
 import { capabilitySchemaError } from "../kernel/capabilitySchema.js";
-import { updateTaskMetadataCommand, sendTaskMessageCommand, type TaskCommandOptions } from "../commands/taskCommands.js";
+import {
+  updateTaskMetadataCommand, sendTaskMessageCommand,
+  type TaskCommandOptions
+} from "../commands/taskCommands.js";
 import type { TaskMetadataUpdate } from "../task/task.js";
 import { webLocalMutation, WebRequestRejected } from "./webMutation.js";
 import { runTaskInputCommand } from "../commands/taskInputCommands.js";
@@ -32,11 +35,16 @@ export function createWebTaskSurface(
   };
   return {
     message: (taskId: string, body: string) => {
-      const { message, task } = webLocalMutation(store, (tx) =>
+      // `queuedForLeader` is the fact the shared transaction actually committed,
+      // not a re-derivation from Task status. A Draft queues its Leader exactly
+      // like an active Task (planning is a Leader conversation), so reporting
+      // "saved" here would have understated a wake that really did happen.
+      const { message, task, queuedForLeader } = webLocalMutation(store, (tx) =>
         sendTaskMessageCommand(tx, taskId, body, "leader", commandOptions));
-      notify(taskId, task.status === "active");
+      notify(taskId, queuedForLeader);
       return { record: message, revision: message.createdAt,
-        disposition: task.status === "active" ? "queued" : "saved",
+        disposition: queuedForLeader ? "queued" : "saved",
+        planning: task.status === "draft",
         target: { scope: "task", taskId, roleName: "leader" } };
     },
     read: async (taskId: string) => withContextObservations(

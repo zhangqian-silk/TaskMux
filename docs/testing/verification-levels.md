@@ -19,13 +19,15 @@ the number of bugs fixed over time.
 
 ## Permanent core smoke
 
-`npm test` and `npm run test:core` build the checkout and run the same four
-happy-path checks:
+`npm test` and `npm run test:core` build the checkout and cover the same primary
+happy-path categories:
 
 1. the packaged CLI starts and exposes setup/update/upgrade/Task commands;
 2. one normal SQLite Task and Message survive a reopen;
 3. a supported historical Home migrates through the linear storage chain to current;
 4. the built-in Codex and Claude Drivers are registered.
+5. one independent declarative plugin is created, validated, called and disabled
+   through authenticated ingress, with its selection and validation preserved.
 
 The test phase should remain below two seconds on a normal development machine;
 the TypeScript build is measured separately. Adding a permanent case requires a

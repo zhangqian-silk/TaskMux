@@ -22,6 +22,10 @@ The [target architecture handbook](docs/architecture/README.md) preserves the
 2026-09-06 design baseline for the upcoming refactor; it does not describe
 already implemented behavior.
 
+The [independent plugin SDK](docs/plugin-sdk.md) documents the implemented
+Task-local package, validation, explicit activation, and trusted-local execution
+contract. It does not provide an OS sandbox or automatic runtime upgrades.
+
 ## Requirements
 
 - Node.js 20.17+, 22.9+, or 24.x

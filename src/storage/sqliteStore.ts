@@ -38,6 +38,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import Database from "better-sqlite3";
+import { validatePluginValidation, type PluginValidation } from "../plugins/pluginPackage.js";
+import { validatePluginIntent, validatePluginIntentFailure, type PluginIntent, type PluginIntentFailure } from "../plugins/pluginIntent.js";
 import {
   validateArtifact, validateLocalResource, validateEnvironmentPreparation,
   type Artifact, type LocalResource, type EnvironmentPreparation
@@ -60,7 +62,7 @@ import type { InputRequest } from "../input/inputRequest.js";
 import type { GlobalRoleSessionSet, RoleAgentSession, TaskRoleSessionSet } from "../executor/agentExecutor.js";
 import type { TaskMessage } from "../message/message.js";
 import type { Milestone } from "../milestone/milestone.js";
-import type { AgentRun } from "../agentRun/agentRun.js";
+import { runPurposeAdmitsTaskState, type AgentRun } from "../agentRun/agentRun.js";
 import type { RuntimeOwner } from "../runtime/runtimeOwner.js";
 import {
   compareRuntimeSessionCandidates,
@@ -245,6 +247,13 @@ function isUniqueConstraint(error: unknown): boolean {
     && "code" in error
     && (error as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY"
     || (error as { code?: string })?.code === "SQLITE_CONSTRAINT_UNIQUE";
+}
+
+/** One admission rule for every active-Turn write path in this store. */
+function assertRunAdmission(task: Task | null, run: AgentRun): void {
+  if (task === null || !runPurposeAdmitsTaskState(run.purpose, task)) {
+    throw new StorageRecordError(`Task execution is not enabled: ${run.taskId}.`);
+  }
 }
 
 export class SqliteTaskStore implements TaskStore {
@@ -835,6 +844,63 @@ export class SqliteTaskStore implements TaskStore {
     return this.#listPayload<Artifact>("artifacts", "task_id = ?", [taskId]).map(validateArtifact);
   }
 
+  savePluginValidation(validation: PluginValidation): void {
+    validatePluginValidation(validation);
+    this.#mutate(() => {
+      const previous = this.getPluginValidation(validation.taskId, validation.id);
+      if (previous !== null) {
+        if (!isDeepStrictEqual(previous, validation)) throw new StorageRecordError("Plugin validation is immutable.");
+        return;
+      }
+      this.#db.prepare("INSERT INTO plugin_validations (task_id, id, payload) VALUES (?, ?, ?)")
+        .run(validation.taskId, validation.id, this.#json(validation));
+    });
+  }
+
+  savePluginIntent(intent: PluginIntent): void {
+    validatePluginIntent(intent);
+    this.#mutate(() => {
+      const previous = this.getPluginIntent(intent.taskId, intent.pluginId);
+      if (intent.revision !== (previous?.revision ?? 0) + 1 || intent.lastFailure !== undefined) {
+        throw new StorageRecordError("Plugin intent must be a new explicit choice without historical failure.");
+      }
+      if (intent.validationId !== undefined) {
+        const validation = this.getPluginValidation(intent.taskId, intent.validationId);
+        if (validation?.package.manifest.id !== intent.pluginId) throw new StorageRecordError("Plugin validation is outside this intent.");
+      }
+      this.#db.prepare(`INSERT INTO plugin_intents (task_id, plugin_id, payload) VALUES (?, ?, ?)
+        ON CONFLICT(task_id, plugin_id) DO UPDATE SET payload = excluded.payload`)
+        .run(intent.taskId, intent.pluginId, this.#json(intent));
+    });
+  }
+
+  getPluginIntent(taskId: string, pluginId: string): PluginIntent | null {
+    const value = this.#getPayload<PluginIntent>("plugin_intents", "task_id = ? AND plugin_id = ?", [taskId, pluginId]);
+    return value === null ? null : validatePluginIntent(value);
+  }
+
+  listPluginIntents(taskId: string): PluginIntent[] {
+    return this.#listPayload<PluginIntent>("plugin_intents", "task_id = ?", [taskId]).map(validatePluginIntent);
+  }
+
+  recordPluginIntentFailure(taskId: string, pluginId: string, revision: number, failure: PluginIntentFailure): boolean {
+    validatePluginIntentFailure(failure);
+    return this.transaction(() => {
+      const current = this.getPluginIntent(taskId, pluginId);
+      if (current === null || current.revision !== revision) return false;
+      this.#mutate(() => {
+        this.#db.prepare("UPDATE plugin_intents SET payload = ? WHERE task_id = ? AND plugin_id = ?")
+          .run(this.#json({ ...current, lastFailure: failure }), taskId, pluginId);
+      });
+      return true;
+    });
+  }
+
+  getPluginValidation(taskId: string, id: string): PluginValidation | null {
+    const value = this.#getPayload<PluginValidation>("plugin_validations", "task_id = ? AND id = ?", [taskId, id]);
+    return value === null ? null : validatePluginValidation(value);
+  }
+
   saveLocalResource(resource: LocalResource): void {
     validateLocalResource(resource);
     this.#mutate(() => {
@@ -1219,6 +1285,39 @@ export class SqliteTaskStore implements TaskStore {
   listActiveTaskIds(): string[] {
     const rows = this.#db.prepare(
       "SELECT task_id FROM tasks_catalog WHERE is_active = 1 ORDER BY task_id"
+    ).all() as Array<{ task_id: string }>;
+    return rows.map((row) => row.task_id);
+  }
+
+  /**
+   * Draft Task ids that carry an active planning Turn.
+   *
+   * Bounded by the active-Turn pointers rather than Task history: a Draft
+   * appears only while one of its Roles actually holds an admitted planning
+   * Turn, so an ordinary Draft is never selected for execution phases.
+   */
+  listPlanningDraftTaskIds(): string[] {
+    const rows = this.#db.prepare(
+      `SELECT DISTINCT catalog.task_id AS task_id
+         FROM tasks_catalog AS catalog
+         JOIN active_turns AS pointers ON pointers.task_id = catalog.task_id
+         JOIN turns ON turns.task_id = pointers.task_id AND turns.turn_id = pointers.turn_id
+        WHERE catalog.status = 'draft'
+          AND turns.status = 'active'
+          AND json_extract(turns.payload, '$.purpose') = 'planning'
+        ORDER BY catalog.task_id`
+    ).all() as Array<{ task_id: string }>;
+    return rows.map((row) => row.task_id);
+  }
+
+  listPendingActivationRequestTaskIds(): string[] {
+    const rows = this.#db.prepare(
+      `SELECT records.task_id AS task_id
+         FROM task_records AS records
+         JOIN tasks_catalog AS catalog ON catalog.task_id = records.task_id
+        WHERE catalog.status = 'draft'
+          AND json_extract(records.payload, '$.activationRequest.disposition') = 'pending'
+        ORDER BY records.task_id`
     ).all() as Array<{ task_id: string }>;
     return rows.map((row) => row.task_id);
   }
@@ -2449,16 +2548,9 @@ export class SqliteTaskStore implements TaskStore {
     }
     this.transaction((store) => {
       const task = store.getTask(run.taskId);
-      const planning = task?.status === "draft" && run.roleName === "leader"
-        && run.purpose === "execution" && run.effective.executionAuthority === "planning"
-        && run.workItemId === undefined && run.executionGroupId === undefined
-        && run.effective.writeProjectIds.length === 0;
-      const current = store.getActiveRun(run.taskId, run.roleName);
-      const updatingExisting = current?.id === run.id;
-      if (!updatingExisting && !planning && (task === null || task.status !== "active" || task.executionGate.state !== "enabled")) {
-        throw new StorageRecordError(`Task execution is not enabled: ${run.taskId}.`);
-      }
+      assertRunAdmission(task, run);
       this.#assertActiveRunForWrite(run);
+      const current = store.getActiveRun(run.taskId, run.roleName);
       if (current !== null && current.id !== run.id) {
         throw new StorageRecordError(`Role already has an active AgentRun: ${run.taskId}/${run.roleName}`);
       }

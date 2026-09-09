@@ -13,7 +13,7 @@ export const RUN_INPUT_PROTOCOL = "yui-run/v1" as const;
 export const RUN_INPUT_MAX_BYTES = 4 * 1024;
 export const RUN_INPUT_MAX_DELTAS = 16;
 
-export type AgentRunPurpose = "execution" | "review" | "global";
+export type AgentRunPurpose = "execution" | "review" | "global" | "planning";
 export const YUI_RUN_INPUT_CHANNELS = [
   "user-message",
   "input-response",
@@ -223,8 +223,8 @@ function normalizeEnvelopeContext(
 }
 
 function normalizeEnvelope(input: AgentRunInputEnvelope): AgentRunInputEnvelope {
-  if (!(["execution", "review", "global"] as const).includes(input.purpose)) {
-    throw new Error("AgentRun input purpose is invalid.");
+  if (!(["execution", "review", "global", "planning"] as const).includes(input.purpose)) {
+    throw new Error("Turn input purpose is invalid.");
   }
   const normalizedInput = normalizeInput(input);
   const subject = normalizeSubject(input.subject);
@@ -237,6 +237,13 @@ function normalizeEnvelope(input: AgentRunInputEnvelope): AgentRunInputEnvelope 
   }
   if (input.purpose === "review" && subject.reviewRoundId === undefined) {
     throw new Error("A review AgentRun input requires a ReviewRound subject.");
+  }
+  if (input.purpose === "planning"
+    && (subject.workItemId !== undefined
+      || subject.reviewRoundId !== undefined
+      || subject.executionGroupId !== undefined
+      || subject.sourceExecutionGroupId !== undefined)) {
+    throw new Error("A planning Turn input carries only its Task subject.");
   }
   return {
     protocol: RUN_INPUT_PROTOCOL,

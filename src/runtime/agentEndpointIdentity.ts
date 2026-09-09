@@ -1,11 +1,63 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import type { ImplementationRef } from "../kernel/instanceHost.js";
+import { detectRunningRelease } from "../release/runtimeRelease.js";
+
+/**
+ * The generation of the Endpoint code this process is actually executing.
+ *
+ * Resolved once, at module load, from the immutable release the running module
+ * belongs to — the same idiom the Controller, the handover candidate and the CLI
+ * Home fence already use. A release directory is content-addressed
+ * (`<version>-<packageDigest>`) and byte-verified on install, so its digest
+ * covers every shipped file rather than a hand-picked few, and cannot drift
+ * under a live process: publishing a new release writes a new directory instead
+ * of mutating this one.
+ *
+ * Resolving at load rather than on first use is the point. A digest computed
+ * lazily would read whatever is on disk when the first Session happens to pin,
+ * and could label already-loaded code A with the identity of a newer B.
+ *
+ * A development checkout has no immutable release, and mutable files have no
+ * honest generation: editing a module in place would keep claiming the previous
+ * bytes. So a checkout gets a digest of its loaded Endpoint modules, explicitly
+ * marked `checkout-`, which never compares equal to a release generation. It is
+ * a development identity and is not claimed to be reproducible from a release.
+ */
+const ENDPOINT_CHECKOUT_MODULES = Object.freeze([
+  "agentEndpoint.js",
+  "agentEndpointIdentity.js",
+  "structuredProviderHost.js",
+  "codexAppServerRuntime.js"
+]);
+
+function resolveEndpointGeneration(): string {
+  const running = detectRunningRelease(fileURLToPath(import.meta.url));
+  // The release digest already covers these modules' bytes, so an installed
+  // release needs no separate file list to be exact.
+  if (running !== null) return running.manifest.packageDigest.slice(0, 32);
+  const hash = createHash("sha256");
+  for (const module of ENDPOINT_CHECKOUT_MODULES) {
+    // An unreadable module is a broken installation, not a reason to fall back
+    // to an identity that would silently match a different build.
+    hash.update(module).update("\0").update(readFileSync(new URL(module, import.meta.url))).update("\0");
+  }
+  return `checkout-${hash.digest("hex").slice(0, 23)}`;
+}
+
+const ENDPOINT_GENERATION = resolveEndpointGeneration();
 
 /** Execution implementation revision, independent from the surrounding CLI release. */
 export function builtinAgentEndpointImplementation(adapterId: string): ImplementationRef {
   if (adapterId !== "codex" && adapterId !== "claude") {
     throw new Error(`No managed Endpoint implementation for adapter: ${adapterId}.`);
   }
-  return Object.freeze({ id: `yui.agent-endpoint.${adapterId}`, generation: "1" });
+  return Object.freeze({
+    id: `yui.agent-endpoint.${adapterId}`,
+    generation: ENDPOINT_GENERATION
+  });
 }
 
 export function validateAgentEndpointImplementation(ref: ImplementationRef): ImplementationRef {

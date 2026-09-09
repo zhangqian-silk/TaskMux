@@ -891,10 +891,75 @@ UPDATE work_items SET payload = json_remove(payload, '$.acceptanceHistory');
   },
   {
     version: 10,
+    name: "plugin-validation-evidence",
+    introducedIn: "0.15.8",
+    sql: `
+CREATE TABLE plugin_validations (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
+`
+  },
+  {
+    version: 11,
+    name: "plugin-enable-intent",
+    introducedIn: "0.15.8",
+    // A v10 validation proves no enable/disable choice. Preserve it unchanged;
+    // never infer desired configuration from historical reports or processes.
+    sql: `
+CREATE TABLE plugin_intents (
+  task_id TEXT NOT NULL REFERENCES tasks_catalog(task_id),
+  plugin_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (task_id, plugin_id)
+);
+`
+  },
+  {
+    // Renumbered from 10 to 12 when this branch adopted upstream master: PR320
+    // took 10 and 11 while this work was in review. Both are already merged, so
+    // they own those numbers; this migration appends after them rather than
+    // competing for a number, and no released entry is touched.
+    version: 12,
+    name: "draft-planning-and-deferred-activation",
+    // Same unreleased release as migrations 4-11: this does not bump the version.
+    introducedIn: "0.15.8",
+    // One current-version migration for everything this change adds. No existing
+    // record is rewritten and no payload is backfilled:
+    //
+    //   - the optional Task activation request: absent means activation was
+    //     never explicitly requested, so a Draft is never inferred to have
+    //     requested it;
+    //   - its bounded settled-request history: absent means no request ever
+    //     reached a terminal disposition on this Task. This is a display
+    //     projection, not the authority: whether an explicitly cancelled or
+    //     adopted requestId may be replayed is decided from the durable
+    //     activation event ledger (never compacted), so eviction from this
+    //     bounded list never resurrects a decided outcome — per-request state
+    //     inside the Task that owns it, not a second scheduling or operation
+    //     ledger;
+    //   - the planning Turn purpose: historical Turns keep their execution or
+    //     review purpose untouched.
+    //
+    // The partial indexes bound Draft planning selection and pending-activation
+    // recovery to the few rows that qualify, so no execution phase scans Task
+    // history to find them. Creating an index adds no row and rewrites no
+    // payload.
+    sql: `
+-- explicit activation request, its bounded settled history, and planning Turn
+-- purpose; absent means activation was never requested
+CREATE INDEX IF NOT EXISTS idx_turns_planning_active ON turns(task_id, turn_id)
+  WHERE status = 'active' AND json_extract(payload, '$.purpose') = 'planning';
+CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
+  WHERE json_extract(payload, '$.activationRequest.disposition') = 'pending';
+`
+  },
+  {
+    version: 13,
     name: "session-authority-and-execution-admission",
     introducedIn: "0.15.9",
-    // A new exact busy/not-accepted fact is distinct from terminal refusal.
-    // Historical refusals are not heuristically reclassified from raw text.
     sql: "SELECT 1; -- AgentRun contract, notification admission and Session authority",
     migrateData: migrateAgentRunContract
   }
@@ -919,7 +984,9 @@ if (MIGRATIONS.at(-1)?.version !== CURRENT_STORAGE_VERSION) {
 /** Current hot-path indexes whose absence would invalidate a current Home. */
 const REQUIRED_SCHEMA_INDEXES = [
   "idx_mailboxes_ready",
-  "idx_input_requests_open_hot"
+  "idx_input_requests_open_hot",
+  "idx_turns_planning_active",
+  "idx_tasks_activation_pending"
 ] as const;
 
 function checksum(sql: string): string {
@@ -1305,6 +1372,8 @@ export function migrateSqliteSchema(
 
 /** The names of every table the schema creates (for tests/introspection). */
 export const SQLITE_SCHEMA_TABLES: readonly string[] = [
+  "plugin_intents",
+  "plugin_validations",
   "artifacts",
   "local_resources",
   "environment_preparations",

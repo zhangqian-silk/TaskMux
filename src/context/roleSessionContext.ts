@@ -29,7 +29,7 @@ export type RoleSessionOwner = Readonly<
 >;
 
 export type RoleSessionContextOptions = Readonly<{
-  purpose?: "execution" | "review";
+  purpose?: "execution" | "review" | "planning";
 }>;
 
 type RoleSessionKind = "operator" | "global" | "leader" | "worker" | "reviewer";
@@ -88,12 +88,15 @@ function renderDeveloperInstructions(
 export function roleSessionKind(
   role: GlobalRole | TaskRole,
   owner: RoleSessionOwner,
-  purpose: "execution" | "review"
+  purpose: "execution" | "review" | "planning"
 ): RoleSessionKind {
   if (owner.scope === "global") {
     return role.name === SYSTEM_OPERATOR_ROLE ? "operator" : "global";
   }
   if (purpose === "review") return "reviewer";
+  // Planning is the same logical Leader as execution, so it deliberately
+  // resolves to the same kind and the same compatibility identity. Activation
+  // must not force a new Session just because the Task left Draft.
   return role.name === SYSTEM_LEADER_ROLE ? "leader" : "worker";
 }
 

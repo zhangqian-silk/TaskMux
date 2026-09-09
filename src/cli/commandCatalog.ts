@@ -370,6 +370,31 @@ const taskChildren: readonly NodeInput[] = [
   },
   { name: "activate", summary: "Activate a Draft Task.", usage: "yui task activate <id>" },
   {
+    name: "activation",
+    summary: "Request, cancel or inspect explicit Task Activation.",
+    sections: [{ id: "manage", title: "Commands", entries: ["request", "cancel", "show"] }],
+    children: [
+      {
+        name: "request",
+        summary: "Record an explicit Activation request and return its reference.",
+        usage: "yui task activation request <task> --request-id <id> "
+          + "--environment <empty|scratch|local:<resource>:<read|write>>",
+        options: ["--request-id", "--environment"]
+      },
+      {
+        name: "cancel",
+        summary: "Cancel a pending Activation request so it is never adopted.",
+        usage: "yui task activation cancel <task> --request-id <id> --reason <text>",
+        options: ["--request-id", "--reason"]
+      },
+      {
+        name: "show",
+        summary: "Show the Task's Activation request and its disposition.",
+        usage: "yui task activation show <task>"
+      }
+    ]
+  },
+  {
     name: "execution",
     summary: "Fence or resume all execution for a Task.",
     sections: [{ id: "manage", title: "Commands", entries: ["stop", "start"] }],
@@ -1511,7 +1536,7 @@ export const ROOT_COMMAND = buildNode({
       name: "task",
       summary: "Manage Tasks, WorkItems, AgentRuns, and integration.",
       sections: [
-        { id: "lifecycle", title: "Lifecycle", entries: ["create", "project", "base", "update", "activate", "execution", "complete", "cancel", "reopen", "retire", "list", "show", "context", "next-action", "remote-delivery", "archive", "replace", "reconcile", "upstream", "artifact"] },
+        { id: "lifecycle", title: "Lifecycle", entries: ["create", "project", "base", "update", "activate", "activation", "execution", "complete", "cancel", "reopen", "retire", "list", "show", "context", "next-action", "remote-delivery", "archive", "replace", "reconcile", "upstream", "artifact"] },
         { id: "collaboration", title: "Collaboration", entries: ["message", "input", "grant", "workflow", "publication", "work", "run", "review", "integration", "role", "overlap", "change-set"] },
         { id: "knowledge", title: "Task Knowledge", entries: ["brief", "decision", "milestone", "event", "continuation", "wake"] }
       ],

@@ -1,13 +1,22 @@
 import type Database from "better-sqlite3";
 import { createContextSnapshot, contextContentDigest, type ContextSnapshot } from "../../context/contextSnapshot.js";
 
-/** Storage 9 -> 10 only. Text, native identities and opaque record/receipt ids
+/** Storage 12 -> 13 only. Text, native identities and opaque record/receipt ids
  * are never renamed. Ordinary runtime stores do not interpret old payloads.
- * v10 also introduces optional Message recipient/continuation/handovers.
+ * v13 also introduces optional Message recipient/continuation/handovers.
  * Existing messages have no recipient and remain informational/Leader wakes;
  * migration never guesses an owner or causes historical messages to execute.
  */
 export function migrateAgentRunContract(db: Database.Database): void {
+  // T08 already stored real planning executions. Use that frozen evidence,
+  // never the Task's current status, to classify their shared Session snapshots.
+  const planningLaunches = new Set<string>();
+  for (const row of db.prepare("SELECT task_id, payload FROM turns").all() as { task_id: string; payload: string }[]) {
+    const run = JSON.parse(row.payload);
+    if (run.purpose === "planning") {
+      planningLaunches.add(`${row.task_id}:${contextContentDigest(run.effective)}`);
+    }
+  }
   const snapshotDigests = new Map<string, string>();
   const renameKey = (key: string): string => {
     if (key === "turn") return "run";
@@ -20,13 +29,15 @@ export function migrateAgentRunContract(db: Database.Database): void {
   };
   const untouched = new Set(["advanced", "metadata", "environment", "raw", "output", "body",
     "description", "summary", "directive", "config"]);
-  const migrate = (value: unknown): any => {
-    if (Array.isArray(value)) return value.map(migrate);
+  const migrate = (value: unknown, taskId?: string, purpose?: string): any => {
+    if (Array.isArray(value)) return value.map((entry) => migrate(entry, taskId, purpose));
     if (value === null || typeof value !== "object") return value;
     const input = value as Record<string, unknown>;
+    const ownerTaskId = typeof input.taskId === "string" ? input.taskId : taskId;
+    const executionPurpose = typeof input.purpose === "string" ? input.purpose : purpose;
     const result: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(input)) {
-      let next = untouched.has(key) ? child : migrate(child);
+      let next = untouched.has(key) ? child : migrate(child, ownerTaskId, executionPurpose);
       if ((key === "type" || key === "recordKind" || key === "store") && child === "turn") next = "run";
       if (key === "type" && typeof child === "string" && child.startsWith("turn.")
         && typeof input.id === "string" && input.id.startsWith("event-") && input.createdAt !== undefined) {
@@ -37,7 +48,7 @@ export function migrateAgentRunContract(db: Database.Database): void {
       // not free-form Provider output.
       if (key === "observation" && typeof child === "string") {
         const parsed = JSON.parse(child);
-        next = JSON.stringify(migrate(parsed));
+        next = JSON.stringify(migrate(parsed, ownerTaskId));
       }
       result[renameKey(key)] = next;
     }
@@ -45,13 +56,14 @@ export function migrateAgentRunContract(db: Database.Database): void {
       && input.id.startsWith("context-snapshot-") && typeof input.sequence === "number") {
       result.digest = snapshotDigests.get(input.digest) ?? input.digest;
     }
-    // Before this release valid managed Sessions could only be launched for
-    // delivery. This preserves that historical authority; no current Task
-    // status is used to upgrade a planning Session.
+    // A Run has its own authoritative purpose. Session copies are classified
+    // by the exact planning launch they retain; activation never upgrades them.
     if (input.schemaVersion === 3 && typeof input.agentId === "string"
       && typeof input.sourceDesiredRevision === "number" && input.workspace !== undefined
       && input.context !== undefined && input.permission !== undefined) {
-      result.executionAuthority = "delivery";
+      result.executionAuthority = executionPurpose === "planning"
+        || (ownerTaskId !== undefined && planningLaunches.has(`${ownerTaskId}:${contextContentDigest(input)}`))
+        ? "planning" : "delivery";
     }
     return result;
   };
@@ -118,7 +130,8 @@ export function migrateAgentRunContract(db: Database.Database): void {
     const update = db.prepare(`UPDATE ${quote(table)} SET ${quote(column)} = ? WHERE ${
       keys.map((key) => `${quote(key)} = ?`).join(" AND ")}`);
     for (const row of rows) {
-      update.run(JSON.stringify(migrate(JSON.parse(row[column] as string))), ...keys.map((key) => row[key]));
+      update.run(JSON.stringify(migrate(JSON.parse(row[column] as string),
+        typeof row.task_id === "string" ? row.task_id : undefined)), ...keys.map((key) => row[key]));
     }
   };
   for (const table of tables) {

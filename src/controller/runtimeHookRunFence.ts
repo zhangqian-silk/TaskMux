@@ -11,6 +11,7 @@ import { formatRunReceiptId } from "../task/taskRecordReference.js";
 import { currentProviderConversation, managedProviderTurnId } from "../runtime/providerRuntimeIdentity.js";
 import type { TaskEvent } from "../event/taskEvent.js";
 import { taskRoleRuntimeIdentity } from "../runtime/managedCaller.js";
+import { runPurposeAdmitsTaskState } from "../agentRun/agentRun.js";
 
 export type RuntimeHookRunFence = Readonly<{
   taskId: string;
@@ -106,8 +107,18 @@ export function resolveRuntimeHookRunFence(
   // cannot erase the original AgentRun's evidence.
   const existingExecutionObservation = (options.terminal === true || options.attemptId !== undefined)
     && (acceptedBinding !== null || matchesProviderTurn);
+  // A Draft's planning Turn runs before activation by design, so it never has an
+  // active execution lifecycle to admit it here. Admission is delegated to the
+  // one shared invariant that already pairs a Turn purpose with a Task state, so
+  // a Draft still cannot produce execution observations while the planning
+  // conversation can report its own runtime.
+  const planningObservation = activeRun !== null
+    && activeRun.purpose === "planning"
+    && activeRun.roleName === roleName
+    && runPurposeAdmitsTaskState(activeRun.purpose, task);
   if (!(task.status === "active" && task.executionGate.state === "enabled")
     && !(task.status === "completed" && options.sessionOnly === true)
+    && !planningObservation
     && !existingExecutionObservation) {
     throw new Error("Runtime observation Hook Task does not accept this lifecycle boundary.");
   }
