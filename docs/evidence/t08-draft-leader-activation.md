@@ -886,3 +886,35 @@ $ TMPDIR=/tmp node --test test/core/*.test.js
 没有重启共享 Controller/Provider;没有真实 Provider/模型/付费/生产 E2E;
 没有触碰 T10/T11/ACP/SDK;没有新增重试 worker / lease / 第二账本;
 没有改动中央已发布迁移(本分支仍为顺延的 12)。
+
+## 13. F5 最终修正与 Leader 集成验证
+
+`turn-19` 交付 `fe55958cbba42819209907904afc4b60bea1b610`：
+取消/采用请求的历史判定改为读取既有持久 activation 事件，16 项数组仅用于
+展示。超过展示上限后，旧取消请求仍被拒绝，不再重获 pending 槽位。
+本节取代前文关于限长数组能够独立保证历史请求不可重播的表述。
+
+Leader 已完整读取该 Turn 原报告及六文件差异。`integration-6 / job-2`
+在独立工作区对该精确提交完成依赖安装、原生产物 SHA 校验、build、lint、
+core：85/85 通过，测试阶段约 4.32 秒；随后由受支持 Integration 的
+compare-and-swap 将 Task main 前移至该提交。原始 Task 基线不变。
+此前 `integration-5` 的预编译下载超时保留为失败记录，不算代码测试失败。
+
+依赖取自本地已缓存的同版本上游预编译归档，仅向隔离 node_modules 解包；
+解包后强制核验 `better_sqlite3.node` 的 SHA-256 为
+`45cb92a176fb758533db6d9a343acdfc73e4de27ac4c20a0cb2a6fb5be3e84f2`。
+没有改写全局安装、共享 Home 或共享服务；此结果不证明本机 GCC 构建缺陷已修复。
+
+85 项中新增的三项 F5 检查验证了真实 SQLite 关闭重开、超过旧展示上限后
+拒绝重播、保留槽位、相同 pending 请求幂等及不同输入拒绝。它们调用领域服务，
+不等同于新的 CLI/daemon E2E。按 `develop-yui` 的临时变更证据规则，
+Leader 在验证通过后移除 `test/core/activation-settled-authority.test.js`，
+不将取消/历史回归矩阵永久加入 core。原测试可从上述提交恢复，运行结果保留于
+`artifacts/jobs/task-22/job-2/logs/006-check-6.log`。
+
+独立 Task-final Review 将针对清理后冻结的最终 HEAD 进行；上述检查不是该 Review。
+
+清理后的 Task main 复用该 Integration 已验证的同锁文件依赖副本，执行
+`make install-local`（含 build）及 `node --test test/core/*.test.js`：
+均退出 0，core 82/82，测试阶段约 4.48 秒。仅测试与证据文档变化，
+生产源码与已通过 lint 的 Integration 候选一致。
