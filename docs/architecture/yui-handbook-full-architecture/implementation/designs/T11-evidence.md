@@ -410,3 +410,94 @@ T11 专项夹具合计：F1 发布层 7 + F1 真实进程 4 + F2 5 + F2 真实 d
 未继承 task16/19 授权，未自行签发 grant，未启动其他 Task，未修改共享
 Home/DB/全局安装/认证/Controller/Provider 服务，未强杀共享进程。
 不声称受信任的本地任意用户代码获得 OS 级隔离。最终候选继续交由 Leader 独立复核。
+
+## integration-1 core-smoke SIGABRT 诊断（turn-13）
+
+integration-1/job-1 在 `933edd9f9949a0b7b5553d31ab405b57c6909e2d` 上 `make install-local`
+与 `npm run lint` 通过，`env -u YUI_HOME npm test` 失败：核心子进程 `test/core/core-smoke.test.js`
+触发 Node 24.20.0 原生 `SIGABRT` —— `node::RemoveEnvironmentCleanupHook(env != nullptr)`
+（`../src/api/hooks.cc:142`），栈经 `better_sqlite3.node` 的 `Statement::~Statement()`。
+汇总 36 项而非 82（35 通过 + 1 个崩溃的子文件），因此不能算通过。原始日志：
+`artifacts/jobs/task-27/job-1/logs/003-check-3.log`。
+
+**结论：与 T11 源码无关，根因是 better-sqlite3 原生附加件的构建来源（prebuilt 对 node-gyp 源码编译），
+而非 commit。** 逐项证据如下。
+
+### 1. 同一 commit、字节相同的源码树，两处工作区结果不同
+
+- Worker 工作区与 integration-1 都在 `933edd9`，两树受版本控制的源码 `git diff --stat` 为空；
+  `better-sqlite3` 的 `src/` 源码树（排除 `build/`）在两处 sha256 相同
+  （`5e671220…`）。二者 better-sqlite3 均为 12.11.1。
+- 差异只在编译产物：Worker 的 `better_sqlite3.node` = `45cb92a1…`（mtime 6 月 16 日、无 `build/` 中间产物
+  → 下载的 **prebuilt**）；integration-1 的 = `2e5e2fc1…`（`build/` 内有 `Makefile`、`config.gypi`、
+  `obj.target`、`sqlite3.a` → 本地 **node-gyp 源码编译**）。
+- 关键判别：`nm -D --undefined-only` 显示 prebuilt **只**引用 `AddEnvironmentCleanupHook`；
+  源码编译版**额外**引用 `RemoveEnvironmentCleanupHook` —— 正是崩溃的那个符号。
+  该符号不来自 better-sqlite3 源码（源码仅在 `better_sqlite3.cpp:61` 调用 `Add`），
+  而来自编译时所用的 Node 头文件 `node_object_wrap.h:128,132`：`ObjectWrap` 的
+  析构路径调用 `RemoveEnvironmentCleanupHook`，`Statement : public node::ObjectWrap` 因此继承。
+  换言之，是否发出该调用由**编译时的头文件/内联**决定，与被编译的 better-sqlite3 版本号无关。
+
+### 2. 2×2 对照矩阵（commit × 构建来源，每格 6 次）
+
+在可丢弃 scratch 内对两个 commit 各注入两种来源的二进制，`cd` 进对应树运行
+`node --test test/core/core-smoke.test.js`，仅统计栈帧指向本树二进制的 SIGABRT：
+
+| 树 | 二进制 | Remove-hook | SIGABRT | clean-pass |
+|---|---|---|---|---|
+| `933edd9`（含 T11） | prebuilt `45cb92a1` | 无 | 0/6 | 6/6 |
+| `933edd9`（含 T11） | 源码编译 `2e5e2fc1` | 有 | 3/6 | 2/6 |
+| `013ffdc`（基线，无 T11） | prebuilt `45cb92a1` | 无 | 0/6 | 6/6 |
+| `013ffdc`（基线，无 T11） | 源码编译 `2e5e2fc1` | 有 | 2/6 | 1/6 |
+
+崩溃只随**二进制来源**出现，不随 commit 出现：**基线（无任何 T11 代码）配源码编译版同样稳定复现
+完全一致的断言崩溃**（`Statement::~Statement` → `RemoveEnvironmentCleanupHook(env != nullptr)`）。
+这直接证明 T11 未引入该崩溃。崩溃为进程退出期偶发（非每次），故用重复试次而非单次表述；
+prebuilt 侧另做 8/8 稳定确认（0 次崩溃）。
+
+### 3. 为何 integration-1 编译了源码，而干净 `npm ci` 取到 prebuilt
+
+- better-sqlite3 的安装脚本是 `prebuild-install || node-gyp rebuild --release`：先尝试下载 prebuilt，
+  失败才回退到源码编译。`prebuild-install` 从 **GitHub Releases**
+  （`https://github.com/WiseLibs/better-sqlite3/releases/download/v12.11.1/`）取包，
+  与 npm registry（`https://registry.npmjs.org/`）**是不同主机**。
+- 复现（scratch，同 Node v24.20.0、同 12.11.1）：
+  - 干净 `npm ci`（registry 与 GitHub 均可达）→ prebuilt `45cb92a1…`（无 Remove hook），约 2–4 秒；
+  - 空 HOME（空 prebuild 缓存）但在线 `npm ci` → 仍是 prebuilt `45cb92a1…`，约 4 秒（空缓存不是原因）；
+  - 仅令 `prebuild-install` 的 GitHub 下载失败（registry 仍可达）→ 触发 `|| node-gyp rebuild`，
+    产出源码编译 `2e5e2fc1…`（有 Remove hook），耗时约 1 分钟。
+- 原 job 的 `check-1` 安装耗时 **113s（“in 2m”）**，正是源码编译签名（干净 prebuilt 仅数秒）。
+  由此判定 integration-1 的隔离环境**可达 registry 但不可达 GitHub Releases 下载**，
+  因而回退到 node-gyp 源码编译，得到带 `RemoveEnvironmentCleanupHook` 的二进制。
+- Leader 在 integration-1 内跑的 `npm rebuild better-sqlite3 --build-from-source --offline`
+  “rebuilt successfully”但仍崩溃，且 npm 提示 `Unknown cli config "--build-from-source"`：
+  已复现——`--build-from-source` 是 node-gyp/prebuild-install 的参数、**不是 npm 的参数**，
+  被 npm 忽略（故告警），该次 rebuild 只是原地再次源码编译，产出同样带 Remove hook 的二进制，
+  自然仍崩溃。它不是“环境已修复”，也不改变根因判断。
+
+### 4. T11 与该安装/构建路径无因果
+
+`git diff --name-only 013ffdc 933edd9` 未触及 `package.json`、`package-lock.json`、`.npmrc`、
+任何 `binding.gyp`/`Makefile`/install 脚本或 better-sqlite3；T11 改动的 6 个源文件中
+`sqlite`/`better-sqlite3` 引用数均为 0。两个二进制的 Node ABI 目标相同（`node_register_module_v137`），
+故不是 ABI 不匹配，纯粹是 prebuilt 与源码编译的差异。
+
+### 5. 干净安装交付验证（`933edd9`，全新 clone、无拷贝 node_modules）
+
+按 integration 步骤序在 scratch 全新树上执行，`node_modules` 事前不存在：
+
+- `check-1 make install-local` → exit 0；安装得到 prebuilt `45cb92a1…`（与 Worker 工作区二进制**字节相同**）；
+- `check-2 npm run lint` → exit 0；
+- `check-3 env -u YUI_HOME npm test` → **tests 82 / pass 82 / fail 0**，exit 0，无任何断言；
+  其中 `core-smoke.test.js` 自身 **47/47** 通过；prebuilt 上 core-smoke 重复 8 次 0 崩溃。
+
+证据日志见工作区 `evidence/turn-13-core-smoke-diagnosis/`（本 Turn 自建 scratch 的真实输出）。
+该崩溃是隔离环境的构建来源问题，**最小必要修正在 Integration 环境的网络/预编译获取一侧**
+（使 `prebuild-install` 能取到 prebuilt，或显式允许其 GitHub 下载），不需要改本 Task 源码，
+也不应新增永久异常矩阵或无依据改依赖版本。终态 job 回收 TMPDIR 造成的 ENOENT 已由 Leader 排除、
+本诊断亦未据此立论。
+
+**身份与边界**：本诊断由 Claude 在本 Task 的 endpoint-owner Turn（turn-9/11/13）内执行；
+所有复现均在本 Task 隔离资源/临时本地 scratch 中，只读 integration-1 工作区与本 Task 日志，
+未改 Integration/main/共享 Home/全局安装，未用真实 Provider/付费模型，未发布。
+诊断结束仅清理本轮自建 scratch，保留 Leader 的 `/tmp/yui-task27-core-diagnostic-yY1poE`。
