@@ -86,7 +86,7 @@ export async function processOperatorInputNotifications(
       const reason = outcome === "unavailable" ? "operator-unavailable" : "operator-not-ready";
       return attentions.map((attention) => skipped(attention, reason));
     }
-    if (outcome === "sent") store.markOperatorTurnStarted(now);
+    if (outcome === "sent") store.markOperatorRunStarted(now);
     store.completeWorkMailbox(targetMailbox, processing.batchId);
     return attentions.map((attention) => ({
       ...attentionIdentity(attention),

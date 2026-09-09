@@ -63,10 +63,10 @@ export class TaskWorkspaceCoordinator {
     const item = this.store.getWorkItem(taskId, workItemId);
     if (item === null) throw new Error(`Work item not found: ${taskId}/${workItemId}.`);
     const assignee = this.#workItemIsolationAssignee(item);
-    const activeDevelopTurn = this.store.listTurns(item.taskId)
+    const activeDevelopRun = this.store.listRuns(item.taskId)
       .find((run) => run.status === "active" && run.workItemId === item.id);
-    if (activeDevelopTurn !== undefined) {
-      throw new Error(`Work Item already has an active Develop Turn: ${activeDevelopTurn.id}.`);
+    if (activeDevelopRun !== undefined) {
+      throw new Error(`Work Item already has an active Develop AgentRun: ${activeDevelopRun.id}.`);
     }
     const task = this.store.getTask(item.taskId)!;
     const taskProjectIds = task.projectBindings.map(({ projectId }) => projectId);
@@ -341,13 +341,13 @@ export class TaskWorkspaceCoordinator {
         };
       }
       const activeRole = this.store.listRoles(taskId)
-        .find((role) => this.store.getActiveTurn(taskId, role.name) !== null);
+        .find((role) => this.store.getActiveRun(taskId, role.name) !== null);
       if (activeRole !== undefined) {
         throw new WorkspaceCleanupBlockedError(
           "active-turn",
           `role:${task.id}/${activeRole.name}`,
           true,
-          `Task Role still has an active Turn: ${task.id}/${activeRole.name}.`
+          `Task Role still has an active AgentRun: ${task.id}/${activeRole.name}.`
         );
       }
       const roleNames = this.store.listRoles(taskId).map(({ name }) => name);
@@ -445,14 +445,14 @@ export class TaskWorkspaceCoordinator {
   }
 
   #assertWorkItemRuntimeQuiescent(item: WorkItem): void {
-    const activeTurn = this.store.listTurns(item.taskId)
+    const activeRun = this.store.listRuns(item.taskId)
       .find((run) => run.status === "active" && run.workItemId === item.id);
-    if (activeTurn !== undefined) {
+    if (activeRun !== undefined) {
       throw new WorkspaceCleanupBlockedError(
         "active-turn",
         `work-item:${item.taskId}/${item.id}`,
         true,
-        `Work item still has an active Turn: ${item.taskId}/${item.id}.`
+        `Work item still has an active AgentRun: ${item.taskId}/${item.id}.`
       );
     }
   }
@@ -505,10 +505,10 @@ export class TaskWorkspaceCoordinator {
 
   async #stopLiveRoles(taskId: string, roleNames: readonly string[]): Promise<void> {
     const targets = [...new Set(roleNames)];
-    const getActiveTurn = this.store.getActiveTurn?.bind(this.store);
+    const getActiveRun = this.store.getActiveRun?.bind(this.store);
     for (const roleName of targets) {
-      if (getActiveTurn !== undefined && getActiveTurn(taskId, roleName) !== null) {
-        throw new Error(`Role has an active Turn: ${taskId}/${roleName}.`);
+      if (getActiveRun !== undefined && getActiveRun(taskId, roleName) !== null) {
+        throw new Error(`Role has an active AgentRun: ${taskId}/${roleName}.`);
       }
       if (this.store.getWorkMailbox !== undefined && hasRuntimeLifecycleWork(
         this.store.getWorkMailbox(
@@ -536,7 +536,7 @@ export class TaskWorkspaceCoordinator {
     // The aggregate-16 dormant Claude placeholder is the sole exception to
     // strict workspace-session retirement. The synchronous pane inspection is
     // performed while holding the Task store transaction so a normal launch
-    // cannot reserve a Turn/Session between absence proof and terminalization.
+    // cannot reserve a AgentRun/Session between absence proof and terminalization.
     if (inspect === undefined || this.store.transaction === undefined) return;
     this.store.transaction((tx) => {
       const panes = inspect(taskId);
@@ -544,8 +544,8 @@ export class TaskWorkspaceCoordinator {
         if (panes.some((pane) => pane.roleName === roleName && !pane.dead)) {
           throw new Error(`Task Role native pane must stop before workspace migration: ${roleName}.`);
         }
-        if (tx.getActiveTurn(taskId, roleName) !== null) {
-          throw new Error(`Role has an active Turn: ${taskId}/${roleName}.`);
+        if (tx.getActiveRun(taskId, roleName) !== null) {
+          throw new Error(`Role has an active AgentRun: ${taskId}/${roleName}.`);
         }
         if (tx.getWorkMailbox !== undefined && hasRuntimeLifecycleWork(
           tx.getWorkMailbox(
@@ -571,8 +571,8 @@ export class TaskWorkspaceCoordinator {
     if (isTerminalWorkItem(item)) {
       throw new Error(`Work item is already terminal: ${item.id}.`);
     }
-    if (item.assignee !== undefined && this.store.getActiveTurn(task.id, item.assignee) !== null) {
-      throw new Error(`Role has an active Turn: ${task.id}/${item.assignee}.`);
+    if (item.assignee !== undefined && this.store.getActiveRun(task.id, item.assignee) !== null) {
+      throw new Error(`Role has an active AgentRun: ${task.id}/${item.assignee}.`);
     }
     if (item.assignee !== undefined && this.store.getRole(task.id, item.assignee) === null) {
       throw new Error(`Role not found: ${task.id}/${item.assignee}.`);

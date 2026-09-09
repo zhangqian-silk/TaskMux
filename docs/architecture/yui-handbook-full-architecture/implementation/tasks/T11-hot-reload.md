@@ -29,7 +29,7 @@
 
 ## 完成证据
 
-- 旧 Session 的后续 Turn 默认仍用旧实现，新 Session 用新实现。
+- 旧 Session 的后续 AgentRun 默认仍用旧实现，新 Session 用新实现。
 - 同 Session 可通过稳定桥调用新增短工具。
 - 历史 Candidate 不要求保留完整旧插件代码。
 

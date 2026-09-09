@@ -12,7 +12,7 @@
 
 Host 保存一份进程内实例集合。每个实例有稳定实现引用、生命周期和 disposer 集合。接口可采用 attach／acquire／release／detach。acquire 返回具体句柄，使用方在 finally 或受控 Session 关闭时 release。
 
-普通调用计入短期引用，Session 计入长期引用。配置 scope 只有 Global／Project／Task，不为了计数再创建 Role／Turn 插件 scope。
+普通调用计入短期引用，Session 计入长期引用。配置 scope 只有 Global／Project／Task，不为了计数再创建 Role／AgentRun 插件 scope。
 
 宿主只认识贡献与依赖句柄，不认识 Review 或 Task 计划。模块在装配入口注册到同一宿主。无引用时按拥有关系释放 listeners、timers、routes 和本地进程附件，不能杀共享 Provider 服务。
 
@@ -36,7 +36,7 @@ Host 保存一份进程内实例集合。每个实例有稳定实现引用、生
 
 用户 CLI、受控 Agent 工具和插件入口各自先认证，再构造调用上下文。插件输入中出现 actor=operator 不影响真实身份。Task／资源关系通过应用入口传入检查，Kernel 不内置所有业务角色策略。
 
-凭据引用可在当前授权下解析，值不能进入日志和持久化输入摘要。撤销管理绑定后旧承载不能发新管理命令，但可信采集器仍可写它已有 Turn 的迟到结果。
+凭据引用可在当前授权下解析，值不能进入日志和持久化输入摘要。撤销管理绑定后旧承载不能发新管理命令，但可信采集器仍可写它已有 AgentRun 的迟到结果。
 
 ## 6. 存储采用
 

@@ -117,9 +117,9 @@ export function executionBand(projection, t, locale) {
   head.append(pill(t, "exec.status", projection.status));
   head.append(node("span", "exec-band-owner",
     t("exec.owner." + projection.owner) + " · " + t("exec.action." + projection.action)));
-  if (projection.activeTurns && projection.activeTurns.length > 0) {
+  if (projection.activeRuns && projection.activeRuns.length > 0) {
     head.append(node("span", "exec-band-executors",
-      projection.activeTurns.length + " " + t("exec.executors")));
+      projection.activeRuns.length + " " + t("exec.executors")));
   }
   if (projection.monitoring === "stopped") {
     head.append(node("span", "exec-band-stopped", t("exec.monitoring.stopped")));
@@ -179,9 +179,10 @@ export function workItemExecutionCard(projection, t) {
       row.append(statusDot(lane.status));
       row.append(node("span", "lane-role", lane.roleName));
       row.append(node("span", "lane-status", t("workExec.lane." + lane.status)));
-      row.append(node("span", "mono", lane.currentTurnId || t("detail.unobserved")));
-      if (lane.retryTurnId) row.append(chip(t("workExec.retry") + " · " + lane.retryTurnId, "is-danger"));
-      if (lane.settleTurnId) row.append(chip(t("workExec.settle") + " · " + lane.settleTurnId));
+      if (lane.delivery) row.append(chip(t("run.delivery." + lane.delivery)));
+      row.append(node("span", "mono", lane.currentRunId || t("detail.unobserved")));
+      if (lane.retryRunId) row.append(chip(t("workExec.retry") + " · " + lane.retryRunId, "is-danger"));
+      if (lane.settleRunId) row.append(chip(t("workExec.settle") + " · " + lane.settleRunId));
       if (lane.session === "unobserved") row.append(chip(t("detail.unobserved")));
       lanes.append(row);
     });
@@ -190,18 +191,18 @@ export function workItemExecutionCard(projection, t) {
 
   const facts = node("div", "record-meta execution-resource-meta");
   facts.append(node("span", "", t("workExec.main") + " · "
-    + (projection.mainTurn.turnId || t("detail.unobserved"))
-    + " [" + t("workExec.mainStatus." + projection.mainTurn.status) + "]"));
+    + (projection.mainRun.runId || t("detail.unobserved"))
+    + " [" + t("workExec.mainStatus." + projection.mainRun.status) + "]"));
   facts.append(node("span", "", t("workExec.candidate") + " · "
     + (projection.candidate.candidateId || t("workExec.none"))
     + " [" + t("workExec.candidateStatus." + projection.candidate.status) + "]"));
   card.append(facts);
 
   if (projection.candidate.sourceExecutionGroupId) {
-    const provenance = projection.candidate.successfulLaneTurns.map(function (lane) {
-      return lane.laneId + " → " + lane.successfulTurnId;
+    const provenance = projection.candidate.successfulLaneRuns.map(function (lane) {
+      return lane.laneId + " → " + lane.successfulRunId;
     }).join(", ") || t("detail.unobserved");
-    card.append(node("p", "muted mono", (projection.candidate.mainTurnId || t("detail.unobserved"))
+    card.append(node("p", "muted mono", (projection.candidate.mainRunId || t("detail.unobserved"))
       + " → " + projection.candidate.sourceExecutionGroupId + " → " + provenance));
   }
 
@@ -282,7 +283,7 @@ export function candidateList(candidates, t, locale) {
       row.append(node("span", "candidate-summary", candidate.summary));
       const source = candidate.source.type === "direct"
         ? t("candidate.source.direct")
-        : t("candidate.source.turn") + " " + candidate.source.turnId;
+        : t("candidate.source.run") + " " + candidate.source.runId;
       row.append(node("span", "candidate-source", source));
       row.append(node("time", "", formatDateTime(candidate.createdAt, locale)));
       list.append(row);
@@ -447,7 +448,7 @@ export function inputCard(input, _options, t, locale, actions) {
   }
   if (input.requester) {
     top.append(node("span", "input-requester",
-      t("detail.requester") + " · " + input.requester.roleName + " / " + input.requester.turnId));
+      t("detail.requester") + " · " + input.requester.roleName + " / " + input.requester.runId));
   }
   card.append(top);
   card.append(answerActions(input, actions, t));
@@ -564,46 +565,51 @@ export function workItemCard(item, titles, t, locale, actions, taskId) {
   return card;
 }
 
-export function turnCard(turn, t, locale) {
+export function runCard(run, t, locale) {
   const card = node("article", "execute-card");
-  card.dataset.status = turn.status;
+  card.dataset.status = run.status;
 
   const idRow = node("div", "execute-id");
-  idRow.append(statusDot(turn.status));
-  idRow.append(node("span", "role", turn.roleName));
-  idRow.append(node("span", "", turn.id));
-  if (turn.workItemId) idRow.append(node("span", "", t("detail.workItem") + " · " + turn.workItemId));
-  if (turn.purpose) idRow.append(chip(t("turn.purpose." + turn.purpose)));
-  idRow.append(node("time", "", formatDateTime(turn.result?.completedAt || turn.updatedAt, locale)));
+  idRow.append(statusDot(run.status));
+  idRow.append(node("span", "role", run.roleName));
+  idRow.append(node("span", "", run.id));
+  if (run.workItemId) idRow.append(node("span", "", t("detail.workItem") + " · " + run.workItemId));
+  if (run.purpose) idRow.append(chip(t("run.purpose." + run.purpose)));
+  idRow.append(node("time", "", formatDateTime(run.result?.completedAt || run.updatedAt, locale)));
   card.append(idRow);
+  const observation = node("div", "record-meta");
+  observation.append(node("span", "", t("run.recordState") + " · " + t("status." + run.status)));
+  observation.append(node("span", "", t("run.delivery") + " · "
+    + t("run.delivery." + (run.execution?.delivery || "unobserved"))));
+  card.append(observation);
 
-  const visibleInput = turn.inputs && turn.inputs.length ? turn.inputs[0].input : null;
+  const visibleInput = run.inputs && run.inputs.length ? run.inputs[0].input : null;
   card.append(richText(t("detail.instruction"), visibleInput?.directive || visibleInput?.action || "-", t, { className: "execute-io", threshold: 320 }));
-  if (turn.result?.output) {
-    card.append(richText(t("detail.outcome"), turn.result.output, t, { className: "execute-io outcome", threshold: 320 }));
+  if (run.result?.output) {
+    card.append(richText(t("detail.outcome"), run.result.output, t, { className: "execute-io outcome", threshold: 320 }));
   }
-  if (turn.result?.diagnostic) {
-    card.append(richText(t("detail.failure"), turn.result.diagnostic, t, { className: "execute-io outcome", threshold: 320 }));
+  if (run.result?.diagnostic) {
+    card.append(richText(t("detail.failure"), run.result.diagnostic, t, { className: "execute-io outcome", threshold: 320 }));
   }
 
   const foot = node("div", "execute-foot");
   const tags = node("div", "execute-tags");
-  tags.append(chip(t("mode." + turn.mode)));
-  if (turn.executionGroupId) {
-    tags.append(chip(t("detail.lineage") + " · " + turn.executionGroupId
-      + (turn.executionLaneId ? "/" + turn.executionLaneId : "")));
+  tags.append(chip(t("mode." + run.mode)));
+  if (run.executionGroupId) {
+    tags.append(chip(t("detail.lineage") + " · " + run.executionGroupId
+      + (run.executionLaneId ? "/" + run.executionLaneId : "")));
   }
-  const badge = turn.effective ? agentBadge(turn.effective) : (turn.agentId ? agentBadge(turn) : null);
+  const badge = run.effective ? agentBadge(run.effective) : (run.agentId ? agentBadge(run) : null);
   if (badge) tags.append(badge);
   foot.append(tags);
-  foot.append(pill(t, "turn", turn.status));
+  foot.append(pill(t, "run", run.status));
   card.append(foot);
 
-  if (turn.effective) {
+  if (run.effective) {
     const eff = node("div", "record-meta");
-    eff.append(node("span", "", t("detail.effective") + " · r" + turn.effective.sourceDesiredRevision));
-    eff.append(node("span", "", t("detail.profileIntent") + " · " + turn.effective.profileAccess));
-    eff.append(node("span", "", t("detail.permission") + " · " + turn.effective.permission.strategy));
+    eff.append(node("span", "", t("detail.effective") + " · r" + run.effective.sourceDesiredRevision));
+    eff.append(node("span", "", t("detail.profileIntent") + " · " + run.effective.profileAccess));
+    eff.append(node("span", "", t("detail.permission") + " · " + run.effective.permission.strategy));
     card.append(eff);
   }
 
@@ -634,8 +640,8 @@ export function reviewCard(round, t, locale) {
   if (round.workspace && round.workspace.root) {
     meta.append(pathMetaItem(t("detail.workspace"), round.workspace.root));
   }
-  if (round.reviewerTurnId) {
-    meta.append(node("span", "mono", t("detail.reviewerTurn") + " · " + round.reviewerTurnId));
+  if (round.reviewerRunId) {
+    meta.append(node("span", "mono", t("detail.reviewerRun") + " · " + round.reviewerRunId));
   }
   if (round.workspaceDisposition) {
     meta.append(node("span", "", t("detail.workspaceDisposition") + " · "
@@ -650,7 +656,7 @@ export function reviewCard(round, t, locale) {
     groupMeta.append(node("span", "", t("reviewExec.assignment") + " · "
       + group.assignment.contextSnapshotRef.id));
     groupMeta.append(node("span", "", t("reviewExec.main") + " · "
-      + (round.reviewerTurnId || t("detail.unobserved"))));
+      + (round.reviewerRunId || t("detail.unobserved"))));
     execution.append(groupMeta);
     const lanes = node("div", "lane-list");
     group.lanes.forEach(function (lane) {
@@ -659,7 +665,7 @@ export function reviewCard(round, t, locale) {
       row.append(node("span", "lane-role", t("reviewExec.producer") + " " + lane.ordinal
         + " · " + lane.roleName));
       row.append(node("span", "lane-status", t("reviewExec.status." + lane.disposition)));
-      row.append(node("span", "mono", lane.currentTurnId || t("detail.unobserved")));
+      row.append(node("span", "mono", lane.currentRunId || t("detail.unobserved")));
       lanes.append(row);
     });
     execution.append(lanes);
@@ -804,7 +810,7 @@ export function historyEventRow(event, t, locale) {
   return card;
 }
 
-export function messageCard(message, t, locale) {
+export function messageCard(message, t, locale, result) {
   const card = node("article", "record-card");
   const head = node("div", "record-head");
   const titleRow = node("div", "record-title-row");
@@ -817,10 +823,25 @@ export function messageCard(message, t, locale) {
   const meta = node("div", "record-meta");
   meta.append(node("span", "mono", message.id));
   meta.append(node("time", "", formatDateTime(message.createdAt, locale)));
-  if (message.turnId) meta.append(node("span", "mono", message.turnId + (message.workItemId ? " · " + message.workItemId : "")));
+  if (message.runId) meta.append(node("span", "mono", message.runId + (message.workItemId ? " · " + message.workItemId : "")));
+  if (message.recipient) {
+    meta.append(node("span", "mono", "→ " + message.recipient.roleName + " · "
+      + (message.recipient.reviewRoundId || message.recipient.workItemId)));
+    meta.append(node("span", "mono", !message.recipient.ownerRunId ? t("messageDelivery.notification") : message.continuation?.runId
+      ? t("messageDelivery.run") + " " + message.continuation.runId
+      : message.continuation?.notDeliveredReason
+        ? t("messageDelivery.blocked") + " " + message.continuation.notDeliveredReason
+        : t("messageDelivery.pending")));
+  }
   card.append(meta);
 
   card.append(richText(null, message.body, t));
+  if (message.resultRef) {
+    card.append(node("small", "mono", message.resultRef.runId));
+    if (result?.output) card.append(richText(t("detail.outcome"), result.output, t));
+    if (result?.diagnostic) card.append(richText(t("detail.failure"), result.diagnostic, t));
+    if (!result) card.append(node("p", "muted", t("detail.unobserved")));
+  }
   return card;
 }
 

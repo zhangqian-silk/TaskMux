@@ -21,11 +21,33 @@ import type {
 import { runtimeLifecycleSignalKey } from "../runtime/lifecycleReservation.js";
 import { isForeignHandoverLockHeld } from "../release/runtimeRelease.js";
 import { FileRuntimeEventInbox } from "./runtimeEventInbox.js";
-import { resolveRuntimeHookTurnFence } from "./runtimeHookTurnFence.js";
-import type { RuntimeHookTurnFence } from "./runtimeHookTurnFence.js";
+import { resolveRuntimeHookRunFence } from "./runtimeHookRunFence.js";
+import type { RuntimeHookRunFence } from "./runtimeHookRunFence.js";
 import { openCurrentTaskStore } from "../storage/currentTaskStore.js";
 
 let structuredSequence = 0;
+
+/** An exact provider item id is evidence of visible input, not an inferred
+ * human author. The original managed request is never replaced.
+ */
+export async function publishStructuredProviderInputObserved(input: Readonly<{
+  home: string; environment: NodeJS.ProcessEnv;
+  observed: import("../runtime/structuredProviderHost.js").StructuredProviderInputObserved;
+}>): Promise<void> {
+  const observed = input.observed;
+  const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
+  const fence = resolveRuntimeHookRunFence(input.environment, adapterId, observed.nativeSessionId, {
+    nativeTurnId: observed.nativeTurnId, terminal: true, sessionOnly: true
+  });
+  if (fence.runId === undefined) return; // Ordinary chat need not be mirrored.
+  await persistAndApply(input.home, [observation({
+    kind: "input.accepted", observedAt: observed.observedAt, sequence: nextStructuredSequence(), ordinal: 0,
+    fence: { ...fence, driverId: builtinAgentDriverRegistry().requireByAdapterId(adapterId).id,
+      conversationId: observed.conversationId, nativeTurnId: observed.nativeTurnId,
+      receiptId: `native-input:${observed.nativeTurnId}/${observed.inputId}` },
+    payload: { input: observed.input }
+  })], fence.taskId, fence.roleName);
+}
 
 export async function publishStructuredProviderStarted(input: Readonly<{
   home: string;
@@ -35,7 +57,7 @@ export async function publishStructuredProviderStarted(input: Readonly<{
   if (input.started.clientOwned) return;
   const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
   const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
-  const fence = resolveRuntimeHookTurnFence(
+  const fence = resolveRuntimeHookRunFence(
     input.environment,
     adapterId,
     input.started.nativeSessionId,
@@ -78,7 +100,7 @@ export async function publishStructuredProviderAccepted(input: Readonly<{
   const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
   const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
   const startupSession = driver.capabilities.observation.sessionBootstrap;
-  const fence = resolveRuntimeHookTurnFence(
+  const fence = resolveRuntimeHookRunFence(
     input.environment,
     adapterId,
     input.receipt.nativeSessionId,
@@ -92,7 +114,7 @@ export async function publishStructuredProviderAccepted(input: Readonly<{
   const commonFence = {
     taskId: fence.taskId,
     roleName: fence.roleName,
-    ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
+    ...(fence.runId === undefined ? {} : { runId: fence.runId }),
     agentId: fence.agentId,
     driverId: driver.id,
     conversationId: input.receipt.conversationId,
@@ -101,8 +123,8 @@ export async function publishStructuredProviderAccepted(input: Readonly<{
       nativeTurnId: input.receipt.nativeTurnId
     }),
     // The structured Host owns the exact input attempt identity. Runtime
-    // descriptor receipts name the Turn bootstrap and must not overwrite a
-    // continuation or human-takeover Turn.
+    // descriptor receipts name the AgentRun bootstrap and must not overwrite a
+    // continuation or human-takeover AgentRun.
     receiptId: input.receipt.attemptId
   };
   const baseSequence = nextStructuredSequence();
@@ -119,7 +141,7 @@ export async function publishStructuredProviderAccepted(input: Readonly<{
   await persistAndApply(input.home, observations, fence.taskId, fence.roleName);
 }
 
-/** Steer settles an additional input, never the parent Turn's initial delivery. */
+/** Steer settles an additional input, never the parent AgentRun's initial delivery. */
 export async function publishStructuredProviderInputSettlement(input: Readonly<{
   home: string;
   environment: NodeJS.ProcessEnv;
@@ -132,11 +154,11 @@ export async function publishStructuredProviderInputSettlement(input: Readonly<{
 }>): Promise<void> {
   const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
   const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
-  const fence = resolveRuntimeHookTurnFence(input.environment, adapterId, input.nativeSessionId, {
+  const fence = resolveRuntimeHookRunFence(input.environment, adapterId, input.nativeSessionId, {
     nativeTurnId: input.nativeTurnId,
     terminal: true
   });
-  if (fence.turnId === undefined) throw new Error("Steer settlement has no exact original Turn.");
+  if (fence.runId === undefined) throw new Error("Steer settlement has no exact original AgentRun.");
   const entry = observation({
     kind: input.status === "accepted" ? "input.accepted"
       : input.status === "rejected" ? "input.rejected" : "input.delivery-unknown",
@@ -146,7 +168,7 @@ export async function publishStructuredProviderInputSettlement(input: Readonly<{
     fence: {
       taskId: fence.taskId,
       roleName: fence.roleName,
-      turnId: fence.turnId,
+      runId: fence.runId,
       agentId: fence.agentId,
       driverId: driver.id,
       conversationId: input.nativeSessionId,
@@ -183,7 +205,7 @@ export async function publishStructuredProviderOpened(input: Readonly<{
   const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
   const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
   const startupSession = driver.capabilities.observation.sessionBootstrap;
-  const fence = resolveRuntimeHookTurnFence(
+  const fence = resolveRuntimeHookRunFence(
     input.environment,
     adapterId,
     input.nativeSessionId,
@@ -192,7 +214,7 @@ export async function publishStructuredProviderOpened(input: Readonly<{
   const commonFence = {
     taskId: fence.taskId,
     roleName: fence.roleName,
-    ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
+    ...(fence.runId === undefined ? {} : { runId: fence.runId }),
     agentId: fence.agentId,
     driverId: driver.id,
     conversationId: input.conversationId,
@@ -226,7 +248,7 @@ export async function publishStructuredProviderGoal(input: Readonly<{
 }>): Promise<void> {
   const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
   const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
-  const fence = resolveRuntimeHookTurnFence(
+  const fence = resolveRuntimeHookRunFence(
     input.environment,
     adapterId,
     input.conversationId,
@@ -267,16 +289,17 @@ export async function publishStructuredConversationRecoverability(input: Readonl
 }>): Promise<void> {
   const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
   const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
-  const fence = resolveRuntimeHookTurnFence(
+  const fence = resolveRuntimeHookRunFence(
     input.environment,
     adapterId,
-    input.conversationId
+    input.conversationId,
+    { sessionOnly: true }
   );
   const sequence = nextStructuredSequence();
   const observationFence = {
     taskId: fence.taskId,
     roleName: fence.roleName,
-    ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
+    ...(fence.runId === undefined ? {} : { runId: fence.runId }),
     agentId: fence.agentId,
     driverId: driver.id,
     conversationId: input.conversationId,
@@ -301,7 +324,7 @@ export async function publishStructuredProviderTerminal(input: Readonly<{
 }>): Promise<void> {
   const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
   const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
-  const fence = resolveRuntimeHookTurnFence(
+  const fence = resolveRuntimeHookRunFence(
     input.environment,
     adapterId,
     input.terminal.nativeSessionId,
@@ -356,7 +379,7 @@ export async function publishStructuredProviderTerminal(input: Readonly<{
     fence: {
       taskId: fence.taskId,
       roleName: fence.roleName,
-      ...(fence.turnId === undefined ? {} : { turnId: fence.turnId }),
+      ...(fence.runId === undefined ? {} : { runId: fence.runId }),
       agentId: fence.agentId,
       driverId: driver.id,
       conversationId: input.terminal.conversationId,
@@ -368,7 +391,12 @@ export async function publishStructuredProviderTerminal(input: Readonly<{
         ? fence.receiptId === undefined ? {} : { receiptId: fence.receiptId }
         : { receiptId: input.terminal.attemptId })
     },
-    payload
+    payload: {
+      ...payload,
+      ...(kind !== "turn.completed" && transported.status === "completed"
+        ? { output: transported.output } : {}),
+      ...(input.terminal.input === undefined ? {} : { input: input.terminal.input })
+    }
   });
   await persistAndApply(
     input.home,
@@ -453,7 +481,7 @@ async function persistAndApply(
       if (isForeignHandoverLockHeld(home)) return;
       throw error;
     }
-    // A fast Provider can accept the initial Turn before the scheduler call
+    // A fast Provider can accept the initial AgentRun before the scheduler call
     // that launched this Host has returned and committed `turn.pushed`. The
     // immutable inbox entry already makes that exact fenced fact durable;
     // `deferred` therefore means "retained for replay", not delivery failure.

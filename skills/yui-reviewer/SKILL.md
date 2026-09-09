@@ -5,7 +5,7 @@ description: Review the exact frozen WorkItem Candidate or unified Task-final sc
 
 # Yui Reviewer
 
-Follow `yui-runtime` first and load the exact current Turn Context Pack. The
+Follow `yui-runtime` first and load the exact current AgentRun Context Pack. The
 ReviewRound, Candidate, workspace, and Snapshot digest returned there are the
 only review scope; fail closed on any mismatch.
 
@@ -20,25 +20,32 @@ reinterpret its scope:
 A Role is an executor, not a workspace owner: each ReviewRound owns an exact
 workspace record. Consecutive Task-final Rounds for the same Reviewer reuse one
 clean physical workspace and native Session while Yui updates the checkout and
-records the new Round snapshot. Treat the new Turn Context Pack and frozen head
+records the new Round snapshot. Treat the new AgentRun Context Pack and frozen head
 as the authority even when the conversation continues; never reuse an earlier
 verdict. Review edits are confined to that workspace, never modify the
 WorkItem Develop workspace, and never become a ChangeSet source.
 
-For a dispatched Review, the Turn Context Pack identifies the ReviewRound,
+For a dispatched Review, the AgentRun Context Pack identifies the ReviewRound,
 frozen Project commits, and assigned workspace. Inspect those exact commits.
 The current mutable Task-main checkout is context only and must never replace,
 widen, or silently update the assigned Review scope.
 
-The Turn also identifies the execution shape. A direct Review Turn is the main
+The AgentRun also identifies the execution shape. A direct Review AgentRun is the main
 Reviewer and produces the authoritative Review result. In replicated Review,
 a Producer Lane independently inspects the same frozen Assignment in its own
 Lane workspace and returns one complete original result. A Producer result is
 non-authoritative: do not create a Candidate, ChangeSet, integration, or
 completion decision.
 
-Only the main Reviewer synthesis Turn may interpret the explicitly selected
-Producer results and complete the ReviewRound. Read every selected source Turn's
+Clarification for the same ReviewRound may arrive through a Message continuation
+in its exact Context Pack. Preserve the frozen candidate and original results;
+the new execution does not authorize reviewing a newer Task head. Messages for
+an obsolete candidate remain visible but cannot restart the old Review. During
+execution a scoped question may be sent with `task message send <task> "<question>"
+--to leader --review-round <round-id>` (include `--work-item` for WorkItem Review).
+
+Only the main Reviewer synthesis AgentRun may interpret the explicitly selected
+Producer results and complete the ReviewRound. Read every selected source AgentRun's
 original result, inspect every supplied result,
 resolve disagreement through judgment against the frozen sources, and return
 one complete authoritative report. Do not select a winning Lane, mutate
@@ -47,21 +54,21 @@ the synthesis.
 
 ## Separate infrastructure failure from review judgment
 
-Verify the exact Turn identity, Context Pack, frozen head, and ReviewRound-owned
+Verify the exact AgentRun identity, Context Pack, frozen head, and ReviewRound-owned
 workspace before inspecting candidate sources. If context loading or workspace
 binding fails before review begins:
 
 - do not inspect the candidate, run candidate checks, invent findings, accept
   risk, or claim the frozen result was reviewed;
-- return the exact infrastructure diagnosis through the assigned Review Turn;
+- return the exact infrastructure diagnosis through the assigned Review AgentRun;
 - do not recommend a Repair WorkItem—the Leader must recover the same frozen
   review boundary with Yui's projected same-Round `task review retry` or exact
-  `task turn retry`;
+  `task run retry`;
 - if any candidate inspection or Reviewer output did occur, report it
   explicitly so the Leader can judge what remains useful. Core records only
   the execution boundary and never classifies the meaning of this prose.
 
-The Review scope remains the current Turn's frozen candidate even if the Leader
+The Review scope remains the current AgentRun's frozen candidate even if the Leader
 handles new user input or advances Task main while this Review is running. Do
 not switch to the newer head, cancel the current inspection, or claim the
 result covers anything beyond the frozen candidate.
@@ -73,7 +80,7 @@ conclusions for the Leader, not machine-readable dispositions. Never create or
 request a follow-up Round yourself.
 
 Keep the context layers distinct. Yui Core owns ReviewRound identity,
-lifecycle, access, workspace, and exact Turn-result correlation; this generic Skill owns
+lifecycle, access, workspace, and exact AgentRun-result correlation; this generic Skill owns
 portable review behavior; Agent-native Project Skills and Project Policy and
 Knowledge own project-specific checks and review expectations; and the Task
 Contract owns the current outcome, scope, acceptance, and required evidence.
@@ -87,12 +94,12 @@ appropriate when repeated patches expose a wrong responsibility or duplicated
 authority.
 
 Follow `yui-runtime`'s distinction between normal Agent execution and
-real-resource validation. This Reviewer Turn is normal execution; additional
+real-resource validation. This Reviewer AgentRun is normal execution; additional
 live-provider, paid, shared, or production validation is not implied.
 
 Complete the assigned frozen-scope review before ending the Provider Turn. Accumulate all
 reachable findings, verification gaps, checks actually run, and bounded next
-actions, then return them together in one Review Turn result; do not stop as
+actions, then return them together in one Review AgentRun result; do not stop as
 soon as the first finding is discovered. A review result is evidence for Leader
 judgment; it does not accept the WorkItem or complete the Task. Preserve the
 ReviewRound record and explicitly clean its workspace after the round is

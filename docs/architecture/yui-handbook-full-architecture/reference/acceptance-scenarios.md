@@ -51,7 +51,7 @@
 | S37 | 历史成果独立读取 | T05、T11 |
 | S38 | 展示贡献可卸载 | T06 |
 | S39 | 实现并存但事实单一 | T00、T02、T04 |
-| S40 | 当前 planning Turn 发起激活 | T08 |
+| S40 | 当前 planning AgentRun 发起激活 | T08 |
 | S41 | 管理交接保留工作 | T03、T04 |
 | S42 | 旧 Session 使用新增工具 | T10、T11 |
 | S43 | 结束与重开不重播历史 | T03、T04 |
@@ -81,11 +81,11 @@
 
 ## S03｜Role 配置与实际执行分开
 
-**前提：** 一个 Worker 的 Turn 正使用 Agent A。
+**前提：** 一个 Worker 的 AgentRun 正使用 Agent A。
 
 **操作：** Leader 将 Role 当前配置改为 Agent B。
 
-**预期：** 当前 Turn 仍保留 A 的实际配置和结果来源；后续明确执行可以选择 B，WorkItem 身份不变。
+**预期：** 当前 AgentRun 仍保留 A 的实际配置和结果来源；后续明确执行可以选择 B，WorkItem 身份不变。
 
 实施关联：T03。验证状态：planned。
 
@@ -125,7 +125,7 @@
 
 **操作：** Reviewer 返回包含建议、疑问或混合意见的文本。
 
-**预期：** 原文只保存在 Reviewer Turn；Review 引用它，Core 不自动解析 verdict 或创建修复 WorkItem。
+**预期：** 原文只保存在 Reviewer AgentRun；Review 引用它，Core 不自动解析 verdict 或创建修复 WorkItem。
 
 实施关联：T03。验证状态：planned。
 
@@ -133,9 +133,9 @@
 
 **前提：** WorkItem 仍为 open。
 
-**操作：** 其 Worker Turn 因 CLI 错误结束。
+**操作：** 其 Worker AgentRun 因 CLI 错误结束。
 
-**预期：** 错误和已有结果进入原 Turn，通知 Leader；WorkItem 仍可继续分配或由 Leader处理。
+**预期：** 错误和已有结果进入原 AgentRun，通知 Leader；WorkItem 仍可继续分配或由 Leader处理。
 
 实施关联：T03。验证状态：planned。
 
@@ -163,7 +163,7 @@
 
 **前提：** 一个 Endpoint 只提供本地关联或传输写入，未返回 native Turn ID。
 
-**操作：** Yui 建立 Turn 并显示执行状态。
+**操作：** Yui 建立 AgentRun 并显示执行状态。
 
 **预期：** 本地 attempt 与 native ID 区分，缺失原生字段保持缺失，不伪造 native acceptance。
 
@@ -193,9 +193,9 @@
 
 **前提：** Session 已由实现 A 打开。
 
-**操作：** 发布实现 B，并在该 Session 开始下一 Turn。
+**操作：** 发布实现 B，并在该 Session 开始下一 AgentRun。
 
-**预期：** 默认仍使用 A 和必要状态依赖，除非显式按可验证方式重建；不在每 Turn 强制升级。
+**预期：** 默认仍使用 A 和必要状态依赖，除非显式按可验证方式重建；不在每 AgentRun 强制升级。
 
 实施关联：T04、T11。验证状态：planned。
 
@@ -261,11 +261,11 @@
 
 ## S21｜迟到和重复结果关联
 
-**前提：** 旧 Turn 已有终态，后继 Turn 正在执行。
+**前提：** 旧 AgentRun 已有终态，后继 AgentRun 正在执行。
 
 **操作：** 旧执行终态重放或延迟到达。
 
-**预期：** 只关联原 Turn，重复幂等；不完成或失败后继 Turn。
+**预期：** 只关联原 AgentRun，重复幂等；不完成或失败后继 AgentRun。
 
 实施关联：T04。验证状态：planned。
 
@@ -415,7 +415,7 @@
 
 **操作：** CLI 和 Web 显示当前任务。
 
-**预期：** 清楚呈现当前配置与各 Turn 实际使用的配置，不把历史结果标签重写。
+**预期：** 清楚呈现当前配置与各 AgentRun 实际使用的配置，不把历史结果标签重写。
 
 实施关联：T03、T06。验证状态：planned。
 
@@ -449,11 +449,11 @@
 
 实施关联：T00、T02、T04。验证状态：planned。
 
-## S40｜当前 planning Turn 发起激活
+## S40｜当前 planning AgentRun 发起激活
 
 **前提：** Leader 正在 Draft 对话中。
 
-**操作：** 该 Turn 调用 Activation，随后结束；或用户在等待中取消。
+**操作：** 该 AgentRun 调用 Activation，随后结束；或用户在等待中取消。
 
 **预期：** 请求立即返回引用而不自等待；结束后按当前有效意图采用；已取消请求不被继续执行。
 
@@ -465,7 +465,7 @@
 
 **操作：** 原 Worker 返回结果，旧 Leader 尝试新管理操作。
 
-**预期：** 结果归原 Turn 并交当前 Leader；旧管理入口不继续越权；Worker 分配不自动重建。
+**预期：** 结果归原 AgentRun 并交当前 Leader；旧管理入口不继续越权；Worker 分配不自动重建。
 
 实施关联：T03、T04。验证状态：planned。
 
@@ -485,7 +485,7 @@
 
 **操作：** 迟到结果到达，随后用户显式重开。
 
-**预期：** 迟到结果只保存到原 Turn，不触发 Task 归档或重开；completed／cancelled 显式重开时不自动重新发送历史输入，负责人明确选择后续工作。另分别从 completed、cancelled 请求 archived：没有独立归档授权、仍有未处置操作或不安全工作区时拒绝且不删数据；满足前置后成为 archived，保留先前结束事实与结果来源。清理可丢弃执行资源后历史仍能读取；archived 拒绝重开。完成／取消本身不自动归档。
+**预期：** 迟到结果只保存到原 AgentRun，不触发 Task 归档或重开；completed／cancelled 显式重开时不自动重新发送历史输入，负责人明确选择后续工作。另分别从 completed、cancelled 请求 archived：没有独立归档授权、仍有未处置操作或不安全工作区时拒绝且不删数据；满足前置后成为 archived，保留先前结束事实与结果来源。清理可丢弃执行资源后历史仍能读取；archived 拒绝重开。完成／取消本身不自动归档。
 
 实施关联：T03、T04。验证状态：planned。
 

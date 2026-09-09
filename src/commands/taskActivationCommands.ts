@@ -78,7 +78,7 @@ function requestActivation(
     actorId: caller.actorId,
     authorityRef: caller.authorityRef,
     environmentPlan,
-    ...(caller.planningTurnId === undefined ? {} : { callerTurnId: caller.planningTurnId })
+    ...(caller.planningRunId === undefined ? {} : { callerRunId: caller.planningRunId })
   }, now));
   // An immediate request has nothing left to wait for, so ask the Controller to
   // pick it up. A deferred one is released by its planning Turn's termination.
@@ -100,7 +100,7 @@ function requestActivation(
     `${result.created ? "Requested" : "Existing"} activation ${result.operationRef}`,
     `Task: ${taskId} (draft)`,
     `Start: ${result.startMode}${
-      result.afterPlanningTurn === undefined ? "" : ` after ${taskId}/${result.afterPlanningTurn}`
+      result.afterPlanningRun === undefined ? "" : ` after ${taskId}/${result.afterPlanningRun}`
     }`,
     `Environment: ${describeEnvironmentPlan(request.environmentPlan)}`,
     `Disposition: ${request.disposition}`,
@@ -112,9 +112,9 @@ function requestActivation(
     operationRef: result.operationRef,
     created: result.created,
     startMode: result.startMode,
-    ...(result.afterPlanningTurn === undefined
+    ...(result.afterPlanningRun === undefined
       ? {}
-      : { afterPlanningTurn: result.afterPlanningTurn }),
+      : { afterPlanningRun: result.afterPlanningRun }),
     request
   });
 }
@@ -177,7 +177,7 @@ function showActivation(args: string[], store: TaskWorkflowStore): TaskCommandEx
     `Activation ${taskActivationOperationRef(task.id, request.operation.requestId)}`,
     `Task: ${task.id} (${task.status})`,
     `Start: ${request.startMode}${
-      request.afterPlanningTurn === undefined ? "" : ` after ${task.id}/${request.afterPlanningTurn}`
+      request.afterPlanningRun === undefined ? "" : ` after ${task.id}/${request.afterPlanningRun}`
     }`,
     `Environment: ${describeEnvironmentPlan(request.environmentPlan)}`,
     `Disposition: ${request.disposition}`,
@@ -204,7 +204,7 @@ function activationCaller(
   store: TaskWorkflowStore,
   options: TaskCommandOptions,
   taskId: string
-): Readonly<{ actorId: string; authorityRef: string; planningTurnId?: string }> {
+): Readonly<{ actorId: string; authorityRef: string; planningRunId?: string }> {
   const actor = taskLocalActor(store, options.environment, taskId);
   if (actor === "leader") {
     const runtime = currentManagedRuntime(
@@ -215,12 +215,12 @@ function activationCaller(
     );
     if (runtime === undefined) {
       throw usageError(
-        `Task-local Leader authority requires the current Provider Turn: ${taskId}.`
+        `Task-local Leader authority requires the current Provider AgentRun: ${taskId}.`
       );
     }
-    const current = runtime.currentTurnId === undefined
+    const current = runtime.currentRunId === undefined
       ? null
-      : store.getTurn(taskId, runtime.currentTurnId);
+      : store.getRun(taskId, runtime.currentRunId);
     return {
       actorId: `task:${taskId}/role:${SYSTEM_LEADER_ROLE}`,
       // Non-secret binding fingerprint of the live Session, matching the Job
@@ -231,7 +231,7 @@ function activationCaller(
         runtime.nativeSessionId
       ]),
       ...(current?.status === "active" && current.purpose === "planning"
-        ? { planningTurnId: current.id }
+        ? { planningRunId: current.id }
         : {})
     };
   }

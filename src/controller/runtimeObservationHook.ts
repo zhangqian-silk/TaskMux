@@ -12,21 +12,21 @@ import {
 } from "../runtime/agentDriverObservation.js";
 import { runtimeLifecycleSignalKey } from "../runtime/lifecycleReservation.js";
 import type { RuntimeObservation } from "../runtime/runtimeObservation.js";
-import { formatTurnReceiptId } from "../task/taskRecordReference.js";
+import { formatRunReceiptId } from "../task/taskRecordReference.js";
 import {
-  boundedTurnFailureDiagnostic,
+  boundedRunFailureDiagnostic,
   transportAgentResult
 } from "../domain/agentResultTransport.js";
 import {
   FileRuntimeEventInbox,
   MAX_RUNTIME_EVENT_FILE_BYTES,
-  type RuntimeTurnTerminalOutcome
+  type RuntimeRunTerminalOutcome
 } from "./runtimeEventInbox.js";
-import { resolveRuntimeHookTurnFence } from "./runtimeHookTurnFence.js";
+import { resolveRuntimeHookRunFence } from "./runtimeHookRunFence.js";
 import type {
-  RuntimeHookTurnFence,
-  RuntimeHookTurnFenceOptions
-} from "./runtimeHookTurnFence.js";
+  RuntimeHookRunFence,
+  RuntimeHookRunFenceOptions
+} from "./runtimeHookRunFence.js";
 
 type ControllerCall = (
   home: string,
@@ -42,23 +42,23 @@ export type ParsedRuntimeObservationHook = Readonly<{
   observations: readonly RuntimeObservation[];
 }>;
 
-type ResolveTurnFence = (
+type ResolveRunFence = (
   environment: NodeJS.ProcessEnv,
   adapterId: string,
   nativeSessionId: string,
-  options: RuntimeHookTurnFenceOptions
-) => RuntimeHookTurnFence;
+  options: RuntimeHookRunFenceOptions
+) => RuntimeHookRunFence;
 
 export type RuntimeObservationHookDependencies = Readonly<{
   drivers?: AgentDriverRegistry;
-  resolveTurnFence?: ResolveTurnFence;
+  resolveRunFence?: ResolveRunFence;
   sequence?: () => number;
 }>;
 
 /**
  * Single hidden ingress for every structured CLI Driver Hook. Native event
  * names and payload shapes terminate here; the durable inbox contains only a
- * provider-independent RuntimeObservation with an exact Session/Turn fence.
+ * provider-independent RuntimeObservation with an exact Session/AgentRun fence.
  */
 export async function runRuntimeObservationHookCommand(
   stdinJson: string | undefined,
@@ -68,7 +68,7 @@ export async function runRuntimeObservationHookCommand(
   dependencies: RuntimeObservationHookDependencies = {}
 ): Promise<void> {
   if (environment.YUI_SESSION_SCOPE === "global") {
-    await runGlobalRuntimeTurnHook(stdinJson, environment, call, now, dependencies);
+    await runGlobalRuntimeRunHook(stdinJson, environment, call, now, dependencies);
     return;
   }
   const parsed = parseRuntimeObservationHook(stdinJson, environment, now, dependencies);
@@ -91,7 +91,7 @@ export async function runRuntimeObservationHookCommand(
   ).catch(() => {});
 }
 
-async function runGlobalRuntimeTurnHook(
+async function runGlobalRuntimeRunHook(
   stdinJson: string | undefined,
   environment: NodeJS.ProcessEnv,
   call: ControllerCall,
@@ -121,7 +121,7 @@ async function runGlobalRuntimeTurnHook(
   }
   const home = requireIdentity(environment.YUI_HOME, "YUI_HOME");
   const roleName = requireIdentity(environment.YUI_ROLE, "Role name");
-  new FileRuntimeEventInbox(home, () => now).enqueueTurnTerminal({
+  new FileRuntimeEventInbox(home, () => now).enqueueRunTerminal({
     scope: "global",
     roleName,
     agentId: requireIdentity(environment.YUI_AGENT_ID, "Agent id"),
@@ -145,7 +145,7 @@ async function runGlobalRuntimeTurnHook(
 function globalHookOutcome(
   payload: Readonly<Record<string, unknown>>,
   hookEventName: "Stop" | "StopFailure"
-): RuntimeTurnTerminalOutcome {
+): RuntimeRunTerminalOutcome {
   if (hookEventName === "Stop") {
     return transportAgentResult(payload.last_assistant_message);
   }
@@ -155,7 +155,7 @@ function globalHookOutcome(
   return {
     status: "failed",
     failureReason: "runtime-failed",
-    diagnostic: boundedTurnFailureDiagnostic(diagnostic)
+    diagnostic: boundedRunFailureDiagnostic(diagnostic)
   };
 }
 
@@ -174,7 +174,7 @@ export function parseRuntimeObservationHook(
     && environment.YUI_ADAPTER_ID === "claude") {
     // Existing native Conversations may retain an old Yui observer plugin.
     // Only the managed stream owns execution facts: Hooks do not expose its
-    // input attempt, and associating them with the currently active Turn can
+    // input attempt, and associating them with the currently active AgentRun can
     // steal a successor's result. This observer is not a permission handler;
     // Claude's configured tool policy and other user plugins remain intact.
     return {
@@ -196,7 +196,7 @@ export function parseRuntimeObservationHook(
   const classification = normalizeAgentDriverHookClassification(
     driver.runtime.classifyHook(nativeHook)
   );
-  const fence = (dependencies.resolveTurnFence ?? resolveRuntimeHookTurnFence)(
+  const fence = (dependencies.resolveRunFence ?? resolveRuntimeHookRunFence)(
     environment,
     driver.adapterId,
     nativeSessionId,
@@ -211,8 +211,8 @@ export function parseRuntimeObservationHook(
       ...(nativeTurnId === undefined ? {} : { nativeTurnId })
     }
   );
-  if (fence.turnId === undefined) {
-    throw new Error("Agent Driver Hook requires a managed Turn.");
+  if (fence.runId === undefined) {
+    throw new Error("Agent Driver Hook requires a managed AgentRun.");
   }
   const driverInput = {
     driver,
@@ -226,13 +226,13 @@ export function parseRuntimeObservationHook(
     fence: {
       taskId: fence.taskId,
       roleName: fence.roleName,
-      turnId: fence.turnId,
+      runId: fence.runId,
       agentId: fence.agentId,
       driverId,
       conversationId: fence.nativeSessionId,
       nativeSessionId: fence.nativeSessionId,
       ...(nativeTurnId === undefined ? {} : { nativeTurnId }),
-      receiptId: fence.receiptId ?? formatTurnReceiptId(fence.taskId, fence.turnId)
+      receiptId: fence.receiptId ?? formatRunReceiptId(fence.taskId, fence.runId)
     },
     payload
   } as const;

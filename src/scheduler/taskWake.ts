@@ -21,7 +21,7 @@ export type TaskWakeStatus = "dispatched" | "consumed";
  *
  * The ledger is also the durable consumption cursor: the latest wake's
  * `toCursor` is the task's high-water mark. A task with no wake records falls
- * back to its last Leader Turn creation time, preserving pre-ledger semantics.
+ * back to its last Leader AgentRun creation time, preserving pre-ledger semantics.
  */
 export type TaskWake = Readonly<{
   schemaVersion: typeof CURRENT_TASK_WAKE_SCHEMA_VERSION;
@@ -36,10 +36,10 @@ export type TaskWake = Readonly<{
   /** ISO timestamp; the delta window's upper bound (dispatch time). */
   toCursor: string;
   status: TaskWakeStatus;
-  /** The Leader Turn this wake dispatched. */
-  turnId?: string;
+  /** The Leader AgentRun this wake dispatched. */
+  runId?: string;
   createdAt: string;
-  /** Set when the dispatched Turn reaches a terminal state. */
+  /** Set when the dispatched AgentRun reaches a terminal state. */
   consumedAt?: string;
 }>;
 
@@ -49,7 +49,7 @@ export function createTaskWake(input: Readonly<{
   reasons: readonly string[];
   fromCursor: string;
   toCursor: string;
-  turnId: string;
+  runId?: string;
   now: Date;
 }>): TaskWake {
   const wake: TaskWake = {
@@ -61,7 +61,7 @@ export function createTaskWake(input: Readonly<{
     fromCursor: requireTimestamp(input.fromCursor, "Wake fromCursor"),
     toCursor: requireTimestamp(input.toCursor, "Wake toCursor"),
     status: "dispatched",
-    turnId: requireIdentity(input.turnId, "Wake Turn id"),
+    ...(input.runId === undefined ? {} : { runId: requireIdentity(input.runId, "Wake AgentRun id") }),
     createdAt: input.now.toISOString()
   };
   validateTaskWake(wake);
@@ -109,15 +109,15 @@ export function latestTaskWake(wakes: readonly TaskWake[]): TaskWake | null {
 }
 
 /**
- * The delta lower bound for a Task's first wake: the last Leader Turn's
+ * The delta lower bound for a Task's first wake: the last Leader AgentRun's
  * creation time, preserving the pre-ledger watermark semantics. When no
- * Leader Turn exists, the Task's own creation time bounds the window.
+ * Leader AgentRun exists, the Task's own creation time bounds the window.
  */
 export function fallbackWakeCursor(input: Readonly<{
   taskCreatedAt: string;
-  leaderTurnCreatedAt?: string;
+  leaderRunCreatedAt?: string;
 }>): string {
-  return input.leaderTurnCreatedAt ?? input.taskCreatedAt;
+  return input.leaderRunCreatedAt ?? input.taskCreatedAt;
 }
 
 function wakeSequence(id: string): number {

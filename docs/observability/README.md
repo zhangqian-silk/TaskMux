@@ -25,14 +25,14 @@ never fabricates them.
 
 `yui task role status <task> <role>` projects the provider-independent Agent
 Driver observations documented in [AgentRuntime Drivers](../agentRuntime-drivers.md).
-It reports the Driver, current Session/Turn/operation state, recent activity,
+It reports the Driver, current Session/AgentRun/operation state, recent activity,
 waiting reason, and normalized usage. Host presence remains a separate tmux
 field: a live pane is not proof that the Agent is actively working.
 
 Five minutes without structured activity changes runtime attention to `quiet`
 (or `active-operation-quiet` when an operation is still open). This is a
 diagnostic health signal only. Workflow-stall attention uses durable Yui
-progress and is not postponed by tokens, tools, CPU, RSS, or Turn completion.
+progress and is not postponed by tokens, tools, CPU, RSS, or AgentRun completion.
 
 ## Feature flag
 
@@ -127,7 +127,7 @@ Stable taxonomy for execution failures (`src/observability/faultClassification.t
 
 `core-diagnostic` is intentionally honest about bounded regex attribution over
 Core-run command diagnostics. Agent-authored Worker or Reviewer results are
-never classified. A cancelled Turn is not counted as a fault class.
+never classified. A cancelled AgentRun is not counted as a fault class.
 
 ## `yui execution audit`
 
@@ -143,11 +143,11 @@ Sections:
 - **runs** — total/active/completed/failed, failure rate, cumulative duration,
   by-role and by-purpose distribution, fault class counts, and structured
   launch-failure phase/kind counts parsed from launch diagnostics.
-- **wakes** — Leader Turns and their durable wake reasons.
+- **wakes** — Leader AgentRuns and their durable wake reasons.
   `suppressedWakes` counts durable `wake.suppressed` task events: Leader wakes
   coalesced by scheduler single-flight because the Role runtime lifecycle lane
   was busy (Issue 05). The wake stays durable and is retried after the lane
-  settles, so a suppression is scheduler backpressure, never a failed Turn.
+  settles, so a suppression is scheduler backpressure, never a failed AgentRun.
 - **sessions** — native Session count, broken/stopped, resets, lifecycle events, stop
   failures.
 - **reviews** — total/completed/failed execution counts. Reviewer prose is not
@@ -157,20 +157,20 @@ Sections:
   PR/MR references.
 - **events** — total, progress vs semantic, obsolete, message count.
 - **workItems** — total/completed/retired.
-- **orchestration** — per-Task intent type, Turn/WorkItem counts, full/delta/
+- **orchestration** — per-Task intent type, AgentRun/WorkItem counts, full/delta/
   failed Reviews, Integration attempts/failures/repeated
   identities/evidence reuse, native Sessions before first durable progress,
   publication-to-completion latency, terminal workspaces, and non-blocking
   cost advisories. `--since`/`--until` filters every underlying record family.
 - **storage** — state.json/runtime/deployments byte sizes.
-- **topLongRunning** — longest-running active/completed Turns with exact refs.
+- **topLongRunning** — longest-running active/completed AgentRuns with exact refs.
 
 Each section degrades independently: a read failure produces an `error` section
 with the error location, without blocking completed sections.
 
 `yui task next-action <task>` shows the same Task-scoped orchestration
 advisories alongside its protocol recommendation. It also shows the canonical
-active Turn projection with each Turn's purpose and WorkItem/ReviewRound
+active AgentRun projection with each AgentRun's purpose and WorkItem/ReviewRound
 binding, so Review activity is never presented as delegated implementation.
 Advisories are derived from existing records and never write state or block a
 legal action. Current

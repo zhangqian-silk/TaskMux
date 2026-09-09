@@ -62,7 +62,7 @@ import type { InputRequest } from "../input/inputRequest.js";
 import type { GlobalRoleSessionSet, RoleAgentSession, TaskRoleSessionSet } from "../executor/agentExecutor.js";
 import type { TaskMessage } from "../message/message.js";
 import type { Milestone } from "../milestone/milestone.js";
-import { turnPurposeAdmitsTaskState, type Turn } from "../turn/turn.js";
+import { runPurposeAdmitsTaskState, type AgentRun } from "../agentRun/agentRun.js";
 import type { RuntimeOwner } from "../runtime/runtimeOwner.js";
 import {
   compareRuntimeSessionCandidates,
@@ -109,8 +109,8 @@ import { managedWorkspaceKey, type ManagedWorkspace, type ManagedWorkspaceOwner 
 import {
   CURRENT_CONFIG_SCHEMA_VERSION,
   CURRENT_WORK_MAILBOX_SCHEMA_VERSION,
-  executionLaneActiveTurnKey,
-  executionLaneActiveTurnKeyParts,
+  executionLaneActiveRunKey,
+  executionLaneActiveRunKeyParts,
   StorageConflictError,
   StorageCancelledError,
   StorageRecordError,
@@ -142,8 +142,8 @@ import {
   inspectSqliteSchemaMigrations,
   migrateSqliteSchema,
   SqliteSchemaMigrationError,
-  TELEMETRY_KEEP_PER_TURN,
-  TELEMETRY_TURN_CAP
+  TELEMETRY_KEEP_PER_RUN,
+  TELEMETRY_RUN_CAP
 } from "./sqliteSchema.js";
 import { StorageSchemaError } from "./storageSchema.js";
 
@@ -197,7 +197,7 @@ export function readSqliteHomeIdentity(
 export type TelemetryProgress = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   progressId: string;
   sequence?: number;
   payload: unknown;
@@ -250,9 +250,9 @@ function isUniqueConstraint(error: unknown): boolean {
 }
 
 /** One admission rule for every active-Turn write path in this store. */
-function assertTurnAdmission(task: Task | null, turn: Turn): void {
-  if (task === null || !turnPurposeAdmitsTaskState(turn.purpose, task)) {
-    throw new StorageRecordError(`Task execution is not enabled: ${turn.taskId}.`);
+function assertRunAdmission(task: Task | null, run: AgentRun): void {
+  if (task === null || !runPurposeAdmitsTaskState(run.purpose, task)) {
+    throw new StorageRecordError(`Task execution is not enabled: ${run.taskId}.`);
   }
 }
 
@@ -1003,7 +1003,7 @@ export class SqliteTaskStore implements TaskStore {
     );
     const activeTasks = boundTasks.filter((task) => task.status === "active");
     const unresolvedWorkItemRefs: string[] = [];
-    const activeTurnRefs: string[] = [];
+    const activeRunRefs: string[] = [];
     const unresolvedIntegrationRefs: string[] = [];
     for (const task of activeTasks) {
       for (const workItem of this.listWorkItems(task.id)) {
@@ -1011,8 +1011,8 @@ export class SqliteTaskStore implements TaskStore {
           unresolvedWorkItemRefs.push(`${task.id}/${workItem.id}`);
         }
       }
-      for (const run of this.listTurns(task.id)) {
-        if (run.status === "active") activeTurnRefs.push(`${task.id}/${run.id}`);
+      for (const run of this.listRuns(task.id)) {
+        if (run.status === "active") activeRunRefs.push(`${task.id}/${run.id}`);
       }
       for (const attempt of this.listIntegrationAttempts(task.id)) {
         if (attempt.status === "running" || attempt.status === "blocked") {
@@ -1025,7 +1025,7 @@ export class SqliteTaskStore implements TaskStore {
       boundTaskIds: boundTasks.map(({ id }) => id),
       activeTaskIds: activeTasks.map(({ id }) => id),
       unresolvedWorkItemRefs,
-      activeTurnRefs,
+      activeRunRefs,
       unresolvedIntegrationRefs
     };
   }
@@ -1180,7 +1180,7 @@ export class SqliteTaskStore implements TaskStore {
     const task = this.#getPayload<Task>("task_records", "task_id = ?", [taskId]);
     if (task === null) return null;
     // One indexed query (idx_turns_role_status) covers both the active
-    // Turns the projection waits on and the Leader Turns the budget consumes.
+    // AgentRuns the projection waits on and the Leader AgentRuns the budget consumes.
     const events = this.#sortById(
       this.#listPayload<TaskEvent>(
         "events",
@@ -1194,13 +1194,13 @@ export class SqliteTaskStore implements TaskStore {
       (event) => event.id
     );
     const runs = operationalTaskRecords(this.#sortById(
-      this.#listPayload<Turn>(
+      this.#listPayload<AgentRun>(
         "turns",
         "task_id = ? AND (status = 'active' OR role_name = 'leader')",
         [taskId]
       ),
       (run) => run.id
-    ), events, "turn");
+    ), events, "run");
     return {
       task: {
         id: task.id,
@@ -1242,11 +1242,11 @@ export class SqliteTaskStore implements TaskStore {
         ),
         (request) => request.id
       ),
-      activeTurns: runs.filter((run) => run.status === "active"),
-      leaderTurns: runs.filter((run) => run.roleName === "leader"),
+      activeRuns: runs.filter((run) => run.status === "active"),
+      leaderRuns: runs.filter((run) => run.roleName === "leader"),
       reviewOutcomeEvidence: {
-        turns: this.#sortById(
-          this.#listPayload<Turn>(
+        runs: this.#sortById(
+          this.#listPayload<AgentRun>(
             "turns",
             "task_id = ?",
             [taskId]
@@ -2365,33 +2365,33 @@ export class SqliteTaskStore implements TaskStore {
 
   // -- turns -----------------------------------------------------------------
 
-  nextTurnId(taskId: string): string { return this.#nextTaskRecordId(taskId, "turn"); }
-  peekNextTurnId(taskId: string): string { return this.#peekTaskRecordId(taskId, "turn"); }
+  nextRunId(taskId: string): string { return this.#nextTaskRecordId(taskId, "run"); }
+  peekNextRunId(taskId: string): string { return this.#peekTaskRecordId(taskId, "run"); }
 
-  getTurn(taskId: string, turnId: string): Turn | null {
-    return this.#getPayload<Turn>("turns", "task_id = ? AND turn_id = ?", [taskId, turnId]);
+  getRun(taskId: string, runId: string): AgentRun | null {
+    return this.#getPayload<AgentRun>("turns", "task_id = ? AND turn_id = ?", [taskId, runId]);
   }
 
-  listTurns(taskId: string): Turn[] {
+  listRuns(taskId: string): AgentRun[] {
     return this.#sortById(
-      this.#listPayload<Turn>("turns", "task_id = ?", [taskId]),
-      (turn) => turn.id
+      this.#listPayload<AgentRun>("turns", "task_id = ?", [taskId]),
+      (run) => run.id
     );
   }
 
-  saveTurn(turn: Turn): void {
-    if (turn.taskId !== undefined) this.#requireTask(turn.taskId);
-    if (turn.reviewRoundId !== undefined) {
-      const round = this.getReviewRound(turn.taskId, turn.reviewRoundId);
+  saveRun(run: AgentRun): void {
+    if (run.taskId !== undefined) this.#requireTask(run.taskId);
+    if (run.reviewRoundId !== undefined) {
+      const round = this.getReviewRound(run.taskId, run.reviewRoundId);
       if (round === null) {
-        throw new StorageRecordError(`Turn ReviewRound not found: ${turn.reviewRoundId}.`);
+        throw new StorageRecordError(`AgentRun ReviewRound not found: ${run.reviewRoundId}.`);
       }
       const roundWorkItemId = round.workItemId;
       const laneRole = round.executionGroup?.lanes
-        .find(({ id }) => id === turn.executionLaneId)?.roleName;
-      if (roundWorkItemId !== turn.workItemId
-        || (round.reviewerRoleName !== turn.roleName && laneRole !== turn.roleName)) {
-        throw new StorageRecordError(`Turn does not match ReviewRound: ${turn.id}.`);
+        .find(({ id }) => id === run.executionLaneId)?.roleName;
+      if (roundWorkItemId !== run.workItemId
+        || (round.reviewerRoleName !== run.roleName && laneRole !== run.roleName)) {
+        throw new StorageRecordError(`AgentRun does not match ReviewRound: ${run.id}.`);
       }
     }
     this.#mutate(() => {
@@ -2399,7 +2399,7 @@ export class SqliteTaskStore implements TaskStore {
         `INSERT INTO turns (task_id, turn_id, role_name, status, payload, updated_at) VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(task_id, turn_id) DO UPDATE SET role_name = excluded.role_name, status = excluded.status,
            payload = excluded.payload, updated_at = excluded.updated_at`
-      ).run(turn.taskId, turn.id, turn.roleName, turn.status, this.#json(turn), this.#now());
+      ).run(run.taskId, run.id, run.roleName, run.status, this.#json(run), this.#now());
     });
   }
 
@@ -2433,204 +2433,204 @@ export class SqliteTaskStore implements TaskStore {
 
   // -- active turns ----------------------------------------------------------
 
-  #saveActiveTurn(taskId: string, pointer: string, turnId: string): void {
+  #saveActiveRun(taskId: string, pointer: string, runId: string): void {
     this.#mutate(() => {
-      const payload = this.#json({ schemaVersion: 3, turnId });
+      const payload = this.#json({ schemaVersion: 3, runId });
       this.#db.prepare(
         `INSERT INTO active_turns (task_id, pointer, turn_id, payload, updated_at) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(task_id, pointer) DO UPDATE SET turn_id = excluded.turn_id, payload = excluded.payload, updated_at = excluded.updated_at`
-      ).run(taskId, pointer, turnId, payload, this.#now());
+      ).run(taskId, pointer, runId, payload, this.#now());
     });
   }
 
-  #readActiveTurnPointer(taskId: string, pointer: string): {
-    turnId: string;
-    turn: Turn | null;
+  #readActiveRunPointer(taskId: string, pointer: string): {
+    runId: string;
+    run: AgentRun | null;
   } | null {
     const row = this.#db.prepare(
       "SELECT turn_id FROM active_turns WHERE task_id = ? AND pointer = ?"
     ).get(taskId, pointer) as { turn_id: string } | undefined;
     if (row === undefined) return null;
     return {
-      turnId: row.turn_id,
-      turn: this.getTurn(taskId, row.turn_id)
+      runId: row.turn_id,
+      run: this.getRun(taskId, row.turn_id)
     };
   }
 
-  #assertActiveTurnForWrite(
-    turn: Turn,
+  #assertActiveRunForWrite(
+    run: AgentRun,
     lane?: Readonly<{ executionGroupId: string; executionLaneId: string }>
   ): void {
-    if (turn.status !== "active") {
-      throw new StorageRecordError(`Active Turn must have active status: ${turn.id}`);
+    if (run.status !== "active") {
+      throw new StorageRecordError(`Active AgentRun must have active status: ${run.id}`);
     }
-    const hasGroup = turn.executionGroupId !== undefined;
-    const hasLane = turn.executionLaneId !== undefined;
+    const hasGroup = run.executionGroupId !== undefined;
+    const hasLane = run.executionLaneId !== undefined;
     if (hasGroup !== hasLane) {
-      throw new StorageRecordError(`Turn execution lineage is incomplete: ${turn.id}.`);
+      throw new StorageRecordError(`AgentRun execution lineage is incomplete: ${run.id}.`);
     }
     if (lane !== undefined
-      && (turn.executionGroupId !== lane.executionGroupId
-        || turn.executionLaneId !== lane.executionLaneId)) {
+      && (run.executionGroupId !== lane.executionGroupId
+        || run.executionLaneId !== lane.executionLaneId)) {
       throw new StorageRecordError(
-        `Active Turn execution lineage does not match its Lane: ${turn.id}`
+        `Active AgentRun execution lineage does not match its Lane: ${run.id}`
       );
     }
   }
 
-  #getActiveRoleTurn(taskId: string, roleName: string): Turn | null {
-    const pointer = this.#readActiveTurnPointer(taskId, roleName);
+  #getActiveRoleRun(taskId: string, roleName: string): AgentRun | null {
+    const pointer = this.#readActiveRunPointer(taskId, roleName);
     if (pointer === null) return null;
     const task = this.getTask(taskId);
     if (task === null) {
-      throw new StorageRecordError(`Active Turn Task is missing: ${taskId}/${roleName}`);
+      throw new StorageRecordError(`Active AgentRun Task is missing: ${taskId}/${roleName}`);
     }
-    if (pointer.turn === null) {
+    if (pointer.run === null) {
       // Retired Tasks are an explicit historical isolation boundary. Their
-      // retained pointer rows may intentionally reference a missing Turn.
+      // retained pointer rows may intentionally reference a missing AgentRun.
       if (task.status === "cancelled" && task.retirementIsolation === true) return null;
-      throw new StorageRecordError(`Active Turn pointer is dangling: ${taskId}/${roleName}`);
+      throw new StorageRecordError(`Active AgentRun pointer is dangling: ${taskId}/${roleName}`);
     }
-    const turn = pointer.turn;
-    if (task.status === "cancelled" && task.retirementIsolation === true) return turn;
-    if (turn.id !== pointer.turnId
-      || turn.taskId !== taskId
-      || turn.roleName !== roleName
-      || turn.status !== "active"
-      || (turn.executionGroupId === undefined) !== (turn.executionLaneId === undefined)) {
-      throw new StorageRecordError(`Active Turn pointer is invalid: ${taskId}/${roleName}`);
+    const run = pointer.run;
+    if (task.status === "cancelled" && task.retirementIsolation === true) return run;
+    if (run.id !== pointer.runId
+      || run.taskId !== taskId
+      || run.roleName !== roleName
+      || run.status !== "active"
+      || (run.executionGroupId === undefined) !== (run.executionLaneId === undefined)) {
+      throw new StorageRecordError(`Active AgentRun pointer is invalid: ${taskId}/${roleName}`);
     }
-    return turn;
+    return run;
   }
 
-  #getActiveLaneTurn(
+  #getActiveLaneRun(
     taskId: string,
     executionGroupId: string,
     executionLaneId: string
-  ): Turn | null {
-    const pointerKey = executionLaneActiveTurnKey(executionGroupId, executionLaneId);
-    const pointer = this.#readActiveTurnPointer(taskId, pointerKey);
+  ): AgentRun | null {
+    const pointerKey = executionLaneActiveRunKey(executionGroupId, executionLaneId);
+    const pointer = this.#readActiveRunPointer(taskId, pointerKey);
     if (pointer === null) return null;
     const task = this.getTask(taskId);
     if (task === null) {
-      throw new StorageRecordError(`Active Turn Task is missing: ${taskId}/${pointerKey}`);
+      throw new StorageRecordError(`Active AgentRun Task is missing: ${taskId}/${pointerKey}`);
     }
-    if (pointer.turn === null) {
+    if (pointer.run === null) {
       if (task.status === "cancelled" && task.retirementIsolation === true) return null;
-      throw new StorageRecordError(`Active Turn pointer is dangling: ${taskId}/${pointerKey}`);
+      throw new StorageRecordError(`Active AgentRun pointer is dangling: ${taskId}/${pointerKey}`);
     }
-    const turn = pointer.turn;
-    if (task.status === "cancelled" && task.retirementIsolation === true) return turn;
-    if (turn.id !== pointer.turnId
-      || turn.taskId !== taskId
-      || turn.status !== "active"
-      || turn.executionGroupId !== executionGroupId
-      || turn.executionLaneId !== executionLaneId) {
-      throw new StorageRecordError(`Active Turn pointer is invalid: ${taskId}/${pointerKey}`);
+    const run = pointer.run;
+    if (task.status === "cancelled" && task.retirementIsolation === true) return run;
+    if (run.id !== pointer.runId
+      || run.taskId !== taskId
+      || run.status !== "active"
+      || run.executionGroupId !== executionGroupId
+      || run.executionLaneId !== executionLaneId) {
+      throw new StorageRecordError(`Active AgentRun pointer is invalid: ${taskId}/${pointerKey}`);
     }
-    return turn;
+    return run;
   }
 
-  #clearActiveTurn(taskId: string, pointer: string): void {
+  #clearActiveRun(taskId: string, pointer: string): void {
     this.#mutate(() => {
       this.#db.prepare("DELETE FROM active_turns WHERE task_id = ? AND pointer = ?").run(taskId, pointer);
     });
   }
 
-  getActiveTurn(taskId: string, roleName: string): Turn | null {
-    return this.#getActiveRoleTurn(taskId, roleName);
+  getActiveRun(taskId: string, roleName: string): AgentRun | null {
+    return this.#getActiveRoleRun(taskId, roleName);
   }
 
-  saveActiveTurn(turn: Turn): void {
-    if (turn.executionGroupId !== undefined || turn.executionLaneId !== undefined) {
-      this.saveActiveExecutionLaneTurn(turn);
+  saveActiveRun(run: AgentRun): void {
+    if (run.executionGroupId !== undefined || run.executionLaneId !== undefined) {
+      this.saveActiveExecutionLaneRun(run);
       return;
     }
     this.transaction((store) => {
-      const task = store.getTask(turn.taskId);
-      assertTurnAdmission(task, turn);
-      this.#assertActiveTurnForWrite(turn);
-      const current = store.getActiveTurn(turn.taskId, turn.roleName);
-      if (current !== null && current.id !== turn.id) {
-        throw new StorageRecordError(`Role already has an active Turn: ${turn.taskId}/${turn.roleName}`);
+      const task = store.getTask(run.taskId);
+      assertRunAdmission(task, run);
+      this.#assertActiveRunForWrite(run);
+      const current = store.getActiveRun(run.taskId, run.roleName);
+      if (current !== null && current.id !== run.id) {
+        throw new StorageRecordError(`Role already has an active AgentRun: ${run.taskId}/${run.roleName}`);
       }
-      // Keep the Turn row and its active pointer in the same transaction. The
+      // Keep the AgentRun row and its active pointer in the same transaction. The
       // adapter may have already written the row; this upsert remains
       // intentionally idempotent for that backend-neutral path.
-      store.saveTurn(turn);
-      this.#saveActiveTurn(turn.taskId, turn.roleName, turn.id);
+      store.saveRun(run);
+      this.#saveActiveRun(run.taskId, run.roleName, run.id);
     });
   }
 
-  clearActiveTurn(taskId: string, roleName: string): void {
-    // A Role key can point at a lane-backed Turn. Remove the matching lane
+  clearActiveRun(taskId: string, roleName: string): void {
+    // A Role key can point at a lane-backed AgentRun. Remove the matching lane
     // pointer too while preserving every other lane for the same Role.
     this.transaction(() => {
-      const rolePointer = this.#readActiveTurnPointer(taskId, roleName);
-      this.#clearActiveTurn(taskId, roleName);
+      const rolePointer = this.#readActiveRunPointer(taskId, roleName);
+      this.#clearActiveRun(taskId, roleName);
       if (rolePointer === null) return;
       const laneRows = this.#db.prepare(
         "SELECT pointer, turn_id FROM active_turns WHERE task_id = ?"
       ).all(taskId) as Array<{ pointer: string; turn_id: string }>;
       for (const row of laneRows) {
-        if (executionLaneActiveTurnKeyParts(row.pointer) !== null
-          && row.turn_id === rolePointer.turnId) {
-          this.#clearActiveTurn(taskId, row.pointer);
+        if (executionLaneActiveRunKeyParts(row.pointer) !== null
+          && row.turn_id === rolePointer.runId) {
+          this.#clearActiveRun(taskId, row.pointer);
         }
       }
     });
   }
 
-  getActiveExecutionLaneTurn(taskId: string, executionGroupId: string, executionLaneId: string): Turn | null {
-    return this.#getActiveLaneTurn(taskId, executionGroupId, executionLaneId);
+  getActiveExecutionLaneRun(taskId: string, executionGroupId: string, executionLaneId: string): AgentRun | null {
+    return this.#getActiveLaneRun(taskId, executionGroupId, executionLaneId);
   }
 
-  saveActiveExecutionLaneTurn(turn: Turn): void {
-    if (turn.executionGroupId === undefined || turn.executionLaneId === undefined) {
-      throw new StorageRecordError(`Active execution-lane Turn requires group and lane ids: ${turn.id}`);
+  saveActiveExecutionLaneRun(run: AgentRun): void {
+    if (run.executionGroupId === undefined || run.executionLaneId === undefined) {
+      throw new StorageRecordError(`Active execution-lane AgentRun requires group and lane ids: ${run.id}`);
     }
     this.transaction((store) => {
-      const task = store.getTask(turn.taskId);
+      const task = store.getTask(run.taskId);
       if (task === null || task.status !== "active" || task.executionGate.state !== "enabled") {
-        throw new StorageRecordError(`Task execution is not enabled: ${turn.taskId}.`);
+        throw new StorageRecordError(`Task execution is not enabled: ${run.taskId}.`);
       }
-      const key = executionLaneActiveTurnKey(turn.executionGroupId!, turn.executionLaneId!);
-      this.#assertActiveTurnForWrite(turn, {
-        executionGroupId: turn.executionGroupId!,
-        executionLaneId: turn.executionLaneId!
+      const key = executionLaneActiveRunKey(run.executionGroupId!, run.executionLaneId!);
+      this.#assertActiveRunForWrite(run, {
+        executionGroupId: run.executionGroupId!,
+        executionLaneId: run.executionLaneId!
       });
-      const current = store.getActiveExecutionLaneTurn(
-        turn.taskId,
-        turn.executionGroupId!,
-        turn.executionLaneId!
+      const current = store.getActiveExecutionLaneRun(
+        run.taskId,
+        run.executionGroupId!,
+        run.executionLaneId!
       );
-      if (current !== null && current.id !== turn.id) {
-        throw new StorageRecordError(`Execution Lane already has an active Turn: ${turn.taskId}/${key}`);
+      if (current !== null && current.id !== run.id) {
+        throw new StorageRecordError(`Execution Lane already has an active AgentRun: ${run.taskId}/${key}`);
       }
-      const rolePointer = this.#readActiveTurnPointer(turn.taskId, turn.roleName);
-      store.saveTurn(turn);
-      this.#saveActiveTurn(turn.taskId, key, turn.id);
+      const rolePointer = this.#readActiveRunPointer(run.taskId, run.roleName);
+      store.saveRun(run);
+      this.#saveActiveRun(run.taskId, key, run.id);
       // Keep the Role pointer for the single-lane delivery path, but never
       // replace it when another Lane already owns that Role.
       if (rolePointer === null) {
-        this.#saveActiveTurn(turn.taskId, turn.roleName, turn.id);
+        this.#saveActiveRun(run.taskId, run.roleName, run.id);
       }
     });
   }
 
-  clearActiveExecutionLaneTurn(taskId: string, executionGroupId: string, executionLaneId: string): void {
+  clearActiveExecutionLaneRun(taskId: string, executionGroupId: string, executionLaneId: string): void {
     this.transaction(() => {
-      const key = executionLaneActiveTurnKey(executionGroupId, executionLaneId);
-      const lanePointer = this.#readActiveTurnPointer(taskId, key);
-      this.#clearActiveTurn(taskId, key);
+      const key = executionLaneActiveRunKey(executionGroupId, executionLaneId);
+      const lanePointer = this.#readActiveRunPointer(taskId, key);
+      this.#clearActiveRun(taskId, key);
       if (lanePointer === null) return;
       const roleRows = this.#db.prepare(
         "SELECT pointer, turn_id FROM active_turns WHERE task_id = ?"
       ).all(taskId) as Array<{ pointer: string; turn_id: string }>;
       for (const row of roleRows) {
-        if (executionLaneActiveTurnKeyParts(row.pointer) === null
-          && row.turn_id === lanePointer.turnId) {
-          this.#clearActiveTurn(taskId, row.pointer);
+        if (executionLaneActiveRunKeyParts(row.pointer) === null
+          && row.turn_id === lanePointer.runId) {
+          this.#clearActiveRun(taskId, row.pointer);
         }
       }
     });
@@ -2840,7 +2840,7 @@ export class SqliteTaskStore implements TaskStore {
         wake.id,
         wake.seq,
         wake.status,
-        wake.turnId ?? null,
+        wake.runId ?? null,
         wake.fromCursor,
         wake.toCursor,
         this.#json([...wake.reasons]),
@@ -2873,7 +2873,8 @@ export class SqliteTaskStore implements TaskStore {
 
   /** Extract the numeric suffix of a `<prefix>-<n>` record id. */
   #idSequence(id: string, kind: TaskRecordKind): number {
-    const match = new RegExp(`^${TASK_RECORD_ID_PREFIXES[kind]}-(\\d+)$`).exec(id);
+    const prefix = kind === "run" ? "(?:run|turn)" : TASK_RECORD_ID_PREFIXES[kind];
+    const match = new RegExp(`^${prefix}-(\\d+)$`).exec(id);
     if (match === null) throw new StorageRecordError(`Task-local ${kind} id is invalid: ${id}.`);
     return Number.parseInt(match[1]!, 10);
   }
@@ -3096,25 +3097,25 @@ export class SqliteTaskStore implements TaskStore {
          ON CONFLICT(task_id, role_name, turn_id, progress_id)
          DO UPDATE SET sequence = excluded.sequence, payload = excluded.payload, received_at = excluded.received_at`
       ).run(
-        entry.taskId, entry.roleName, entry.turnId, entry.progressId,
+        entry.taskId, entry.roleName, entry.runId, entry.progressId,
         entry.sequence ?? null, this.#json(entry.payload), entry.receivedAt
       );
     });
   }
 
-  listTelemetry(taskId: string, turnId?: string): TelemetryProgress[] {
-    const rows = turnId === undefined
+  listTelemetry(taskId: string, runId?: string): TelemetryProgress[] {
+    const rows = runId === undefined
       ? this.#db.prepare(
           "SELECT task_id, role_name, turn_id, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? ORDER BY received_at"
         ).all(taskId)
       : this.#db.prepare(
           "SELECT task_id, role_name, turn_id, progress_id, sequence, payload, received_at FROM telemetry WHERE task_id = ? AND turn_id = ? ORDER BY received_at"
-        ).all(taskId, turnId);
+        ).all(taskId, runId);
     return (rows as Array<{ task_id: string; role_name: string; turn_id: string; progress_id: string; sequence: number | null; payload: string; received_at: string }>)
       .map((row) => ({
         taskId: row.task_id,
         roleName: row.role_name,
-        turnId: row.turn_id,
+        runId: row.turn_id,
         progressId: row.progress_id,
         sequence: row.sequence ?? undefined,
         payload: this.#parse(row.payload),
@@ -3122,20 +3123,20 @@ export class SqliteTaskStore implements TaskStore {
       }));
   }
 
-  countTelemetry(taskId: string, turnId?: string): number {
-    const row = turnId === undefined
+  countTelemetry(taskId: string, runId?: string): number {
+    const row = runId === undefined
       ? this.#db.prepare("SELECT COUNT(*) AS n FROM telemetry WHERE task_id = ?").get(taskId)
-      : this.#db.prepare("SELECT COUNT(*) AS n FROM telemetry WHERE task_id = ? AND turn_id = ?").get(taskId, turnId);
+      : this.#db.prepare("SELECT COUNT(*) AS n FROM telemetry WHERE task_id = ? AND turn_id = ?").get(taskId, runId);
     return (row as { n: number }).n;
   }
 
   /**
    * Bounded retention (§4.4): keep the newest `keep` rows per
-   * (task, role, Turn) and delete older ones. The DELETE is scoped
+   * (task, role, AgentRun) and delete older ones. The DELETE is scoped
    * by task_id; it never rewrites global rows or other Tasks. Returns the number
    * of rows deleted. Terminal/semantic events go to `events` and are never pruned.
    */
-  pruneTelemetry(taskId: string, roleName: string, turnId: string, keep: number = TELEMETRY_KEEP_PER_TURN): number {
+  pruneTelemetry(taskId: string, roleName: string, runId: string, keep: number = TELEMETRY_KEEP_PER_RUN): number {
     return this.#mutate(() => {
       const result = this.#db.prepare(
         `DELETE FROM telemetry
@@ -3147,16 +3148,16 @@ export class SqliteTaskStore implements TaskStore {
              ORDER BY received_at DESC, COALESCE(sequence, -1) DESC, progress_id ASC
              LIMIT ?
            )`
-      ).run(taskId, roleName, turnId, taskId, roleName, turnId, keep);
+      ).run(taskId, roleName, runId, taskId, roleName, runId, keep);
       return result.changes;
     });
   }
 
   /**
-   * Hard cap for an active Turn (§4.4): trim oldest rows across the Turn beyond
+   * Hard cap for an active AgentRun (§4.4): trim oldest rows across the AgentRun beyond
    * `cap` (default 50k). Returns the number of rows deleted.
    */
-  capTelemetryTurn(taskId: string, turnId: string, cap: number = TELEMETRY_TURN_CAP): number {
+  capTelemetryRun(taskId: string, runId: string, cap: number = TELEMETRY_RUN_CAP): number {
     return this.#mutate(() => {
       const result = this.#db.prepare(
         `DELETE FROM telemetry
@@ -3168,7 +3169,7 @@ export class SqliteTaskStore implements TaskStore {
              ORDER BY received_at DESC, COALESCE(sequence, -1) DESC, progress_id ASC
              LIMIT ?
            )`
-      ).run(taskId, turnId, taskId, turnId, cap);
+      ).run(taskId, runId, taskId, runId, cap);
       return result.changes;
     });
   }

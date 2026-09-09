@@ -16,13 +16,13 @@ export type WorkMailboxQueueStore = Readonly<{
   saveWorkMailbox(mailbox: WorkMailbox): void;
 }>;
 
-export type RoleTurnDispatchIdentity = Readonly<{
+export type RoleRunDispatchIdentity = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
 }>;
 
-export type RoleTurnDispatchToken =
+export type RoleRunDispatchToken =
   | Readonly<{
       kind: "pending";
       fromSequence: number;
@@ -33,9 +33,9 @@ export type RoleTurnDispatchToken =
       batchId: string;
     }>;
 
-export type RoleTurnDispatchSettlement = "settled" | "absent" | "state-changed";
+export type RoleRunDispatchSettlement = "settled" | "absent" | "state-changed";
 
-const LEGACY_ROLE_TURN_DISPATCH_REASONS = new Set([
+const LEGACY_ROLE_RUN_DISPATCH_REASONS = new Set([
   "turn-dispatched",
   "turn-retried",
   "review-requested",
@@ -64,15 +64,15 @@ export function enqueueWork(
 }
 
 /**
- * The sole ordinary Role Turn wake shape. The Turn is durable execution
- * authority; this signal only asks the Controller to deliver that exact Turn.
+ * The sole ordinary Role AgentRun wake shape. The AgentRun is durable execution
+ * authority; this signal only asks the Controller to deliver that exact AgentRun.
  * Leader is deliberately excluded because its Role mailbox is reserved for
- * semantic event wakes and force-steer batches. A Leader active Turn is
+ * semantic event wakes and force-steer batches. A Leader active AgentRun is
  * selected directly from durable state by its targeted Controller pass.
  */
-export function enqueueRoleTurnDispatch(
+export function enqueueRoleRunDispatch(
   store: WorkMailboxQueueStore,
-  input: RoleTurnDispatchIdentity & Readonly<{
+  input: RoleRunDispatchIdentity & Readonly<{
     reason: string;
     occurredAt: Date | string;
   }>
@@ -80,26 +80,26 @@ export function enqueueRoleTurnDispatch(
   if (input.roleName === "leader") return null;
   return enqueueWork(
     store,
-    roleTurnTarget(input),
+    roleRunTarget(input),
     input.reason,
     input.occurredAt,
-    [roleTurnRef(input)],
+    [roleRunRef(input)],
     {
       source: "turn-dispatch",
-      dedupeKey: roleTurnDispatchDedupeKey(input)
+      dedupeKey: roleRunDispatchDedupeKey(input)
     }
   );
 }
 
 /**
- * Captures only the mailbox prefix that contains one exact Role Turn dispatch.
+ * Captures only the mailbox prefix that contains one exact Role AgentRun dispatch.
  * A later signal may append while Provider delivery is in flight; its suffix
  * remains pending when this token is settled.
  */
-export function captureRoleTurnDispatch(
+export function captureRoleRunDispatch(
   mailbox: WorkMailbox | null,
-  input: RoleTurnDispatchIdentity
-): RoleTurnDispatchToken | null {
+  input: RoleRunDispatchIdentity
+): RoleRunDispatchToken | null {
   if (input.roleName === "leader"
     || mailbox === null
     || mailbox.target.kind !== "role"
@@ -107,7 +107,7 @@ export function captureRoleTurnDispatch(
     || mailbox.target.roleName !== input.roleName) {
     return null;
   }
-  const exactRef = roleTurnRef(input);
+  const exactRef = roleRunRef(input);
   if (mailbox.processing?.executionRef !== undefined
     && mailboxEntityRefKey(mailbox.processing.executionRef) === mailboxEntityRefKey(exactRef)) {
     return {
@@ -117,26 +117,26 @@ export function captureRoleTurnDispatch(
   }
   const pending = mailbox.pending;
   if (pending === null) return null;
-  const dedupeKey = roleTurnDispatchDedupeKey(input);
+  const dedupeKey = roleRunDispatchDedupeKey(input);
   if (mailbox.recentDedupeKeys.includes(dedupeKey)) return null;
   const keyIndex = pending.dedupeKeys.indexOf(dedupeKey);
   if (keyIndex >= 0 && pending.dedupeKeys.length === pending.requestCount) {
-    const turnSequence = pending.fromSequence + keyIndex;
-    if (turnSequence <= pending.toSequence) {
+    const runSequence = pending.fromSequence + keyIndex;
+    if (runSequence <= pending.toSequence) {
       return {
         kind: "pending",
         fromSequence: pending.fromSequence,
-        toSequence: turnSequence
+        toSequence: runSequence
       };
     }
   }
   // Valid earlier dispatches used sequence-generated dedupe keys and could
   // include a companion WorkItem ref. Consume that complete legacy batch once
-  // the exact Turn reaches an accepted or terminal boundary.
+  // the exact AgentRun reaches an accepted or terminal boundary.
   if (pending.requestCount === 1
     && pending.sources.length === 1
     && pending.sources[0] === "yui"
-    && pending.reasons.some((reason) => LEGACY_ROLE_TURN_DISPATCH_REASONS.has(reason))
+    && pending.reasons.some((reason) => LEGACY_ROLE_RUN_DISPATCH_REASONS.has(reason))
     && pending.refs.some((ref) => (
       mailboxEntityRefKey(ref) === mailboxEntityRefKey(exactRef)
     ))) {
@@ -150,21 +150,21 @@ export function captureRoleTurnDispatch(
 }
 
 /**
- * Settles one exact ordinary Role Turn dispatch. Provider acceptance is the
+ * Settles one exact ordinary Role AgentRun dispatch. Provider acceptance is the
  * normal boundary; terminalization calls the same operation for conclusively
  * unaccepted and valid earlier dispatches.
  */
-export function settleRoleTurnDispatch(
+export function settleRoleRunDispatch(
   store: WorkMailboxQueueStore,
-  input: RoleTurnDispatchIdentity,
-  expected?: RoleTurnDispatchToken | null
-): RoleTurnDispatchSettlement {
+  input: RoleRunDispatchIdentity,
+  expected?: RoleRunDispatchToken | null
+): RoleRunDispatchSettlement {
   if (expected === null) return "absent";
-  const target = roleTurnTarget(input);
+  const target = roleRunTarget(input);
   const mailbox = store.getWorkMailbox(target);
-  const current = captureRoleTurnDispatch(mailbox, input);
+  const current = captureRoleRunDispatch(mailbox, input);
   if (current === null || mailbox === null) return "absent";
-  if (expected !== undefined && !sameRoleTurnDispatchToken(current, expected)) {
+  if (expected !== undefined && !sameRoleRunDispatchToken(current, expected)) {
     return "state-changed";
   }
   const token = expected ?? current;
@@ -206,9 +206,9 @@ export function completeWorkExecution(
 /**
  * Completes a mailbox execution or fails the surrounding transaction.
  *
- * A terminal Turn and its processing mailbox batch are one consistency
+ * A terminal AgentRun and its processing mailbox batch are one consistency
  * boundary. Silently accepting a missing or mismatched batch would leave
- * durable work stuck in `processing` after the Turn has already ended.
+ * durable work stuck in `processing` after the AgentRun has already ended.
  */
 export function requireCompleteWorkExecution(
   store: WorkMailboxQueueStore,
@@ -237,7 +237,7 @@ export function requireCompleteWorkExecution(
 }
 
 /**
- * Settles the exact Turn delivery boundary, including the short window before
+ * Settles the exact AgentRun delivery boundary, including the short window before
  * the scheduler has claimed its single pending dispatch. A merged pending
  * batch is never discarded because its signal-to-ref mapping is no longer
  * recoverable.
@@ -270,8 +270,8 @@ function timestamp(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
-function roleTurnTarget(
-  input: Pick<RoleTurnDispatchIdentity, "taskId" | "roleName">
+function roleRunTarget(
+  input: Pick<RoleRunDispatchIdentity, "taskId" | "roleName">
 ): Extract<MailboxTarget, { kind: "role" }> {
   return {
     kind: "role",
@@ -280,21 +280,21 @@ function roleTurnTarget(
   };
 }
 
-function roleTurnRef(input: RoleTurnDispatchIdentity): MailboxEntityRef {
+function roleRunRef(input: RoleRunDispatchIdentity): MailboxEntityRef {
   return {
-    type: "turn",
+    type: "run",
     taskId: input.taskId,
-    id: input.turnId
+    id: input.runId
   };
 }
 
-function roleTurnDispatchDedupeKey(input: RoleTurnDispatchIdentity): string {
-  return `role-turn:${input.taskId}:${input.roleName}:${input.turnId}`;
+function roleRunDispatchDedupeKey(input: RoleRunDispatchIdentity): string {
+  return `role-turn:${input.taskId}:${input.roleName}:${input.runId}`;
 }
 
-function sameRoleTurnDispatchToken(
-  left: RoleTurnDispatchToken,
-  right: RoleTurnDispatchToken
+function sameRoleRunDispatchToken(
+  left: RoleRunDispatchToken,
+  right: RoleRunDispatchToken
 ): boolean {
   return left.kind === right.kind
     && (left.kind === "pending"

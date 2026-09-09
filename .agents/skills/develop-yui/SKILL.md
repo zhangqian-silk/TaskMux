@@ -53,7 +53,7 @@ Agent Driver registration.
 - Treat TDD and change-specific tests as temporary development scaffolding.
   They may be added or run while implementing the current requirement, but
   remove them before handoff unless they expose a missing basic product path.
-- Do not turn a bug fix into a permanent one-test-per-regression contract.
+- Do not run a bug fix into a permanent one-test-per-regression contract.
   Error branches, malformed data, deletion, retirement, archive, retry,
   rollback, compatibility matrices, and historical incidents are validated
   only for the change that touches them.
@@ -75,7 +75,7 @@ Agent Driver registration.
 
 Execution topology is a Leader judgment made from current Task context, not a
 core scheduling policy. Yui should provide the same composable operations for
-direct work, native children, and managed Turns without trying to infer an
+direct work, native children, and managed AgentRuns without trying to infer an
 optimal decomposition from Task type, file count, risk labels, subsystem
 names, or workflow phase.
 
@@ -95,15 +95,15 @@ complete coordination and Integration cost.
 For an ordinary WorkItem, use its existing owner or assignee directly in the
 main workspace Yui supplies for that execution. A Leader-owned WorkItem uses
 Task main; a Worker-owned WorkItem uses its Develop workspace. Dispatch an
-assigned WorkItem without `--lane-role` by default. That direct WorkItem Turn
+assigned WorkItem without `--lane-role` by default. That direct WorkItem AgentRun
 is durable and has no ExecutionGroup. Request replicated execution with at
 least two distinct Lane Roles only when current Task evidence justifies
 independent attempts at the same frozen Assignment. This execution choice is
 separate from Task decomposition and WorkItem count. Direct Candidate or
-Task-final Review likewise uses one main Reviewer Turn with no Group.
+Task-final Review likewise uses one main Reviewer AgentRun with no Group.
 Replicated Review is an explicit choice in either scope: it uses at least two
 distinct Producer Lane Roles over one frozen Assignment. The Leader explicitly
-selects original source Turns for one authoritative synthesis Turn; Core does
+selects original source AgentRuns for one authoritative synthesis AgentRun; Core does
 not enforce a success count, vote, or automatic synthesis. Automatic policy-triggered Candidate Review
 stays direct.
 

@@ -22,12 +22,12 @@ Yui 不把 Agent 的判断固化成确定性的工作流引擎。核心只负责
 - `WorkItem`：唯一的有界工作单元，保存目标、验收条件、依赖、状态和精简结果。
 - `WorkerProfile`：可复用的 Worker 模板，分别保存可移植行为与继承或显式指定的 Agent runtime。
 - `TaskRole`：Task 内可修改的 Worker 实例，可绑定多个 Agent，并分别保存运行配置。
-- `Turn`：Task Role 的一次受管派发与结果交付。
+- `AgentRun`：Task Role 的一次受管派发与结果交付。
 - `ChangeSet`：隔离 WorkItem 当前 HEAD 的不可变 Git 结果。
 - Integration：候选集成、检查、冲突报告和 Leader 决策。
 
 每个 WorkItem 只选择三条路径之一：Leader 直接执行、Leader 在当前
-Agent 对话内创建 native subagent，或交给 Task Role Turn。Yui
+Agent 对话内创建 native subagent，或交给 Task Role AgentRun。Yui
 不提供 subagent 启动命令，也不创建 child Session 记录。
 
 内置 Profile：
@@ -111,7 +111,7 @@ Controller 发现文件。稳定 Project checkout 与受管理 worktree 位于 h
 通过显式升级入口。
 
 所有 Task-owned 记录族都在各自 Task 内分配单调递增的本地 ID。因此，不同
-Task 可以同时拥有 `work-item-1`、`turn-1` 或 `input-1`。受管 Task
+Task 可以同时拥有 `work-item-1`、`run-1` 或 `input-1`。受管 Task
 session 可由 `YUI_TASK_ID` 提供作用域并使用本地短 ID；Task session 外必须
 使用 `<task-id>/<local-id>`。Yui 不会拿裸 ID 扫描所有 Task。已经显式接收
 Task 的命令（例如 `task work create`、`task integration start`）仍使用该
@@ -156,14 +156,14 @@ Brief 使用 `task brief update <task-id>` 只提交要改的字段，不要求�
 事务读取最新记录并保留其他字段；同一字段以后一次明确写入为准。
 修改前后值保存在事件中，可用 `task event list <task-id>` 找回历史，
 由 Leader 决定是否重新写入，不自动回滚或撤销已有验收。
-WorkItem 当前状态为 open／accepted／retired，执行失败属于原 Turn。
+WorkItem 当前状态为 open／accepted／retired，执行失败属于原 AgentRun。
 提交 Candidate 不等于接受，Leader 通过 `task work accept` 明确验收。
 
 Task 生命周期为 draft／active／completed／cancelled／archived。
 `task cancel <task-id> --summary "..."` 停止追求目标，不证明资源停止。
 cancelled 需用户／Operator 明确重开；Leader 可重开 completed。重开不重播
 历史输入，归档仍是独立的用户／Operator 操作，archived 不可重开。
-Role 当前配置与 Turn effective 分开；Worker 改选 B 不改写正在执行的 A。
+Role 当前配置与 AgentRun effective 分开；Worker 改选 B 不改写正在执行的 A。
 显式重应用 Profile 会重新复制其已解析 runtime，必须匹配目标 Agent binding。
 
 Draft 只保存规划记录和 Project 绑定，不采用可写 managed Workspace。Message
@@ -210,11 +210,11 @@ yui config workflow set review --role reviewer --trigger final
 每个进入 Leader 验收阶段的结果，都会成为原 WorkItem 上一个明确的候选。
 当前全局规则对所有新旧 Task 的下一个候选生效，并在候选提交时形成快照；
 后续 `set`/`clear` 不会改变已经在途的判断。
-`always` 会为每个候选启动 ReviewRound，包括已结束的 Role Turn 结果和 Leader 直接管理的
+`always` 会为每个候选启动 ReviewRound，包括已结束的 Role AgentRun 结果和 Leader 直接管理的
 结果；`leader` 则让候选保持等待验收，由 Leader 直接 accept 或执行
 `yui task work review <task-id>/<work-item-id>`。因此只要配置了审查规则，Leader
 管理的候选也不会直接标记为完成。ReviewRound 引用不可变候选，审查
-Turn 不创建新 WorkItem，也不会递归触发审查。审查以自然语言结果
+AgentRun 不创建新 WorkItem，也不会递归触发审查。审查以自然语言结果
 唤醒 Leader；Leader 决定验收、reject 后在原 Role 与原 Session 中修复、
 再次审查，或通过 InputRequest 询问用户。审查失败会保留为可见证据并
 唤醒 Leader，但不会取代 Leader 的最终判断。
@@ -222,18 +222,18 @@ Turn 不创建新 WorkItem，也不会递归触发审查。审查以自然语言
 显式请求 Task 级 Review；不可变 Task contract 也可以强制要求。Task-final Round
 直接冻结 Task main，不需要虚构 WorkItem/Candidate，因此没有 WorkItem 的小任务也能
 review。冻结头变化时创建新的语义 Round；同一 Reviewer 的兼容原生 Session 可以在
-稳定 workspace 中继续，而每个 Turn 仍严格绑定自己的 Round 和冻结头。旧报告保留为
+稳定 workspace 中继续，而每个 AgentRun 仍严格绑定自己的 Round 和冻结头。旧报告保留为
 证据。Reviewer 按 Project Policy/Knowledge 检查整个 Task，并只报告有直接证据的
 可达、重要、可行动问题或有限验证缺口。
 所有候选、ReviewRound 和 Leader 决策都集中在原 WorkItem 下；reject
 后的下一轮会复用原执行 Role、Session 与 workspace，并追加新候选。
 
 显式 WorkItem Candidate Review 与 Task-final Review 默认都直接创建一个 main
-Reviewer Turn；只有 Leader 明确提供至少两个不同的 `--lane-role` 时才使用复制执行。
+Reviewer AgentRun；只有 Leader 明确提供至少两个不同的 `--lane-role` 时才使用复制执行。
 复制执行最多支持八个 Lane。所有 Producer Lane 在隔离 workspace 中检查同一冻结 Assignment，全部 settle 且至少
-两个成功后，才创建一个权威 main synthesis Turn。自动 policy 触发的 Candidate
+两个成功后，才创建一个权威 main synthesis AgentRun。自动 policy 触发的 Candidate
 Review 始终保持直接执行。主 Reviewer 通过冻结 Context 按 Lane 顺序读取每个成功
-Producer Turn 的原始结果；Core 不复制其 prompt/workspace/runtime，也不解析结果语义。
+Producer AgentRun 的原始结果；Core 不复制其 prompt/workspace/runtime，也不解析结果语义。
 
 ```sh
 yui task work review <task-id>/<work-item-id>
@@ -245,7 +245,7 @@ yui task review request <task-id> --role reviewer \
   --lane-role security-reviewer --lane-role correctness-reviewer
 ```
 
-查看已有 Task 的详细状态时，优先使用 `task context`。它一次聚合 Task、Brief、Active Decision、最近的 Milestone、Role、当前及最近的 WorkItem 与关联 Turn、最近的 Message、Open/Resolved InputRequest 和 Event。终端输出会精简历史和长文本；`yui --json task context <task-id>` 会在顶层 `data` 中返回完整记录。
+查看已有 Task 的详细状态时，优先使用 `task context`。它一次聚合 Task、Brief、Active Decision、最近的 Milestone、Role、当前及最近的 WorkItem 与关联 AgentRun、最近的 Message、Open/Resolved InputRequest 和 Event。终端输出会精简历史和长文本；`yui --json task context <task-id>` 会在顶层 `data` 中返回完整记录。
 
 Task identity 由一个有界交付目标决定，而不是由涉及几个仓库决定。带仓库的
 Task 可以绑定多个 Project，并为每个 Project 记录独立 base ref：
@@ -332,8 +332,8 @@ yui operator enter
 yui task role reset <task-id> <role> --reason "<该 generation 无法继续的原因>"
 ```
 
-Yui 从自己的记录中推导当前 Turn、Agent、launch、receipt 和 native Session。
-它只失败化该精确 active Turn（以及对应 execution WorkItem），把当前 Session
+Yui 从自己的记录中推导当前 AgentRun、Agent、launch、receipt 和 native Session。
+它只失败化该精确 active AgentRun（以及对应 execution WorkItem），把当前 Session
 保存为 broken history，并要求 Controller 只停止该 Role 拥有的 runtime。该命令
 不会创建 Candidate、验收工作或完成 Task。cleanup pending 期间，`task role status`
 和 `task context` 会阻止 fresh launch；已有 message、review 和交付历史都会保留。
@@ -375,20 +375,20 @@ yui task work dispatch <task-id>/<work-item-id> \
   --lane-role producer-a --lane-role producer-b
 ```
 
-Lane 是可恢复的逻辑槽。成功 Lane 指向不可变的 Producer Turn 结果；Turn 失败时
-Lane 仍保持 open，并显示为 `needs-attention`。Leader 对精确失败 Turn 执行重试或
+Lane 是可恢复的逻辑槽。成功 Lane 指向不可变的 Producer AgentRun 结果；AgentRun 失败时
+Lane 仍保持 open，并显示为 `needs-attention`。Leader 对精确失败 AgentRun 执行重试或
 显式结算：
 
 ```sh
-yui task turn retry <task-id>/<failed-turn-id>
-yui task turn settle <task-id>/<failed-turn-id>
+yui task run retry <task-id>/<failed-run-id>
+yui task run settle <task-id>/<failed-run-id>
 ```
 
 Yui 会等待所有 Lane 结算。至少两个 Producer 成功结果才会为 WorkItem assignee
-幂等创建一个主 Turn；成功数不足时本次 WorkItem 尝试失败，不会降级使用单个结果。
-主 Turn 重试继续引用同一来源 Group，也不会重跑成功 Lane。只有成功的主 Turn 能
+幂等创建一个主 AgentRun；成功数不足时本次 WorkItem 尝试失败，不会降级使用单个结果。
+主 AgentRun 重试继续引用同一来源 Group，也不会重跑成功 Lane。只有成功的主 AgentRun 能
 形成 Review 与 Integration 使用的 Candidate。`task work show`、`task work list`、
-Task context 和 Web 控制室从相同持久事实推导执行形态、恢复目标、综合资格、主 Turn、
+Task context 和 Web 控制室从相同持久事实推导执行形态、恢复目标、综合资格、主 AgentRun、
 Candidate 溯源、下一步及责任人。缺失事实保持 `unknown` 或 `unobserved`；token、
 耗时和工具调用只读展示，不参与调度、恢复或生命周期决策。
 
@@ -418,25 +418,25 @@ skills 及由 access 派生的 constraints）；同一命令中的显式 Role �
 ReviewRound 从冻结 Candidate SHA 创建独立的可写 worktree。只有 exact
 ReviewRound owner、reviewRoundId、冻结 base 与 workspace 全部匹配时，才获得
 该 workspace 的写入授权；Skill 仍禁止 push、Integration、Task state、其他
-workspace 与真实 YUI_HOME 变更。Reviewer 以最终 Provider 回复交付当前 Turn，
+workspace 与真实 YUI_HOME 变更。Reviewer 以最终 Provider 回复交付当前 AgentRun，
 Yui 原样保存其完整的自由格式 Markdown、JSON 或普通文本结果，不解析标题、字段、
 checks、severity、finding、verdict 或 evidence commit。Skill 和派发消息可以建议
 输出结构，但该结构不是 Core 协议；格式缺失或 JSON 无效由 Leader 阅读原文后判断。
 Core 自己观测的 workspace 与 Git 证据独立保存。
 
-Reviewer 可以修改文件并在不提交的情况下结束 Turn；脏字节不会被推断为 evidence。
+Reviewer 可以修改文件并在不提交的情况下结束 AgentRun；脏字节不会被推断为 evidence。
 该 Round 仍会精确终结且不产生 Candidate/ChangeSet，workspace 会为 Leader 判断而
 保留，cleanup 会在其重新变干净前拒绝删除。
 
-Provider 原生 Turn 终态会结束 Turn，Yui 保存最终回复，将 WorkItem 提交给 Leader 审查，并追加结果消息和
+Provider 原生 AgentRun 终态会结束 AgentRun，Yui 保存最终回复，将 WorkItem 提交给 Leader 审查，并追加结果消息和
 唤醒 Leader；它不会验收或完成 WorkItem。有效结果在 512 KiB 限制内逐字保留；
 缺失、空白、含 NUL 或超限结果不会伪造成功文本，而是以 `missing-result` 和
-Core 诊断失败终结该 Turn。Leader 不会自唤醒，pending wake 会保留到 Leader 空闲。
+Core 诊断失败终结该 AgentRun。Leader 不会自唤醒，pending wake 会保留到 Leader 空闲。
 
 如果无法最终判断结果，交接必须明确标为 `uncertain`、`incomplete`、
 `blocked` 或 `requiring Leader judgment`，并提交最完整且真实的身份、已执行
 动作、仓库状态、检查与错误、最后生命周期边界、未完成工作、待决事项、风险、
-置信度及有界下一选项。Turn 结果只是不可变的执行证据；
+置信度及有界下一选项。AgentRun 结果只是不可变的执行证据；
 它不表示验收、WorkItem 完成、ChangeSet capture、Integration 或 Task 完成。
 
 对于有界工作，Leader 可以直接执行 roleless WorkItem，也可以在当前
@@ -469,9 +469,9 @@ yui task work update <task-id>/<work-item-id> done \
 
 无法确认实际 model/effort 时使用 `inherited` 或 `unknown`，不能猜测。
 需要独立 provider、凭据、交互 Session 或持久生命周期时，使用 Task Role
-Turn。
+AgentRun。
 
-隔离 Task Role 的结果按“Provider Turn 终态记录 Turn 结果 → Leader 语义审查 → capture 当前
+隔离 Task Role 的结果按“Provider Turn 终态记录 AgentRun 结果 → Leader 语义审查 → capture 当前
 HEAD → candidate 集成和检查 → Leader accept”的顺序处理。审查不通过时，
 Leader reject 并在同一 workspace 重新派发。相同 HEAD 重复 capture 复用
 原 ChangeSet；修复后的新 HEAD 形成新候选：
@@ -497,7 +497,7 @@ yui task integration resolve <task-id>/<integration-id> \
 yui task integration continue <task-id>/<integration-id>
 ```
 
-Worker Turn 完成不等于 WorkItem 完成。Leader 审查结果、验证和最新
+Worker AgentRun 完成不等于 WorkItem 完成。Leader 审查结果、验证和最新
 ChangeSet 集成后再显式验收：
 
 ```sh
@@ -513,13 +513,13 @@ worktree 与检查日志会作为证据保留，直到显式清理。
 
 ```sh
 yui task message retire <task>/<message> --reason "已被新指令替代"
-yui task turn retire <task>/<turn> --reason "无效的启动记录"
+yui task run retire <task>/<run> --reason "无效的启动记录"
 ```
 
 这些命令追加 retirement 事实；列表和审计仍保留并标记原 Message、
-WorkItem 或 Turn，而受管 Turn 上下文、actionability、恢复、Review 证据和调度会忽略
-它。活动 Turn 会先按精确身份终态化；重复废弃是幂等操作。Message 与
-Turn 只能由用户或全局 Operator 废弃，WorkItem 也可由所属 Task Leader
+WorkItem 或 AgentRun，而受管 AgentRun 上下文、actionability、恢复、Review 证据和调度会忽略
+它。活动 AgentRun 会先按精确身份终态化；重复废弃是幂等操作。Message 与
+AgentRun 只能由用户或全局 Operator 废弃，WorkItem 也可由所属 Task Leader
 废弃。
 
 长期 Task 不依赖 native transcript 恢复。Leader 每次结束 Provider Turn 前更新 Brief
@@ -527,7 +527,7 @@ Turn 只能由用户或全局 Operator 废弃，WorkItem 也可由所属 Task Le
 阶段成果写入 Milestone；只有跨 Task 稳定有效的信息才进入 Project
 Knowledge。
 
-当活动 Leader Turn 必须获得用户决定才能继续时，可以创建持久 InputRequest，然后以真实的 blocked 结果结束当前 Provider Turn：
+当活动 Leader AgentRun 必须获得用户决定才能继续时，可以创建持久 InputRequest，然后以真实的 blocked 结果结束当前 Provider Turn：
 
 ```sh
 yui task input request <task-id> --question "默认使用哪种格式？" \
@@ -547,13 +547,13 @@ yui task input request <task-id> --question "默认使用哪种格式？" \
 
 推荐项会明确展示给用户；如果截止时间前没有回答，独立的最近 deadline timer 会唤醒 Controller，原子采用这个确定选项，并排队恢复固定的 Leader session。自由文本和必须由用户回答的请求永远不会自动解决。
 
-`task input list` 是权威的全局开放输入 Inbox；可附加 Task ID 限定范围，或使用 `--all` 查看已回答和已取消的请求。Task 完成、退役、Leader attention、stall 和开放输入只以不可变 TaskEvent 或 InputRequest 引用进入全局 Operator mailbox。Controller 把一个待处理 batch 合并成一条带回执的 `[Yui updates]` user message，仅投递给已有且 ready 的 Operator；Operator 再通过 CLI 读取引用记录，判断哪些信息值得呈现。Operator 正在运行或不可用时，Yui 不启动也不打断它，整批引用保持持久化，并在原生 turn 完成或后续 Controller 处理中重试。该路径是 user message，不是 tool call，也不会读取或分类 Agent 终端文本。用户和 Operator 都可回答。存在开放请求时，无关的 pending wake 不会绕过等待，Task 也不能 complete 或 archive。原 Leader 也可执行 `yui task input cancel <task-id> <input-id> --reason "..."`，取消会排队恢复该固定 Leader session。
+`task input list` 是权威的全局开放输入 Inbox；可附加 Task ID 限定范围，或使用 `--all` 查看已回答和已取消的请求。Task 完成、退役、Leader attention、stall 和开放输入只以不可变 TaskEvent 或 InputRequest 引用进入全局 Operator mailbox。Controller 把一个待处理 batch 合并成一条带回执的 `[Yui updates]` user message，仅投递给已有且 ready 的 Operator；Operator 再通过 CLI 读取引用记录，判断哪些信息值得呈现。Operator 正在运行或不可用时，Yui 不启动也不打断它，整批引用保持持久化，并在原生 run 完成或后续 Controller 处理中重试。该路径是 user message，不是 tool call，也不会读取或分类 Agent 终端文本。用户和 Operator 都可回答。存在开放请求时，无关的 pending wake 不会绕过等待，Task 也不能 complete 或 archive。原 Leader 也可执行 `yui task input cancel <task-id> <input-id> --reason "..."`，取消会排队恢复该固定 Leader session。
 
 ```sh
 yui task context <task-id>
 ```
 
-需要查看单个集合或记录时，再使用 `task work`、`task message`、`task turn` 和 Task Knowledge 下的细分命令。
+需要查看单个集合或记录时，再使用 `task work`、`task message`、`task run` 和 Task Knowledge 下的细分命令。
 
 使用一个幂等命令记录 Task 已确认的 PR/MR 外部交付状态：
 
@@ -621,7 +621,7 @@ yui task reopen <task-id>
 ```
 
 completed Task 在显式 reopen 前会拒绝消息、派发、进入 session、重试和迟到的
-Turn 交付。终态 WorkItem、Review、Integration 与 Lane worktree 会作为非阻塞的
+AgentRun 交付。终态 WorkItem、Review、Integration 与 Lane worktree 会作为非阻塞的
 completion advisory 返回，但必须在 archive 前处理。每个隔离 WorkItem worktree
 仍需显式标记 integrated 或 abandoned，清理时也会删除其受管分支；archive 还必须
 通过 `--integrated` 或 `--abandon` 明确 Task main 的处理结果。`--integrated`
@@ -639,13 +639,13 @@ Task 生命周期的交互选择只展示有效来源状态：activate 只展示
 
 受管理的 Provider 会话仍然是普通用户会话。Yui 只添加对应的 Role Skill 与 Session Manifest 指针，并通过 Provider 原生结构化协议提交 Task 工作；Yui 不接管完整对话历史。受管理输入绝不会作为终端按键、粘贴文本或启动 argv 发送。Codex 在只转发字节的 `app-server proxy` 上完成 App Server WebSocket 握手，接入与 Desktop 相同的共享 daemon；原生 thread 可在 Desktop 中直接查看和操作。Task execution stop 只终止 Yui 的 Agent Host、WebSocket 与 proxy，保留共享 daemon、原生 thread、Task、WorkItem、代码与持久消息；start 创建新的 attachment。Claude 继续使用独立的持久 stream-json 进程，并以精确回放的 user message 作为接收确认。
 
-Session、Activation 与 Turn 是独立身份。Session 可以跨多个 Turn 和客户端连接；Activation 只代表 Yui 当前的连接，而不是对 Provider thread 的独占所有权。每次 Provider 执行对应一个持久 Turn；写入超时或结果不明确会进入 `delivery-unknown`，不会自动重发。Codex 已存在的 active Turn 只会让 Yui 暂时等待，不会导致待投递 Turn 失败；Claude 等独立进程 Provider 继续通过 Yui 的 view/takeover 边界进行人工控制。
+Session、Activation 与 AgentRun 是独立身份。Session 可以跨多个 AgentRun 和客户端连接；Activation 只代表 Yui 当前的连接，而不是对 Provider thread 的独占所有权。每次 Provider 执行对应一个持久 AgentRun；写入超时或结果不明确会进入 `delivery-unknown`，不会自动重发。Codex 已存在的 active AgentRun 只会让 Yui 暂时等待，不会导致待投递 AgentRun 失败；Claude 等独立进程 Provider 继续通过 Yui 的 view/takeover 边界进行人工控制。
 
 恢复只在真的续不下去时被拦住：provider 侧没有可恢复的 Session、换了 Agent 或适配器、换了物理工作区。模型、推理强度、权限策略、Role 说明与 Skill、声明的写范围只决定下一次 activation 用什么，审查轮次、候选 commit、工作区基线这类每轮事实不影响复用。因此当 Role 存在活跃 Session 时，`task role update`、`config role update`、`config agent update` 会先报告该 Session 并要求 `--yes` 确认；需要立刻生效则先停止该 Session。
 
-Turn 是 Role 是否有工作正在执行的唯一持久调度状态，记录可见输入、来源/渠道与最终回复，不复制思考过程或工具调用。所有经 Yui 中转或生成的输入统一使用 `source: yui`；Provider UI 中直接输入的消息使用 `source: user`；显式 Goal continuation 使用 `source: provider`。Provider Turn 终态后 Yui 完成该 Turn，再把下一个 Turn 投递到同一 Session。TaskRole 本身只保存身份和期望启动配置，不再保存可写的运行状态；CLI/Web 展示的 Role 状态由活动 Turn 派生，并叠加 Session/Driver 生命周期事实用于诊断。
+AgentRun 是 Role 是否有工作正在执行的唯一持久调度状态，记录可见输入、来源/渠道与最终回复，不复制思考过程或工具调用。所有经 Yui 中转或生成的输入统一使用 `source: yui`；Provider UI 中直接输入的消息使用 `source: user`；显式 Goal continuation 使用 `source: provider`。Provider Turn 终态后 Yui 完成该 AgentRun，再把下一个 AgentRun 投递到同一 Session。TaskRole 本身只保存身份和期望启动配置，不再保存可写的运行状态；CLI/Web 展示的 Role 状态由活动 AgentRun 派生，并叠加 Session/Driver 生命周期事实用于诊断。
 
-Goal 是 Session 级显式 Provider 事实，可以跨越多个 Turn。Codex 通过 Goal API/事件提供，Claude 通过 `active_goal` 提供；Yui 不用静默等待来猜测 Goal 是否完成。Turn 结束不等于 Goal、WorkItem 或 Task 完成，只有 Leader 更新 WorkItem 与 Task 的持久语义。
+Goal 是 Session 级显式 Provider 事实，可以跨越多个 AgentRun。Codex 通过 Goal API/事件提供，Claude 通过 `active_goal` 提供；Yui 不用静默等待来猜测 Goal 是否完成。AgentRun 结束不等于 Goal、WorkItem 或 Task 完成，只有 Leader 更新 WorkItem 与 Task 的持久语义。
 
 Task Role 使用以下显式入口：
 
@@ -657,7 +657,7 @@ yui task role takeover <task-id> <role>
 yui task role release <task-id> <role>
 ```
 
-Codex Role thread 可在 Desktop 中直接查看和操作；Desktop 已有 active Turn 时，Yui 只保留待投递工作并等待，不会失败或重复投递。`view`、`takeover`、`release` 继续作为 Claude 等独立进程 Provider 的人工控制入口。Yui 不写入全局 Hook/config，也不启动、重启或停止共享 daemon；Codex CLI/daemon 故障由 Task 生命周期之外修复。Global Operator 与 global Role 继续使用原生交互式 CLI，不属于受管理 Task Provider 协议；Yui 在内部将 Codex 的 Global TUI 连接到同一个默认 App Server，用户不能通过 Agent 或 Role 参数覆盖该连接，Session Manifest 自带不依赖启动进程环境的 Global Context 命令，因此同一 thread 可直接切换到 Desktop 继续对话。
+Codex Role thread 可在 Desktop 中直接查看和操作；Desktop 已有 active AgentRun 时，Yui 只保留待投递工作并等待，不会失败或重复投递。`view`、`takeover`、`release` 继续作为 Claude 等独立进程 Provider 的人工控制入口。Yui 不写入全局 Hook/config，也不启动、重启或停止共享 daemon；Codex CLI/daemon 故障由 Task 生命周期之外修复。Global Operator 与 global Role 继续使用原生交互式 CLI，不属于受管理 Task Provider 协议；Yui 在内部将 Codex 的 Global TUI 连接到同一个默认 App Server，用户不能通过 Agent 或 Role 参数覆盖该连接，Session Manifest 自带不依赖启动进程环境的 Global Context 命令，因此同一 thread 可直接切换到 Desktop 继续对话。
 
 Global Codex 的薄 Host 与原生 TUI 位于同一个 pane，透明转发 App Server 连接，并从该 TUI 自己的 `thread/start` 或 `thread/resume` 成功响应取得 Thread ID。Yui 在首条用户消息之前通过既有启动回执登记身份，不依赖 `notify`、历史目录扫描或 bootstrap 消息；旧的 global `notify` 不能登记或修改 Session 生命周期。连接随 TUI 退出，不依赖 Controller 的持续运行。tmux 窗口存在不等于 Agent 存活：`pane_dead=0` 才是运行中，`pane_dead=1` 是保留的退出现场，读取失败则报错。状态查询不删除现场；显式启动可重建精确的死亡窗口，但不能覆盖身份未知的活 Operator。
 
@@ -681,21 +681,21 @@ binding，用于不同账号、模型、profile 或环境来源；这些 binding
 更新时才进入现有配置选择流程。
 
 受管理 Session 的普通工作流命令统一调用 PATH 中的 `yui`。Session Manifest
-与持久 Role/Turn fence 负责身份认证，CLI 和 Controller 只需满足协议与存储兼容，
+与持久 Role/AgentRun fence 负责身份认证，CLI 和 Controller 只需满足协议与存储兼容，
 不会因包版本升级而使现有 Session 失效；Provider 回调等内部路径仍保留精确围栏。
 `update` 会幂等刷新旧版本生成的精确 CLI wrapper，使历史 Session 也转为这一
 兼容入口。
 
 使用 `yui config role unbind <global-role> <agent-id>` 或 `yui task role unbind <task-id> <role> <agent-id>` 可移除休眠 binding。active binding 或任何未 stopped 的 native session 都会被拒绝；stopped session 记录会和 binding 在同一事务中删除。
 
-Claude 的 session ID 在启动前分配，并由持久 stream-json Provider 进程承载多个 Turn；Codex 使用持久 App Server thread。两者都复用同一套 Conversation、Activation、Turn 与 authority fence，不再向模型对话注入 session-bind prompt。
+Claude 的 session ID 在启动前分配，并由持久 stream-json Provider 进程承载多个 AgentRun；Codex 使用持久 App Server thread。两者都复用同一套 Conversation、Activation、AgentRun 与 authority fence，不再向模型对话注入 session-bind prompt。
 
 自动生命周期与投递判断只使用 Provider 原生事件或受支持 Hook 的结构化 payload、持久身份、tmux process
 state、receipt 与 pane fence。Yui 不会解析 prompt glyph、进度文本、trust dialog
 或其他 Agent 终端输出来推断 ready 或 success。`captureRole()` 只用于显式的人类
 transcript 查看，不具备生命周期权威。
 
-稳定的 Role 上下文不会创建额外的 bootstrap Turn。Task execution Turn 按角色使用通用 Leader 或 Worker Skill，review Turn 则按持久 Turn purpose 使用通用 Reviewer Skill；Provider 可以通过安全的追加式原生上下文通道携带 Skill，也可以在普通 Task 投递中指向它。这些都只是 Yui 自己拥有的可移植编排规则。Project Skills 始终是 Project 中正常版本化的文件，由 Agent 通过自身项目机制发现、选择并按需加载；Yui 不扫描、不解析、不复制，也不注入 Project Skills。Managed Codex 保留用户原有的 developer instructions；普通 Task 消息会携带精简的 Session Manifest 绝对路径，Manifest 再指向对应的 Yui Role Skill，供 Codex 按需读取。model、effort、permission、workspace 与 shell 设置作为共享 daemon 上的线程级 `thread/start` 或 `thread/resume` 配置传入；Codex 原生 config profile 因无法隔离到单条共享 thread 而被拒绝，Yui 不修改底层 Codex 配置文件。App Server 原生通知是 Managed Codex 线程的生命周期权威；Yui 不为它安装 Hook，也不占用 `notify`。交互式 Codex Session 仍可使用 Yui 的结构化 `notify` callback，Doctor 会报告最终生效的配置冲突。`skills.config` 只负责启停已发现 Skill，Yui 不会误用它。Claude 从 Yui 管理的私有 `0600` context 文件读取同一份 Yui Role Skill 内容，不再把大段或敏感文本放进 argv；重试和 resume 会复用按 purpose 区分的稳定路径。非 Operator 的 global Role 保持中性，不会注入 Task 编排 Skill。因此 Operator 会停在空白的原生 composer，用户输入仍是第一条 user message；Leader wake、Worker 和 Reviewer Turn assignment 仍是邮箱投递的真实工作消息。
+稳定的 Role 上下文不会创建额外的 bootstrap AgentRun。Task execution AgentRun 按角色使用通用 Leader 或 Worker Skill，review AgentRun 则按持久 AgentRun purpose 使用通用 Reviewer Skill；Provider 可以通过安全的追加式原生上下文通道携带 Skill，也可以在普通 Task 投递中指向它。这些都只是 Yui 自己拥有的可移植编排规则。Project Skills 始终是 Project 中正常版本化的文件，由 Agent 通过自身项目机制发现、选择并按需加载；Yui 不扫描、不解析、不复制，也不注入 Project Skills。Managed Codex 保留用户原有的 developer instructions；普通 Task 消息会携带精简的 Session Manifest 绝对路径，Manifest 再指向对应的 Yui Role Skill，供 Codex 按需读取。model、effort、permission、workspace 与 shell 设置作为共享 daemon 上的线程级 `thread/start` 或 `thread/resume` 配置传入；Codex 原生 config profile 因无法隔离到单条共享 thread 而被拒绝，Yui 不修改底层 Codex 配置文件。App Server 原生通知是 Managed Codex 线程的生命周期权威；Yui 不为它安装 Hook，也不占用 `notify`。交互式 Codex Session 仍可使用 Yui 的结构化 `notify` callback，Doctor 会报告最终生效的配置冲突。`skills.config` 只负责启停已发现 Skill，Yui 不会误用它。Claude 从 Yui 管理的私有 `0600` context 文件读取同一份 Yui Role Skill 内容，不再把大段或敏感文本放进 argv；重试和 resume 会复用按 purpose 区分的稳定路径。非 Operator 的 global Role 保持中性，不会注入 Task 编排 Skill。因此 Operator 会停在空白的原生 composer，用户输入仍是第一条 user message；Leader wake、Worker 和 Reviewer AgentRun assignment 仍是邮箱投递的真实工作消息。
 
 ## Controller 与失败处理
 
@@ -714,23 +714,23 @@ yui controller restart
 `upgrade --dry-run` 不会启动 Controller。`update` 只有在迁移和新二进制健康
 检查都通过后，才会替换或启动 Controller。
 
-恢复 reconciliation 默认每 120 秒执行一次。普通持久状态变化只会将 Task、Role 或 Operator key 放入队列并立即返回；固定 100ms 窗口内到达的 key 会合并触发一次不重叠的定向处理。Operator 呈现使用独立 lane，不会被 Task 的 Git/worktree 操作阻塞；周期 Git/worktree 处理只覆盖仍有持久 Task mailbox 工作的 Task，活动 Role 的存活检查合并为一次 tmux inventory。来自 Provider 原生事件或受支持 Hook 的结构化 Agent Driver observation，会经过精确 fence 后进入持久 runtime inbox。终态 Turn observation 会原子记录精确的 Turn 结果。持久 WorkMailbox 会冻结当前 processing 批次，期间的新事件合并到下一 pending 批次；失败会释放当前批次供恢复。推荐输入与 pending Turn 共用最近 deadline 选择器，不依赖恢复扫描间隔；显式 `task reconcile` 仍会立即请求恢复扫描。保留的闭环为：
+恢复 reconciliation 默认每 120 秒执行一次。普通持久状态变化只会将 Task、Role 或 Operator key 放入队列并立即返回；固定 100ms 窗口内到达的 key 会合并触发一次不重叠的定向处理。Operator 呈现使用独立 lane，不会被 Task 的 Git/worktree 操作阻塞；周期 Git/worktree 处理只覆盖仍有持久 Task mailbox 工作的 Task，活动 Role 的存活检查合并为一次 tmux inventory。来自 Provider 原生事件或受支持 Hook 的结构化 Agent Driver observation，会经过精确 fence 后进入持久 runtime inbox。终态 AgentRun observation 会原子记录精确的 AgentRun 结果。持久 WorkMailbox 会冻结当前 processing 批次，期间的新事件合并到下一 pending 批次；失败会释放当前批次供恢复。推荐输入与 pending AgentRun 共用最近 deadline 选择器，不依赖恢复扫描间隔；显式 `task reconcile` 仍会立即请求恢复扫描。保留的闭环为：
 
 1. 准备 active Project Task 的主 worktree；
 2. 停止 archived Task 的 tmux，并只清理干净 worktree；
-3. 投递排队的 Worker Turn；
+3. 投递排队的 Worker AgentRun；
 4. 检测活动 Role 进程退出；
 5. Leader 空闲时投递 pending wake。
 
-自动输入只通过 tmux 投递。每次处理只做一次非阻塞的 process-state readiness 检查；启动阶段忙碌时通过小型有界 mailbox timer 重试，后续忙碌会话通常由 Codex turn-complete 事件再次唤醒。pane 内 receipt 可避免 Controller 重试时重复输入同一 Turn。
+自动输入只通过 tmux 投递。每次处理只做一次非阻塞的 process-state readiness 检查；启动阶段忙碌时通过小型有界 mailbox timer 重试，后续忙碌会话通常由 Codex run-complete 事件再次唤醒。pane 内 receipt 可避免 Controller 重试时重复输入同一 AgentRun。
 
-Role 进程未产生 Provider 终态结果就退出时，Controller 会失败对应 Turn 和 running WorkItem，并唤醒 Leader。恢复状态通过精简的 Jobs 视图呈现：
+Role 进程未产生 Provider 终态结果就退出时，Controller 会失败对应 AgentRun 和 running WorkItem，并唤醒 Leader。恢复状态通过精简的 Jobs 视图呈现：
 
 ```sh
 yui jobs list
 yui jobs retry leader-recovery:<task-id>
 yui task reconcile <task-id>
-yui task turn retry <failed-turn-id>
+yui task run retry <failed-run-id>
 ```
 
 `jobs` 不是旧版通用队列，只展示持久 Leader wake 和 Leader recovery failure。
@@ -746,7 +746,7 @@ yui web
 # Yui web control room: http://127.0.0.1:4173
 ```
 
-可用 `--port <port>` 或 `--host 127.0.0.1|::1|localhost` 修改监听参数。Yui 会拒绝非 loopback host，因为控制室会展示 Task、Role、WorkItem、Turn、Message、Decision、Milestone 和 InputRequest 等信息。服务启动时生成的随机 token 会嵌入页面，并保护写操作和终端连接。
+可用 `--port <port>` 或 `--host 127.0.0.1|::1|localhost` 修改监听参数。Yui 会拒绝非 loopback host，因为控制室会展示 Task、Role、WorkItem、AgentRun、Message、Decision、Milestone 和 InputRequest 等信息。服务启动时生成的随机 token 会嵌入页面，并保护写操作和终端连接。
 
 Web 端可以通过与 Terminal 相同的持久化 CLI 路径回答 open InputRequest，也可以通过原生 xterm 客户端 attach 到已有 Operator、Leader 或 Worker tmux pane。关闭浏览器终端只会 detach 当前 tmux client，Agent 进程与对话继续保留；Web 不复制 transcript，也不维护第二套会话状态。
 

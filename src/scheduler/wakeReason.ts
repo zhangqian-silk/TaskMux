@@ -8,7 +8,7 @@
  * queue — the wake layer owns the meaning of its tags.
  *
  * Tag wire format: `<kind>` or `<kind>:<ref>`. The ref is an exact record
- * identifier (InputRequest id, Turn id, ...) or, for `force-wake`, the
+ * identifier (InputRequest id, AgentRun id, ...) or, for `force-wake`, the
  * operator-supplied text. Unknown kinds parse losslessly so a newer producer
  * can never wedge an older reader.
  */

@@ -19,7 +19,7 @@ export type ProviderContinuationQueryResult = Readonly<{
 }>;
 
 export interface ProviderContinuationMetadataPort {
-  /** Metadata-only exact/partial query. Implementations must never start a model Turn. */
+  /** Metadata-only exact/partial query. Implementations must never start a model AgentRun. */
   queryKnownContinuations(input: Readonly<{
     providerNamespace: string;
     accountScope: string;

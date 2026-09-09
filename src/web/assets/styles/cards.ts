@@ -1,12 +1,19 @@
 /*
  * CARDS — content-bearing surfaces.
  * Overview blocks, detail head / conclusion band, sections, record cards,
- * input cards, Turn cards, criteria lists. Widgets (pills, chips, metrics)
+ * input cards, AgentRun cards, criteria lists. Widgets (pills, chips, metrics)
  * live in widgets.ts; markdown typography lives in markdown.ts.
  */
 export const CARD_STYLES = `
 .surface-json { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 36rem; overflow: auto; }
 .task-surface .section-body { display:grid; gap:12px; min-width:0; }
+.task-surface { grid-template-columns:minmax(0,1fr); }
+.task-surface .detail-section,.task-surface .record-card,.task-surface .execute-card { min-width:0; max-width:100%; }
+.task-surface .record-meta { min-width:0; overflow-wrap:anywhere; }
+@media(max-width:620px){
+  .task-surface .record-head{flex-wrap:wrap}
+  .task-surface .record-title-row{flex-basis:100%}
+}
 .task-surface .section-body > .pill { width:max-content; }
 .task-surface form,.task-surface label { display:grid; gap:10px; min-width:0; }
 .task-surface label { font-size:13px; font-weight:500; }
@@ -120,9 +127,9 @@ details.work-item-card>summary.record-head~*{margin-top:0}
 .input-answer:hover{border-color:var(--accent-line);color:var(--accent);background:var(--accent-soft)}
 .input-form{display:flex;gap:8px;flex:1}
 .input-form input{min-width:0;flex:1;padding:8px 12px;color:var(--text);background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius);font-family:var(--font-body);font-size:12.5px}
-/* Execution Turns */
-.turn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:9px}
-.turn-filter{margin-bottom:3px}
+/* Execution AgentRuns */
+.run-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:9px}
+.run-filter{margin-bottom:3px}
 .execute-card{background:var(--bg-2);border:1px solid var(--border);border-left:2px solid var(--border);border-radius:var(--radius);padding:9px 12px;display:grid;gap:6px;box-shadow:var(--shadow-card);transition:border-color var(--motion-fast)}
 .execute-card:hover{border-left-color:var(--border-strong)}
 .execute-card[data-status=active]{border-left-color:var(--accent)}

@@ -1,8 +1,8 @@
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import { operationalTaskRecords } from "../task/taskRecordRetirement.js";
 import { TASK_COMPLETION_PUBLISHED_TREE_AUTHORIZED_EVENT } from "../task/publicationReference.js";
-import { TURN_INPUT_MAX_DELTAS } from "./turnInputContract.js";
+import { RUN_INPUT_MAX_DELTAS } from "./runInputContract.js";
 import { assertWorkItemDependenciesCompleted } from "../workItem/dependencyGate.js";
 import { governingWorkItemCandidate, workItemExecutionGroupById, type WorkItem } from "../workItem/workItem.js";
 import { stableArtifactRef } from "../resources/projectResource.js";
@@ -17,62 +17,62 @@ import {
   type ContextSnapshotRef,
   type ContextSnapshotScope
 } from "./contextSnapshot.js";
-import { MAX_SYNTHESIS_SOURCE_TURNS, sourceTurnContextValue } from "./sourceTurnContext.js";
+import { MAX_SYNTHESIS_SOURCE_RUNS, sourceRunContextValue } from "./sourceRunContext.js";
 
-export const TURN_CONTEXT_PACK_SCHEMA_VERSION = 1 as const;
-export const TURN_CONTEXT_PACK_MAX_REFS = 256;
-export const TURN_CONTEXT_PACK_MAX_BYTES = 8 * 1024 * 1024;
-export const TURN_CONTEXT_EXPAND_MAX_BYTES = 4 * 1024 * 1024;
+export const RUN_CONTEXT_PACK_SCHEMA_VERSION = 1 as const;
+export const RUN_CONTEXT_PACK_MAX_REFS = 256;
+export const RUN_CONTEXT_PACK_MAX_BYTES = 8 * 1024 * 1024;
+export const RUN_CONTEXT_EXPAND_MAX_BYTES = 4 * 1024 * 1024;
 
-export type TurnContextView = "operator" | "leader" | "worker" | "reviewer" | "global";
-export type TurnContextSummary = Readonly<{
+export type AgentRunContextView = "operator" | "leader" | "worker" | "reviewer" | "global";
+export type AgentRunContextSummary = Readonly<{
   refId: string;
   store: string;
   summary: string;
   digest: string;
 }>;
-export type TurnContextBudgetResult = Readonly<{
+export type AgentRunContextBudgetResult = Readonly<{
   maxRefs: number;
   returnedRefs: number;
   maxBytes: number;
   returnedBytes: number;
   truncated: false;
 }>;
-export type TurnContextPack = Readonly<{
-  schemaVersion: typeof TURN_CONTEXT_PACK_SCHEMA_VERSION;
+export type AgentRunContextPack = Readonly<{
+  schemaVersion: typeof RUN_CONTEXT_PACK_SCHEMA_VERSION;
   identity: Readonly<{
     taskId: string;
-    turnId: string;
+    runId: string;
     roleName: string;
-    purpose: Turn["purpose"];
+    purpose: AgentRun["purpose"];
     agentId: string;
     adapterId: string;
     workspace: string;
   }>;
   snapshot?: ContextSnapshotRef;
-  input: Turn["inputs"][number]["input"];
+  input: AgentRun["inputs"][number]["input"];
   authority: Readonly<{
-    view: TurnContextView;
+    view: AgentRunContextView;
     readableRefs: readonly ContextRef[];
     writableProjectIds: readonly string[];
   }>;
   pointers: readonly ContextRef[];
-  summaries: readonly TurnContextSummary[];
+  summaries: readonly AgentRunContextSummary[];
   deltas: readonly ContextRef[];
   completion: Readonly<{
     allowedActions: readonly string[];
-    exactTurnRef: string;
+    exactRunRef: string;
   }>;
-  budget: TurnContextBudgetResult;
+  budget: AgentRunContextBudgetResult;
   digest: string;
-  liveTaskState: TurnContextLiveTaskState;
+  liveTaskState: AgentRunContextLiveTaskState;
 }>;
 
 /**
  * What is true on the Task right now, read when the Pack was built.
  *
- * Everything else in the Pack is the frozen contract this Turn was handed. A
- * long-running Turn can be handed that contract and then find the Task has
+ * Everything else in the Pack is the frozen contract this AgentRun was handed. A
+ * long-running AgentRun can be handed that contract and then find the Task has
  * moved on: another Role may still be executing, or a Task-final Review may
  * still be in flight. Without this block a Leader has to already suspect that
  * and go ask, which is exactly the situation where it will not.
@@ -81,11 +81,11 @@ export type TurnContextPack = Readonly<{
  * outside the content digest on purpose: that digest is the delta cursor for
  * the frozen refs and must not move just because the world moved.
  */
-export type TurnContextLiveTaskState = Readonly<{
-  activeTurns: readonly Readonly<{
-    turnId: string;
+export type AgentRunContextLiveTaskState = Readonly<{
+  activeRuns: readonly Readonly<{
+    runId: string;
     roleName: string;
-    purpose: Turn["purpose"];
+    purpose: AgentRun["purpose"];
     workItemId?: string;
     reviewRoundId?: string;
   }>[];
@@ -98,17 +98,17 @@ export type TurnContextLiveTaskState = Readonly<{
 
 type MaterializedRef = Readonly<{ ref: ContextRef; value: unknown }>;
 
-export function freezeTurnContextSnapshot(
+export function freezeRunContextSnapshot(
   store: TaskStore,
   run: Readonly<Pick<
-    Turn,
+    AgentRun,
     "taskId" | "roleName" | "purpose" | "workItemId" | "reviewRoundId"
       | "sourceExecutionGroupId" | "workspace"
   >>,
   now: Date,
   frozenBy: "leader" | "controller" = "controller",
   baselineRef?: ContextSnapshotRef,
-  sourceTurnIds?: readonly string[]
+  sourceRunIds?: readonly string[]
 ): ContextSnapshot {
   if (baselineRef !== undefined) {
     const baseline = store.getContextSnapshot(run.taskId, baselineRef.id);
@@ -120,12 +120,12 @@ export function freezeTurnContextSnapshot(
       || baseline.scope !== "stage"
       || baselineRef.scope !== baseline.scope
       || baseline.scopeRef !== baselineRef.scopeRef) {
-      throw new Error(`Turn Context baseline is missing or drifted: ${baselineRef.id}.`);
+      throw new Error(`AgentRun Context baseline is missing or drifted: ${baselineRef.id}.`);
     }
     validateContextSnapshot(baseline);
     const overlays = [
-      ...collectTurnContextOverlays(store, run),
-      ...collectSourceTurnContext(store, run, sourceTurnIds)
+      ...collectRunContextOverlays(store, run),
+      ...collectSourceRunContext(store, run, sourceRunIds)
     ];
     const resources = [...new Map([...baseline.resources, ...overlays].map((entry) => [
       contextRefIdentity(entry.ref),
@@ -185,7 +185,7 @@ export function freezeTurnContextSnapshot(
 
 /**
  * Freeze the shared, role-neutral ContextSnapshot anchored by one WorkItem
- * ExecutionAssignment. Turn snapshots remain role-specific; this record is
+ * ExecutionAssignment. AgentRun snapshots remain role-specific; this record is
  * the durable Assignment baseline and freezes the current WorkItem facts so
  * the Group never depends on ambient latest state.
  */
@@ -216,7 +216,7 @@ export function freezeWorkItemExecutionAssignmentContextSnapshot(
   }
   for (const binding of task.projectBindings) {
     const project = store.getProject(binding.projectId);
-    if (project === null) throw new Error(`Turn Project not found: ${binding.projectId}.`);
+    if (project === null) throw new Error(`AgentRun Project not found: ${binding.projectId}.`);
     const { knowledge, ...projectPolicy } = project;
     materialized.push(materialize("L1", "project-policy", project.id, projectPolicy));
     for (const entry of knowledge.filter(({ status }) => status === "active")) {
@@ -333,27 +333,27 @@ export function contextSnapshotDeltaRefIds(
       || before.store !== ref.store
       || before.layer !== ref.layer;
   }).map(({ refId }) => refId);
-  return Object.freeze([...new Set(changed)].sort().slice(0, TURN_INPUT_MAX_DELTAS));
+  return Object.freeze([...new Set(changed)].sort().slice(0, RUN_INPUT_MAX_DELTAS));
 }
 
-export function buildTurnContextPack(store: TaskStore, taskId: string, turnId: string): TurnContextPack {
-  const run = requireExactTurn(store, taskId, turnId);
+export function buildRunContextPack(store: TaskStore, taskId: string, runId: string): AgentRunContextPack {
+  const run = requireExactRun(store, taskId, runId);
   const current = collectAuthorizedContext(store, run);
   let pointers: readonly ContextRef[] = current.map(({ ref }) => ref);
   let snapshotRef: ContextSnapshotRef | undefined;
   if (run.inputs[0]!.input.contextSnapshotRef !== undefined) {
     const expected = run.inputs[0]!.input.contextSnapshotRef;
     const snapshot = store.getContextSnapshot(taskId, expected.id);
-    if (snapshot === null) throw new Error(`Turn Context Snapshot is missing: ${expected.id}.`);
+    if (snapshot === null) throw new Error(`AgentRun Context Snapshot is missing: ${expected.id}.`);
     validateContextSnapshot(snapshot);
     if (snapshot.digest !== expected.digest || snapshot.taskId !== taskId) {
-      throw new Error(`Turn Context Snapshot identity drifted: ${expected.id}.`);
+      throw new Error(`AgentRun Context Snapshot identity drifted: ${expected.id}.`);
     }
     pointers = snapshot.refs;
     snapshotRef = contextSnapshotRef(snapshot);
   }
-  if (pointers.length > TURN_CONTEXT_PACK_MAX_REFS) {
-    throw new Error(`Turn Context exceeds ${TURN_CONTEXT_PACK_MAX_REFS} authorized refs.`);
+  if (pointers.length > RUN_CONTEXT_PACK_MAX_REFS) {
+    throw new Error(`AgentRun Context exceeds ${RUN_CONTEXT_PACK_MAX_REFS} authorized refs.`);
   }
   const view = contextView(run);
   const writableProjectIds = writableProjects(store, run, view);
@@ -364,10 +364,10 @@ export function buildTurnContextPack(store: TaskStore, taskId: string, turnId: s
     digest: ref.digest
   }));
   const body = {
-    schemaVersion: TURN_CONTEXT_PACK_SCHEMA_VERSION,
+    schemaVersion: RUN_CONTEXT_PACK_SCHEMA_VERSION,
     identity: Object.freeze({
       taskId,
-      turnId: turnId,
+      runId: runId,
       roleName: run.roleName,
       purpose: run.purpose,
       agentId: run.effective.agentId,
@@ -382,20 +382,20 @@ export function buildTurnContextPack(store: TaskStore, taskId: string, turnId: s
     deltas: pointers.filter((ref) => run.inputs[0]!.input.deltaRefIds.includes(ref.refId)),
     completion: Object.freeze({
       allowedActions: completionActions(view),
-      exactTurnRef: `${taskId}/${turnId}`
+      exactRunRef: `${taskId}/${runId}`
     })
   };
   const digest = contextContentDigest(body);
   const preliminaryBytes = Buffer.byteLength(JSON.stringify({ ...body, digest }), "utf8");
-  if (preliminaryBytes > TURN_CONTEXT_PACK_MAX_BYTES) {
-    throw new Error(`Turn Context Pack exceeds ${TURN_CONTEXT_PACK_MAX_BYTES} bytes.`);
+  if (preliminaryBytes > RUN_CONTEXT_PACK_MAX_BYTES) {
+    throw new Error(`AgentRun Context Pack exceeds ${RUN_CONTEXT_PACK_MAX_BYTES} bytes.`);
   }
   const pack = Object.freeze({
     ...body,
     budget: Object.freeze({
-      maxRefs: TURN_CONTEXT_PACK_MAX_REFS,
+      maxRefs: RUN_CONTEXT_PACK_MAX_REFS,
       returnedRefs: pointers.length,
-      maxBytes: TURN_CONTEXT_PACK_MAX_BYTES,
+      maxBytes: RUN_CONTEXT_PACK_MAX_BYTES,
       returnedBytes: preliminaryBytes,
       truncated: false as const
     }),
@@ -406,15 +406,15 @@ export function buildTurnContextPack(store: TaskStore, taskId: string, turnId: s
 }
 
 /** Reads the Task's current in-flight execution, outside the frozen contract. */
-function readLiveTaskState(store: TaskStore, taskId: string): TurnContextLiveTaskState {
-  const activeTurns = store.listTurns(taskId)
-    .filter((turn) => turn.status === "active")
-    .map((turn) => Object.freeze({
-      turnId: turn.id,
-      roleName: turn.roleName,
-      purpose: turn.purpose,
-      ...(turn.workItemId === undefined ? {} : { workItemId: turn.workItemId }),
-      ...(turn.reviewRoundId === undefined ? {} : { reviewRoundId: turn.reviewRoundId })
+function readLiveTaskState(store: TaskStore, taskId: string): AgentRunContextLiveTaskState {
+  const activeRuns = store.listRuns(taskId)
+    .filter((run) => run.status === "active")
+    .map((run) => Object.freeze({
+      runId: run.id,
+      roleName: run.roleName,
+      purpose: run.purpose,
+      ...(run.workItemId === undefined ? {} : { workItemId: run.workItemId }),
+      ...(run.reviewRoundId === undefined ? {} : { reviewRoundId: run.reviewRoundId })
     }));
   const activeTaskReviews = store.listReviewRounds(taskId)
     .filter((round) => (
@@ -427,27 +427,27 @@ function readLiveTaskState(store: TaskStore, taskId: string): TurnContextLiveTas
       status: round.status as "pending" | "running"
     }));
   return Object.freeze({
-    activeTurns: Object.freeze(activeTurns),
+    activeRuns: Object.freeze(activeRuns),
     activeTaskReviews: Object.freeze(activeTaskReviews)
   });
 }
 
-export function expandTurnContextRef(
+export function expandRunContextRef(
   store: TaskStore,
   taskId: string,
-  turnId: string,
+  runId: string,
   refId: string,
   refStore?: string
 ): Readonly<{ ref: ContextRef; value: unknown; digest: string }> {
-  const pack = buildTurnContextPack(store, taskId, turnId);
+  const pack = buildRunContextPack(store, taskId, runId);
   const authorized = pack.pointers.filter((ref) => (
     ref.refId === refId && (refStore === undefined || ref.store === refStore)
   ));
   const selector = refStore === undefined ? refId : `${refStore}/${refId}`;
   if (authorized.length !== 1) {
-    throw new Error(`Turn Context ref is not uniquely authorized: ${selector}.`);
+    throw new Error(`AgentRun Context ref is not uniquely authorized: ${selector}.`);
   }
-  const run = requireExactTurn(store, taskId, turnId);
+  const run = requireExactRun(store, taskId, runId);
   const snapshotRef = run.inputs[0]!.input.contextSnapshotRef;
   const materialized = snapshotRef === undefined
     ? collectAuthorizedContext(store, run).find(({ ref }) => (
@@ -457,11 +457,11 @@ export function expandTurnContextRef(
         contextRefIdentity(ref) === contextRefIdentity(authorized[0]!)
       ));
   if (materialized === undefined || materialized.ref.digest !== authorized[0]!.digest) {
-    throw new Error(`Turn Context ref is unavailable or drifted: ${selector}.`);
+    throw new Error(`AgentRun Context ref is unavailable or drifted: ${selector}.`);
   }
   const bytes = Buffer.byteLength(JSON.stringify(materialized.value), "utf8");
-  if (bytes > TURN_CONTEXT_EXPAND_MAX_BYTES) {
-    throw new Error(`Turn Context expansion exceeds ${TURN_CONTEXT_EXPAND_MAX_BYTES} bytes.`);
+  if (bytes > RUN_CONTEXT_EXPAND_MAX_BYTES) {
+    throw new Error(`AgentRun Context expansion exceeds ${RUN_CONTEXT_EXPAND_MAX_BYTES} bytes.`);
   }
   return Object.freeze({
     ref: materialized.ref,
@@ -470,18 +470,18 @@ export function expandTurnContextRef(
   });
 }
 
-/** Fail-closed delta cursor resolution for one immutable Turn lineage. */
-export function buildTurnContextDelta(
+/** Fail-closed delta cursor resolution for one immutable AgentRun lineage. */
+export function buildRunContextDelta(
   store: TaskStore,
   taskId: string,
-  turnId: string,
+  runId: string,
   after: string
 ): Readonly<{ schemaVersion: 1; after: string; cursor: string; refs: readonly ContextRef[] }> {
-  const pack = buildTurnContextPack(store, taskId, turnId);
+  const pack = buildRunContextPack(store, taskId, runId);
   if (after === pack.digest || after === pack.snapshot?.digest) {
     return Object.freeze({ schemaVersion: 1, after, cursor: pack.digest, refs: [] });
   }
-  const run = requireExactTurn(store, taskId, turnId);
+  const run = requireExactRun(store, taskId, runId);
   const snapshotRef = run.inputs[0]!.input.contextSnapshotRef;
   const snapshot = snapshotRef === undefined
     ? null
@@ -489,7 +489,7 @@ export function buildTurnContextDelta(
   const parentDigest = snapshot?.parentRef?.digest;
   if (!((parentDigest !== undefined && after === parentDigest)
     || (parentDigest === undefined && after === "none"))) {
-    throw new Error("Turn Context delta cursor is outside the frozen Snapshot lineage.");
+    throw new Error("AgentRun Context delta cursor is outside the frozen Snapshot lineage.");
   }
   return Object.freeze({
     schemaVersion: 1,
@@ -499,10 +499,10 @@ export function buildTurnContextDelta(
   });
 }
 
-function requireExactTurn(store: TaskStore, taskId: string, turnId: string): Turn {
-  const run = store.getTurn(taskId, turnId);
-  if (run === null || run.taskId !== taskId || run.id !== turnId) {
-    throw new Error(`Turn not found: ${taskId}/${turnId}.`);
+function requireExactRun(store: TaskStore, taskId: string, runId: string): AgentRun {
+  const run = store.getRun(taskId, runId);
+  if (run === null || run.taskId !== taskId || run.id !== runId) {
+    throw new Error(`AgentRun not found: ${taskId}/${runId}.`);
   }
   return run;
 }
@@ -510,7 +510,7 @@ function requireExactTurn(store: TaskStore, taskId: string, turnId: string): Tur
 function collectAuthorizedContext(
   store: TaskStore,
   run: Readonly<Pick<
-    Turn,
+    AgentRun,
     "taskId" | "roleName" | "purpose" | "workItemId" | "reviewRoundId"
       | "sourceExecutionGroupId" | "workspace"
   >>
@@ -523,11 +523,11 @@ function collectAuthorizedContext(
   if (brief !== null && view === "leader") {
     result.push(materialize("L2", "task-brief", task.id, brief));
   }
-  result.push(...collectTurnContextOverlays(store, run));
-  result.push(...collectSourceTurnContext(store, run));
+  result.push(...collectRunContextOverlays(store, run));
+  result.push(...collectSourceRunContext(store, run));
   if (run.workItemId !== undefined) {
     const item = store.getWorkItem(task.id, run.workItemId);
-    if (item === null) throw new Error(`Turn WorkItem not found: ${run.workItemId}.`);
+    if (item === null) throw new Error(`AgentRun WorkItem not found: ${run.workItemId}.`);
     result.push(materialize("L3", "work-item", item.id, item));
     result.push(...candidateArtifacts(store, task.id, item.candidates));
     if (view === "worker") {
@@ -542,7 +542,7 @@ function collectAuthorizedContext(
   }
   if (run.reviewRoundId !== undefined) {
     const round = store.getReviewRound(task.id, run.reviewRoundId);
-    if (round === null) throw new Error(`Turn ReviewRound not found: ${run.reviewRoundId}.`);
+    if (round === null) throw new Error(`AgentRun ReviewRound not found: ${run.reviewRoundId}.`);
     result.push(materialize("L3", "review-round", round.id, round));
     if (round.scope === "task") {
       for (const item of store.listWorkItems(task.id).filter(({ status }) => status !== "retired")) {
@@ -554,15 +554,15 @@ function collectAuthorizedContext(
     }
     if (round.deltaRecheck !== undefined) {
       const previous = store.getReviewRound(task.id, round.deltaRecheck.previousReviewRoundId);
-      const previousTurn = previous?.reviewerTurnId === undefined
+      const previousRun = previous?.reviewerRunId === undefined
         ? null
-        : store.getTurn(task.id, previous.reviewerTurnId);
+        : store.getRun(task.id, previous.reviewerRunId);
       if (previous === null
         || previous === undefined
         || previous.status !== "completed"
-        || previousTurn === null
-        || previousTurn.status !== "completed"
-        || previousTurn.result === undefined) {
+        || previousRun === null
+        || previousRun.status !== "completed"
+        || previousRun.result === undefined) {
         throw new Error(
           `Delta recheck source Review result is unavailable: ${
             round.deltaRecheck.previousReviewRoundId
@@ -572,15 +572,15 @@ function collectAuthorizedContext(
       result.push(materialize("L3", "review-round", previous.id, previous));
       result.push(materialize(
         "L4",
-        "source-turn",
-        previousTurn.id,
-        sourceTurnContextValue(previousTurn)
+        "source-run",
+        previousRun.id,
+        sourceRunContextValue(previousRun)
       ));
     }
   }
   for (const binding of task.projectBindings) {
     const project = store.getProject(binding.projectId);
-    if (project === null) throw new Error(`Turn Project not found: ${binding.projectId}.`);
+    if (project === null) throw new Error(`AgentRun Project not found: ${binding.projectId}.`);
     const { knowledge, ...projectPolicy } = project;
     result.push(materialize("L1", "project-policy", project.id, projectPolicy));
     for (const entry of knowledge.filter(({ status }) => status === "active")) {
@@ -618,12 +618,12 @@ function collectAuthorizedContext(
     for (const round of store.listReviewRounds(task.id).slice(-16)) {
       result.push(materialize("L3", "review-round", round.id, round));
     }
-    for (const turn of operationalTaskRecords(
-      store.listTurns(task.id),
+    for (const run of operationalTaskRecords(
+      store.listRuns(task.id),
       events,
-      "turn"
+      "run"
     ).slice(-24)) {
-      result.push(materialize("L4", "turn", turn.id, turn));
+      result.push(materialize("L4", "run", run.id, run));
     }
     for (const message of operationalTaskRecords(
       store.listMessages(task.id),
@@ -670,16 +670,16 @@ function candidateArtifacts(
 }
 
 /** Lane-specific context that may be layered over an immutable stage base. */
-function collectTurnContextOverlays(
+function collectRunContextOverlays(
   store: TaskStore,
   run: Readonly<Pick<
-    Turn,
+    AgentRun,
     "taskId" | "roleName" | "purpose" | "workItemId" | "reviewRoundId"
       | "sourceExecutionGroupId" | "workspace"
   >>
 ): MaterializedRef[] {
   const role = store.getRole(run.taskId, run.roleName);
-  if (role === null) throw new Error(`Turn Role not found: ${run.taskId}/${run.roleName}.`);
+  if (role === null) throw new Error(`AgentRun Role not found: ${run.taskId}/${run.roleName}.`);
   return [
     materialize("L1", "role-profile", role.name, {
       name: role.name,
@@ -702,19 +702,19 @@ function collectTurnContextOverlays(
   ];
 }
 
-function collectSourceTurnContext(
+function collectSourceRunContext(
   store: TaskStore,
   run: Readonly<Pick<
-    Turn,
+    AgentRun,
     "taskId" | "purpose" | "workItemId" | "reviewRoundId" | "sourceExecutionGroupId"
   >>,
-  sourceTurnIds?: readonly string[]
+  sourceRunIds?: readonly string[]
 ): MaterializedRef[] {
   if (run.sourceExecutionGroupId === undefined) return [];
-  if (sourceTurnIds === undefined || sourceTurnIds.length === 0
-    || sourceTurnIds.length > MAX_SYNTHESIS_SOURCE_TURNS
-    || new Set(sourceTurnIds).size !== sourceTurnIds.length) {
-    throw new Error("Synthesis requires explicit, distinct source Turn references.");
+  if (sourceRunIds === undefined || sourceRunIds.length === 0
+    || sourceRunIds.length > MAX_SYNTHESIS_SOURCE_RUNS
+    || new Set(sourceRunIds).size !== sourceRunIds.length) {
+    throw new Error("Synthesis requires explicit, distinct source AgentRun references.");
   }
   const group = run.purpose === "execution"
     ? (() => {
@@ -722,7 +722,7 @@ function collectSourceTurnContext(
           throw new Error("Execution synthesis source requires a WorkItem.");
         }
         const item = store.getWorkItem(run.taskId, run.workItemId);
-        if (item === null) throw new Error(`Turn WorkItem not found: ${run.workItemId}.`);
+        if (item === null) throw new Error(`AgentRun WorkItem not found: ${run.workItemId}.`);
         return workItemExecutionGroupById(item, run.sourceExecutionGroupId);
       })()
     : (() => {
@@ -730,7 +730,7 @@ function collectSourceTurnContext(
           throw new Error("Review synthesis source requires a ReviewRound.");
         }
         const round = store.getReviewRound(run.taskId, run.reviewRoundId);
-        if (round === null) throw new Error(`Turn ReviewRound not found: ${run.reviewRoundId}.`);
+        if (round === null) throw new Error(`AgentRun ReviewRound not found: ${run.reviewRoundId}.`);
         return round.executionGroup?.id === run.sourceExecutionGroupId
           ? round.executionGroup
           : undefined;
@@ -738,8 +738,8 @@ function collectSourceTurnContext(
   if (group === undefined) {
     throw new Error(`Source ExecutionGroup not found: ${run.sourceExecutionGroupId}.`);
   }
-  return sourceTurnIds.map((turnId): MaterializedRef => {
-      const source = store.getTurn(run.taskId, turnId);
+  return sourceRunIds.map((runId): MaterializedRef => {
+      const source = store.getRun(run.taskId, runId);
       const lane = group.lanes.find(({ id }) => id === source?.executionLaneId);
       if (source === null
         || lane === undefined
@@ -751,34 +751,34 @@ function collectSourceTurnContext(
         || source.executionGroupId !== group.id
         || source.executionLaneId !== lane.id
         || source.roleName !== lane.roleName) {
-        throw new Error(`Selected source Turn is missing or drifted: ${group.id}/${turnId}.`);
+        throw new Error(`Selected source AgentRun is missing or drifted: ${group.id}/${runId}.`);
       }
       return materialize(
         "L4",
-        "source-turn",
+        "source-run",
         source.id,
-        sourceTurnContextValue(source)
+        sourceRunContextValue(source)
       );
     });
 }
 
 /** The frozen refs, not the Group's changing lane state, define provenance. */
-export function synthesisSourceTurnIds(
+export function synthesisSourceRunIds(
   store: Pick<TaskStore, "getContextSnapshot">,
-  turn: Turn
+  run: AgentRun
 ): readonly string[] {
-  const ref = turn.inputs[0]!.input.contextSnapshotRef;
-  if (ref === undefined) throw new Error(`Synthesis Turn has no Context Snapshot: ${turn.id}.`);
-  const snapshot = store.getContextSnapshot(turn.taskId, ref.id);
+  const ref = run.inputs[0]!.input.contextSnapshotRef;
+  if (ref === undefined) throw new Error(`Synthesis AgentRun has no Context Snapshot: ${run.id}.`);
+  const snapshot = store.getContextSnapshot(run.taskId, ref.id);
   if (snapshot === null || snapshot.digest !== ref.digest
     || snapshot.sequence !== ref.sequence || snapshot.scope !== ref.scope
-    || snapshot.scopeRef !== ref.scopeRef || snapshot.taskId !== turn.taskId) {
+    || snapshot.scopeRef !== ref.scopeRef || snapshot.taskId !== run.taskId) {
     throw new Error(`Synthesis Context Snapshot is missing or drifted: ${ref.id}.`);
   }
   validateContextSnapshot(snapshot);
   return snapshot.resources.filter(({ ref: entry, value }) => (
-    entry.store === "source-turn"
-    && (value as { executionGroupId?: string }).executionGroupId === turn.sourceExecutionGroupId
+    entry.store === "source-run"
+    && (value as { executionGroupId?: string }).executionGroupId === run.sourceExecutionGroupId
   )).map(({ ref: entry }) => entry.refId);
 }
 
@@ -808,14 +808,14 @@ function contextRefIdentity(ref: ContextRef): string {
   return `${ref.store}\0${ref.refId}\0${ref.revision}`;
 }
 
-function contextView(run: Readonly<Pick<Turn, "roleName" | "purpose">>): TurnContextView {
+function contextView(run: Readonly<Pick<AgentRun, "roleName" | "purpose">>): AgentRunContextView {
   if (run.purpose === "review") return "reviewer";
   if (run.roleName === "leader") return "leader";
   if (run.roleName === "operator") return "operator";
   return "worker";
 }
 
-function writableProjects(store: TaskStore, run: Turn, view: TurnContextView): readonly string[] {
+function writableProjects(store: TaskStore, run: AgentRun, view: AgentRunContextView): readonly string[] {
   if (view === "leader") return Object.freeze(store.getTask(run.taskId)?.projectBindings.map(({ projectId }) => projectId) ?? []);
   if (view === "reviewer") {
     return Object.freeze(run.workspace?.entries.filter(({ access }) => access === "write").map(({ projectId }) => projectId) ?? []);
@@ -824,7 +824,7 @@ function writableProjects(store: TaskStore, run: Turn, view: TurnContextView): r
   return Object.freeze(store.getWorkItem(run.taskId, run.workItemId)?.writeProjectIds ?? []);
 }
 
-function completionActions(view: TurnContextView): readonly string[] {
+function completionActions(view: AgentRunContextView): readonly string[] {
   if (view === "leader") return Object.freeze(["finish-turn", "complete-task", "request-input"]);
   if (view === "reviewer") return Object.freeze(["checkpoint", "finish-turn"]);
   if (view === "operator") return Object.freeze(["answer-input", "recover"]);

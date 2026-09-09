@@ -57,18 +57,18 @@ polling protocol is required to follow work.
 `WorkItem` means one substantial, independently acceptable requirement with a
 clear owner. Create multiple WorkItems only when multiple Workers can own and
 advance those requirements independently, normally in parallel. Internal
-implementation steps, test runs, review findings, and local fixes remain Turn,
+implementation steps, test runs, review findings, and local fixes remain AgentRun,
 Event, report, or commit evidence under the existing Task or WorkItem; they are
 not new WorkItems.
 
 Native subagents may help an Agent investigate or critique inside its current
 conversation, but they are not a second Yui WorkItem execution model and do
 not create child-session records. A Yui-managed WorkItem dispatch has one
-logical main executor: the current Session for `WorkItem.assignee`. A Turn is
-an execution attempt, not a requirement, and repeated Turns may continue the
+logical main executor: the current Session for `WorkItem.assignee`. A AgentRun is
+an execution attempt, not a requirement, and repeated AgentRuns may continue the
 same compatible Role Session.
 
-Without `--lane-role`, dispatch is `direct`: Yui creates only the main Turn and
+Without `--lane-role`, dispatch is `direct`: Yui creates only the main AgentRun and
 does not persist an ExecutionGroup or Lane. With at least two distinct
 non-assignee roles, dispatch is `replicated`: one ExecutionGroup freezes a
 canonical Assignment and every Lane independently executes that exact same
@@ -76,13 +76,13 @@ Assignment. One Lane role is invalid, and Lane roles cannot introduce their
 own objective, directive, acceptance criteria, context, or write scope.
 
 A Lane is a recoverable logical slot whose durable disposition is `open`,
-`succeeded`, or `failed`. Failed Turns leave the Lane open for an exact
-`task turn retry`; `task turn settle` records the Leader's decision to stop
+`succeeded`, or `failed`. Failed AgentRuns leave the Lane open for an exact
+`task run retry`; `task run settle` records the Leader's decision to stop
 recovering that Lane. Yui waits until every Lane is settled. At least two
 successful Lanes make synthesis eligible and create or wake one idempotent
-main Turn with every successful Producer result in stable Lane order. Fewer
+main AgentRun with every successful Producer result in stable Lane order. Fewer
 than two successes fail that Group attempt without degrading to a single
-result. Retrying the main Turn keeps the same Group and does not rerun a
+result. Retrying the main AgentRun keeps the same Group and does not rerun a
 successful Lane.
 
 ## Profiles, Roles, and Agents
@@ -96,23 +96,23 @@ successful Lane.
   the active Agent binding. Its versioned desired launch configuration is
   next-launch-only. The Role may bind multiple Agents; every binding retains
   independent runtime configuration.
-- `Turn` records one managed dispatch and an immutable effective snapshot:
+- `AgentRun` records one managed dispatch and an immutable effective snapshot:
   actual Agent, adapter, model, effort, Profile behavior intent, exact writable
   Projects, provider permission strategy and native options, workspace, Role
   context, and source desired revision. A native Role Session stores the same snapshot; running processes
   are never hot-mutated by later Role edits.
 - A `WorkItemCandidate` is the explicit result currently awaiting Leader
   acceptance. A dispatched WorkItem Candidate can reference only a successful
-  main Turn; the complete replicated provenance is derived through Main Turn
-  -> ExecutionGroup -> Lane -> successful Producer Turn. A roleless delivery
+  main AgentRun; the complete replicated provenance is derived through Main AgentRun
+  -> ExecutionGroup -> Lane -> successful Producer AgentRun. A roleless delivery
   unit managed directly by the Leader may instead use the existing direct
   source. Lanes never become Candidates or enter Review or Integration.
 - `ReviewRound` records one semantic judgment. A WorkItem Review references
   that WorkItem's immutable Candidate. A Task-final Review references the
   frozen Task heads directly and has no synthetic WorkItem/Candidate anchor.
-  Either scope executes directly through one main Reviewer Turn or, when the
+  Either scope executes directly through one main Reviewer AgentRun or, when the
   Leader explicitly supplies at least two Producer Roles, through one frozen
-  replicated Assignment followed by one authoritative main synthesis Turn.
+  replicated Assignment followed by one authoritative main synthesis AgentRun.
   It is never another WorkItem.
 
 Adding another Agent requires an explicit adapter implementation. Profiles do
@@ -139,33 +139,33 @@ open --explicit acceptance--> accepted
 open/accepted --retire--> retired
 ```
 
-Execution, waiting and failure belong to Turns, not WorkItem responsibility.
+Execution, waiting and failure belong to AgentRuns, not WorkItem responsibility.
 Submitting or rejecting a Candidate leaves the WorkItem open. Brief and
 definition edits preserve acceptance until the Leader explicitly withdraws it.
 Task lifecycle is draft / active / completed / cancelled / archived; ending
 intent does not prove execution resources stopped. Reopening does not replay
 historical delivery requests, and archived Tasks cannot reopen.
 
-For `direct`, the assignee's successful main Turn supplies the result. For
-`replicated`, Lane Turns supply immutable Producer results and only the
-successful synthesis main Turn supplies the Candidate. Roleless WorkItems are
+For `direct`, the assignee's successful main AgentRun supplies the result. For
+`replicated`, Lane AgentRuns supply immutable Producer results and only the
+successful synthesis main AgentRun supplies the Candidate. Roleless WorkItems are
 advanced directly by the Leader but enter the same Candidate, ChangeSet,
 Integration, and acceptance boundary.
 
-The Provider's native Turn terminal ends its associated Turn and stores the
-final response as immutable Turn evidence. It never accepts the WorkItem. The
+The Provider's native Turn terminal ends its associated AgentRun and stores the
+final response as immutable AgentRun evidence. It never accepts the WorkItem. The
 Leader checks semantics, evidence, and Git state, then resolves the execution
 result and accepts or rejects it with bounded feedback. A rejected isolated
-WorkItem keeps its workspace so the next Turn can repair the same result.
+WorkItem keeps its workspace so the next AgentRun can repair the same result.
 
 An optional global review rule names one existing Global Role and chooses
 `always`, `leader`, or `final`. Candidate rules remain live defaults; each
 WorkItem Candidate snapshots the effective review rule when submitted.
-Every managed execution result is stored first on its exact Turn. A Candidate
+Every managed execution result is stored first on its exact AgentRun. A Candidate
 is created only from the main result when the Leader resolves the execution
 output for acceptance.
-`always` dispatches a review Turn for every candidate, whether it comes
-from a completed execution Turn or a Leader-managed direct result; `leader`
+`always` dispatches a review AgentRun for every candidate, whether it comes
+from a completed execution AgentRun or a Leader-managed direct result; `leader`
 leaves every candidate for the Leader to accept directly or review explicitly.
 `final` keeps WorkItem acceptance and Integration independent and supplies the
 default Reviewer Role when the Leader decides the frozen Task result warrants
@@ -174,28 +174,28 @@ Review. A Leader-requested Round remains evidence without becoming policy: a
 later Task head does not require another Round unless the Leader requests one
 or an explicit Task contract requires it. This final Reviewer evaluates the whole
 Task, so normal delivery does not pay for a complete review of every WorkItem.
-Review Turns complete only their exact ReviewRound, leave the WorkItem awaiting
+Review AgentRuns complete only their exact ReviewRound, leave the WorkItem awaiting
 acceptance, and never trigger another review or append a Candidate. Successful
 and failed review attempts both wake the Leader and remain evidence for
 judgment, not a machine verdict. The ReviewRound stores only Core-owned
 identity, frozen Candidate, workspace provenance, execution topology, main
-Reviewer Turn reference, lifecycle, and failure diagnostics. The complete
-free-form Reviewer result lives only on that exact Turn. The Leader may route
+Reviewer AgentRun reference, lifecycle, and failure diagnostics. The complete
+free-form Reviewer result lives only on that exact AgentRun. The Leader may route
 that result to the original Worker, but Yui never parses or merges it
 automatically.
 
 Roles describe Agent capability, but they do not own repository workspaces. A
 `ManagedWorkspace` is keyed by its durable owner (`Task`, `WorkItem`,
-`ReviewRound`, or `IntegrationAttempt`); an Turn carries only a launch
+`ReviewRound`, or `IntegrationAttempt`); an AgentRun carries only a launch
 snapshot. Review workspaces are writable copies at the frozen commit, so
 diagnostics cannot redirect Develop or become a ChangeSet source. Task-final
 Rounds keep independent immutable records but may reassign one clean physical
 workspace to the next Round for the same Reviewer Role. This lets the native
-Reviewer Session continue while every Turn remains bound to its exact Round and
+Reviewer Session continue while every AgentRun remains bound to its exact Round and
 head.
 
 Dependencies are enforced at dispatch. A Role cannot have overlapping active
-Turns, and terminal Task state fences new messages, dispatches, retries, and
+AgentRuns, and terminal Task state fences new messages, dispatches, retries, and
 late results until explicitly reopened.
 
 ## Project workspaces and integration
@@ -245,7 +245,7 @@ WorkItem, or adds the Project to the Task.
 
 An isolated result is handled in this order:
 
-1. the Worker Provider Turn ends and its Turn result is recorded;
+1. the Worker Provider Turn ends and its AgentRun result is recorded;
 2. the Leader reviews semantics and evidence;
 3. Yui captures each writable Project HEAD as an immutable Project ChangeSet;
 4. each Project integration applies the governing Candidate's ChangeSet in a candidate worktree;
@@ -262,7 +262,7 @@ project-specific engineering rules; and the Task Contract owns the requested
 outcome. Yui injects only its own generic Role Skills. It never scans or copies
 Project Skills into managed context; the selected Agent discovers them through
 its native project mechanism. Execution and review select their generic Skill
-by durable Turn purpose. A Reviewer result returns as the exact source Turn
+by durable AgentRun purpose. A Reviewer result returns as the exact source AgentRun
 text. The Leader decides whether to send feedback to the existing Worker,
 accept, review again, handle a local or Integration issue, or create genuinely
 independent follow-up work. Core neither parses findings nor creates repair
@@ -293,7 +293,7 @@ and knowledge needed to resume and audit work:
 - Decisions: material choices and supersession;
 - Milestones: independently useful phase outcomes;
 - Project Knowledge: stable facts reusable across Tasks;
-- WorkItems, Roles, Turns, Messages, InputRequests, Events, ChangeSets, and
+- WorkItems, Roles, AgentRuns, Messages, InputRequests, Events, ChangeSets, and
   integration evidence.
 
 The Leader updates the Brief when durable Task context changes, records material choices as
@@ -307,37 +307,37 @@ context.
 Provider conversations remain user conversations. Yui adds the matching Role
 Skill and Session Manifest pointer, then uses provider-native requests for
 durable Task delivery; it does not own or mirror the full transcript. The
-Controller owns mailbox delivery, wakeups, Role liveness, recovery decisions,
+Controller owns mailbox delivery, wakeups, Role liveness, recovery observations,
 and exact receipts. tmux keeps Yui's client attachment observable where the
 provider path needs one. The Controller owns durable wake consumption and
-Provider submission; the Provider Runtime Binding owns the only Turn receipt.
+Provider submission; the Provider Runtime Binding owns the only AgentRun receipt.
 
-Session, Activation, and Turn identities are independent. A Session can span
-Turns and client attachments; one Activation identifies Yui's current
-attachment, not exclusive ownership of the Provider thread. One Turn identifies
-one provider-native execution, whether its input arrived through Yui or directly
-through the Provider UI. Yui's authority epoch fences only Yui's own submissions
+Session, Activation, and AgentRun identities are independent. A Session can span
+AgentRuns and client attachments; one Activation identifies Yui's current
+attachment, not exclusive ownership of the Provider thread. One AgentRun identifies
+one explicitly requested execution. Ordinary Provider UI conversation does not
+create an AgentRun. Yui's authority epoch fences only Yui's own submissions
 and retries.
 
-`Turn` is the single durable scheduling authority for a Role. It records the
+`AgentRun` is durable execution intent, not Role authority or a global scheduling lock. It records the
 visible inputs, their source and channel, and the final Provider output; it does
 not copy reasoning or tool traffic. All input relayed or generated by Yui has
 source `yui`, while direct Provider input has source `user` and explicit Goal
 continuations have source `provider`.
 `TaskRole` likewise stores configuration and identity, not a writable runtime
-status. CLI and Web status views derive activity from the active Turn and
-add Session/Driver facts only as lifecycle and diagnostic detail.
+status. CLI and Web show record lifecycle separately from actual
+Session/Provider admission and activity evidence.
 `AgentHost` is the serialized consumer: while a Provider Turn is active, the
-next mailbox wake remains durable and unsubmitted. When that Turn ends, Yui
+next mailbox wake remains durable and unsubmitted. When that AgentRun ends, Yui
 atomically stores the result. Worker and Reviewer completion enters the bounded
-Leader wake aggregation window; a later dispatch creates a new Turn while
+Leader wake aggregation window; notification delivery creates no AgentRun while
 reusing the same live Session whenever its configuration remains compatible.
 Task and WorkItem completion remain Leader decisions and never follow merely
 from Provider termination.
 
 Codex Task threads remain ordinary native Sessions and can be opened and used
-directly in Desktop. Direct user Turns are recorded in the same Turn history. If
-one is active, Yui keeps its pending message until that Turn settles. Global
+directly in Desktop. Direct user native Turns do not become Yui AgentRuns. If
+one is active, Yui keeps its pending message until the native Session is available. Global
 interactive entry remains a native Session-lifecycle operation outside the Task
 delivery contract.
 
@@ -351,11 +351,15 @@ to one shared-daemon thread. The Agent Host owns only its proxy and WebSocket:
 Task execution stop discards the Yui attachment without waiting for or changing
 the daemon or native thread, and start creates a new attachment.
 Claude uses a persistent stream-json
-transport with exact user-message replay acknowledgement. In both cases, Yui
-records Turn intent before writing, accepts only exact Provider evidence, and
+transport with exact local attempt correlation and no invented nativeTurnId.
+Pipe writes are transport evidence; the matching result establishes native acceptance.
+For explicit executions Yui records AgentRun intent before writing, accepts only exact Provider evidence, and
 maps an uncertain write to `delivery-unknown` without automatic resubmission.
 
-Role desired revisions and Turn/Session effective snapshots keep configuration
+See [the current shared contract](docs/architecture/yui-handbook-full-architecture/architecture/07-session-run-contract.md) for Session-only
+Leader authority, captured planning/delivery scope, reference Messages, and storage 9 → 10.
+
+Role desired revisions and AgentRun/Session effective snapshots keep configuration
 history explicit. Resume compares the complete effective snapshot and
 workspace compatibility rather than revision alone. Desired drift is expected
 while an old process is running and becomes effective only on a later launch;

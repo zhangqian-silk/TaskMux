@@ -1,7 +1,9 @@
 import type { TaskEvent } from "../event/taskEvent.js";
 import { operationalTaskRecords } from "../task/taskRecordRetirement.js";
 import type { InputRequest } from "../input/inputRequest.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
+import { runtimeObservationFromTaskEvent } from "../runtime/runtimeObservation.js";
+import type { ProviderTurnStatus } from "../runtime/providerRuntimeIdentity.js";
 import type { Role } from "../role/role.js";
 import { taskOwnsManagedWorkspace, type Task, type TaskStatus } from "../task/task.js";
 import type { TaskBrief } from "../brief/taskBrief.js";
@@ -26,7 +28,7 @@ import {
   type TaskObservabilityProjection
 } from "./taskObservabilityProjection.js";
 import type { ContextSnapshot } from "../context/contextSnapshot.js";
-import { isRoleTurnStalled, latestStallProgressAt } from "./roleTurnStall.js";
+import { isRoleRunStalled, latestStallProgressAt } from "./roleRunStall.js";
 import { resolveRuntimeHealth } from "../config/yuiConfig.js";
 import type { RuntimeHealthPolicy } from "../runtime/runtimeHealthPolicy.js";
 import {
@@ -86,7 +88,7 @@ export type TaskExecutionAttention = Readonly<{
   id: string;
   owner: "leader" | "operator";
   summary: string;
-  turnId?: string;
+  runId?: string;
   roleName?: string;
   failClosed?: boolean;
 }>;
@@ -98,12 +100,13 @@ export type TaskExecutionBlocker = Readonly<{
   summary: string;
 }>;
 
-export type TaskExecutionTurn = Readonly<{
+export type TaskExecutionRun = Readonly<{
   id: string;
   roleName: string;
-  purpose: Turn["purpose"];
+  purpose: AgentRun["purpose"];
   providerSession: "active" | "starting";
-  status: Turn["status"];
+  status: AgentRun["status"];
+  delivery: ProviderTurnStatus | "unobserved";
   workItemId?: string;
   reviewRoundId?: string;
   executionGroupId?: string;
@@ -121,7 +124,7 @@ export type TaskExecutionProjection = Readonly<{
   reason: string;
   monitoring: "active" | "stopped";
   failClosed: boolean;
-  activeTurns: readonly TaskExecutionTurn[];
+  activeRuns: readonly TaskExecutionRun[];
   /** Read-only Leader aggregation for every unified execution Group. */
   executionGroups: readonly ExecutionGroupHealthSummary[];
   /** Shared DAG, cost, context, and stage projection for CLI/Web consumers. */
@@ -142,7 +145,7 @@ export type TaskExecutionReadStore = Readonly<{
   getTask?(taskId: string): Task | null;
   getTaskBrief?(taskId: string): TaskBrief | null;
   listRoles?(taskId: string): readonly Role[];
-  listTurns?(taskId: string): readonly Turn[];
+  listRuns?(taskId: string): readonly AgentRun[];
   listWorkItems?(taskId: string): readonly WorkItem[];
   listInputRequests?(taskId: string): readonly InputRequest[];
   listReviewRounds?(taskId: string): readonly ReviewRound[];
@@ -158,6 +161,7 @@ export type TaskExecutionReadStore = Readonly<{
     nativeSessionId?: string;
     status?: string;
   }> | null;
+  getTaskRoleSessionSet?(taskId: string, roleName: string): import("../executor/agentExecutor.js").TaskRoleSessionSet | null;
   getConfig?(): Readonly<{ runtimeHealth?: unknown }>;
   listContextSnapshots?(taskId: string): readonly ContextSnapshot[];
 }>;
@@ -175,7 +179,8 @@ export type TaskExecutionFacts = Readonly<{
     adapterId?: string;
     status?: string;
   }>[];
-  turns: readonly Turn[];
+  runs: readonly AgentRun[];
+  runDelivery?: Readonly<Record<string, ProviderTurnStatus | "unobserved">>;
   workItems?: readonly WorkItem[];
   inputRequests?: readonly InputRequest[];
   reviewRounds?: readonly ReviewRound[];
@@ -214,10 +219,10 @@ export function buildTaskExecutionProjection(
   if (task === null) return null;
   const roles = store.listRoles?.(taskId) ?? [];
   const events = store.listEvents?.(taskId) ?? [];
-  const turns = operationalTaskRecords(
-    store.listTurns?.(taskId) ?? [],
+  const runs = operationalTaskRecords(
+    store.listRuns?.(taskId) ?? [],
     events,
-    "turn"
+    "run"
   );
   const leaderMailbox = store.getWorkMailbox?.({
     kind: "role",
@@ -233,13 +238,17 @@ export function buildTaskExecutionProjection(
   return projectTaskExecution({
     task,
     roles,
-    turns,
+    runs,
+    runDelivery: Object.fromEntries(runs.map((run) => {
+      const observed = store.getTaskRoleSessionSet?.(taskId, run.roleName)?.providerBinding?.run;
+      return [run.id, observed?.runId === run.id ? observed.status : "unobserved"];
+    })),
     executionGroups: store.listWorkItems === undefined && store.listReviewRounds === undefined
       ? []
       : collectExecutionGroups(
           store.listWorkItems?.(taskId) ?? [],
           store.listReviewRounds?.(taskId) ?? [],
-          turns
+          runs
         ),
     workItems: store.listWorkItems?.(taskId) ?? [],
     ...(store.listContextSnapshots === undefined
@@ -275,12 +284,12 @@ export function buildTaskExecutionProjection(
 export function projectTaskExecutionFromFacts(
   facts: TaskExecutionFacts
 ): TaskExecutionProjection {
-  const turns = operationalTaskRecords(facts.turns, facts.events ?? [], "turn");
+  const runs = operationalTaskRecords(facts.runs, facts.events ?? [], "run");
   const executionGroups = facts.executionGroups
-    ?? collectExecutionGroups(facts.workItems ?? [], facts.reviewRounds ?? [], turns);
+    ?? collectExecutionGroups(facts.workItems ?? [], facts.reviewRounds ?? [], runs);
   return projectTaskExecution({
     ...facts,
-    turns,
+    runs,
     executionGroups
   });
 }
@@ -291,7 +300,7 @@ export function projectTaskExecution(
   const {
     task,
     roles,
-    turns,
+    runs,
     workItems = [],
     inputRequests = [],
     reviewRounds = [],
@@ -307,7 +316,7 @@ export function projectTaskExecution(
   const groupSummaries = executionGroups.map((group) => {
     return summarizeExecutionGroupHealth({
       group,
-      turns,
+      runs,
       sessions: roleSessions,
       events,
       now,
@@ -328,7 +337,7 @@ export function projectTaskExecution(
   const observability = buildTaskObservabilityProjection({
     workItems,
     executionGroups: observabilityGroups,
-    turns,
+    runs,
     events,
     contextSnapshots: facts.contextSnapshots,
     sessionTokens,
@@ -340,22 +349,32 @@ export function projectTaskExecution(
     executionGroups: groupSummaries,
     observability
   });
-  const activeTurns = turns.filter((turn) => turn.status === "active");
-  const turnHasSession = (turn: Turn): boolean => roleSessions.some((session) => (
-    session.roleName === turn.roleName
-    && session.agentId === turn.effective.agentId
+  const activeRuns = runs.filter((run) => run.status === "active");
+  const deliveryOf = (run: AgentRun): ProviderTurnStatus | "unobserved" => {
+    const known = facts.runDelivery?.[run.id];
+    if (known !== undefined && known !== "unobserved") return known;
+    const observed = events.map(runtimeObservationFromTaskEvent).filter((event) =>
+      event?.fence.runId === run.id && event.authority !== "transport"
+      && ["turn.accepted", "turn.completed", "turn.failed", "turn.cancelled"].includes(event.kind)).at(-1);
+    return observed === undefined || observed === null ? "unobserved"
+      : observed.kind.slice("run.".length) as ProviderTurnStatus;
+  };
+  const runHasSession = (run: AgentRun): boolean => roleSessions.some((session) => (
+    session.roleName === run.roleName
+    && session.agentId === run.effective.agentId
     && session.status !== "ended"
   ));
-  const activeTurnViews: readonly TaskExecutionTurn[] = activeTurns.map((turn) => ({
-    id: turn.id,
-    roleName: turn.roleName,
-    purpose: turn.purpose,
-    providerSession: turnHasSession(turn) ? "active" : "starting",
-    status: turn.status,
-    ...(turn.workItemId === undefined ? {} : { workItemId: turn.workItemId }),
-    ...(turn.reviewRoundId === undefined ? {} : { reviewRoundId: turn.reviewRoundId }),
-    ...(turn.executionGroupId === undefined ? {} : { executionGroupId: turn.executionGroupId }),
-    ...(turn.executionLaneId === undefined ? {} : { executionLaneId: turn.executionLaneId })
+  const activeRunViews: readonly TaskExecutionRun[] = activeRuns.map((run) => ({
+    id: run.id,
+    roleName: run.roleName,
+    purpose: run.purpose,
+    providerSession: runHasSession(run) ? "active" : "starting",
+    status: run.status,
+    delivery: deliveryOf(run),
+    ...(run.workItemId === undefined ? {} : { workItemId: run.workItemId }),
+    ...(run.reviewRoundId === undefined ? {} : { reviewRoundId: run.reviewRoundId }),
+    ...(run.executionGroupId === undefined ? {} : { executionGroupId: run.executionGroupId }),
+    ...(run.executionLaneId === undefined ? {} : { executionLaneId: run.executionLaneId })
   }));
   const monitoring = task.executionGate.state === "stopped"
     || task.status === "completed"
@@ -374,7 +393,7 @@ export function projectTaskExecution(
         reason: "execution-stopped",
         monitoring,
         failClosed: false,
-        activeTurns: activeTurnViews,
+        activeRuns: activeRunViews,
         attention: [],
         blockers: [],
         pendingWakeup
@@ -390,7 +409,7 @@ export function projectTaskExecution(
       reason: "task-terminal",
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention: [],
       blockers: [],
       pendingWakeup
@@ -400,7 +419,7 @@ export function projectTaskExecution(
   const attention = collectAttention({
     task,
     roles,
-    activeTurns,
+    activeRuns,
     events,
     leaderFailure,
     roleSessions,
@@ -408,17 +427,17 @@ export function projectTaskExecution(
   });
   const openInputs = inputRequests.filter((request) => request.status === "open");
   const blockers = collectBlockers(workItems, reviewRounds, integrations, openInputs, task);
-  const activeExecutionTurns = activeTurns.filter((turn) => turn.purpose === "execution");
-  const activeReviewTurns = activeTurns.filter((turn) => turn.purpose === "review");
-  const activeDelegatedExecutions = activeExecutionTurns.filter((turn) => (
-    turn.roleName !== "leader"
+  const activeExecutionRuns = activeRuns.filter((run) => run.purpose === "execution");
+  const activeReviewRuns = activeRuns.filter((run) => run.purpose === "review");
+  const activeDelegatedExecutions = activeExecutionRuns.filter((run) => (
+    run.roleName !== "leader"
   ));
-  const healthyActiveTurns = activeTurns.filter((turn) => (
-    turnHasSession(turn)
-    && !attention.some((item) => item.turnId === turn.id)
+  const healthyActiveRuns = activeRuns.filter((run) => (
+    deliveryOf(run) === "accepted"
+    && !attention.some((item) => item.runId === run.id)
   ));
-  const activeLeader = activeTurns.find((turn) => turn.roleName === "leader");
-  const pendingDeliveryTurns = activeTurns.filter((turn) => !turnHasSession(turn));
+  const activeLeader = activeRuns.find((run) => run.roleName === "leader");
+  const pendingDeliveryRuns = activeRuns.filter((run) => deliveryOf(run) !== "accepted");
   const hasPendingLeaderWork = pendingWakeup !== null
     || leaderMailbox?.pending !== null;
   const recoveryPending = isRecoveryPending(
@@ -427,7 +446,7 @@ export function projectTaskExecution(
     leaderFailure
   );
   const failedWork = workItems.some((item) => item.status === "open"
-    && turns.filter((turn) => turn.workItemId === item.id).at(-1)?.status === "failed");
+    && runs.filter((run) => run.workItemId === item.id).at(-1)?.status === "failed");
   const candidateReady = workItems.some((item) => (item.status === "open" && item.currentCandidateId !== undefined));
   const blockedIntegration = integrations.some((attempt) => attempt.status === "blocked");
   const unresolvedIntegration = integrations.some((attempt) => (
@@ -441,19 +460,19 @@ export function projectTaskExecution(
     const first = attention[0];
     if (first === undefined) throw new Error("Task execution attention disappeared.");
     const progressingWithAttention = first.kind === "checkpoint-overdue"
-      && healthyActiveTurns.length > 0;
+      && healthyActiveRuns.length > 0;
     return render({
       task,
       status: progressingWithAttention ? "progressing-with-attention" : "attention",
       owner: first.owner,
       action: "inspect-attention",
       summary: progressingWithAttention
-        ? `${healthyActiveTurns.length} healthy active Turn(s) remain while ${first.summary}`
+        ? `${healthyActiveRuns.length} healthy active AgentRun(s) remain while ${first.summary}`
         : first.summary,
       reason: progressingWithAttention ? "progressing-with-attention" : first.kind,
       monitoring,
       failClosed: hasLeaderMismatch || attention.some((item) => item.failClosed === true),
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
@@ -472,7 +491,7 @@ export function projectTaskExecution(
       reason: "open-input-request",
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
@@ -488,11 +507,11 @@ export function projectTaskExecution(
       action: "recover-execution",
       summary: `Execution Lane ${laneRecovery.laneId} in ${laneRecovery.groupId}`
         + ` requires ${laneRecovery.recovery}`
-        + (laneRecovery.turnId === undefined ? "." : ` for exact Turn ${laneRecovery.turnId}.`),
+        + (laneRecovery.runId === undefined ? "." : ` for exact AgentRun ${laneRecovery.runId}.`),
       reason: `execution-lane-${laneRecovery.recovery}`,
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
@@ -511,7 +530,7 @@ export function projectTaskExecution(
       reason: blockedIntegration ? "integration-blocked" : failedWork ? "work-failed" : "identity-mismatch",
       monitoring,
       failClosed: hasLeaderMismatch,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
@@ -528,24 +547,24 @@ export function projectTaskExecution(
       reason: leaderFailure === null ? "recovery-pending" : "leader-recovery-failed",
       monitoring,
       failClosed: leaderFailure !== null,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
     });
   }
-  const leaderDeliveryPending = pendingDeliveryTurns.some((turn) => turn.roleName === "leader");
+  const leaderDeliveryPending = pendingDeliveryRuns.some((run) => run.roleName === "leader");
   if (leaderDeliveryPending) {
     return render({
       task,
-      status: "recovering",
+      status: "waiting-on-agents",
       owner: "leader",
       action: "recover-leader",
-      summary: "The active Leader Turn is awaiting provider acceptance; delivery remains fail-closed.",
+      summary: `Leader execution record is open; admission is ${activeLeader === undefined ? "unobserved" : deliveryOf(activeLeader)}. This is not proof of Agent progress.`,
       reason: "delivery-pending",
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
@@ -553,14 +572,14 @@ export function projectTaskExecution(
   }
   if (activeLeader !== undefined) {
     const concurrentExecutionCount = activeDelegatedExecutions.length;
-    const concurrentReviewCount = activeReviewTurns.length;
+    const concurrentReviewCount = activeReviewRuns.length;
     const concurrentSummary = [
       concurrentExecutionCount === 0
         ? null
-        : `${concurrentExecutionCount} delegated execution Turn(s)`,
+        : `${concurrentExecutionCount} delegated execution AgentRun(s)`,
       concurrentReviewCount === 0
         ? null
-        : `${concurrentReviewCount} Review Turn(s)`
+        : `${concurrentReviewCount} Review AgentRun(s)`
     ].filter((value): value is string => value !== null).join(" and ");
     return render({
       task,
@@ -568,12 +587,12 @@ export function projectTaskExecution(
       owner: "leader",
       action: "advance-task",
       summary: concurrentSummary.length === 0
-        ? "Leader Turn is actively advancing the Task."
-        : `Leader Turn is actively advancing the Task alongside ${concurrentSummary}.`,
+        ? "Leader execution was accepted; its result and Task progress remain separate facts."
+        : `Leader execution was accepted alongside ${concurrentSummary}; Task progress remains a separate fact.`,
       reason: concurrentSummary.length === 0 ? "leader-turn-active" : "leader-and-agents-active",
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
@@ -585,62 +604,62 @@ export function projectTaskExecution(
       status: "needs-leader-action",
       owner: "leader",
       action: "advance-task",
-      summary: "A durable Leader wake is pending; concurrent Turns remain visible but do not suppress it.",
+      summary: "A durable Leader wake is pending; concurrent AgentRuns remain visible but do not suppress it.",
       reason: "leader-wake-pending",
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
     });
   }
-  if (pendingDeliveryTurns.length > 0) {
+  if (pendingDeliveryRuns.length > 0) {
     return render({
       task,
       status: "recovering",
       owner: "leader",
       action: "recover-execution",
-      summary: `${pendingDeliveryTurns.length} active delegated Turn(s) are awaiting provider acceptance; delivery remains fail-closed.`,
+      summary: `${pendingDeliveryRuns.length} active delegated AgentRun(s) are awaiting provider acceptance; delivery remains fail-closed.`,
       reason: "delivery-pending",
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
     });
   }
   if (activeDelegatedExecutions.length > 0) {
-    const reviewSuffix = activeReviewTurns.length === 0
+    const reviewSuffix = activeReviewRuns.length === 0
       ? ""
-      : `; ${activeReviewTurns.length} Review Turn(s) are also active`;
+      : `; ${activeReviewRuns.length} Review AgentRun(s) are also active`;
     return render({
       task,
       status: "waiting-on-agents",
       owner: roleOwner(activeDelegatedExecutions[0].roleName),
       action: "wait-for-agents",
-      summary: `${activeDelegatedExecutions.length} delegated execution Turn(s) are active${reviewSuffix}.`,
+      summary: `${activeDelegatedExecutions.length} delegated execution AgentRun(s) are active${reviewSuffix}.`,
       reason: "delegated-work-active",
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
     });
   }
-  if (activeReviewTurns.length > 0) {
+  if (activeReviewRuns.length > 0) {
     return render({
       task,
       status: "waiting-on-agents",
       owner: "reviewer",
       action: "wait-for-agents",
-      summary: `${activeReviewTurns.length} Review Turn(s) are evaluating frozen candidates; newer facts can still wake the Leader.`,
+      summary: `${activeReviewRuns.length} Review AgentRun(s) are evaluating frozen candidates; newer facts can still wake the Leader.`,
       reason: "review-active",
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
@@ -660,7 +679,7 @@ export function projectTaskExecution(
         : "integration-pending",
       monitoring,
       failClosed: false,
-      activeTurns: activeTurnViews,
+      activeRuns: activeRunViews,
       attention,
       blockers,
       pendingWakeup
@@ -675,7 +694,7 @@ export function projectTaskExecution(
     reason: "no-executor",
     monitoring,
     failClosed: false,
-    activeTurns: activeTurnViews,
+    activeRuns: activeRunViews,
     attention,
     blockers,
     pendingWakeup
@@ -703,7 +722,7 @@ function projection(
     reason: input.reason,
     monitoring: input.monitoring,
     failClosed: input.failClosed,
-    activeTurns: input.activeTurns,
+    activeRuns: input.activeRuns,
     executionGroups: input.executionGroups ?? [],
     observability: input.observability,
     attention: input.attention,
@@ -725,7 +744,7 @@ function uniqueExecutionGroups(groups: readonly ExecutionGroup[]): ExecutionGrou
 function collectExecutionGroups(
   workItems: readonly WorkItem[],
   reviewRounds: readonly ReviewRound[],
-  _turns: readonly Turn[]
+  _turns: readonly AgentRun[]
 ): ExecutionGroup[] {
   const groups: ExecutionGroup[] = [
     ...workItems.flatMap((item) => {
@@ -752,7 +771,7 @@ function collectExecutionGroups(
 function collectAttention(input: Readonly<{
   task: TaskExecutionTask;
   roles: readonly Readonly<{ name: string; activeAgentId?: string; adapterId?: string }>[];
-  activeTurns: readonly Turn[];
+  activeRuns: readonly AgentRun[];
   events: readonly TaskEvent[];
   leaderFailure: LeaderFailure | null;
   roleSessions: readonly Readonly<{
@@ -764,7 +783,7 @@ function collectAttention(input: Readonly<{
   inputRequests: readonly InputRequest[];
 }>): TaskExecutionAttention[] {
   const result: TaskExecutionAttention[] = [];
-  const { task, activeTurns, events, leaderFailure } = input;
+  const { task, activeRuns, events, leaderFailure } = input;
   if (leaderFailure !== null) {
     result.push({
       kind: "leader-recovery",
@@ -774,52 +793,52 @@ function collectAttention(input: Readonly<{
       failClosed: true
     });
   }
-  for (const turn of activeTurns) {
-    const session = input.roleSessions.find((candidate) => candidate.roleName === turn.roleName);
+  for (const run of activeRuns) {
+    const session = input.roleSessions.find((candidate) => candidate.roleName === run.roleName);
     // Current Role selection is desired configuration, not the identity fence
-    // of a Turn already assigned. Only actual execution evidence can mismatch.
+    // of a AgentRun already assigned. Only actual execution evidence can mismatch.
     if (
       session !== undefined
-      && (session.agentId !== turn.effective?.agentId || session.adapterId !== turn.effective?.adapterId)
+      && (session.agentId !== run.effective?.agentId || session.adapterId !== run.effective?.adapterId)
     ) {
       result.push({
         kind: "identity-mismatch",
-        id: `session:${turn.id}`,
+        id: `session:${run.id}`,
         owner: "leader",
-        summary: `Turn ${turn.id} has a provider/session identity mismatch; monitoring fails closed.`,
-        turnId: turn.id,
-        roleName: turn.roleName,
+        summary: `AgentRun ${run.id} has a provider/session identity mismatch; monitoring fails closed.`,
+        runId: run.id,
+        roleName: run.roleName,
         failClosed: true
       });
     }
-    if (isRoleTurnStalled(events, turn.id)) {
-      if (turn.roleName === "leader") {
-        const progressAt = latestStallProgressAt(events, turn.id) ?? "unknown";
+    if (isRoleRunStalled(events, run.id)) {
+      if (run.roleName === "leader") {
+        const progressAt = latestStallProgressAt(events, run.id) ?? "unknown";
         result.push({
           kind: "leader-stalled",
-          id: `leader-stall:${turn.id}:${progressAt}`,
+          id: `leader-stall:${run.id}:${progressAt}`,
           owner: "operator",
-          summary: `Leader Turn ${turn.id} has an unresolved no-progress attention.`,
-          turnId: turn.id,
-          roleName: turn.roleName
+          summary: `Leader AgentRun ${run.id} has an unresolved no-progress attention.`,
+          runId: run.id,
+          roleName: run.roleName
         });
       } else {
         result.push({
           kind: "checkpoint-overdue",
-          id: `checkpoint-overdue:${turn.id}`,
+          id: `checkpoint-overdue:${run.id}`,
           owner: "leader",
-          summary: `Delegated Turn ${turn.id} has an unresolved checkpoint-overdue signal.`,
-          turnId: turn.id,
-          roleName: turn.roleName
+          summary: `Delegated AgentRun ${run.id} has an unresolved checkpoint-overdue signal.`,
+          runId: run.id,
+          roleName: run.roleName
         });
       }
     }
   }
   for (const request of input.inputRequests.filter(({ status }) => status === "open")) {
     const requester = request.requester;
-    const turn = requester === undefined
+    const run = requester === undefined
       ? undefined
-      : activeTurns.find(({ id }) => id === requester.turnId);
+      : activeRuns.find(({ id }) => id === requester.runId);
     const role = requester === undefined
       ? undefined
       : input.roles.find(({ name }) => name === requester.roleName);
@@ -827,11 +846,11 @@ function collectAttention(input: Readonly<{
       ? undefined
       : input.roleSessions.find(({ roleName }) => roleName === requester.roleName);
     if (
-      turn === undefined
-      || turn.roleName !== "leader"
+      run === undefined
+      || run.roleName !== "leader"
       || requester === undefined
-      || turn.effective?.agentId !== requester.agentId
-      || (role?.adapterId !== undefined && role.adapterId !== turn.effective?.adapterId)
+      || run.effective?.agentId !== requester.agentId
+      || (role?.adapterId !== undefined && role.adapterId !== run.effective?.adapterId)
       || (requester.nativeSessionId !== undefined
         && session?.nativeSessionId !== requester.nativeSessionId)
     ) {
@@ -839,8 +858,8 @@ function collectAttention(input: Readonly<{
         kind: "identity-mismatch",
         id: `input:${request.id}`,
         owner: "leader",
-        summary: `InputRequest ${request.id} does not match the active Leader Turn/session; it is held fail-closed.`,
-        ...(requester?.turnId === undefined ? {} : { turnId: requester.turnId }),
+        summary: `InputRequest ${request.id} does not match the active Leader AgentRun/session; it is held fail-closed.`,
+        ...(requester?.runId === undefined ? {} : { runId: requester.runId }),
         roleName: "leader",
         failClosed: true
       });

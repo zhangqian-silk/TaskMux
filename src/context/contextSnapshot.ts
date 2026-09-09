@@ -9,9 +9,9 @@ import {
   requireTimestamp
 } from "../domain/validation.js";
 import {
-  MAX_CONTEXT_SOURCE_TURN_BYTES,
-  MAX_CONTEXT_SOURCE_TURNS
-} from "./sourceTurnContext.js";
+  MAX_CONTEXT_SOURCE_RUN_BYTES,
+  MAX_CONTEXT_SOURCE_RUNS
+} from "./sourceRunContext.js";
 
 export const CONTEXT_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 export const CONTEXT_SNAPSHOT_MAX_RESOURCES = 256;
@@ -50,7 +50,7 @@ export type ContextSnapshotResource = Readonly<{
 
 export type ContextSnapshot = ContextSnapshotRef & Readonly<{
   refs: readonly ContextRef[];
-  /** Immutable authorized values; mutable stores are never re-read for a frozen Turn. */
+  /** Immutable authorized values; mutable stores are never re-read for a frozen AgentRun. */
   resources: readonly ContextSnapshotResource[];
   repoCommit?: string;
   acceptRefs: readonly string[];
@@ -273,18 +273,18 @@ function normalizeSnapshotResources(
   refs: readonly ContextRef[]
 ): readonly ContextSnapshotResource[] {
   if (!Array.isArray(values)) throw new Error("Context Snapshot resources must be an array.");
-  const sourceTurnCount = values.filter((resource) => (
+  const sourceRunCount = values.filter((resource) => (
     resource !== null
     && typeof resource === "object"
     && !Array.isArray(resource)
     && resource.ref !== null
     && typeof resource.ref === "object"
-    && resource.ref.store === "source-turn"
+    && resource.ref.store === "source-run"
   )).length;
-  if (sourceTurnCount > MAX_CONTEXT_SOURCE_TURNS) {
-    throw new Error(`Context Snapshot exceeds ${MAX_CONTEXT_SOURCE_TURNS} source Turns.`);
+  if (sourceRunCount > MAX_CONTEXT_SOURCE_RUNS) {
+    throw new Error(`Context Snapshot exceeds ${MAX_CONTEXT_SOURCE_RUNS} source AgentRuns.`);
   }
-  if (values.length - sourceTurnCount > CONTEXT_SNAPSHOT_MAX_RESOURCES) {
+  if (values.length - sourceRunCount > CONTEXT_SNAPSHOT_MAX_RESOURCES) {
     throw new Error(`Context Snapshot exceeds ${CONTEXT_SNAPSHOT_MAX_RESOURCES} resources.`);
   }
   const byRef = new Map(refs.map((ref) => [contextRefKey(ref), ref]));
@@ -310,14 +310,14 @@ function normalizeSnapshotResources(
     || new Set(resources.map(({ ref }) => contextRefKey(ref))).size !== refs.length) {
     throw new Error("Context Snapshot resources must cover every ref exactly once.");
   }
-  const ordinary = resources.filter(({ ref }) => ref.store !== "source-turn");
-  const sourceTurns = resources.filter(({ ref }) => ref.store === "source-turn");
+  const ordinary = resources.filter(({ ref }) => ref.store !== "source-run");
+  const sourceRuns = resources.filter(({ ref }) => ref.store === "source-run");
   if (Buffer.byteLength(JSON.stringify(ordinary), "utf8") > CONTEXT_SNAPSHOT_MAX_BYTES) {
     throw new Error(`Context Snapshot resources exceed ${CONTEXT_SNAPSHOT_MAX_BYTES} bytes.`);
   }
-  if (Buffer.byteLength(JSON.stringify(sourceTurns), "utf8") > MAX_CONTEXT_SOURCE_TURN_BYTES) {
+  if (Buffer.byteLength(JSON.stringify(sourceRuns), "utf8") > MAX_CONTEXT_SOURCE_RUN_BYTES) {
     throw new Error(
-      `Context Snapshot source Turns exceed ${MAX_CONTEXT_SOURCE_TURN_BYTES} bytes.`
+      `Context Snapshot source AgentRuns exceed ${MAX_CONTEXT_SOURCE_RUN_BYTES} bytes.`
     );
   }
   return Object.freeze(resources);

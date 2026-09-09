@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { SqliteTaskStore } from "../../dist/storage/sqliteStore.js";
 import { createTask, activateTask } from "../../dist/task/task.js";
 import { createGlobalRole, createRole, createRoleAgentBinding } from "../../dist/role/role.js";
-import { createTurn } from "../../dist/turn/turn.js";
-import { createTurnInput } from "../../dist/context/turnInputContract.js";
+import { createRun } from "../../dist/agentRun/agentRun.js";
+import { createRunInput } from "../../dist/context/runInputContract.js";
 import { createRoleSessionSet, recordRoleAgentSession } from "../../dist/executor/agentExecutor.js";
 import { resolveEffectiveLaunch } from "../../dist/executor/effectiveLaunch.js";
 import { createBuiltinCapabilities } from "../../dist/kernel/builtinCapabilities.js";
@@ -32,7 +32,7 @@ test("a Leader uses a Task-local declarative plugin and preserves its result", a
       createRoleSessionSet({ scope: "task", taskId: task.id, roleName: role.name }, binding.agentId, now),
       { agentId: binding.agentId, adapterId: binding.adapterId, nativeSessionId: "plugin-smoke-session",
         policy: "fixed", status: "active", effective: resolveEffectiveLaunch({ role, purpose: "execution" }) }, now));
-    store.saveActiveTurn(createTurn("turn-1", task.id, role.name, "new", createTurnInput({
+    store.saveActiveRun(createRun("turn-1", task.id, role.name, "new", createRunInput({
       source: { type: "yui", channel: "leader-wakeup" }, directive: "Use a Task-local plugin.", deltaRefIds: []
     }), now, { effective: resolveEffectiveLaunch({ role, purpose: "execution" }) }));
     const dispatch = createCapabilityDispatcher(createBuiltinCapabilities(host, store, createDurableJobControl(store)));

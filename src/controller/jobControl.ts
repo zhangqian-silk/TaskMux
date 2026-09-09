@@ -38,9 +38,9 @@ import { requireManagedTaskCaller } from "../runtime/managedCaller.js";
  *
  * rr12: The identity is now bound to a durable, Controller-verified record
  * rather than trusted as a literal:
- * - A `task` caller must carry `turnId`; the Controller looks up that Turn,
- *   requires `turn.roleName === role` and `turn.status === "active"`, and verifies
- *   the current native Session binding. Role does not narrow authority within the Task.
+ * - A Task caller names its current native Session. Leader management does not
+ *   require an active Run; other Task Roles retain their exact Assignment gate.
+ *   New delivery Jobs additionally require the Session's captured delivery authority.
  * - A `global` caller is verified against the current global Role, Agent,
  *   and native Session and then has full Task control authority.
  * - A literal `scope: "user"` is never authority on its own.
@@ -52,7 +52,7 @@ export type DurableJobCaller = Readonly<{
   agentId?: string;
   adapterId?: string;
   nativeSessionId?: string;
-  turnId?: string;
+  runId?: string;
 }>;
 
 export type DurableJobStartParams = Readonly<{
@@ -297,6 +297,12 @@ function assertNonSecretJobInput(params: DurableJobStartParams): void {
 function validateStartParams(store: TaskStore, params: DurableJobStartParams): void {
   validateJobTarget(store, params);
   assertCallerAuthorized(store, params.caller, params.taskId);
+  if (params.caller.scope === "task") {
+    const session = store.getTaskRoleSessionSet(params.taskId, params.caller.role!);
+    if (session?.sessions[session.activeAgentId]?.effective.executionAuthority !== "delivery") {
+      throw jobControlError("UNAUTHORIZED", "Managed workspace Jobs require a delivery Session; Task activation does not upgrade planning authority.");
+    }
+  }
 }
 
 function validateJobTarget(store: TaskStore, params: Omit<DurableJobStartParams, "caller">): void {
@@ -428,16 +434,15 @@ function validateJobTarget(store: TaskStore, params: Omit<DurableJobStartParams,
 /**
  * rr8/rr12: Bind the declared job owner to the caller's managed identity. The
  * Controller validates the declared owner/workspace and verifies the caller
- * against durable Turn/Session state — a self-reported role or scope is never
+ * against durable AgentRun/Session state — a self-reported role or scope is never
  * authority on its own. The rules:
  *
  * - `user` (non-managed): rejected because it has no managed Session identity.
  * - `global`: full Task authority after current Role Session verification.
  * - `task` + mismatched taskId: rejected.
- * - `task` + missing `turnId`: rejected (a managed caller must bind to a Turn).
- * - `task` + Turn not found / not active / `roleName !== role`: rejected — the
- *   claimed Role must be the real Role of an active Turn.
- * - `task`: full authority inside the matching Task after active Turn and
+ * - A non-Leader Task caller requires its current active Assignment.
+ * - A Leader Task caller requires its current, unrevoked native Session.
+ * - `task`: authority inside the matching Task after current Session and
  *   native Session verification; Role does not narrow it.
  */
 /**
@@ -448,7 +453,7 @@ function validateJobTarget(store: TaskStore, params: Omit<DurableJobStartParams,
 function assertCallerAuthorized(
   store: Pick<
     TaskStore,
-    "getTurn" | "getActiveTurn" | "getRole" | "getTaskRoleSessionSet" | "listEvents"
+    "getRun" | "getActiveRun" | "getRole" | "getTaskRoleSessionSet" | "listEvents"
       | "getGlobalRole" | "getGlobalRoleSessionSet"
   >,
   caller: DurableJobCaller,
@@ -486,10 +491,8 @@ function assertCallerAuthorized(
       "A managed Task Session may not start or cancel Jobs for a different Task."
     );
   }
-  // The Turn is resolved from durable state rather than presented by the
-  // caller: a long-lived Session process cannot hold a current Turn in its
-  // frozen environment, and its own claim would add nothing the store does
-  // not already own.
+  // A long-lived Session is the Leader's identity, not its execution
+  // occupancy. Non-Leader callers still require their active Assignment.
   const current = (() => {
     try {
       return requireManagedTaskCaller(store, {
@@ -500,8 +503,8 @@ function assertCallerAuthorized(
       throw jobControlError("UNAUTHORIZED", error instanceof Error ? error.message : String(error));
     }
   })();
-  if (current.currentTurnId === undefined) {
-    throw jobControlError("UNAUTHORIZED", "A managed Task Session's Role is not bound to an active Turn.");
+  if (current.roleName !== "leader" && current.currentRunId === undefined) {
+    throw jobControlError("UNAUTHORIZED", "A managed Task Session's Role is not bound to an active AgentRun.");
   }
   const sessions = store.getTaskRoleSessionSet(taskId, current.roleName);
   const session = activeLiveRoleAgentSession(sessions);
@@ -757,7 +760,7 @@ function parseCaller(value: JsonValue | undefined): DurableJobCaller {
   const record = value as Readonly<Record<string, JsonValue>>;
   const allowed = new Set([
     "scope", "taskId", "role", "agentId", "adapterId", "nativeSessionId",
-    "turnId"
+    "runId"
   ]);
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) {
@@ -768,7 +771,7 @@ function parseCaller(value: JsonValue | undefined): DurableJobCaller {
     throw jobControlError("INVALID_PARAMS", "job caller scope is invalid.");
   }
   const optionalId = (key: "taskId" | "role" | "agentId" | "adapterId"
-    | "nativeSessionId" | "turnId"): string | undefined => {
+    | "nativeSessionId" | "runId"): string | undefined => {
     const entry = record[key];
     if (entry === undefined) return undefined;
     return requiredId(entry, `job caller ${key}`);
@@ -778,7 +781,7 @@ function parseCaller(value: JsonValue | undefined): DurableJobCaller {
   const agentId = optionalId("agentId");
   const adapterId = optionalId("adapterId");
   const nativeSessionId = optionalId("nativeSessionId");
-  const turnId = optionalId("turnId");
+  const runId = optionalId("runId");
   return {
     scope: record.scope,
     ...(taskId === undefined ? {} : { taskId }),
@@ -786,7 +789,7 @@ function parseCaller(value: JsonValue | undefined): DurableJobCaller {
     ...(agentId === undefined ? {} : { agentId }),
     ...(adapterId === undefined ? {} : { adapterId }),
     ...(nativeSessionId === undefined ? {} : { nativeSessionId }),
-    ...(turnId === undefined ? {} : { turnId })
+    ...(runId === undefined ? {} : { runId })
   };
 }
 

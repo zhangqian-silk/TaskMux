@@ -34,11 +34,11 @@ Operator 是全局 Role；Leader 属于一个 Task；Worker／Reviewer 是为该
 
 ## 3. 配置生效规则
 
-Role edit 返回保存后的当前配置。正在执行的 Turn 保留实际配置；下一次派发解析新配置。若现有 Session 的 Agent、环境或安全相关设置不兼容，则由负责人决定停止或创建新 Session，不热改进程。
+Role edit 返回保存后的当前配置。正在执行的 AgentRun 保留实际配置；下一次派发解析新配置。若现有 Session 的 Agent、环境或安全相关设置不兼容，则由负责人决定停止或创建新 Session，不热改进程。
 
 不影响执行控制的展示字段可即时更新。指令和 Skills 的生效也以实际 Runtime 能力为准，不能因为数据库已改就声称运行中的模型已经读到。
 
-更换 Worker Agent 不改变 WorkItem 身份。Leader 承载更换也不重建 Task；原分配的 Worker 结果按原 Turn 保存后交给当前 Leader。
+更换 Worker Agent 不改变 WorkItem 身份。Leader 承载更换也不重建 Task；原分配的 Worker 结果按原 AgentRun 保存后交给当前 Leader。
 
 ## 4. Context 的返回内容
 
@@ -76,7 +76,7 @@ Surface 使用两个主要目标：全局 Operator 或某 Task 的 Leader。Task
 
 普通消息保留 from、to、task、body／reference 和 createdAt。用户问题可附回答状态和回答引用，以便重启后知道仍在等什么。不存在额外的 Message-driven 工作流。
 
-投递可以批量包含事件和消息引用。记录稳定 attempt 与被接受 Turn 的关系。忙碌时保留待投递输入，重复 Wake 合并；未知投递先保留证据，不因 Role 换绑自动再发。
+投递可以批量包含事件和消息引用。记录稳定 attempt 与被接受 AgentRun 的关系。忙碌时保留待投递输入，重复 Wake 合并；未知投递先保留证据，不因 Role 换绑自动再发。
 
 消息接受只说明输入到达，不证明 Agent 已经实施。对于重要要求，落实证据是后续持久化和工作结果。Context 读取是独立行为。
 

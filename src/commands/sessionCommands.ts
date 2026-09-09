@@ -68,7 +68,7 @@ export async function runSessionStopCommand(input: Readonly<{
     // lifecycle work that may exist without a current Session candidate.
     await input.runtime.drainController();
     await input.runtime.stopController();
-    // Re-read the authoritative facts after the drain because a Turn that was
+    // Re-read the authoritative facts after the drain because a AgentRun that was
     // already inside a pass may have changed state meanwhile.
     const settled = input.runtime.snapshot();
     const blockedAfterDrain = blockedSessions(settled);
@@ -128,7 +128,7 @@ function blockedStopResult(
   blocked: SessionStopResult["data"]["blocked"]
 ): SessionStopResult {
   const details = blocked.map(({ session }) => (
-    `- ${renderSessionOwner(session)} (an active Turn or lifecycle operation is still pending)`
+    `- ${renderSessionOwner(session)} (an active AgentRun or lifecycle operation is still pending)`
   ));
   return {
     output: [

@@ -26,6 +26,7 @@ import {
   REMOVE_RUNTIME_GENERATION_SQL,
   removeRuntimeGenerationRecords
 } from "./migrations/removeRuntimeGeneration.js";
+import { migrateAgentRunContract } from "./migrations/agentRunContract.js";
 
 import {
   CURRENT_STORAGE_VERSION,
@@ -33,8 +34,8 @@ import {
 } from "./storageVersions.js";
 
 /** Telemetry retention bounds (§4.4). Open question 3 in §11; defaults from the design. */
-export const TELEMETRY_KEEP_PER_TURN = 200;
-export const TELEMETRY_TURN_CAP = 50_000;
+export const TELEMETRY_KEEP_PER_RUN = 200;
+export const TELEMETRY_RUN_CAP = 50_000;
 
 /**
  * Version 1 migration: creates every table and index.
@@ -954,6 +955,13 @@ CREATE INDEX IF NOT EXISTS idx_turns_planning_active ON turns(task_id, turn_id)
 CREATE INDEX IF NOT EXISTS idx_tasks_activation_pending ON task_records(task_id)
   WHERE json_extract(payload, '$.activationRequest.disposition') = 'pending';
 `
+  },
+  {
+    version: 13,
+    name: "session-authority-and-execution-admission",
+    introducedIn: "0.15.9",
+    sql: "SELECT 1; -- AgentRun contract, notification admission and Session authority",
+    migrateData: migrateAgentRunContract
   }
 ]);
 

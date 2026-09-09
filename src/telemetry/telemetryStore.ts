@@ -2,13 +2,13 @@ import type { TelemetryMode } from "./telemetryConfig.js";
 
 /**
  * One high-volume Agent Driver observation routed to the telemetry sidecar.
- * Progress belongs to a Task/Role/Turn. `sequence` is the provider counter
+ * Progress belongs to a Task/Role/AgentRun. `sequence` is the provider counter
  * when known, not an identity for a Host attachment.
  */
 export type TelemetryProgressEntry = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   progressId: string;
   sequence?: number;
   payload: Readonly<Record<string, string>>;
@@ -16,14 +16,14 @@ export type TelemetryProgressEntry = Readonly<{
 }>;
 
 /**
- * Per-Turn progress summary. `count` is the total number of progress
- * observations ever recorded for the Turn (including rows pruned from the
+ * Per-AgentRun progress summary. `count` is the total number of progress
+ * observations ever recorded for the AgentRun (including rows pruned from the
  * retained window); the window and the aggregate are both bounded.
  */
 export type TelemetryAggregate = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   firstAt: string;
   lastAt: string;
   count: number;
@@ -66,25 +66,25 @@ export interface TelemetrySink {
 /**
  * Read side of the sidecar. All reads are cold/bounded: default Task context
  * never loads full progress history — it uses aggregates and the latest row
- * per Turn; full history is paged by Task ID.
+ * per AgentRun; full history is paged by Task ID.
  */
 export interface TelemetryReader {
-  count(taskId: string, turnId?: string): number;
+  count(taskId: string, runId?: string): number;
   list(
     taskId: string,
-    turnId?: string,
+    runId?: string,
     page?: Readonly<{ limit: number; offset: number }>
   ): TelemetryPage<TelemetryProgressEntry>;
-  /** Summary of one Turn, or null when unknown. */
-  aggregate(taskId: string, turnId: string): TelemetryAggregate | null;
-  /** Exact summary for one Role/Turn, or null when unknown. */
-  aggregateRoleTurn(
+  /** Summary of one AgentRun, or null when unknown. */
+  aggregate(taskId: string, runId: string): TelemetryAggregate | null;
+  /** Exact summary for one Role/AgentRun, or null when unknown. */
+  aggregateRoleRun(
     taskId: string,
     roleName: string,
-    turnId: string
+    runId: string
   ): TelemetryAggregate | null;
-  /** All per-Turn aggregates for one Task (retention/status reads). */
-  listTurnAggregates(taskId: string): TelemetryAggregate[];
+  /** All per-AgentRun aggregates for one Task (retention/status reads). */
+  listRunAggregates(taskId: string): TelemetryAggregate[];
   /**
    * Monotonic counter of applied writes. Consumers that cache projections
    * derived from telemetry (for example the scheduler stall fold) include it
@@ -96,26 +96,26 @@ export interface TelemetryReader {
 export interface TelemetryStore extends TelemetrySink, TelemetryReader {
   /**
    * Terminal retention: keep the newest `keep` rows per
-   * (task, role, Turn) and delete older ones. The aggregate is
+   * (task, role, AgentRun) and delete older ones. The aggregate is
    * preserved. Returns the number of rows deleted.
    */
-  pruneTurn(
+  pruneRun(
     taskId: string,
     roleName: string,
-    turnId: string,
+    runId: string,
     keep?: number
   ): number;
   /**
-   * Active-Turn hard cap: trim oldest rows across the Turn beyond `cap`.
+   * Active-AgentRun hard cap: trim oldest rows across the AgentRun beyond `cap`.
    * Returns the number of rows deleted.
    */
-  capTurn(taskId: string, turnId: string, cap?: number): number;
+  capRun(taskId: string, runId: string, cap?: number): number;
   /**
-   * Bulk-import one Turn's retained window and authoritative aggregate
+   * Bulk-import one AgentRun's retained window and authoritative aggregate
    * (historical compaction). Synchronous and transactional; bypasses the
    * coalescing ingress queue because the caller already validated the data.
    */
-  importTurn(
+  importRun(
     entries: readonly TelemetryProgressEntry[],
     aggregate: TelemetryAggregate
   ): void;

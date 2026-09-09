@@ -3,7 +3,7 @@ export const MARKDOWN_SCRIPT = `
 //
 // Agent-authored prose (focus, outcomes, reviews, messages) arrives as plain
 // text with informal Markdown. Rendering structure (headings, lists, code)
-// turns walls of text into scannable blocks.
+// runs walls of text into scannable blocks.
 //
 // Safety rule: every byte of user text is HTML-escaped BEFORE any tag is
 // introduced; the transforms below only ever add our own elements. Links are

@@ -34,7 +34,7 @@ export const role: RoleRecord = {
   }
 };
 export const oldSession: SessionRecord = {
-  id: 'session-1', roleId: role.id, effective: role.current,
+  id: 'session-1', roleId: role.id, effective: { ...role.current, executionAuthority: 'delivery' },
   implementation: { pluginId: 'example/runtime', generation: 'g1', version: '1.0', artifactDigest: 'sha256:example-a' },
   statefulDependencies: []
 };
@@ -45,7 +45,7 @@ export const nextRole: RoleRecord = {
 // oldSession keeps its actual configuration; changing Role does not rewrite it.
 export const candidate: Candidate = {
   id: 'candidate-1', taskId: task.id, workItemId: 'work-1',
-  source: { kind: 'turn', turnId: 'turn-1' },
+  source: { kind: 'run', runId: 'run-1' },
   summary: '已形成说明',
   artifacts: [{ kind: 'content', id: 'artifact-1', digest: 'sha256:example-report', locator: 'artifacts/report.md' }],
   contextRefs: [{ id: brief.id, revision: brief.revision }]
@@ -53,15 +53,15 @@ export const candidate: Candidate = {
 export const progressUpdate: BriefRecord = { ...brief, revision: 2, currentFocus: '等待负责人阅读说明' };
 // A progress write does not edit candidate or impose automatic invalidation.
 export const review: Review = {
-  id: 'review-1', taskId: task.id, candidateId: candidate.id, reviewerTurnId: 'review-turn-1'
+  id: 'review-1', taskId: task.id, candidateId: candidate.id, reviewerRunId: 'review-run-1'
 };
 export const group: ExecutionGroup = {
   id: 'group-1', assignment: { objective: '独立检查同一材料', contextRefs: [], permittedResourceRefs: [] },
   attempts: [
-    { replica: 0, attempt: 0, turnId: 'a0' },
-    { replica: 1, attempt: 0, turnId: 'b0' },
-    { replica: 1, attempt: 1, turnId: 'b1' }
-  ], selectedResultTurns: ['a0', 'b1']
+    { replica: 0, attempt: 0, runId: 'a0' },
+    { replica: 1, attempt: 0, runId: 'b0' },
+    { replica: 1, attempt: 1, runId: 'b1' }
+  ], selectedResultRuns: ['a0', 'b1']
 };
 export const outputFailureAfterEffect: OperationRecord = {
   id: 'op-1', requestId: 'req-1', requestDigest: 'sha256:input', actorId: 'leader-1',

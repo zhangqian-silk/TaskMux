@@ -20,7 +20,7 @@ export function createCapabilityDispatcher(capabilities: ReturnType<typeof creat
           properties: {
             scope: { enum: ["user", "global", "task"] }, taskId: { type: "string" },
             role: { type: "string" }, agentId: { type: "string" }, adapterId: { type: "string" }, nativeSessionId: { type: "string" },
-            turnId: { type: "string" }
+            runId: { type: "string" }
           }
         },
         query: { type: "string" },

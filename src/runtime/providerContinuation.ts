@@ -30,7 +30,7 @@ export type ProviderContinuation = Readonly<{
   schemaVersion: 1;
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   identity: ProviderContinuationIdentity;
   parentContinuationId?: string;
   execution: ContinuationExecution;
@@ -65,7 +65,7 @@ export function providerContinuationKey(identity: ProviderContinuationIdentity):
 export function createProviderContinuation(input: Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   identity: ProviderContinuationIdentity;
   parentContinuationId?: string;
   attachment: ContinuationAttachment;
@@ -78,7 +78,7 @@ export function createProviderContinuation(input: Readonly<{
     schemaVersion: 1,
     taskId: text(input.taskId, "Task id"),
     roleName: text(input.roleName, "Role name"),
-    turnId: text(input.turnId, "Turn id"),
+    runId: text(input.runId, "AgentRun id"),
     identity: validateProviderContinuationIdentity(input.identity),
     ...(input.parentContinuationId === undefined
       ? {}
@@ -234,7 +234,7 @@ export function validateProviderContinuation(value: ProviderContinuation): Provi
   if (value.schemaVersion !== 1) throw new Error("Provider Continuation schemaVersion must be 1.");
   text(value.taskId, "Task id");
   text(value.roleName, "Role name");
-  text(value.turnId, "Turn id");
+  text(value.runId, "AgentRun id");
   validateProviderContinuationIdentity(value.identity);
   if (!["active", "quiescent", "unknown"].includes(value.execution)) {
     throw new Error("Provider Continuation execution is invalid.");

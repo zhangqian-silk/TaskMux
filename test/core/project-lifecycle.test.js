@@ -172,7 +172,7 @@ test("Task activation rolls back every fresh clone when one remote cannot be clo
   assert.equal(persisted.workspaceIdentity, undefined);
   assert.equal(store.getTaskWorkspace(task.id), null);
   assert.deepEqual(store.listManagedWorkspaces(task.id), []);
-  assert.deepEqual(store.listTurns(task.id), []);
+  assert.deepEqual(store.listRuns(task.id), []);
   assert.equal(existsSync(join(workspaceRoot, "tasks", task.id)), false);
 });
 

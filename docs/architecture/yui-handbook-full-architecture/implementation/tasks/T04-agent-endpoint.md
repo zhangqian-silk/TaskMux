@@ -6,7 +6,7 @@
 
 用同一执行接口承载现有 Codex 和 Claude 路径，产品、协议和载体在 Runtime 内部分工。
 
-**完成状态：** 上层按 Role 发起和读取 Turn，不依赖具体 Provider 字段；现有原生能力不被统一接口抹平。
+**完成状态：** 上层按 Role 发起和读取 AgentRun，不依赖具体 Provider 字段；现有原生能力不被统一接口抹平。
 
 ## 责任范围
 
@@ -31,7 +31,7 @@
 
 - 当前 Codex／Claude 主路径可通过 Endpoint 完成。
 - pending、unknown、已接受和未提交按证据区分。
-- 更换配置不改写已运行 Turn，不会重复未知输入。
+- 更换配置不改写已运行 AgentRun，不会重复未知输入。
 
 验收场景：S09、S11、S12、S14、S17、S18、S19、S21、S22、S23、S24、S35、S39、S41、S43。场景定义见[统一验收说明](../../reference/acceptance-scenarios.md)。
 

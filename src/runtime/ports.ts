@@ -82,7 +82,7 @@ export type RuntimeLaunchPreparationRequest = Readonly<{
   environment?: Readonly<Record<string, string>>;
   mode: "new" | "resume";
   nativeSessionId?: string;
-  turnId?: string;
+  runId?: string;
 }>;
 
 /**
@@ -91,7 +91,7 @@ export type RuntimeLaunchPreparationRequest = Readonly<{
  */
 export type RuntimeLaunchPreflight = Readonly<{
   owner: RuntimeOwner;
-  turnId?: string;
+  runId?: string;
   agentId: string;
   adapterId: string;
   effective: EffectiveLaunchSnapshot;
@@ -101,11 +101,11 @@ export type RuntimeLaunchPreflight = Readonly<{
 
 export type RuntimeLaunchPreStart = (preflight: RuntimeLaunchPreflight) => void;
 
-/** Prepare a Session and record its native identity before Turn delivery. */
+/** Prepare a Session and record its native identity before AgentRun delivery. */
 export interface RuntimeLaunchPreparationPort {
   /**
    * When supplied, the host must invoke `beforeHostStart` before creating any
-   * external Provider process; callers use it to persist the exact Turn fence.
+   * external Provider process; callers use it to persist the exact AgentRun fence.
    */
   prepare(
     request: RuntimeLaunchPreparationRequest,

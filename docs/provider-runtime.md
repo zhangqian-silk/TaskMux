@@ -7,12 +7,12 @@ require every user interaction to pass through Yui.
 
 Task state and conversation state have different responsibilities:
 
-- Codex or Claude owns messages, turns, tool activity, and native history.
-- Yui owns Tasks, WorkItems, Turns, workspaces, durable messages, and wake
-  hints. The active Turn is the only durable answer to whether a Role has
-  workflow work in progress.
+- Codex or Claude owns native messages, Turns, tool activity, and native history.
+- Yui owns Tasks, WorkItems, AgentRuns, workspaces, durable messages, and wake
+  hints. An open AgentRun records outstanding execution intent, not actual
+  Agent activity or Leader authority.
 - A Provider binding owns Session, Activation, authority, Goal, and native Turn
-  facts. It does not maintain a second execution record alongside Yui's Turn.
+  facts. It does not maintain a second execution record alongside Yui's AgentRun.
 - The Role Skill tells the Agent when and how to read or update Yui through the
   Session Manifest's exact `YUI_SESSION_CLI` entry point.
 
@@ -22,15 +22,15 @@ Task state and conversation state have different responsibilities:
 | --- | --- |
 | Controller | Schedule durable Task work and submit Provider-native Turns |
 | Agent Host | Keep one Yui client attachment alive and relay structured requests |
-| Provider Adapter | Start/resume a native conversation and submit or inspect Turns |
+| Provider Adapter | Start/resume a native conversation and submit or inspect AgentRuns |
 | Provider conversation | Hold the user-visible transcript and native execution history |
 
 The normal delivery path is:
 
 ```text
-Task/Message -> Yui Turn -> ordinary Provider Turn
-                              |
-                              +-> Provider Runtime Binding observation
+Explicit execution -> AgentRun -> Provider input
+Message/wake       -> mailbox  -> Provider input
+                                  -> exact Provider Runtime Binding evidence
 ```
 
 Yui's internal authority epoch fences only Yui's own submissions.
@@ -90,9 +90,9 @@ it from another native Codex client.
 
 If an already-running native Turn is observed while Yui resumes a thread, Yui
 classifies its attempted delivery as `busy`. The pending input and mailbox batch
-stay durable until that native Turn settles. A Yui Turn reaches terminal state
+stay durable until that native Turn settles. A Yui AgentRun reaches terminal state
 only from the native Provider terminal; there is no separate `yield` outcome.
-The final visible assistant response becomes the Turn result.
+The final visible assistant response becomes the AgentRun result.
 
 If a proxy disconnects, the Agent Host may attach a bounded replacement client
 and resume the same thread from exact native history. Task execution stop
@@ -110,9 +110,10 @@ underlying Codex config.
 
 Managed Claude continues to use a persistent `--input-format stream-json` and
 `--output-format stream-json` process. Yui preallocates the native Session ID,
-and Agent Host is that process's sole input writer. A completed pipe write
-accepts the Turn; the later Claude `result` event settles it. Provider Turn IDs
-are opaque correlation values rather than path-safe Yui identities.
+and Agent Host is that process's sole input writer. A completed pipe write is
+transport evidence, not native acceptance. The matching Claude `result` supplies
+acceptance and terminal evidence through the exact local attempt. A result-message
+UUID is not a nativeTurnId.
 
 The tmux view/takeover gateway remains the human-control boundary for providers
 with an independent managed process, such as Claude. Codex users operate the
@@ -123,16 +124,16 @@ ordinary shared thread directly in Desktop.
 Before Yui writes a Task-owned input, it records a `submitting` Provider Turn
 observation using a stable attempt id. The provider result is one of:
 
-- `accepted`: the provider returned an exact native Turn identity;
-- `busy`: another ordinary client has an active Turn, so Yui keeps the work
+- `accepted`: exact Provider evidence, including verified local stream correlation;
+- `busy`: another ordinary client has an active native Turn, so Yui keeps the work
   pending;
 - `rejected`: the provider definitively rejected the input before creating a
-  Turn; or
+  native Turn; or
 - `delivery-unknown`: the write may have happened but no exact receipt was
   observed.
 
 `delivery-unknown` is never retried automatically. `busy` is safe to retry
-because the provider proved that Yui's requested Turn was not created.
+because the provider proved that Yui's input was not accepted.
 
 ## Recovery
 
@@ -140,12 +141,12 @@ Conversation recovery uses provider-native evidence:
 
 | Observation | Available Agent choice |
 | --- | --- |
-| Thread has Yui's exact persisted active Turn | Reattach and continue observing it |
-| Thread has another client's active Turn | Wait; retain pending Yui work |
-| Yui's persisted Turn is terminal in native history | Fold the recovered terminal exactly once |
+| Thread has Yui's exact persisted active AgentRun | Reattach and continue observing it |
+| Thread has another client's active native Turn | Wait; retain pending Yui work |
+| Yui's persisted AgentRun is terminal in native history | Fold the recovered terminal exactly once |
 | Thread exists and is idle | Resume and deliver the pending input |
-| Driver proves the thread is missing, ended, expired, or out of context | Settle the current Turn, explicitly stop the exact Session/Host, then dispatch a new Turn on a new Session; the complete prior error and identities remain readable |
-| Availability, capacity, or `429`; input was accepted and Session is recoverable | Submit a new Turn in the same Session when useful |
+| Driver proves the thread is missing, ended, expired, or out of context | Settle the current AgentRun, explicitly stop the exact Session/Host, then dispatch a new AgentRun on a new Session; the complete prior error and identities remain readable |
+| Availability, capacity, or `429`; input was accepted and Session is recoverable | Submit a new AgentRun in the same Session when useful |
 | Delivery is unknown | Inspect native history and preserve identity; do not blindly duplicate the input |
 
 A dead pane, process exit, timeout, or App Server disconnect is not proof that
@@ -156,30 +157,31 @@ or cannot continue because its context is exhausted.
 ## Required invariants
 
 1. A stable Provider Turn attempt exists before its provider write.
-2. Provider acceptance carries an exact native Turn identity.
+2. Provider acceptance carries exact native identity or verified local correlation.
 3. Ambiguous delivery is never automatically duplicated.
-4. A busy ordinary thread keeps Yui work pending instead of failing the Turn.
+4. A busy ordinary thread keeps Yui work pending instead of failing the AgentRun.
 5. A replacement conversation is created only after the responsible Agent
    explicitly ends the old Session; Core never replaces it as error policy.
 6. Yui Skill/config does not mutate global Codex config.
 7. Task stop owns and terminates every Yui Agent Host and proxy without treating
    the shared Codex daemon or native conversation as Task cleanup.
-8. Provider runtime state never decides whether a Role may own a Turn.
+8. Provider runtime state is not the Leader's general management authority.
 9. TaskRole carries desired configuration only; displayed activity is derived
-   from Turn and cannot become another writable scheduling state.
+   from native evidence separately from AgentRun lifecycle.
 
 ## Direct dialogue and Goal
 
-Every Provider execution becomes one Yui Turn. Inputs relayed or generated by
-Yui use `source: yui` with a channel such as `user-message`, `task-dispatch`,
-`workitem-dispatch`, `input-response`, `leader-wakeup`, or
-`leader-forced-wakeup`. Input entered directly in the Provider UI uses
-`source: user`; an explicit Provider Goal continuation uses `source: provider`.
-Only visible inputs and the final response are copied into the Turn record;
-reasoning and tool traffic remain Provider-native.
+Only explicitly requested tracked work becomes an AgentRun. Ordinary notifications,
+native dialogue and Goal continuation do not automatically create one.
+Yui-delivered execution input retains its source/channel; accurately observed native
+items may append `provider/visible-input` without attributing an unverified human
+origin. Reasoning and tool traffic remain Provider-native.
 
-A Session may span many Turns. An explicit Codex Goal event or Claude
-`active_goal` fact is Session-scoped and may span those Turns. A Turn terminal
+A Session may span many AgentRuns. An explicit Codex Goal event or Claude
+`active_goal` fact is Session-scoped and may span those AgentRuns. A AgentRun terminal
 does not imply Goal, WorkItem, or Task completion, and Yui never guesses Goal
 completion from a quiet interval. Leader alone updates durable WorkItem and
 Task meaning.
+
+See [Session, AgentRun and notification boundaries](architecture/yui-handbook-full-architecture/architecture/07-session-run-contract.md)
+for the current API, result Messages, planning authority and migration.

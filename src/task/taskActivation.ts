@@ -63,7 +63,7 @@ export type TaskActivationRequest = Readonly<{
   operation: OperationFacts;
   startMode: TaskActivationStartMode;
   /** Turn whose termination releases a deferred request. */
-  afterPlanningTurn?: string;
+  afterPlanningRun?: string;
   /** Explicit resource configuration; an empty plan is legal. */
   environmentPlan: EnvironmentPlan;
   disposition: TaskActivationDisposition;
@@ -80,7 +80,7 @@ export type TaskActivationRequestInput = Readonly<{
   actorId: string;
   authorityRef: string;
   startMode: TaskActivationStartMode;
-  afterPlanningTurn?: string;
+  afterPlanningRun?: string;
   environmentPlan: EnvironmentPlan;
 }>;
 
@@ -96,14 +96,14 @@ export function taskActivationInputDigest(
   taskId: string,
   input: Readonly<{
     startMode: TaskActivationStartMode;
-    afterPlanningTurn?: string;
+    afterPlanningRun?: string;
     environmentPlan: EnvironmentPlan;
   }>
 ): string {
   return createHash("sha256").update(JSON.stringify([
     taskId,
     input.startMode,
-    input.afterPlanningTurn ?? null,
+    input.afterPlanningRun ?? null,
     canonicalEnvironmentPlan(input.environmentPlan)
   ])).digest("hex");
 }
@@ -114,10 +114,10 @@ export function createTaskActivationRequest(
   now: Date
 ): TaskActivationRequest {
   if (input.startMode === "after-planning-turn") {
-    if (input.afterPlanningTurn === undefined) {
+    if (input.afterPlanningRun === undefined) {
       throw new Error("A deferred activation request must name its planning Turn.");
     }
-  } else if (input.afterPlanningTurn !== undefined) {
+  } else if (input.afterPlanningRun !== undefined) {
     throw new Error("An immediate activation request cannot defer to a planning Turn.");
   }
   const timestamp = now.toISOString();
@@ -136,9 +136,9 @@ export function createTaskActivationRequest(
       partialResultRefs: []
     },
     startMode: input.startMode,
-    ...(input.afterPlanningTurn === undefined
+    ...(input.afterPlanningRun === undefined
       ? {}
-      : { afterPlanningTurn: input.afterPlanningTurn }),
+      : { afterPlanningRun: input.afterPlanningRun }),
     environmentPlan: canonicalEnvironmentPlan(input.environmentPlan),
     disposition: "pending",
     requestedAt: timestamp,
@@ -251,7 +251,7 @@ export type TaskActivationAdmission =
   | Readonly<{
       disposition: "deferred";
       request: TaskActivationRequest;
-      afterPlanningTurn: string;
+      afterPlanningRun: string;
     }>
   | Readonly<{ disposition: "settled"; request: TaskActivationRequest }>
   | Readonly<{
@@ -272,7 +272,7 @@ export type TaskActivationAdmission =
 export function admitTaskActivationRequest(
   task: Task,
   request: TaskActivationRequest | undefined,
-  planningTurnIsActive: (turnId: string) => boolean
+  planningRunIsActive: (runId: string) => boolean
 ): TaskActivationAdmission | undefined {
   if (request === undefined) return undefined;
   if (request.disposition === "adopted" || request.disposition === "cancelled") {
@@ -299,12 +299,12 @@ export function admitTaskActivationRequest(
       reason: `Task execution is stopped: ${task.id}.`
     };
   }
-  if (request.afterPlanningTurn !== undefined
-    && planningTurnIsActive(request.afterPlanningTurn)) {
+  if (request.afterPlanningRun !== undefined
+    && planningRunIsActive(request.afterPlanningRun)) {
     return {
       disposition: "deferred",
       request,
-      afterPlanningTurn: request.afterPlanningTurn
+      afterPlanningRun: request.afterPlanningRun
     };
   }
   return { disposition: "ready", request };
@@ -368,11 +368,11 @@ export function validateTaskActivationRequest(
     throw new Error(`Activation start mode is invalid: ${String(request.startMode)}.`);
   }
   if ((request.startMode === "after-planning-turn")
-    !== (request.afterPlanningTurn !== undefined)) {
+    !== (request.afterPlanningRun !== undefined)) {
     throw new Error("Activation deferral must name exactly the planning Turn it waits for.");
   }
-  if (request.afterPlanningTurn !== undefined) {
-    requireIdentity(request.afterPlanningTurn, "Activation planning Turn");
+  if (request.afterPlanningRun !== undefined) {
+    requireIdentity(request.afterPlanningRun, "Activation planning Turn");
   }
   if (!["pending", "adopted", "cancelled", "failed"].includes(request.disposition)) {
     throw new Error(`Activation disposition is invalid: ${String(request.disposition)}.`);

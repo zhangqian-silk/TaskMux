@@ -56,7 +56,7 @@ export type RequestTaskActivationInput = Readonly<{
    * Supplying it is what makes the request deferred instead of immediate; the
    * caller never waits for its own Turn to end.
    */
-  callerTurnId?: string;
+  callerRunId?: string;
 }>;
 
 export type RequestTaskActivationResult = Readonly<{
@@ -67,7 +67,7 @@ export type RequestTaskActivationResult = Readonly<{
   /** True when this call created the request rather than returning the existing one. */
   created: boolean;
   /** Planning Turn whose termination releases the request, when deferred. */
-  afterPlanningTurn?: string;
+  afterPlanningRun?: string;
 }>;
 
 export function taskActivationOperationRef(taskId: string, requestId: string): string {
@@ -78,7 +78,7 @@ export function taskActivationOperationRef(taskId: string, requestId: string): s
  * Records an explicit activation request and returns its operation reference.
  *
  * This never prepares resources and never waits. When the caller is the Task's
- * own running planning Turn, the request is stored with `afterPlanningTurn` set
+ * own running planning Turn, the request is stored with `afterPlanningRun` set
  * to that Turn — expressing the deferral in the same operation facts the
  * request already carries, rather than blocking a synchronous tool on the Turn
  * it is running inside (S40).
@@ -94,8 +94,8 @@ export function requestTaskActivation(
   return store.transaction((tx) => {
     const task = requireOpenDraft(tx, input.taskId);
     const plan = canonicalEnvironmentPlan(input.environmentPlan);
-    const planningTurn = resolveCallerPlanningTurn(tx, task.id, input.callerTurnId);
-    const startMode: TaskActivationStartMode = planningTurn === undefined
+    const planningRun = resolveCallerPlanningRun(tx, task.id, input.callerRunId);
+    const startMode: TaskActivationStartMode = planningRun === undefined
       ? "immediate"
       : "after-planning-turn";
     const existing = task.activationRequest;
@@ -121,7 +121,7 @@ export function requestTaskActivation(
     if (existing?.operation.requestId === input.requestId) {
       const digest = taskActivationInputDigest(task.id, {
         startMode,
-        ...(planningTurn === undefined ? {} : { afterPlanningTurn: planningTurn }),
+        ...(planningRun === undefined ? {} : { afterPlanningRun: planningRun }),
         environmentPlan: plan
       });
       if (existing.operation.inputDigest !== digest) {
@@ -134,9 +134,9 @@ export function requestTaskActivation(
         request: existing,
         startMode: existing.startMode,
         created: false,
-        ...(existing.afterPlanningTurn === undefined
+        ...(existing.afterPlanningRun === undefined
           ? {}
-          : { afterPlanningTurn: existing.afterPlanningTurn })
+          : { afterPlanningRun: existing.afterPlanningRun })
       };
     }
     if (existing?.disposition === "pending") {
@@ -150,7 +150,7 @@ export function requestTaskActivation(
       actorId: input.actorId,
       authorityRef: input.authorityRef,
       startMode,
-      ...(planningTurn === undefined ? {} : { afterPlanningTurn: planningTurn }),
+      ...(planningRun === undefined ? {} : { afterPlanningRun: planningRun }),
       environmentPlan: plan
     }, now);
     tx.saveTask(setTaskActivationRequest(task, request, now));
@@ -163,9 +163,9 @@ export function requestTaskActivation(
         startMode: request.startMode,
         environmentPlan: describeEnvironmentPlan(request.environmentPlan),
         actor: request.operation.actorId,
-        ...(request.afterPlanningTurn === undefined
+        ...(request.afterPlanningRun === undefined
           ? {}
-          : { afterPlanningTurn: request.afterPlanningTurn })
+          : { afterPlanningRun: request.afterPlanningRun })
       },
       now
     ));
@@ -174,7 +174,7 @@ export function requestTaskActivation(
       request,
       startMode,
       created: true,
-      ...(planningTurn === undefined ? {} : { afterPlanningTurn: planningTurn })
+      ...(planningRun === undefined ? {} : { afterPlanningRun: planningRun })
     };
   });
 }
@@ -217,7 +217,7 @@ export function cancelTaskActivation(
 
 export type TaskActivationAdmissionResult =
   | Readonly<{ disposition: "ready"; request: TaskActivationRequest; plan: EnvironmentPlan }>
-  | Readonly<{ disposition: "deferred"; request: TaskActivationRequest; afterPlanningTurn: string }>
+  | Readonly<{ disposition: "deferred"; request: TaskActivationRequest; afterPlanningRun: string }>
   | Readonly<{ disposition: "absent" }>
   | Readonly<{ disposition: "settled"; request: TaskActivationRequest }>
   | Readonly<{ disposition: "unavailable"; request: TaskActivationRequest; reason: string }>;
@@ -238,7 +238,7 @@ export function admitStoredTaskActivation(
   const admission = admitTaskActivationRequest(
     task,
     task.activationRequest,
-    (turnId) => store.getTurn(taskId, turnId)?.status === "active"
+    (runId) => store.getRun(taskId, runId)?.status === "active"
   );
   if (admission === undefined) return { disposition: "absent" };
   return admission.disposition === "ready"
@@ -515,23 +515,23 @@ function requireOpenDraft(store: TaskStore, taskId: string): Task {
  * treated as immediate: a caller that names a Turn is asserting it runs inside
  * it, and a wrong assertion must not quietly change the start mode.
  */
-function resolveCallerPlanningTurn(
+function resolveCallerPlanningRun(
   store: TaskStore,
   taskId: string,
-  callerTurnId: string | undefined
+  callerRunId: string | undefined
 ): string | undefined {
-  if (callerTurnId === undefined) return undefined;
-  const turn = store.getTurn(taskId, callerTurnId);
-  if (turn === null) throw new Error(`Turn not found: ${taskId}/${callerTurnId}.`);
-  if (turn.purpose !== "planning") {
+  if (callerRunId === undefined) return undefined;
+  const run = store.getRun(taskId, callerRunId);
+  if (run === null) throw new Error(`AgentRun not found: ${taskId}/${callerRunId}.`);
+  if (run.purpose !== "planning") {
     throw new Error(
-      `Activation deferral requires a planning Turn: ${taskId}/${callerTurnId}/${turn.purpose}.`
+      `Activation deferral requires a planning AgentRun: ${taskId}/${callerRunId}/${run.purpose}.`
     );
   }
-  if (turn.status !== "active") {
+  if (run.status !== "active") {
     // A terminated planning Turn no longer needs deferral; the request is
     // adoptable now and says so, rather than waiting for a finished Turn.
     return undefined;
   }
-  return turn.id;
+  return run.id;
 }

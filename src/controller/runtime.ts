@@ -78,6 +78,7 @@ import {
 } from "./controller.js";
 import {
   AgentHostProviderTurnFenceError,
+  AgentHostProviderSessionBusyError,
   FileSchedulerStoreAdapter
 } from "./fileSchedulerStoreAdapter.js";
 import { openSchedulerTelemetry } from "../telemetry/telemetryWiring.js";
@@ -132,7 +133,7 @@ import {
   runtimeObservationFromTaskEvent
 } from "../runtime/runtimeObservation.js";
 import { createTaskEvent } from "../event/taskEvent.js";
-import { turnPurposeAdmitsTaskState } from "../turn/turn.js";
+import { runPurposeAdmitsTaskState } from "../agentRun/agentRun.js";
 import { taskOwnsManagedWorkspace } from "../task/task.js";
 
 export type FileTaskControllerFactoryOptions = ControllerRuntimeOptions & Readonly<{
@@ -281,7 +282,7 @@ export async function startFileTaskControllerRuntime(
             && event.observation.fence.taskId === owner.taskId
             && event.observation.fence.roleName === owner.roleName
             && event.observation.fence.agentId === request.agentId
-            && event.observation.fence.turnId === request.turnId
+            && event.observation.fence.runId === request.runId
             && typeof event.observation.fence.nativeSessionId === "string"
             && event.observation.fence.nativeSessionId.trim().length > 0
           ) {
@@ -406,24 +407,24 @@ export async function startFileTaskControllerRuntime(
             && candidate.roleName === owner.roleName
           ));
           if (input === undefined) return [];
-          const identity = owner.turnId === undefined || owner.adapterId === undefined || (owner.nativeSessionId === undefined) || (owner.nativeSessionId !== undefined && owner.nativeSessionId.trim().length === 0)
+          const identity = owner.runId === undefined || owner.adapterId === undefined || (owner.nativeSessionId === undefined) || (owner.nativeSessionId !== undefined && owner.nativeSessionId.trim().length === 0)
             ? undefined
             : {
                 taskId: owner.taskId,
                 roleName: owner.roleName,
-                turnId: owner.turnId,
+                runId: owner.runId,
                 agentId: owner.agentId,
                 adapterId: owner.adapterId,
                 ...(owner.nativeSessionId === undefined
                   ? {}
                   : { nativeSessionId: owner.nativeSessionId }),
               };
-          const changed = !active || input.turnId === undefined
+          const changed = !active || input.runId === undefined
             ? false
             : resourceActivity({
                 taskId: input.taskId,
                 roleName: input.roleName,
-                turnId: input.turnId,
+                runId: input.runId,
                 agentId: input.agentId,
                 adapterId: input.adapterId,
                 ...(input.nativeSessionId === undefined
@@ -734,7 +735,7 @@ export function createRuntimeLifecycleDispatcher(
         schedulerStore.beginAgentHostProviderTurn({
           taskId: value.taskId,
           roleName: value.roleName,
-          ...(value.turnId === undefined ? {} : { turnId: value.turnId }),
+          ...(value.runId === undefined ? {} : { runId: value.runId }),
           agentId: value.agentId,
           nativeSessionId: value.nativeSessionId,
           attemptId: value.attemptId,
@@ -744,6 +745,7 @@ export function createRuntimeLifecycleDispatcher(
           now: value.now
         });
       } catch (error) {
+        if (error instanceof AgentHostProviderSessionBusyError) throw error;
         if (error instanceof AgentHostProviderTurnFenceError) {
           throw applicationError("INVALID_PARAMS", error.message);
         }
@@ -756,7 +758,7 @@ export function createRuntimeLifecycleDispatcher(
       const status = (params as Record<string, unknown>).status;
       const reason = (params as Record<string, unknown>).reason;
       const raw = (params as Record<string, unknown>).raw;
-      if ((status !== "rejected" && status !== "delivery-unknown")
+      if ((status !== "rejected" && status !== "deferred" && status !== "delivery-unknown")
         || typeof reason !== "string" || reason.trim().length === 0
         || typeof raw !== "string" || raw.trim().length === 0) {
         throw applicationError("INVALID_PARAMS", "Provider Turn resolution is invalid.");
@@ -764,7 +766,7 @@ export function createRuntimeLifecycleDispatcher(
       schedulerStore.resolveAgentHostProviderTurnSubmission({
         taskId: value.taskId,
         roleName: value.roleName,
-        ...(value.turnId === undefined ? {} : { turnId: value.turnId }),
+        ...(value.runId === undefined ? {} : { runId: value.runId }),
         attemptId: value.attemptId,
         status,
         reason,
@@ -775,9 +777,9 @@ export function createRuntimeLifecycleDispatcher(
     }
     if (method === "runtime.process-exit-observe") {
       const observation = validateRuntimeProcessExitObservation(params as never);
-      const run = observation.taskId === undefined || observation.turnId === undefined
+      const run = observation.taskId === undefined || observation.runId === undefined
         ? null
-        : store.getTurn(observation.taskId, observation.turnId);
+        : store.getRun(observation.taskId, observation.runId);
       const globalRole = observation.taskId === undefined
         ? store.getGlobalRole(observation.roleName)
         : null;
@@ -786,19 +788,19 @@ export function createRuntimeLifecycleDispatcher(
       const driver = adapterId === undefined
         ? null
         : builtinAgentDriverRegistry().findByAdapterId(adapterId);
-      const turnTerminalObserved = observation.taskId !== undefined
-        && observation.turnId !== undefined
+      const runTerminalObserved = observation.taskId !== undefined
+        && observation.runId !== undefined
         && store.listEvents(observation.taskId).some((event) => {
           const runtime = runtimeObservationFromTaskEvent(event);
           return runtime !== null
-            && runtime.fence.turnId === observation.turnId
+            && runtime.fence.runId === observation.runId
             && ["turn.completed", "turn.failed", "turn.cancelled"].includes(runtime.kind)
             && Date.parse(runtime.receivedAt) <= Date.parse(observation.observedAt);
         });
-      const turnFailureObserved = observation.taskId !== undefined && observation.turnId !== undefined && store.listEvents(observation.taskId).some((event) => {
+      const runFailureObserved = observation.taskId !== undefined && observation.runId !== undefined && store.listEvents(observation.taskId).some((event) => {
           const runtime = runtimeObservationFromTaskEvent(event);
           return runtime !== null
-            && runtime.fence.turnId === observation.turnId
+            && runtime.fence.runId === observation.runId
             && runtime.fence.nativeSessionId === observation.nativeSessionId
             && runtime.kind === "turn.failed"
             && Date.parse(runtime.receivedAt) <= Date.parse(observation.observedAt);
@@ -807,8 +809,8 @@ export function createRuntimeLifecycleDispatcher(
         ...(driver === null
           ? {}
           : { childLifecycle: driver.capabilities.lifecycle.providerProcess }),
-        turnTerminalObserved,
-        turnFailureObserved
+        runTerminalObserved,
+        runFailureObserved
       });
       if (observation.taskId === undefined) {
         const recorded = appendGlobalProcessExitObservation(
@@ -892,17 +894,17 @@ export function createRuntimeLifecycleDispatcher(
     // Resolve the admitted Turn first: its purpose decides which Task
     // lifecycle and workspace fences apply. A Draft Leader planning Turn runs
     // without a Task workspace; every delivery Turn keeps the full fence.
-    const activeTurn = request.scope === "task"
-      ? store.getActiveTurn(request.taskId, request.roleName)
+    const activeRun = request.scope === "task"
+      ? store.getActiveRun(request.taskId, request.roleName)
       : null;
-    if (request.scope === "task" && activeTurn === null) {
+    if (request.scope === "task" && activeRun === null) {
       throw applicationError(
         "INVALID_PARAMS",
         "Task Role runtime attachment requires an admitted active Turn; it cannot create an empty Provider Conversation."
       );
     }
     if (request.scope === "task"
-      && (task === null || !turnPurposeAdmitsTaskState(activeTurn!.purpose, task))) {
+      && (task === null || !runPurposeAdmitsTaskState(activeRun!.purpose, task))) {
       throw applicationError(
         "INVALID_PARAMS",
         task === null
@@ -911,7 +913,7 @@ export function createRuntimeLifecycleDispatcher(
       );
     }
     const planningDraft = request.scope === "task"
-      && activeTurn?.purpose === "planning"
+      && activeRun?.purpose === "planning"
       && task?.status === "draft";
     // A Task activated with an empty environment plan owns no managed
     // workspace, so there is nothing to prove ready. Every Task that does own
@@ -958,7 +960,7 @@ export function createRuntimeLifecycleDispatcher(
       );
     }
     const managedWorkspace = request.scope === "task"
-      ? activeTurn?.workspace
+      ? activeRun?.workspace
         ?? currentDesiredManagedWorkspace(store, request.taskId, request.roleName)
       : undefined;
     // Distinguish "this Task owns no workspace by design" from "the
@@ -974,7 +976,7 @@ export function createRuntimeLifecycleDispatcher(
     const sessions = request.scope === "task"
       ? store.getTaskRoleSessionSet(request.taskId, request.roleName)
       : store.getGlobalRoleSessionSet(request.roleName);
-    const effective = activeTurn?.effective
+    const effective = activeRun?.effective
       ?? activeLiveRoleAgentSession(sessions)?.effective
       ?? resolveRuntimeDesiredEffective(store, request, role);
     const binding = role.agentBindings[effective.agentId];
@@ -993,12 +995,12 @@ export function createRuntimeLifecycleDispatcher(
     }
     validateLifecycleEnvironment(request.environment, agent);
     const session = sessions?.sessions[effective.agentId];
-    // An ensure call may reattach the already-admitted Turn to its existing
+    // An ensure call may reattach the already-admitted AgentRun to its existing
     // Conversation, but it may not manufacture a fresh Conversation without a
-    // pending managed Turn. Fresh replacement remains owned by Turn dispatch.
-    const mode = activeTurn === null
+    // pending managed AgentRun. Fresh replacement remains owned by AgentRun dispatch.
+    const mode = activeRun === null
       ? roleAgentSessionResumeMode(sessions, effective.agentId, effective)
-      : session?.nativeSessionId === undefined ? activeTurn.mode : "resume";
+      : session?.nativeSessionId === undefined ? activeRun.mode : "resume";
     if (request.scope === "task" && mode === "resume"
       && (session?.nativeSessionId === undefined
         || session.nativeSessionId.trim().length === 0)) {
@@ -1018,7 +1020,7 @@ export function createRuntimeLifecycleDispatcher(
       workspace: effective.workspace.root,
       ...(managedWorkspace === undefined ? {} : { managedWorkspace }),
       ...(workspaceFree ? { workspaceFree: true as const } : {}),
-      ...(activeTurn === null ? {} : { turnId: activeTurn.id }),
+      ...(activeRun === null ? {} : { runId: activeRun.id }),
       ...(request.environment === undefined
         ? {}
         : { environment: request.environment })
@@ -1084,24 +1086,24 @@ function assertRuntimeLaunchRequestCurrent(
   store: TaskStore,
   request: CoordinatedRuntimeLaunchRequest
 ): void {
-  let activeTurn: ReturnType<TaskStore["getActiveTurn"]> = null;
+  let activeRun: ReturnType<TaskStore["getActiveRun"]> = null;
   if (request.owner.scope === "task") {
     const task = store.getTask(request.owner.taskId);
     if (task === null) {
       throw new Error(`Task is no longer active: ${request.owner.taskId}.`);
     }
-    activeTurn = store.getActiveTurn(
+    activeRun = store.getActiveRun(
       request.owner.taskId,
       request.owner.roleName
     );
-    if (!turnPurposeAdmitsTaskState(activeTurn?.purpose ?? "execution", task)) {
+    if (!runPurposeAdmitsTaskState(activeRun?.purpose ?? "execution", task)) {
       throw new Error(`Task is no longer active: ${request.owner.taskId}.`);
     }
     if (
-      request.turnId !== undefined
-      && activeTurn?.id !== request.turnId
+      request.runId !== undefined
+      && activeRun?.id !== request.runId
     ) {
-      throw new Error(`Role Turn is no longer current: ${request.turnId}.`);
+      throw new Error(`Role AgentRun is no longer current: ${request.runId}.`);
     }
   }
   const role = request.owner.scope === "task"
@@ -1113,8 +1115,8 @@ function assertRuntimeLaunchRequestCurrent(
   const sessions = request.owner.scope === "task"
     ? store.getTaskRoleSessionSet(request.owner.taskId, request.owner.roleName)
     : store.getGlobalRoleSessionSet(request.owner.roleName);
-  const expectedEffective = request.owner.scope === "task" && request.turnId !== undefined
-    ? activeTurn?.effective
+  const expectedEffective = request.owner.scope === "task" && request.runId !== undefined
+    ? activeRun?.effective
     : activeLiveRoleAgentSession(sessions)?.effective
       ?? currentDesiredEffective(store, request, role);
   if (
@@ -1127,7 +1129,7 @@ function assertRuntimeLaunchRequestCurrent(
     throw new Error(`Role launch state changed: ${request.owner.roleName}.`);
   }
   if (request.owner.scope === "task" && request.managedWorkspace !== undefined) {
-    const expectedWorkspace = activeTurn?.workspace
+    const expectedWorkspace = activeRun?.workspace
       ?? currentDesiredManagedWorkspace(
         store,
         request.owner.taskId,
@@ -1454,7 +1456,7 @@ function requiredParam(value: JsonValue | undefined): string {
 function providerTurnControlParams(params: JsonValue): Readonly<{
   taskId: string;
   roleName: string;
-  turnId?: string;
+  runId?: string;
   agentId: string;
   nativeSessionId: string;
   attemptId: string;
@@ -1478,7 +1480,7 @@ function providerTurnControlParams(params: JsonValue): Readonly<{
   return {
     taskId: requiredParam(value.taskId),
     roleName: requiredParam(value.roleName),
-    ...(value.turnId === undefined ? {} : { turnId: requiredParam(value.turnId) }),
+    ...(value.runId === undefined ? {} : { runId: requiredParam(value.runId) }),
     agentId: requiredParam(value.agentId),
     nativeSessionId: requiredParam(value.nativeSessionId),
     attemptId: requiredParam(value.attemptId),

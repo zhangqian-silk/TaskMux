@@ -38,7 +38,7 @@ export const LIVE_SESSION_ACKNOWLEDGEMENT_OPTION = "--yes";
  * the desired configuration is therefore a decision about the next Host
  * activation, and the Agent making the change is the one that knows whether the
  * running Session should keep going or be replaced. Report that fact once, here,
- * instead of refusing the Turn that later resumes the Session.
+ * instead of refusing the AgentRun that later resumes the Session.
  */
 export function assertLiveRoleSessionAcknowledged(input: Readonly<{
   sessions: RoleSessionSet | null;
@@ -55,7 +55,7 @@ export function assertLiveRoleSessionAcknowledged(input: Readonly<{
   throw usageError([
     input.endsSession === true
       ? `Role ${input.roleName} has a live native Session that cannot continue after this `
-        + "change; its next Turn will need a new Session."
+        + "change; its next AgentRun will need a new Session."
       : `Role ${input.roleName} has a live native Session, so this change applies to its `
         + "next Host process instead of the running one.",
     `  Agent: ${session.agentId} (${session.adapterId})`,

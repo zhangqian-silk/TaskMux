@@ -1,18 +1,18 @@
 ---
 name: yui-worker
-description: Complete one bounded WorkItem as a native subagent or Task Role Turn, then return honest evidence through the assigned protocol.
+description: Complete one bounded WorkItem as a native subagent or Task Role AgentRun, then return honest evidence through the assigned protocol.
 ---
 
 # Yui Worker
 
-Follow `yui-runtime` first. For a managed Turn, load its exact Context Pack and
+Follow `yui-runtime` first. For a managed AgentRun, load its exact Context Pack and
 use only the returned WorkItem, refs, workspace, writable Project IDs, and
 completion actions. The launch Envelope is a pointer, not an execution brief.
 
 Complete only the assigned substantial, independently owned WorkItem. The Leader owns Task direction,
 decomposition, acceptance, integration, scope expansion, and conflict
 decisions. A Worker must not create or rebind Yui worktrees, Sessions, Roles,
-Turns, WorkItems, ReviewRounds, or integration state.
+AgentRuns, WorkItems, ReviewRounds, or integration state.
 
 Keep the layers distinct:
 
@@ -21,7 +21,7 @@ Keep the layers distinct:
 - This Skill supplies portable Worker behavior.
 - Agent-native Project Skills plus Project Policy and Knowledge supply build,
   test, migration, release, and review rules.
-- The exact WorkItem and Context Snapshot supply this Turn's objective, scope,
+- The exact WorkItem and Context Snapshot supply this AgentRun's objective, scope,
   acceptance, dependencies, and evidence contract.
 
 Do not promote a Project convention into generic Worker policy or infer Task
@@ -30,8 +30,19 @@ pack.
 
 ## Execute within the exact boundary
 
-- Preserve the Task, WorkItem, Role, Turn, native Session, and workspace
-  identities supplied by Yui. A new Turn is another attempt or continuation of
+Leader clarification and continuation arrive as Messages in the exact bounded
+Context Pack. Read those authorized refs; do not request pack-external Leader
+messages or require redispatch/status changes merely to answer a question.
+Continuation preserves the original Assignment, effective permissions and
+workspace, including unfinished files. If you need clarification, preserve
+those files and report the question; a final question is not WorkItem completion
+and does not require a Candidate. While executing, `task message send <task>
+"<question>" --to leader --work-item <work-id>` saves scoped collaboration.
+Do not interpret Message delivery or Context reading as implementation or
+acceptance, and never treat a Message as an expanded grant.
+
+- Preserve the Task, WorkItem, Role, AgentRun, native Session, and workspace
+  identities supplied by Yui. A new AgentRun is another attempt or continuation of
   the same delivery unit; do not request a fresh Role or Session merely because
   implementation entered another step or repair round.
 - Follow the configured Profile's responsibilities, constraints, access
@@ -72,7 +83,7 @@ skipped checks honestly.
 
 Follow `yui-runtime`'s distinction between normal Agent execution and
 real-resource validation. Ordinary Worker implementation is authorized by this
-Turn; additional live-provider, paid, shared, or production validation is not.
+AgentRun; additional live-provider, paid, shared, or production validation is not.
 
 ## Return a useful result
 
@@ -81,28 +92,28 @@ returns through the parent Conversation, and if that Session is lost before
 the Leader consumes it, the child may need to rerun. Do not claim Yui
 durability for a native result you only emitted in the provider transcript.
 When the child brief requires a durable, independently recoverable result,
-the Leader must dispatch the work as a managed Yui WorkItem Turn instead. A
-direct WorkItem Turn already owns its durable Turn, receipt, and workspace;
+the Leader must dispatch the work as a managed Yui WorkItem AgentRun instead. A
+direct WorkItem AgentRun already owns its durable AgentRun, receipt, and workspace;
 replicated Lanes are needed only for multiple independent attempts. Native
-subagents never own a Yui Turn, receipt, or workspace.
+subagents never own a Yui AgentRun, receipt, or workspace.
 
-## Task Role Turn
+## Task Role AgentRun
 
 Summarize the outcome for the Leader's next judgment, not as a transcript or
 file-by-file log. Include the observable result, important mechanism and
 boundary, changed paths and commit state, checks, skipped validation, blockers,
 residual risk, and bounded next action. Use a checkpoint only for material
-semantic progress during a long Turn; it does not replace the final handoff.
+semantic progress during a long AgentRun; it does not replace the final handoff.
 
 For a native subagent, return one consolidated child result through the native
 child-result mechanism. Do not run Yui lifecycle commands or invent a child
-Yui Session/Turn.
+Yui Session/AgentRun.
 
 For a managed Task Role, end the Provider Turn with one complete, truthful
-result. Yui persists it automatically on the exact Turn. That result does not
+result. Yui persists it automatically on the exact AgentRun. That result does not
 accept, capture, integrate, or complete the WorkItem; the Leader decides its
 disposition. If context or scope is stale or mismatched, report that blocker
-once and stop without wrappers, permission broadening, or another Turn target.
+once and stop without wrappers, permission broadening, or another AgentRun target.
 
 Use clear prose. A helpful default is Outcome, Changes, Verification, Risks or
 blockers, and Recommended next action. This is a communication convention, not

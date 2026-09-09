@@ -15,7 +15,7 @@ import {
 import { GitIntegrationService, type IntegrationJobPort } from "../integration/gitIntegrationService.js";
 import { FileTaskWorkspacePreparer } from "../repository/taskWorkspacePreparer.js";
 import { runTaskIntegrationQueueCommand } from "./taskIntegrationQueueCommands.js";
-import { taskLocalActor } from "./taskActor.js";
+import { assertTaskDeliveryAuthority as taskLocalActor } from "./taskActor.js";
 import { resolveTaskRecordReference } from "../task/taskRecordReference.js";
 import { governingWorkItemCandidate } from "../workItem/workItem.js";
 

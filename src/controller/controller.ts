@@ -1,7 +1,6 @@
 import { reconciliationIntervalMilliseconds } from "../config/yuiConfig.js";
 import {
   LEADER_WAKE_AGGREGATION_MS,
-  LEADER_WAKE_FORCE_MS,
   processLeaderWakeups,
   type LeaderWakeupProcessingResult
 } from "../scheduler/leaderWakeupProcessor.js";
@@ -10,26 +9,26 @@ import {
   type PendingWakeup
 } from "../scheduler/pendingWakeup.js";
 import {
-  processActiveRoleTurnDeliveries,
-  type ActiveRoleTurnDeliveryResult
-} from "../scheduler/activeRoleTurnDelivery.js";
+  processActiveRoleRunDeliveries,
+  type ActiveRoleRunDeliveryResult
+} from "../scheduler/activeRoleRunDelivery.js";
 import {
   selectedActiveSchedulerTasks
 } from "../scheduler/ports.js";
 import type {
   AutoResolvedInput,
-  RoleTurnDeliveryFailurePersistence,
+  RoleRunDeliveryFailurePersistence,
   SchedulerReconcileSelection,
   SchedulerStorePort,
   TmuxDeliveryPort
 } from "../scheduler/ports.js";
-import { reconcileExitedRoleTurns } from "../scheduler/roleTurnLiveness.js";
+import { reconcileExitedRoleRuns } from "../scheduler/roleRunLiveness.js";
 import {
   DEFAULT_STALL_WINDOW_MS,
   DEFAULT_WORKFLOW_STALL_CANDIDATE_AGE_MS,
-  reconcileStalledRoleTurns,
-  type RoleTurnResourceEvidence
-} from "../scheduler/roleTurnStall.js";
+  reconcileStalledRoleRuns,
+  type RoleRunResourceEvidence
+} from "../scheduler/roleRunStall.js";
 import {
   processOperatorInputNotifications,
   type OperatorInputNotificationResult
@@ -96,14 +95,14 @@ type RuntimeLifecycleHost = Pick<
   "inspectOwner" | "inspectOwners" | "stopOwner"
 >;
 
-type RoleTurnDeliveryFailureIdentity = Omit<
-  RoleTurnDeliveryFailurePersistence,
+type RoleRunDeliveryFailureIdentity = Omit<
+  RoleRunDeliveryFailurePersistence,
   "now"
 >;
 
 export type ControllerSchedulerResult = Readonly<{
-  activeTurnDeliveries: readonly ActiveRoleTurnDeliveryResult[];
-  failedTurnRefs: readonly string[];
+  activeRunDeliveries: readonly ActiveRoleRunDeliveryResult[];
+  failedRunRefs: readonly string[];
   wakeups: readonly LeaderWakeupProcessingResult[];
   inputNotifications: readonly OperatorInputNotificationResult[];
   autoResolvedInputs: readonly AutoResolvedInput[];
@@ -285,7 +284,7 @@ export async function runControllerSchedulerPass(
   // control sockets when several scheduler phases repeat it in one native
   // event-loop turn. Give already-written requests a poll boundary before the
   // next durable phase; later phases retain their existing CAS fences.
-  await controlEventLoopTurn();
+  await controlEventLoopRun();
   const failedCleanupRoles = await processSelectedRoleRuntimeCleanups(
     store,
     delivery,
@@ -323,12 +322,12 @@ export async function runControllerSchedulerPass(
     );
     // Preserve ready-Leader-first ordering, then bound the repeated state
     // projections that follow it in this pass.
-    await controlEventLoopTurn();
+    await controlEventLoopRun();
     // A Task whose deferred activation was just released must become active
     // before the workspace phase, so its first workspace preparation happens in
     // this same pass rather than waiting for the next one.
     await adoptReleasedTaskActivations(store, workspacePreparer, selection, onError);
-    await controlEventLoopTurn();
+    await controlEventLoopRun();
     const workspacePreparation = await prepareActiveWorkspaces(
       store,
       workspacePreparer,
@@ -336,14 +335,14 @@ export async function runControllerSchedulerPass(
       maintenanceFence,
       onMaintenanceFenceDefer
     );
-    await controlEventLoopTurn();
-    const activeTurnDeliveries = await processActiveRoleTurnDeliveries(
+    await controlEventLoopRun();
+    const activeRunDeliveries = await processActiveRoleRunDeliveries(
       store, delivery, now, roleSelection
     );
-    await controlEventLoopTurn();
-    const unsettledTurnRefs = new Set(activeTurnDeliveries.flatMap((result) => (
+    await controlEventLoopRun();
+    const unsettledRunRefs = new Set(activeRunDeliveries.flatMap((result) => (
       result.reason === "delivery-uncertain"
-        ? [formatTaskRecordReference(result.taskId, result.turnId, "turn")]
+        ? [formatTaskRecordReference(result.taskId, result.runId, "run")]
         : []
     )));
     // Every successful Task has completed the targeted phases owned by its
@@ -357,40 +356,40 @@ export async function runControllerSchedulerPass(
     }
     const newlyIdleBusyTaskIds = new Set(initialWakeupResults.flatMap((result) => (
       result.reason === "busy"
-        && store.getActiveTurn(result.taskId, "leader") === null
+        && store.getActiveRun(result.taskId, "leader") === null
         ? [result.taskId]
         : []
     )));
-    // Phase-one Leader Turns did not exist at the pass's liveness boundary.
-    // Keep every newly claimed Turn outside destructive absence decisions until
+    // Phase-one Leader AgentRuns did not exist at the pass's liveness boundary.
+    // Keep every newly claimed AgentRun outside destructive absence decisions until
     // a later pass can observe its stable provider/runtime.
     for (const result of initialWakeupResults) {
       if (
-        result.turnId !== undefined
-        && store.getActiveTurn(result.taskId, "leader")?.id === result.turnId
+        result.runId !== undefined
+        && store.getActiveRun(result.taskId, "leader")?.id === result.runId
       ) {
-        unsettledTurnRefs.add(
-          formatTaskRecordReference(result.taskId, result.turnId, "turn")
+        unsettledRunRefs.add(
+          formatTaskRecordReference(result.taskId, result.runId, "run")
         );
       }
     }
     // Let socket callbacks queued during the bounded scheduler phases run
     // before starting a potentially large liveness inventory.
-    await controlEventLoopTurn();
+    await controlEventLoopRun();
     const liveStatuses = new Map<string, "present" | "absent">();
-    const resourceEvidence = new Map<string, RoleTurnResourceEvidence>();
-    const failedTurnRefs = await reconcileExitedRoleTurns(
+    const resourceEvidence = new Map<string, RoleRunResourceEvidence>();
+    const failedRunRefs = await reconcileExitedRoleRuns(
       store,
       delivery,
       now,
       roleSelection,
-      unsettledTurnRefs,
+      unsettledRunRefs,
       liveStatuses,
       resourceEvidence,
       scope.kind === "dirty"
     );
-    await controlEventLoopTurn();
-    await reconcileStalledRoleTurns(
+    await controlEventLoopRun();
+    await reconcileStalledRoleRuns(
       store,
       delivery,
       now,
@@ -400,7 +399,7 @@ export async function runControllerSchedulerPass(
       resourceEvidence,
       diagnosticAfterMs
     );
-    await controlEventLoopTurn();
+    await controlEventLoopRun();
     const selectedInputTaskIds = selectedTaskIdsForBoundedPass(store, selection);
     const autoResolvedInputs = selectedInputTaskIds === undefined
       ? store.resolveExpiredInputRecommendations(now)
@@ -446,8 +445,8 @@ export async function runControllerSchedulerPass(
       ? await processOperatorInputNotifications(store, delivery, selection, now)
       : [];
     return {
-      activeTurnDeliveries,
-      failedTurnRefs,
+      activeRunDeliveries,
+      failedRunRefs,
       wakeups: mergeWakeupPhaseResults(initialWakeupResults, laterWakeups),
       inputNotifications,
       autoResolvedInputs
@@ -863,10 +862,10 @@ async function adoptReleasedTaskActivations(
     if (request?.disposition !== "pending") continue;
     if (request.startMode !== "after-planning-turn") continue;
     // Still inside its planning Turn: the deferral has not been released yet.
-    const planningTurn = request.afterPlanningTurn === undefined
+    const planningRun = request.afterPlanningRun === undefined
       ? null
-      : store.getActiveTurn(taskId, "leader");
-    if (planningTurn?.id === request.afterPlanningTurn) continue;
+      : store.getActiveRun(taskId, "leader");
+    if (planningRun?.id === request.afterPlanningRun) continue;
     try {
       await workspace.activateTaskWorkspace(taskId);
     } catch (error) {
@@ -1000,8 +999,8 @@ function partitionDirtyScope(keys: readonly MailboxKey[]): DirtyScopePartition {
 
 function emptyControllerSchedulerResult(): ControllerSchedulerResult {
   return {
-    activeTurnDeliveries: [],
-    failedTurnRefs: [],
+    activeRunDeliveries: [],
+    failedRunRefs: [],
     wakeups: [],
     inputNotifications: [],
     autoResolvedInputs: []
@@ -1025,8 +1024,8 @@ function mergeControllerSchedulerResults(
   results: readonly ControllerSchedulerResult[]
 ): ControllerSchedulerResult {
   return {
-    activeTurnDeliveries: results.flatMap((result) => result.activeTurnDeliveries),
-    failedTurnRefs: results.flatMap((result) => result.failedTurnRefs),
+    activeRunDeliveries: results.flatMap((result) => result.activeRunDeliveries),
+    failedRunRefs: results.flatMap((result) => result.failedRunRefs),
     wakeups: results.flatMap((result) => result.wakeups),
     inputNotifications: results.flatMap((result) => result.inputNotifications),
     autoResolvedInputs: results.flatMap((result) => result.autoResolvedInputs)
@@ -1064,7 +1063,7 @@ export class FileTaskController {
     identity: string;
     attempts: number;
     startedAtMs: number;
-    terminalFailure?: RoleTurnDeliveryFailureIdentity;
+    terminalFailure?: RoleRunDeliveryFailureIdentity;
   }>>();
   readonly #deliveryRetryTimers = new Map<MailboxKey, NodeJS.Timeout>();
   readonly #taskPassRetryAttempts = new Map<string, Readonly<{
@@ -1164,12 +1163,12 @@ export class FileTaskController {
     this.#stallWindowMs = positiveInteger(
       options.stallWindowMs,
       DEFAULT_STALL_WINDOW_MS,
-      "Controller Turn stall window"
+      "Controller AgentRun stall window"
     );
     this.#diagnosticAfterMs = positiveInteger(
       options.diagnosticAfterMs,
       DEFAULT_WORKFLOW_STALL_CANDIDATE_AGE_MS,
-      "Controller Turn diagnostic threshold"
+      "Controller AgentRun diagnostic threshold"
     );
     this.#runtimeEventProcessor = options.runtimeEventProcessor;
     this.#runtimeObserver = options.runtimeObserver;
@@ -1442,7 +1441,7 @@ export class FileTaskController {
           }
           // Detached reconciliation is deliberately confined to the low-rate
           // full pass. It queries only identities already present in Task
-          // facts and cannot start a model Turn or scan unknown children.
+          // facts and cannot start a model AgentRun or scan unknown children.
           if (scope.kind === "full" && this.#continuationReconciler !== undefined) {
             await this.#continuationReconciler.reconcile(this.#now());
           }
@@ -1565,7 +1564,7 @@ export class FileTaskController {
         if (this.#pendingFull || this.#pendingKeys.size > 0 || pendingRuntimeDrain) {
           // A continuous Hook signal stream must yield to socket callbacks
           // between bounded scheduler passes.
-          await eventLoopTurn();
+          await eventLoopRun();
         }
       }
       return result;
@@ -1911,13 +1910,7 @@ export class FileTaskController {
           at: aggregationAt
         }];
       }
-      const forceAt = firstRequestedAt + LEADER_WAKE_FORCE_MS;
-      return forceAt > now && this.store.getActiveTurn(wakeup.taskId, "leader") !== null
-        ? [{
-            key: `role:${encodeURIComponent(wakeup.taskId)}/leader` as MailboxKey,
-            at: forceAt
-          }]
-        : [];
+      return [];
     });
     const nearest = nearestDeadlineBatch(deadlines);
     if (nearest === null) return;
@@ -1933,12 +1926,12 @@ export class FileTaskController {
   #scheduleDeliveryRetries(result: ControllerSchedulerResult): void {
     const retry = new Map<MailboxKey, Readonly<{
       identity: string;
-      terminalFailure?: RoleTurnDeliveryFailureIdentity;
+      terminalFailure?: RoleRunDeliveryFailureIdentity;
     }>>();
     const settled = new Set<MailboxKey>();
     const writerBlocked = new Set<MailboxKey>();
     const resignal = new Set<MailboxKey>();
-    for (const delivery of result.activeTurnDeliveries) {
+    for (const delivery of result.activeRunDeliveries) {
       const key = `role:${encodeURIComponent(delivery.taskId)}/${encodeURIComponent(delivery.roleName)}` as const;
       if (delivery.terminalized === true) {
         settled.add(key);
@@ -1947,7 +1940,7 @@ export class FileTaskController {
       else if (delivery.reason === "writer-attached") writerBlocked.add(key);
       else if (delivery.reason === "not-ready"
         || delivery.reason === "runtime-unavailable") {
-        retry.set(key, { identity: delivery.turnId });
+        retry.set(key, { identity: delivery.runId });
       }
       else if (delivery.status === "delivered" || delivery.status === "already-delivered") settled.add(key);
     }
@@ -1955,9 +1948,9 @@ export class FileTaskController {
       const key = `role:${encodeURIComponent(wakeup.taskId)}/leader` as const;
       if (
         wakeup.reason === "not-ready"
-        || (wakeup.reason === "busy" && wakeup.turnId !== undefined)
+        || (wakeup.reason === "busy" && wakeup.runId !== undefined)
       ) {
-        retry.set(key, { identity: wakeup.turnId ?? key });
+        retry.set(key, { identity: wakeup.runId ?? key });
       }
       else if (wakeup.status === "dispatched") settled.add(key);
     }
@@ -2038,7 +2031,7 @@ export class FileTaskController {
   #scheduleDeliveryRetry(
     key: MailboxKey,
     identity: string,
-    terminalFailure?: RoleTurnDeliveryFailureIdentity
+    terminalFailure?: RoleRunDeliveryFailureIdentity
   ): void {
     let previous = this.#deliveryRetryAttempts.get(key);
     if (previous !== undefined && previous.identity !== identity) {
@@ -2093,12 +2086,12 @@ export class FileTaskController {
 
   #terminalizePreparedAfterRetryExhaustion(
     key: MailboxKey,
-    turnId: string,
-    failure: RoleTurnDeliveryFailureIdentity | undefined
+    runId: string,
+    failure: RoleRunDeliveryFailureIdentity | undefined
   ): void {
     if (
       !key.startsWith("role:")
-      || turnId.startsWith("runtime-cleanup:")
+      || runId.startsWith("runtime-cleanup:")
       || failure === undefined
     ) {
       return;
@@ -2108,11 +2101,11 @@ export class FileTaskController {
     if (
       target.taskId !== failure.taskId
       || target.roleName !== failure.roleName
-      || turnId !== failure.turnId
+      || runId !== failure.runId
     ) {
-      throw new Error(`Role delivery retry identity changed: ${key}/${turnId}.`);
+      throw new Error(`Role delivery retry identity changed: ${key}/${runId}.`);
     }
-    const result = this.store.saveRoleTurnDeliveryFailure({
+    const result = this.store.saveRoleRunDeliveryFailure({
       ...failure,
       now: this.#now()
     });
@@ -2121,7 +2114,7 @@ export class FileTaskController {
     this.delivery.forgetPrepared?.({
       taskId: failure.taskId,
       roleName: failure.roleName,
-      turnId: failure.turnId,
+      runId: failure.runId,
     });
     if (!this.#stopped) this.signal(key);
   }
@@ -2355,16 +2348,16 @@ class ControllerDispatcherServiceTimeMetrics {
   }
 }
 
-function eventLoopTurn(): Promise<void> {
+function eventLoopRun(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-async function controlEventLoopTurn(): Promise<void> {
+async function controlEventLoopRun(): Promise<void> {
   // A setImmediate scheduled from the check phase may resume before the next
   // poll phase. Two turns guarantee already-written socket data gets one poll
   // opportunity before another synchronous scheduler projection starts.
-  await eventLoopTurn();
-  await eventLoopTurn();
+  await eventLoopRun();
+  await eventLoopRun();
 }
 
 function signalMailboxKey(value: JsonValue): MailboxKey {

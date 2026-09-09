@@ -1,9 +1,9 @@
-import { enqueueRoleTurnDispatch } from "../coordination/workMailboxQueue.js";
-import { createTurnInput } from "../context/turnInputContract.js";
+import { enqueueRoleRunDispatch } from "../coordination/workMailboxQueue.js";
+import { createRunInput } from "../context/runInputContract.js";
 import {
   contextSnapshotDeltaRefIds,
-  freezeTurnContextSnapshot
-} from "../context/turnContextPack.js";
+  freezeRunContextSnapshot
+} from "../context/runContextPack.js";
 import { contextSnapshotRef } from "../context/contextSnapshot.js";
 import { roleAgentSessionResumeMode } from "../executor/agentExecutor.js";
 import { resolveEffectiveLaunch } from "../executor/effectiveLaunch.js";
@@ -13,7 +13,7 @@ import {
   type ReviewRound
 } from "../review/reviewRound.js";
 import type { TaskStore } from "../storage/taskStore.js";
-import { createTurn, type Turn } from "../turn/turn.js";
+import { createRun, type AgentRun } from "../agentRun/agentRun.js";
 import {
   type ReviewExecutionGroup
 } from "./workItemExecution.js";
@@ -21,39 +21,39 @@ import {
 export type ReviewSynthesisProducer = Readonly<{
   laneId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
 }>;
 
 export function selectedReviewSynthesisProducers(
-  store: Pick<TaskStore, "getTurn">,
+  store: Pick<TaskStore, "getRun">,
   round: ReviewRound,
   group: ReviewExecutionGroup,
-  sourceTurnIds: readonly string[]
+  sourceRunIds: readonly string[]
 ): readonly ReviewSynthesisProducer[] {
-  if (sourceTurnIds.length === 0 || new Set(sourceTurnIds).size !== sourceTurnIds.length) {
-    throw new Error("Synthesis requires explicit, distinct source Turn references.");
+  if (sourceRunIds.length === 0 || new Set(sourceRunIds).size !== sourceRunIds.length) {
+    throw new Error("Synthesis requires explicit, distinct source AgentRun references.");
   }
-  return sourceTurnIds.map((turnId) => {
-    const turn = store.getTurn(round.taskId, turnId);
-    const lane = group.lanes.find(({ id }) => id === turn?.executionLaneId);
-    if (turn === null
+  return sourceRunIds.map((runId) => {
+    const run = store.getRun(round.taskId, runId);
+    const lane = group.lanes.find(({ id }) => id === run?.executionLaneId);
+    if (run === null
       || lane === undefined
-      || !["completed", "failed"].includes(turn.status)
-      || turn.purpose !== "review"
-      || turn.reviewRoundId !== round.id
-      || turn.executionGroupId !== group.id
-      || turn.executionLaneId !== lane.id
-      || turn.roleName !== lane.roleName
-      || turn.result === undefined) {
+      || !["completed", "failed"].includes(run.status)
+      || run.purpose !== "review"
+      || run.reviewRoundId !== round.id
+      || run.executionGroupId !== group.id
+      || run.executionLaneId !== lane.id
+      || run.roleName !== lane.roleName
+      || run.result === undefined) {
       throw new Error(
         `Synthesis source is not an exact terminal Review Producer result: `
-        + `${group.id}/${turnId}.`
+        + `${group.id}/${runId}.`
       );
     }
     return {
       laneId: lane.id,
       roleName: lane.roleName,
-      turnId: turn.id
+      runId: run.id
     };
   });
 }
@@ -63,9 +63,9 @@ export function dispatchReviewSynthesis(
   store: TaskStore,
   taskId: string,
   reviewRoundId: string,
-  sourceTurnIds: readonly string[],
+  sourceRunIds: readonly string[],
   now: Date
-): Turn {
+): AgentRun {
   const task = store.getTask(taskId);
   if (task === null || task.status !== "active" || task.executionGate.state !== "enabled") {
     throw new Error(`Task execution is not enabled: ${taskId}.`);
@@ -76,21 +76,21 @@ export function dispatchReviewSynthesis(
   }
   const group = round.executionGroup;
   if (group === undefined) throw new Error(`ReviewRound has no ExecutionGroup: ${round.id}.`);
-  const producers = selectedReviewSynthesisProducers(store, round, group, sourceTurnIds);
-  const existing = store.listTurns(taskId).filter((turn) => (
-    turn.purpose === "review"
-    && turn.reviewRoundId === round.id
-    && turn.sourceExecutionGroupId === group.id
+  const producers = selectedReviewSynthesisProducers(store, round, group, sourceRunIds);
+  const existing = store.listRuns(taskId).filter((run) => (
+    run.purpose === "review"
+    && run.reviewRoundId === round.id
+    && run.sourceExecutionGroupId === group.id
   ));
-  if (existing.length > 0 || round.reviewerTurnId !== undefined) {
-    throw new Error(`Synthesis already exists for ${group.id}; retry its Turn explicitly.`);
+  if (existing.length > 0 || round.reviewerRunId !== undefined) {
+    throw new Error(`Synthesis already exists for ${group.id}; retry its AgentRun explicitly.`);
   }
   const role = store.getRole(taskId, round.reviewerRoleName);
   if (role === null) {
     throw new Error(`Review main Role is missing: ${taskId}/${round.reviewerRoleName}.`);
   }
-  if (store.getActiveTurn(taskId, role.name) !== null) {
-    throw new Error(`Review main Role already has an active Turn: ${role.name}.`);
+  if (store.getActiveRun(taskId, role.name) !== null) {
+    throw new Error(`Review main Role already has an active AgentRun: ${role.name}.`);
   }
   const workspace = store.getReviewRoundWorkspace(taskId, round.id);
   if (workspace === null) {
@@ -103,7 +103,7 @@ export function dispatchReviewSynthesis(
     reviewRoundId: round.id,
     reviewBaseCommit: round.reviewBaseCommit
   });
-  const snapshot = freezeTurnContextSnapshot(store, {
+  const snapshot = freezeRunContextSnapshot(store, {
     taskId,
     roleName: role.name,
     purpose: "review",
@@ -111,9 +111,9 @@ export function dispatchReviewSynthesis(
     reviewRoundId: round.id,
     sourceExecutionGroupId: group.id,
     workspace
-  }, now, "leader", group.assignment.contextSnapshotRef, sourceTurnIds);
-  const turn = createTurn(
-    store.nextTurnId(taskId),
+  }, now, "leader", group.assignment.contextSnapshotRef, sourceRunIds);
+  const run = createRun(
+    store.nextRunId(taskId),
     taskId,
     role.name,
     roleAgentSessionResumeMode(
@@ -121,7 +121,7 @@ export function dispatchReviewSynthesis(
       effective.agentId,
       effective
     ),
-    createTurnInput({
+    createRunInput({
       source: {
         type: "yui",
         channel: round.workItemId === undefined ? "task-dispatch" : "workitem-dispatch"
@@ -140,36 +140,36 @@ export function dispatchReviewSynthesis(
       effective
     }
   );
-  store.saveTurn(turn);
-  store.saveReviewRound(taskId, startReviewRound(round, turn.id));
-  store.saveActiveTurn(turn);
-  enqueueRoleTurnDispatch(store, {
+  store.saveRun(run);
+  store.saveReviewRound(taskId, startReviewRound(round, run.id));
+  store.saveActiveRun(run);
+  enqueueRoleRunDispatch(store, {
     taskId,
     roleName: role.name,
-    turnId: turn.id,
+    runId: run.id,
     reason: "review-synthesis-ready",
     occurredAt: now
   });
   store.saveEvent(taskId, createTaskEvent(
     store.nextEventId(taskId),
     taskId,
-    "turn.review-dispatched",
+    "run.review-dispatched",
     {
-      turnId: turn.id,
-      role: turn.roleName,
-      purpose: turn.purpose,
-      mode: turn.mode,
-      agent: `${turn.effective.agentId}/${turn.effective.adapterId}`,
-      effectiveRevision: String(turn.effective.sourceDesiredRevision),
-      profileAccess: turn.effective.profileAccess,
-      effectivePermission: turn.effective.permission.strategy,
-      writeProjectIds: turn.effective.writeProjectIds.join(",") || "none",
+      runId: run.id,
+      role: run.roleName,
+      purpose: run.purpose,
+      mode: run.mode,
+      agent: `${run.effective.agentId}/${run.effective.adapterId}`,
+      effectiveRevision: String(run.effective.sourceDesiredRevision),
+      profileAccess: run.effective.profileAccess,
+      effectivePermission: run.effective.permission.strategy,
+      writeProjectIds: run.effective.writeProjectIds.join(",") || "none",
       reviewRoundId: round.id,
       sourceExecutionGroupId: group.id
     },
     now
   ));
-  return turn;
+  return run;
 }
 
 function synthesisDirective(
@@ -178,7 +178,7 @@ function synthesisDirective(
 ): string {
   return [
     "Act as the main Reviewer over the explicitly selected Producer results in the supplied order.",
-    "Expand each exact source Turn from the frozen Context Snapshot and consume its original result text plus Core-authored system evidence.",
+    "Expand each exact source AgentRun from the frozen Context Snapshot and consume its original result text plus Core-authored system evidence.",
     "Resolve disagreements through review judgment against the frozen candidate. Do not rerun, retry, append, select, or abandon Lanes.",
     "Return one complete original review result for the Leader; Yui Core does not parse or validate its semantic structure.",
     JSON.stringify({

@@ -44,8 +44,8 @@ export function taskActor(
  * Resolve authority for a recoverable Task-local mutation. A managed Leader
  * does not gain that authority from long-lived process environment alone. Its
  * process proves only that Yui launched it for this Task Role; whether it is
- * still the current runtime, and which Turn is current, are read from durable
- * state at command time. Plain-user and global-Operator behavior is unchanged.
+ * still the current Session is read from durable state at command time.
+ * Execution occupancy is not management authority.
  */
 export function taskLocalActor(
   store: ManagedCallerStore,
@@ -54,10 +54,25 @@ export function taskLocalActor(
 ): TaskCompletedBy {
   const actor = taskActor(environment, taskId);
   if (actor !== "leader") return actor;
-  if (taskLeaderActionTurnId(store, taskId, environment) === undefined) {
+  if (currentManagedRuntime(store, environment, taskId, LEADER_ROLE) === undefined) {
     throw usageError(
-      `Task-local Leader authority requires the current Provider Turn: ${taskId}.`
+      `Task-local Leader authority requires the current native Session: ${taskId}.`
     );
+  }
+  return actor;
+}
+
+/** Planning conversations may save facts; delivery checks the immutable
+ * native Session authority, not the Task's newly activated status.
+ */
+export function assertTaskDeliveryAuthority(
+  store: ManagedCallerStore, environment: NodeJS.ProcessEnv | undefined, taskId: string
+): TaskCompletedBy {
+  const actor = taskLocalActor(store, environment, taskId);
+  if (actor !== "leader") return actor;
+  const caller = currentManagedRuntime(store, environment, taskId, LEADER_ROLE);
+  if (caller?.executionAuthority !== "delivery") {
+    throw usageError("This native Session has planning authority, not delivery authority. Use a delivery Session for this operation.");
   }
   return actor;
 }
@@ -90,7 +105,7 @@ export function projectActor(environment: NodeJS.ProcessEnv | undefined): Projec
 
 /**
  * Resolve the caller's Task, Role and native Session identity. The Controller
- * verifies it against durable state and supplies the current Turn. A Task
+ * verifies it against durable state and supplies the current AgentRun. A Task
  * caller cannot control another Task; an incomplete identity is not a user.
  */
 export function resolveJobCaller(
@@ -106,7 +121,7 @@ export function resolveJobCaller(
     }
     const role = env.YUI_ROLE;
     const nativeSessionId = env.CODEX_THREAD_ID ?? env.YUI_NATIVE_SESSION_ID;
-    // The Turn is deliberately absent: the Controller reads the current Turn
+    // The AgentRun is deliberately absent: the Controller reads the current AgentRun
     // for this Task Role from durable state when it authorizes the request.
     return {
       scope: "task",
@@ -132,23 +147,4 @@ export function resolveJobCaller(
     throw usageError("Managed Agent identity is incomplete; refusing to infer user authority.");
   }
   return { scope: "user" };
-}
-
-/**
- * Resolve the current Task Leader Turn for event attribution and Task-local
- * Leader authority.
- *
- * A long-lived managed process cannot carry this: its environment is frozen at
- * launch, so any Turn it holds is stale the moment Yui advances the Task. The
- * Turn is therefore read from durable state, and the process only has to prove
- * that it is still the current runtime of the Leader Role through its
- * per-Session caller key. When the Role has no active Turn, or the process has
- * been superseded, there is simply no Leader action window.
- */
-export function taskLeaderActionTurnId(
-  store: ManagedCallerStore,
-  taskId: string,
-  environment: NodeJS.ProcessEnv | undefined
-): string | undefined {
-  return currentManagedRuntime(store, environment, taskId, LEADER_ROLE)?.currentTurnId;
 }

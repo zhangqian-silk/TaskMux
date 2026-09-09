@@ -23,9 +23,9 @@ import {
   isRuntimeTokenEvidence,
   type RuntimeObservation
 } from "../runtime/runtimeObservation.js";
-import type { TurnFailureReason } from "../turn/turn.js";
+import type { AgentRunFailureReason } from "../agentRun/agentRun.js";
 import {
-  boundedTurnFailureDiagnostic,
+  boundedRunFailureDiagnostic,
   transportAgentResult
 } from "../domain/agentResultTransport.js";
 
@@ -45,15 +45,16 @@ export type RuntimeObservationInboxEvent = Readonly<{
   observation: RuntimeObservation;
 }>;
 
-export type RuntimeTurnTerminalOutcome =
+export type RuntimeRunTerminalOutcome =
   | Readonly<{ status: "completed"; output: string }>
   | Readonly<{
       status: "failed";
       diagnostic: string;
-      failureReason: TurnFailureReason;
+      failureReason: AgentRunFailureReason;
+      output?: string;
     }>;
 
-export type RuntimeTurnTerminalInput = Readonly<{
+export type RuntimeRunTerminalInput = Readonly<{
   scope: "task" | "global";
   taskId?: string;
   roleName: string;
@@ -61,18 +62,18 @@ export type RuntimeTurnTerminalInput = Readonly<{
   adapterId: "codex" | "claude";
   nativeSessionId: string;
   nativeTurnId: string;
-  turnId?: string;
+  runId?: string;
   title?: string;
   providerStatus: "completed" | "failed" | "cancelled";
-  outcome: RuntimeTurnTerminalOutcome;
+  outcome: RuntimeRunTerminalOutcome;
 }>;
 
-export type RuntimeTurnTerminalEvent = Readonly<{
+export type RuntimeRunTerminalEvent = Readonly<{
   schemaVersion: 1;
   id: string;
   type: "native-turn-terminal";
   receivedAt: string;
-}> & RuntimeTurnTerminalInput;
+}> & RuntimeRunTerminalInput;
 
 /**
  * f7/rr5: A DurableJob reached a terminal state. The supervisor delivers
@@ -97,7 +98,7 @@ export type RuntimeDurableJobTerminalEvent = Readonly<{
 
 export type RuntimeLifecycleEvent =
   | RuntimeObservationInboxEvent
-  | RuntimeTurnTerminalEvent
+  | RuntimeRunTerminalEvent
   | RuntimeDurableJobTerminalEvent;
 
 export type RuntimeEventEnqueueResult<TEvent extends RuntimeLifecycleEvent = RuntimeLifecycleEvent> =
@@ -147,9 +148,9 @@ export class FileRuntimeEventInbox {
     return this.publish(event);
   }
 
-  enqueueTurnTerminal(
-    input: RuntimeTurnTerminalInput
-  ): RuntimeEventEnqueueResult<RuntimeTurnTerminalEvent> {
+  enqueueRunTerminal(
+    input: RuntimeRunTerminalInput
+  ): RuntimeEventEnqueueResult<RuntimeRunTerminalEvent> {
     const normalized = normalizeNativeTurnTerminalInput(input);
     return this.publish(Object.freeze({
       schemaVersion: 1,
@@ -220,7 +221,7 @@ export class FileRuntimeEventInbox {
     } catch {
       throw invalidEvent(`Runtime event JSON is invalid: ${id}`);
     }
-    const event = parseRuntimeEvent(value);
+    const event = parseRuntimeEvent(decodeInboxV1(value));
     if (event.id !== id || runtimeEventId(event.type, event) !== id) {
       throw invalidEvent(`Runtime event identity is invalid: ${id}`);
     }
@@ -281,7 +282,7 @@ export class FileRuntimeEventInbox {
   private publishUnlocked<TEvent extends RuntimeLifecycleEvent>(
     event: TEvent
   ): RuntimeEventEnqueueResult<TEvent> {
-    const content = `${JSON.stringify(event)}\n`;
+    const content = `${JSON.stringify(encodeInboxV1(event))}\n`;
     if (Buffer.byteLength(content, "utf8") > MAX_RUNTIME_EVENT_FILE_BYTES) {
       throw new RuntimeEventInboxError(
         "RUNTIME_EVENT_TOO_LARGE",
@@ -371,7 +372,7 @@ export class RuntimeEventInboxError extends Error {
 
 function runtimeEventId(
   type: RuntimeLifecycleEvent["type"],
-  input: RuntimeTurnTerminalInput
+  input: RuntimeRunTerminalInput
     | RuntimeDurableJobTerminalInput
     | Readonly<{ observation: RuntimeObservation }>
 ): string {
@@ -397,7 +398,7 @@ function runtimeEventId(
       job.outcome
     ])).digest("hex")}`;
   }
-  const provider = input as RuntimeTurnTerminalInput;
+  const provider = input as RuntimeRunTerminalInput;
   const common = [
     1,
     type,
@@ -408,18 +409,18 @@ function runtimeEventId(
     provider.adapterId,
     provider.nativeSessionId,
     provider.nativeTurnId,
-    provider.turnId ?? null
+    provider.runId ?? null
   ];
   return `turn-${createHash("sha256").update(JSON.stringify(common)).digest("hex")}`;
 }
 
 function normalizeNativeTurnTerminalInput(
-  input: RuntimeTurnTerminalInput
-): RuntimeTurnTerminalInput {
+  input: RuntimeRunTerminalInput
+): RuntimeRunTerminalInput {
   const scope = input.scope;
   if (scope !== "task" && scope !== "global") throw invalidEvent();
   if (!["completed", "failed", "cancelled"].includes(input.providerStatus)) throw invalidEvent();
-  const outcome = normalizeRuntimeTurnTerminalOutcome(input.outcome);
+  const outcome = normalizeRuntimeRunTerminalOutcome(input.outcome);
   if (outcome.status === "completed" && input.providerStatus !== "completed") {
     throw invalidEvent("Only a completed Provider Turn may carry a completed Agent result.");
   }
@@ -430,9 +431,9 @@ function normalizeNativeTurnTerminalInput(
     adapterId: input.adapterId,
     nativeSessionId: requireIdentityText(input.nativeSessionId, "Native session id"),
     nativeTurnId: requireIdentityText(input.nativeTurnId, "Provider native Turn id"),
-    ...(input.turnId === undefined
+    ...(input.runId === undefined
       ? {}
-      : { turnId: requireIdentityText(input.turnId, "Turn id") }),
+      : { runId: requireIdentityText(input.runId, "AgentRun id") }),
     ...(input.title === undefined
       ? {}
       : { title: requireIdentityText(input.title, "Session title") }),
@@ -445,11 +446,11 @@ function normalizeNativeTurnTerminalInput(
     : common;
 }
 
-function normalizeRuntimeTurnTerminalOutcome(
+function normalizeRuntimeRunTerminalOutcome(
   input: unknown
-): RuntimeTurnTerminalOutcome {
+): RuntimeRunTerminalOutcome {
   if (!isObject(input)) {
-    throw invalidEvent("Runtime Turn terminal outcome is invalid.");
+    throw invalidEvent("Runtime AgentRun terminal outcome is invalid.");
   }
   if (input.status === "completed") return transportAgentResult(input.output);
   if (input.status !== "failed"
@@ -464,14 +465,49 @@ function normalizeRuntimeTurnTerminalOutcome(
       "cancelled"
     ]
       .includes(input.failureReason)) {
-    throw invalidEvent("Runtime Turn failure outcome is invalid.");
+    throw invalidEvent("Runtime AgentRun failure outcome is invalid.");
   }
   return {
     status: "failed",
-    diagnostic: boundedTurnFailureDiagnostic(input.diagnostic),
-    failureReason: input.failureReason
+    diagnostic: boundedRunFailureDiagnostic(input.diagnostic),
+    failureReason: input.failureReason,
+    ...(typeof input.output === "string" && transportAgentResult(input.output).status === "completed"
+      ? { output: input.output } : {})
   };
 }
+
+/** The already deployed inbox v1 is a transport envelope, not a second domain
+ * schema. Keep its wire keys and opaque ids stable so pre-upgrade pending
+ * facts remain readable atomically. Public/in-process values use runId.
+ * Retire this codec only with a new inbox protocol after all v1 producers
+ * and pending files have drained; do not introduce dual domain-store reads.
+ */
+function inboxReference(value: Record<string, any>, encode: boolean): Record<string, any> {
+  const from = encode ? "runId" : "turnId";
+  const to = encode ? "turnId" : "runId";
+  if (Object.hasOwn(value, to)) throw invalidEvent("Inbox v1 reference uses the wrong wire shape.");
+  const { [from]: id, ...rest } = value;
+  return id === undefined ? rest : { ...rest, [to]: id };
+}
+
+function inboxEnvelope(value: unknown, encode: boolean): unknown {
+  if (!isObject(value)) throw invalidEvent();
+  if (value.type === "native-turn-terminal") return inboxReference(value, encode);
+  if (value.type !== "runtime-observation") return value;
+  if (!isObject(value.observation) || !isObject(value.observation.fence)) throw invalidEvent();
+  const observation = value.observation;
+  let payload = observation.payload;
+  if (isObject(payload?.failure)) {
+    const from = encode ? "runTerminal" : "turnTerminal";
+    const to = encode ? "turnTerminal" : "runTerminal";
+    const { [from]: terminal, ...failure } = payload.failure;
+    payload = { ...payload, failure: terminal === undefined ? failure : { ...failure, [to]: terminal } };
+  }
+  return { ...value, observation: { ...observation, payload,
+    fence: inboxReference(observation.fence, encode) } };
+}
+function encodeInboxV1(value: RuntimeLifecycleEvent): unknown { return inboxEnvelope(value, true); }
+function decodeInboxV1(value: unknown): unknown { return inboxEnvelope(value, false); }
 
 function normalizeDurableJobTerminalInput(
   input: RuntimeDurableJobTerminalInput
@@ -548,21 +584,21 @@ function parseDurableJobTerminalEvent(
   });
 }
 
-function parseNativeTurnTerminalEvent(value: Record<string, any>): RuntimeTurnTerminalEvent {
+function parseNativeTurnTerminalEvent(value: Record<string, any>): RuntimeRunTerminalEvent {
   const scope = value.scope;
   const expected = scope === "task"
     ? [
         "schemaVersion", "id", "type", "receivedAt", "scope", "taskId",
         "roleName", "agentId", "adapterId", "nativeSessionId", "nativeTurnId",
         "providerStatus", "outcome",
-        ...(value.turnId === undefined ? [] : ["turnId"]),
+        ...(value.runId === undefined ? [] : ["runId"]),
         ...(value.title === undefined ? [] : ["title"])
       ]
     : [
         "schemaVersion", "id", "type", "receivedAt", "scope",
         "roleName", "agentId", "adapterId", "nativeSessionId", "nativeTurnId",
         "providerStatus", "outcome",
-        ...(value.turnId === undefined ? [] : ["turnId"]),
+        ...(value.runId === undefined ? [] : ["runId"]),
         ...(value.title === undefined ? [] : ["title"])
       ];
   if ((scope !== "task" && scope !== "global")
@@ -577,7 +613,7 @@ function parseNativeTurnTerminalEvent(value: Record<string, any>): RuntimeTurnTe
     adapterId: value.adapterId,
     nativeSessionId: value.nativeSessionId,
     nativeTurnId: value.nativeTurnId,
-    ...(value.turnId === undefined ? {} : { turnId: value.turnId }),
+    ...(value.runId === undefined ? {} : { runId: value.runId }),
     ...(value.title === undefined ? {} : { title: value.title }),
     providerStatus: value.providerStatus,
     outcome: value.outcome
@@ -644,7 +680,7 @@ function hasSameIdentity(left: RuntimeLifecycleEvent, right: RuntimeLifecycleEve
     && (!("nativeSessionId" in left)
       || !("nativeSessionId" in right)
       || left.nativeSessionId === right.nativeSessionId)
-    && (!("turnId" in left) || !("turnId" in right) || left.turnId === right.turnId)
+    && (!("runId" in left) || !("runId" in right) || left.runId === right.runId)
     && (!("jobId" in left) || !("jobId" in right) || left.jobId === right.jobId);
 }
 

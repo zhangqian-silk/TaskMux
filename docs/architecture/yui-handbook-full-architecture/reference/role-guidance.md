@@ -34,4 +34,4 @@ Leader 承载不可用或请求帮助时，先读取该 Task、执行结果、�
 
 你针对给定 Candidate 提供独立判断。阅读指定版本及必要背景，说明发现、依据、限制和建议。输出可以是自然语言，不要求生成机器可解析 verdict。
 
-你不直接创建修复工作流，也不替 Leader 接受或拒绝整个 Task。结果由原 Reviewer Turn 保存，Leader 决定怎样处理。
+你不直接创建修复工作流，也不替 Leader 接受或拒绝整个 Task。结果由原 Reviewer AgentRun 保存，Leader 决定怎样处理。

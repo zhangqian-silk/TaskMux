@@ -11,14 +11,14 @@
 用户进入 Task A，与 Leader A 细化方案；同时也可进入 Task B。Surface 根据 Task 路由到对应 Leader，没有“必须回 Operator 转述”的限制。跨任务资料使用共享 Project 知识或带来源的普通消息传递，不建立自动跨 Task DAG。
 
 **事实链：** 用户请求 → Task／Brief → Leader Role。  
-**运行链：** 用户进入 → 按需 Session → planning Turn。  
+**运行链：** 用户进入 → 按需 Session → planning AgentRun。
 **决定者：** Operator 划 Task，Leader 划内部工作。
 
 ## 2. Draft 中持续对齐
 
 Leader 读取当前 Brief，讨论后直接更新要求或方案。对重要取舍写 Decision；日常进度写 currentFocus。必要资料通过 Artifact 保存，可从 Context 展开读取。
 
-用户同意开始后，Leader 或 Operator 提出 Activation。若由当前 planning Turn 发起，请求立即返回，Turn 完成后执行资源采用。正式 Session 能兼容续用就续用，不能则打开新会话读取同一 Task Context。
+用户同意开始后，Leader 或 Operator 提出 Activation。若由当前 planning AgentRun 发起，请求立即返回，AgentRun 完成后执行资源采用。正式 Session 能兼容续用就续用，不能则打开新会话读取同一 Task Context。
 
 Activation 的记录说明开始时依据什么，不限制之后继续讨论。临时实验内容可以显式引用或复制到交付环境，但不会因目录存在就自动被采用。
 
@@ -26,15 +26,15 @@ Activation 的记录说明开始时依据什么，不限制之后继续讨论。
 
 任务只需要整理一份说明。Leader 使用已有能力读取材料、生成文件、保存结果，然后调用 Task 完成能力写入说明和产物引用。
 
-不需要合成 Worker、WorkItem、Lane、Review 或 Git Integration 来满足统一流程。Task 完成由明确操作产生，原生 Turn 的结束只保存该次回复。展示层读取两者各自的事实。
+不需要合成 Worker、WorkItem、Lane、Review 或 Git Integration 来满足统一流程。Task 完成由明确操作产生，原生 AgentRun 的结束只保存该次回复。展示层读取两者各自的事实。
 
 ## 4. 两个 WorkItem 并行
 
-Leader 建立两个可以独立负责的 WorkItem，分别配置 Worker Role 并发出执行请求。Execution 检查角色是否忙碌及实际环境条件，创建 Turn 并调用 Endpoint。
+Leader 建立两个可以独立负责的 WorkItem，分别配置 Worker Role 并发出执行请求。Execution 检查角色是否忙碌及实际环境条件，创建 AgentRun 并调用 Endpoint。
 
-Worker 输出分别保存到原 Turn，通知 Leader。Leader 可以请求 Candidate、直接读取产物、发送反馈或接受结果。若一个 Worker 失败，另一个正常执行不受影响；失败只成为当前 Task 的一条事实。
+Worker 输出分别保存到原 AgentRun，通知 Leader。Leader 可以请求 Candidate、直接读取产物、发送反馈或接受结果。若一个 Worker 失败，另一个正常执行不受影响；失败只成为当前 Task 的一条事实。
 
-要求改变时，Leader决定哪些工作需要调整。框架不自动根据每个 Brief 修改取消所有 Turn，也不以所有候选拥有同一 revision 为完成前提。
+要求改变时，Leader决定哪些工作需要调整。框架不自动根据每个 Brief 修改取消所有 AgentRun，也不以所有候选拥有同一 revision 为完成前提。
 
 ## 5. 同一工作多个独立尝试
 
@@ -54,7 +54,7 @@ Leader 可自己综合，也可委派一个主执行读取明确选择的结果�
 
 Leader 将一个 Worker 的当前配置从 Agent A 改为 Agent B。Role 的逻辑身份不变，WorkItem 和消息不重建。
 
-旧 Turn 仍按原配置结束，或者由 Leader 明确取消。新执行使用新有效配置，必要时新建 Session 并读取 Assignment 与持久化结果。新的 Session 不必重现旧会话的全部 token 历史。
+旧 AgentRun 仍按原配置结束，或者由 Leader 明确取消。新执行使用新有效配置，必要时新建 Session 并读取 Assignment 与持久化结果。新的 Session 不必重现旧会话的全部 token 历史。
 
 配置切换不删除旧结果，也不需要全局重载所有插件。
 

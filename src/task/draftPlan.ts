@@ -181,8 +181,8 @@ function firstDraftExecutionFact(store: TaskStore, task: Task): string | undefin
   // the Draft, and a planning Turn can never carry a WorkItem, ReviewRound,
   // Lane or workspace (validateTurn enforces that), so this stays a narrow
   // exemption rather than a hole.
-  const turn = store.listTurns(task.id).find(({ purpose }) => purpose !== "planning");
-  if (turn !== undefined) return `Turn ${turn.id}/${turn.purpose}`;
+  const run = store.listRuns(task.id).find(({ purpose }) => purpose !== "planning");
+  if (run !== undefined) return `AgentRun ${run.id}/${run.purpose}`;
   const hostOwner = store.listSessionOwners().find(({ owner }) => (
     owner.scope === "task" && owner.taskId === task.id && owner.roleName !== SYSTEM_LEADER_ROLE
   ));
@@ -206,15 +206,9 @@ function firstDraftExecutionFact(store: TaskStore, task: Task): string | undefin
   if (itemWithExecution !== undefined) {
     return `Work Item execution (${itemWithExecution.id})`;
   }
-  const runtimeEvent = store.listEvents(task.id).find((event) => {
-    const { type } = event;
-    if (!(type.startsWith("runtime.") || type.startsWith("turn.")
-      || type.startsWith("review.") || type.startsWith("integration."))) {
-      return false;
-    }
-    return !isDraftPlanningEvent(store, task, event);
-  });
-  return runtimeEvent === undefined ? undefined : `event ${runtimeEvent.id}/${runtimeEvent.type}`;
+  // Runtime observations support planning; they are not a competing source
+  // of delivery authority. The domain records above own delivery facts.
+  return undefined;
 }
 
 /**
@@ -233,9 +227,9 @@ function firstDraftExecutionFact(store: TaskStore, task: Task): string | undefin
 function isDraftPlanningEvent(store: TaskStore, task: Task, event: TaskEvent): boolean {
   // Several emitters write an absent Turn as an empty string, so only a
   // non-empty id counts as a reference worth resolving.
-  const turnId = event.payload["turnId"];
-  if (typeof turnId === "string" && turnId !== "") {
-    return store.getTurn(task.id, turnId)?.purpose === "planning";
+  const runId = event.payload["runId"];
+  if (typeof runId === "string" && runId !== "") {
+    return store.getRun(task.id, runId)?.purpose === "planning";
   }
   // A canonical runtime observation is the event normal delivery writes for
   // session.started/conversation.observed/turn.accepted and every terminal. It

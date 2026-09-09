@@ -1,4 +1,5 @@
-import { serializeTurnInputEnvelope } from "../context/turnInputContract.js";
+import { randomUUID } from "node:crypto";
+import { serializeRunInputEnvelope } from "../context/runInputContract.js";
 import {
   roleSessionMayContinue,
   sameEffectiveLaunch
@@ -16,16 +17,16 @@ import {
   RuntimeLaunchError,
   type RuntimeLaunchPreflight
 } from "../runtime/ports.js";
-import { formatTurnReceiptId } from "../task/taskRecordReference.js";
+import { formatRunReceiptId } from "../task/taskRecordReference.js";
 import { taskOwnsManagedWorkspace } from "../task/task.js";
-import { turnInputEnvelope } from "../turn/turn.js";
+import { runInputEnvelope } from "../agentRun/agentRun.js";
 import {
-  captureRoleTurnDispatch,
-  type RoleTurnDispatchToken
+  captureRoleRunDispatch,
+  type RoleRunDispatchToken
 } from "../coordination/workMailboxQueue.js";
 import type {
   PreparedRoleDelivery,
-  SchedulerTurn,
+  SchedulerRun,
   SchedulerRole,
   SchedulerRoleSession,
   SchedulerStorePort,
@@ -40,10 +41,10 @@ import {
   type SchedulerReconcileSelection
 } from "./ports.js";
 
-export type ActiveRoleTurnDeliveryResult = Readonly<{
+export type ActiveRoleRunDeliveryResult = Readonly<{
   taskId: string;
   roleName: string;
-  turnId: string;
+  runId: string;
   status: "delivered" | "already-delivered" | "skipped" | "failed";
   reason?: "workspace-not-ready" | "launch-failed" | "provider-rejected" | "mailbox-empty" | "mailbox-busy" | "not-ready" | "runtime-unavailable" | "writer-attached" | "delivery-uncertain";
   error?: string;
@@ -51,107 +52,136 @@ export type ActiveRoleTurnDeliveryResult = Readonly<{
 }>;
 
 /**
- * Sole managed Provider write path. A Turn is durable workflow intent;
+ * Sole managed Provider write path. A AgentRun is durable workflow intent;
  * each invocation here is an ordinary Provider-native Turn on the Role's
  * shared conversation. Stable request ids make a repeated submit idempotent
- * without copying Provider delivery state into Turn or WorkMailbox.
+ * without copying Provider delivery state into AgentRun or WorkMailbox.
  */
-export async function processActiveRoleTurnDeliveries(
+export async function processActiveRoleRunDeliveries(
   store: SchedulerStorePort,
   delivery: TmuxDeliveryPort,
   now: Date,
   selection?: SchedulerReconcileSelection
-): Promise<ActiveRoleTurnDeliveryResult[]> {
-  const results: ActiveRoleTurnDeliveryResult[] = [];
+): Promise<ActiveRoleRunDeliveryResult[]> {
+  const results: ActiveRoleRunDeliveryResult[] = [];
   // Planning Turns are admitted on a Draft, so delivery must be able to see
   // that Draft or an admitted planning Turn would never be delivered, resumed
   // or terminalized. Selection still admits it only on its durable Turn.
   for (const task of selectedActiveSchedulerTasks(store, selection, {
     includePlanningDrafts: true
   })) {
+    store.prepareMessageContinuations?.(task.id, now);
     for (const role of selectedSchedulerRoles(store, task.id, selection)) {
-      const turn = store.getActiveTurn(task.id, role.name);
-      if (turn === null) continue;
-      results.push(await deliverActiveTurn(store, delivery, task, role, turn, now));
+      const run = store.getActiveRun(task.id, role.name);
+      if (run === null) continue;
+      results.push(await deliverActiveRun(store, delivery, task, role, run, now));
     }
   }
   return results;
 }
 
-async function deliverActiveTurn(
+async function deliverActiveRun(
   store: SchedulerStorePort,
   delivery: TmuxDeliveryPort,
   task: SchedulerTask,
   role: SchedulerRole,
-  turn: SchedulerTurn,
+  run: SchedulerRun,
   now: Date
-): Promise<ActiveRoleTurnDeliveryResult> {
-  const base = { taskId: task.id, roleName: role.name, turnId: turn.id };
+): Promise<ActiveRoleRunDeliveryResult> {
+  const base = { taskId: task.id, roleName: role.name, runId: run.id };
   if (!isSchedulerTaskWorkspaceReady(
     task,
     store.getTaskWorkspace(task.id),
-    turn.purpose
+    run.purpose
   )) {
     return { ...base, status: "skipped", reason: "workspace-not-ready" };
   }
 
-  const dispatchToken = captureRoleTurnDispatch(store.getWorkMailbox({
+  const dispatchToken = captureRoleRunDispatch(store.getWorkMailbox({
     kind: "role",
     taskId: task.id,
     roleName: role.name
   }), {
     taskId: task.id,
     roleName: role.name,
-    turnId: turn.id
+    runId: run.id
   });
   const sessionSet = store.getTaskRoleSessionSet?.(task.id, role.name) ?? null;
   const binding = sessionSet?.providerBinding ?? null;
-  const observedTurn = binding?.turn ?? null;
-  const initialAttemptId = formatTurnReceiptId(task.id, turn.id);
-  const currentProviderTurn = managedProviderTurnId(observedTurn) === turn.id ? observedTurn : null;
+  const observedRun = binding?.run ?? null;
+  const initialAttemptId = formatRunReceiptId(task.id, run.id);
+  const currentProviderTurn = managedProviderTurnId(observedRun) === run.id ? observedRun : null;
 
   if (binding?.authority.owner === "human"
     || binding?.authority.owner === "unknown") {
     return { ...base, status: "skipped", reason: "writer-attached" };
   }
+  if (currentProviderTurn === null && observedRun !== null
+    && ["submitting", "accepted", "delivery-unknown"].includes(observedRun.status)) {
+    return { ...base, status: "skipped",
+      reason: observedRun.status === "delivery-unknown" ? "delivery-uncertain" : "not-ready" };
+  }
   if (currentProviderTurn?.status === "accepted") {
-    settleAcceptedRoleTurnDispatch(store, turn, dispatchToken);
+    settleAcceptedRoleRunDispatch(store, run, dispatchToken);
     return { ...base, status: "skipped", reason: "not-ready" };
   }
   if (currentProviderTurn?.status === "submitting") {
     return { ...base, status: "skipped", reason: "not-ready" };
   }
   if (currentProviderTurn?.status === "delivery-unknown") {
-    return failTurnDelivery(store, turn, now, "delivery-unknown",
-      currentProviderTurn.terminalReason ?? "Provider could not determine whether the Turn was accepted.");
+    return { ...base, status: "skipped", reason: "delivery-uncertain",
+      error: currentProviderTurn.terminalReason ?? "Provider acceptance is unknown; no replay is permitted." };
   }
 
-  if (currentProviderTurn !== null) {
+  if (currentProviderTurn?.status === "rejected") {
+    return failRunDelivery(store, run, now, "runtime-failed",
+      currentProviderTurn.terminalReason ?? "Provider rejected the input.");
+  }
+  if (currentProviderTurn !== null && currentProviderTurn.status !== "deferred") {
     const reason = currentProviderTurn.terminalReason
-      ?? `Provider Turn ended with status ${currentProviderTurn.status} without recording its Turn result.`;
+      ?? `Provider Turn ended with status ${currentProviderTurn.status} without recording its AgentRun result.`;
     // A terminal Provider projection without an application result is a
     // framework consistency failure, not evidence that the Agent omitted its
     // report. Keep the exact input fenced; never submit it again.
     return { ...base, status: "skipped", reason: "delivery-uncertain", error: reason };
   }
+  const lastSubmitError = (store.listEvents?.(task.id) ?? []).filter((event) =>
+    event.type === "runtime.agent-error" && event.payload.runId === run.id
+    && event.payload.roleName === role.name && event.payload.phase === "turn-submit").at(-1);
+  if (currentProviderTurn === null && lastSubmitError?.payload.inputDisposition === "unknown") {
+    return { ...base, status: "skipped", reason: "delivery-uncertain", error: lastSubmitError.payload.message };
+  }
+  const deferredBeforeRegistration = lastSubmitError?.payload.inputDisposition === "not-accepted"
+    && lastSubmitError.payload.registrationDisposition === "not-committed"
+    && lastSubmitError.payload.errorName === "ProviderTurnBusyError";
 
-  const attemptId = initialAttemptId;
-  const mode = turn.mode;
-  const existingSession = store.getRoleSession(task.id, role.name, turn.effective.agentId);
+  // Only a durable, exact busy/not-accepted disposition permits a new
+  // transport attempt. Keep the business input and every earlier receipt.
+  const attemptId = currentProviderTurn?.status === "deferred" || deferredBeforeRegistration
+    ? `${initialAttemptId}/attempt/${randomUUID()}`
+    : initialAttemptId;
+  const existingSession = store.getRoleSession(task.id, role.name, run.effective.agentId);
+  // The first attempted admission may already have opened this fixed native
+  // Session. A busy retry resumes it; it does not repeat the original launch.
+  const preparedHere = existingSession?.nativeSessionId !== undefined
+    && (store.listEvents?.(task.id) ?? []).some((event) => event.type === "run.session-prepared"
+      && event.payload.runId === run.id && event.payload.nativeSessionId === existingSession.nativeSessionId);
+  const mode = (currentProviderTurn?.status === "deferred" || preparedHere) && existingSession?.nativeSessionId !== undefined
+    ? "resume" : run.mode;
   let prepared: PreparedRoleDelivery | undefined;
   let submitted = false;
   try {
     const nativeSessionId = mode === "resume"
-      ? requireResumeSession(role, turn, existingSession)
+      ? requireResumeSession(role, run, existingSession)
       : undefined;
     prepared = await delivery.prepareRoleSession({
       taskId: task.id,
       roleName: role.name,
-      agentId: turn.effective.agentId,
-      adapterId: turn.effective.adapterId,
-      effective: turn.effective,
-      workspace: turn.effective.workspace.root,
-      ...(turn.workspace === undefined ? {} : { managedWorkspace: turn.workspace }),
+      agentId: run.effective.agentId,
+      adapterId: run.effective.adapterId,
+      effective: run.effective,
+      workspace: run.effective.workspace.root,
+      ...(run.workspace === undefined ? {} : { managedWorkspace: run.workspace }),
       // A Task owning no workspace by design states that explicitly, so the
       // launch does not read the absent workspace as a missing one and fail
       // closed (S27). Two distinct cases qualify: a Task activated with an
@@ -159,19 +189,19 @@ async function deliverActiveTurn(
       // which may already bind a Project but has not activated, so no worktree
       // exists or is owed yet. Declaring it free is what keeps the isolation
       // fence honest instead of letting it fail on a workspace nobody promised.
-      ...(turn.workspace === undefined
-        && (isSchedulerPlanningDraft(task, turn.purpose)
+      ...(run.workspace === undefined
+        && (isSchedulerPlanningDraft(task, run.purpose)
           || !taskOwnsManagedWorkspace(task))
         ? { workspaceFree: true as const }
         : {}),
       mode,
-      turnId: turn.id,
+      runId: run.id,
       ...(nativeSessionId === undefined ? {} : { nativeSessionId }),
       beforeHostStart: (preflight) => persistPreStartSession(
         store,
         task,
         role,
-        turn,
+        run,
         existingSession,
         mode,
         preflight,
@@ -180,21 +210,21 @@ async function deliverActiveTurn(
     });
     const preparedSession = prepared.session === undefined
       ? existingSession
-      : validateRoleSession(role, turn, existingSession, mode, prepared.session);
-    store.saveRoleTurnPrepared({
+      : validateRoleSession(role, run, existingSession, mode, prepared.session);
+    store.saveRoleRunPrepared({
       task,
       role,
-      turn,
+      run,
       session: preparedSession,
       now
     });
 
     const ready = await delivery.waitUntilReady(prepared);
-    const readySession = validateRoleSession(role, turn, existingSession, mode, ready.session);
-    store.saveRoleTurnPrepared({
+    const readySession = validateRoleSession(role, run, existingSession, mode, ready.session);
+    store.saveRoleRunPrepared({
       task,
       role,
-      turn,
+      run,
       session: readySession,
       now
     });
@@ -202,18 +232,25 @@ async function deliverActiveTurn(
     const outcome = await delivery.sendOnce({
       delivery: ready,
       receiptId: attemptId,
-      text: serializeTurnInputEnvelope(turnInputEnvelope(turn))
+      text: serializeRunInputEnvelope(runInputEnvelope(run))
     });
 
     if (outcome.status === "pending") {
       // The original Host request is still in flight. Its durable submitting
       // attempt prevents another write; only the eventual receipt consumes
       // this mailbox input. A normal wait is neither failure nor acceptance.
-      forget(delivery, task.id, role.name, turn.id);
+      forget(delivery, task.id, role.name, run.id);
       return { ...base, status: "skipped", reason: "not-ready" };
     }
     if (outcome.status === "busy" || outcome.status === "unavailable") {
-      forget(delivery, task.id, role.name, turn.id);
+      if (outcome.status === "busy" && outcome.failure?.inputDisposition === "not-accepted") {
+        store.recordAgentError?.({ taskId: task.id, roleName: role.name, runId: run.id,
+          source: "host", phase: "turn-submit", message: outcome.failure.detail,
+          raw: outcome.failure.raw ?? serializeAgentErrorRaw(outcome.failure),
+          inputDisposition: "not-accepted", ...providerDeliveryFailureFacts(outcome.failure),
+          attemptId }, now);
+      }
+      forget(delivery, task.id, role.name, run.id);
       return {
         ...base,
         status: "skipped",
@@ -221,21 +258,21 @@ async function deliverActiveTurn(
       };
     }
     if (outcome.status === "rejected" || outcome.status === "delivery-unknown") {
-      forget(delivery, task.id, role.name, turn.id);
+      forget(delivery, task.id, role.name, run.id);
       const unknown = outcome.status === "delivery-unknown";
       const failure = outcome.failure;
       // The Host's own account of the failure. Without it the only honest
       // statement is that delivery did not complete — never that the Provider
       // rejected the input, which is one specific cause among many.
       const cause = failure === undefined
-        ? `The Agent Host did not deliver the managed Turn (${outcome.status}) and reported no cause.`
+        ? `The Agent Host did not deliver the managed AgentRun (${outcome.status}) and reported no cause.`
         : formatProviderDeliveryFailure(failure);
       // This path is the common Provider write failure and previously left no
       // durable fact at all, so the cause was unrecoverable after the fact.
       store.recordAgentError?.({
         taskId: task.id,
         roleName: role.name,
-        turnId: turn.id,
+        runId: run.id,
         source: "host",
         phase: failure?.phase ?? "turn-submit",
         message: cause,
@@ -244,20 +281,20 @@ async function deliverActiveTurn(
         // the original cause, which is the detail an authorized reader needs.
         raw: failure?.raw ?? serializeAgentErrorRaw(failure ?? cause),
         inputDisposition: failure?.inputDisposition ?? (unknown ? "unknown" : "not-accepted"),
-        ...providerDeliveryFailureFacts(failure)
+        ...providerDeliveryFailureFacts(failure),
+        attemptId
       }, now);
-      return failTurnDelivery(
+      if (unknown) return { ...base, status: "skipped", reason: "delivery-uncertain", error: cause };
+      return failRunDelivery(
         store,
-        turn,
+        run,
         now,
-        unknown ? "delivery-unknown" : "runtime-failed",
-        unknown
-          ? `Provider Turn delivery is ambiguous; Yui will not replay it automatically. ${cause}`
-          : cause
+        "runtime-failed",
+        cause
       );
     }
-    forget(delivery, task.id, role.name, turn.id);
-    settleAcceptedRoleTurnDispatch(store, turn, dispatchToken);
+    forget(delivery, task.id, role.name, run.id);
+    settleAcceptedRoleRunDispatch(store, run, dispatchToken);
     return {
       ...base,
       status: outcome.status === "sent" ? "delivered" : "already-delivered"
@@ -269,7 +306,7 @@ async function deliverActiveTurn(
     store.recordAgentError?.({
       taskId: task.id,
       roleName: role.name,
-      turnId: turn.id,
+      runId: run.id,
       source: error instanceof RuntimeLaunchError || error instanceof RuntimeLaunchFailure ? "host" : "yui",
       phase: submitted ? "turn-submit" : mode === "new" ? "session-start" : "session-restore",
       message,
@@ -293,38 +330,39 @@ async function deliverActiveTurn(
         error: message
       };
     }
-    forget(delivery, task.id, role.name, turn.id);
-    return failTurnDelivery(
+    forget(delivery, task.id, role.name, run.id);
+    if (submitted) return { ...base, status: "skipped", reason: "delivery-uncertain", error: message };
+    return failRunDelivery(
       store,
-      turn,
+      run,
       now,
-      submitted ? "delivery-unknown" : "startup-failed",
+      "startup-failed",
       message
     );
   }
 }
 
-function failTurnDelivery(
+function failRunDelivery(
   store: SchedulerStorePort,
-  turn: SchedulerTurn,
+  run: SchedulerRun,
   now: Date,
-  failureReason: import("../turn/turn.js").TurnFailureReason,
+  failureReason: import("../agentRun/agentRun.js").AgentRunFailureReason,
   summary: string
-): ActiveRoleTurnDeliveryResult {
-  const disposition = store.saveRoleTurnDeliveryFailure({
-    taskId: turn.taskId,
-    roleName: turn.roleName,
-    agentId: turn.effective.agentId,
-    adapterId: turn.effective.adapterId,
-    turnId: turn.id,
+): ActiveRoleRunDeliveryResult {
+  const disposition = store.saveRoleRunDeliveryFailure({
+    taskId: run.taskId,
+    roleName: run.roleName,
+    agentId: run.effective.agentId,
+    adapterId: run.effective.adapterId,
+    runId: run.id,
     failureReason,
     summary,
     now
   });
   return {
-    taskId: turn.taskId,
-    roleName: turn.roleName,
-    turnId: turn.id,
+    taskId: run.taskId,
+    roleName: run.roleName,
+    runId: run.id,
     status: disposition === "failed" ? "failed" : "skipped",
     reason: failureReason === "delivery-unknown" ? "delivery-uncertain" : "launch-failed",
     error: summary,
@@ -332,15 +370,15 @@ function failTurnDelivery(
   };
 }
 
-function settleAcceptedRoleTurnDispatch(
+function settleAcceptedRoleRunDispatch(
   store: SchedulerStorePort,
-  turn: SchedulerTurn,
-  expected?: RoleTurnDispatchToken | null
+  run: SchedulerRun,
+  expected?: RoleRunDispatchToken | null
 ): void {
-  store.settleRoleTurnDispatch({
-    taskId: turn.taskId,
-    roleName: turn.roleName,
-    turnId: turn.id,
+  store.settleRoleRunDispatch({
+    taskId: run.taskId,
+    roleName: run.roleName,
+    runId: run.id,
     ...(expected === undefined ? {} : { expected })
   });
 }
@@ -349,14 +387,14 @@ function persistPreStartSession(
   store: SchedulerStorePort,
   task: SchedulerTask,
   role: SchedulerRole,
-  turn: SchedulerTurn,
+  run: SchedulerRun,
   existing: SchedulerRoleSession | null,
   mode: "new" | "resume",
   preflight: RuntimeLaunchPreflight,
   now: Date
 ): void {
-  if (preflight.owner.scope !== "task" || preflight.owner.taskId !== task.id || preflight.owner.roleName !== role.name || preflight.turnId !== turn.id) {
-    throw new Error(`Pre-start launch fence changed the active Role Turn: ${task.id}/${role.name}.`);
+  if (preflight.owner.scope !== "task" || preflight.owner.taskId !== task.id || preflight.owner.roleName !== role.name || preflight.runId !== run.id) {
+    throw new Error(`Pre-start launch fence changed the active Role AgentRun: ${task.id}/${role.name}.`);
   }
   const session = preflight.nativeSessionId === undefined ? null : {
     agentId: preflight.agentId,
@@ -366,18 +404,18 @@ function persistPreStartSession(
     status: "active" as const,
     effective: preflight.effective
   };
-  store.saveRoleTurnPrepared({
+  store.saveRoleRunPrepared({
     task,
     role,
-    turn,
-    session: validateRoleSession(role, turn, existing, mode, session),
+    run,
+    session: validateRoleSession(role, run, existing, mode, session),
     now
   });
 }
 
 function validateRoleSession(
   role: SchedulerRole,
-  turn: SchedulerTurn,
+  run: SchedulerRun,
   existing: SchedulerRoleSession | null,
   mode: "new" | "resume",
   session: SchedulerRoleSession | null
@@ -386,13 +424,13 @@ function validateRoleSession(
   if (session === null || !hasText(session.nativeSessionId)) {
     throw new Error(`Ready Role session has no native session id: ${role.taskId}/${role.name}.`);
   }
-  if (session.agentId !== turn.effective.agentId
-    || session.adapterId !== turn.effective.adapterId) {
+  if (session.agentId !== run.effective.agentId
+    || session.adapterId !== run.effective.adapterId) {
     throw new Error(`Ready Role session identity changed: ${role.taskId}/${role.name}.`);
   }
   const compatible = mode === "resume"
-    ? roleSessionMayContinue(session.effective, turn.effective)
-    : sameEffectiveLaunch(session.effective, turn.effective);
+    ? roleSessionMayContinue(session.effective, run.effective)
+    : sameEffectiveLaunch(session.effective, run.effective);
   if (!compatible) {
     throw new Error(`Ready Role session effective snapshot changed: ${role.taskId}/${role.name}.`);
   }
@@ -408,13 +446,13 @@ function validateRoleSession(
 
 function requireResumeSession(
   role: SchedulerRole,
-  turn: SchedulerTurn,
+  run: SchedulerRun,
   session: SchedulerRoleSession | null
 ): string {
   if (session === null || !hasText(session.nativeSessionId)) {
     throw new Error(`Role resume has no fixed native session: ${role.taskId}/${role.name}.`);
   }
-  if (!roleSessionMayContinue(session.effective, turn.effective)) {
+  if (!roleSessionMayContinue(session.effective, run.effective)) {
     throw new Error(`Role resume effective snapshot drifted: ${role.taskId}/${role.name}.`);
   }
   return session.nativeSessionId;
@@ -424,12 +462,12 @@ function forget(
   delivery: TmuxDeliveryPort,
   taskId: string,
   roleName: string,
-  turnId: string
+  runId: string
 ): void {
   delivery.forgetPrepared?.({
     taskId,
     roleName,
-    turnId,
+    runId,
   });
 }
 

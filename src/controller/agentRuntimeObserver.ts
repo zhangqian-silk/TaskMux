@@ -21,7 +21,7 @@ import { FileRuntimeEventInbox } from "./runtimeEventInbox.js";
 
 type ObserverStore = Pick<
   TaskStore,
-  "listTasks" | "getTask" | "listTurns" | "getActiveTurn" | "listEvents"
+  "listTasks" | "getTask" | "listRuns" | "getActiveRun" | "listEvents"
 > & Readonly<{
   /** SQLite exposes this bounded production hot-set projection. */
   listActiveTaskIds?: () => readonly string[];
@@ -50,7 +50,7 @@ const MAX_CONCURRENT_SAMPLES = 64;
 
 /**
  * Controller-owned, provider-independent sampler. Drivers own source parsing;
- * this component owns active-Turn discovery, cursor lifetime, canonical event
+ * this component owns active-AgentRun discovery, cursor lifetime, canonical event
  * creation, and low-latency mailbox wakes.
  */
 export class AgentRuntimeObserver implements AgentRuntimeObserverPort {
@@ -119,7 +119,7 @@ export class AgentRuntimeObserver implements AgentRuntimeObserverPort {
         if (state.usage === undefined) {
           // Cumulative counters need a lower bound. An exact initial sample
           // proves the complete Session history even when the
-          // current Turn resumed that Session, so preserve every occurrence and
+          // current AgentRun resumed that Session, so preserve every occurrence and
           // anchor it at zero. A partial sample cannot prove the omitted request
           // boundaries; retain its latest total as a partial baseline, plus the
           // smallest ordered witness if the visible counter already rolled back.
@@ -284,13 +284,13 @@ export class AgentRuntimeObserver implements AgentRuntimeObserverPort {
 
   private activeSources(): readonly Readonly<{
     key: string;
-    fence: RuntimeObservationFence & Required<Pick<RuntimeObservationFence, "taskId" | "turnId">>;
+    fence: RuntimeObservationFence & Required<Pick<RuntimeObservationFence, "taskId" | "runId">>;
     source: AgentRuntimeObserverSource;
     persistedState: ObserverState;
   }>[] {
     const result: Array<Readonly<{
       key: string;
-      fence: RuntimeObservationFence & Required<Pick<RuntimeObservationFence, "taskId" | "turnId">>;
+      fence: RuntimeObservationFence & Required<Pick<RuntimeObservationFence, "taskId" | "runId">>;
       source: AgentRuntimeObserverSource;
       persistedState: ObserverState;
     }>> = [];
@@ -311,47 +311,47 @@ export class AgentRuntimeObserver implements AgentRuntimeObserverPort {
         ));
     for (const task of activeTasks) {
       // A Task still incurs one O(E) event projection. Group those observations
-      // by Turn and sort each group once so every active Turn can reuse the same
+      // by AgentRun and sort each group once so every active AgentRun can reuse the same
       // ordered slice instead of repeatedly filtering/sorting all E events.
-      const observationsByTurnId = new Map<string, RuntimeObservation[]>();
+      const observationsByRunId = new Map<string, RuntimeObservation[]>();
       const taskObservations: RuntimeObservation[] = [];
       for (const event of this.store.listEvents(task.id)) {
         const observation = runtimeObservationFromTaskEvent(event);
-        const turnId = observation?.fence.turnId;
-        if (observation === null || turnId === undefined) continue;
+        const runId = observation?.fence.runId;
+        if (observation === null || runId === undefined) continue;
         taskObservations.push(observation);
-        const grouped = observationsByTurnId.get(turnId);
+        const grouped = observationsByRunId.get(runId);
         if (grouped === undefined) {
-          observationsByTurnId.set(turnId, [observation]);
+          observationsByRunId.set(runId, [observation]);
         } else {
           grouped.push(observation);
         }
       }
-      for (const observations of observationsByTurnId.values()) {
+      for (const observations of observationsByRunId.values()) {
         observations.sort(compareObservations);
       }
       taskObservations.sort(compareObservations);
-      for (const run of this.store.listTurns(task.id)) {
+      for (const run of this.store.listRuns(task.id)) {
         if (run.status !== "active"
-          || this.store.getActiveTurn(task.id, run.roleName)?.id !== run.id) continue;
-        const observations = observationsByTurnId.get(run.id) ?? [];
+          || this.store.getActiveRun(task.id, run.roleName)?.id !== run.id) continue;
+        const observations = observationsByRunId.get(run.id) ?? [];
         const accepted = observations
           .filter((observation) => observation.kind === "turn.accepted"
-            && observation.fence.turnId === run.id
+            && observation.fence.runId === run.id
             && observation.fence.roleName === run.roleName
             && observation.fence.agentId === run.effective.agentId
             && observation.payload.observerSource !== undefined)
           .at(-1);
         const source = accepted?.payload.observerSource;
         if (accepted === undefined || source === undefined
-          || accepted.fence.taskId === undefined || accepted.fence.turnId === undefined) continue;
+          || accepted.fence.taskId === undefined || accepted.fence.runId === undefined) continue;
         try {
           if (this.drivers.require(accepted.fence.driverId).runtime.observer === undefined) continue;
         } catch {
           continue;
         }
         const fence = accepted.fence as RuntimeObservationFence
-          & Required<Pick<RuntimeObservationFence, "taskId" | "turnId">>;
+          & Required<Pick<RuntimeObservationFence, "taskId" | "runId">>;
         const sessionObservations = taskObservations.filter((observation) => (
           sessionRuntimeFenceMatches(fence, observation.fence)
           && observation.payload.sourceId === source.sourceId
@@ -376,7 +376,7 @@ export class AgentRuntimeObserver implements AgentRuntimeObserverPort {
           key: JSON.stringify([
             fence.taskId,
             fence.roleName,
-            fence.turnId,
+            fence.runId,
             fence.agentId,
             fence.driverId,
             fence.nativeSessionId,

@@ -44,31 +44,31 @@ export function buildWorkerContext(context: BuildRoleContextInput): string {
   return renderDispatchContext("worker", context);
 }
 
-const WORKER_TURN_COMPLETION_MARKER = "Yui Role Turn result requirement:";
-const WORKER_TURN_COMPLETION_REQUIREMENT = [
-  WORKER_TURN_COMPLETION_MARKER,
+const WORKER_RUN_COMPLETION_MARKER = "Yui Role AgentRun result requirement:";
+const WORKER_RUN_COMPLETION_REQUIREMENT = [
+  WORKER_RUN_COMPLETION_MARKER,
   "End the Provider turn with a truthful final report. Yui records that native turn result "
-    + "for the current Turn automatically; no completion command is required.",
+    + "for the current AgentRun automatically; no completion command is required.",
   "If you cannot finally determine success, failure, completeness, or the correct "
     + "disposition, do not guess, silently stop, or hide uncertainty behind a success "
     + "summary. Label the final report uncertain, incomplete, "
     + "blocked, or requiring Leader judgment.",
-  "Report the most complete truthful evidence available and, when applicable: exact Turn, "
+  "Report the most complete truthful evidence available and, when applicable: exact AgentRun, "
     + "WorkItem, and native Session identity; actions actually performed; changed paths "
     + "and commit/worktree state; checks actually run and their outcomes; provider, runtime, "
     + "or permission errors; the last confirmed lifecycle boundary; work not performed; "
     + "unresolved assumptions or decisions; residual risks; confidence; and bounded next options.",
-  "The Provider turn ending closes only this Turn. It does not imply Leader acceptance, "
-    + "WorkItem completion, ChangeSet capture, Integration, or Task completion. Review Turns "
+  "The Provider turn ending closes only this AgentRun. It does not imply Leader acceptance, "
+    + "WorkItem completion, ChangeSet capture, Integration, or Task completion. Review AgentRuns "
     + "report findings, verification gaps, and limits; the Leader decides disposition."
 ].join("\n");
 
-export function ensureWorkerTurnCompletionRequirement(
+export function ensureWorkerRunCompletionRequirement(
   input: string
 ): string {
-  return input.endsWith(`\n\n${WORKER_TURN_COMPLETION_REQUIREMENT}`)
+  return input.endsWith(`\n\n${WORKER_RUN_COMPLETION_REQUIREMENT}`)
     ? input
-    : `${input}\n\n${WORKER_TURN_COMPLETION_REQUIREMENT}`;
+    : `${input}\n\n${WORKER_RUN_COMPLETION_REQUIREMENT}`;
 }
 
 function renderDispatchContext(
@@ -100,7 +100,7 @@ function renderDispatchContext(
   ].filter((section): section is string => section !== null && section.length > 0)
     .join("\n\n");
   return kind === "worker"
-    ? ensureWorkerTurnCompletionRequirement(rendered)
+    ? ensureWorkerRunCompletionRequirement(rendered)
     : rendered;
 }
 

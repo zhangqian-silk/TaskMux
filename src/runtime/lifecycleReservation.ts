@@ -11,9 +11,9 @@ export const RUNTIME_HOST_DETACH_REQUIRED_REASON = "runtime-host-detach-required
 /**
  * A Role runtime lifecycle lane already holds an explicit cleanup obligation.
  * This is scheduler
- * backpressure: the equivalent wake/Turn must be retried after the lane
- * settles. It is never grounds to terminalize a Turn, because the contention
- * happens before (or outside) any semantic Turn launch.
+ * backpressure: the equivalent wake/AgentRun must be retried after the lane
+ * settles. It is never grounds to terminalize a AgentRun, because the contention
+ * happens before (or outside) any semantic AgentRun launch.
  */
 export class RuntimeLifecycleBusyError extends Error {
   readonly name = "RuntimeLifecycleBusyError";

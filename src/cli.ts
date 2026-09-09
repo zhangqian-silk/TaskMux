@@ -102,7 +102,7 @@ import {
 import { runTaskPublicationVerifyCommand } from "./commands/taskPublicationVerifyCommand.js";
 import { createGitHubCliPublicationVerifier } from "./external/githubPublicationVerifier.js";
 import { createGitLabCliPublicationVerifier } from "./external/gitlabPublicationVerifier.js";
-import { taskActor } from "./commands/taskActor.js";
+import { taskLocalActor, assertTaskDeliveryAuthority } from "./commands/taskActor.js";
 import {
   parseTaskExecutionStartRequest,
   parseTaskExecutionStopRequest,
@@ -530,7 +530,7 @@ export async function main(): Promise<void> {
     if (args[1] === "runtime-hook" && args.length === 2) {
       // Provider lifecycle Hooks are observation channels, never execution
       // gates. A late/stale Hook must not make Claude reject an otherwise
-      // valid Session or Turn; its exact fence is revalidated before any
+      // valid Session or AgentRun; its exact fence is revalidated before any
       // inbox fact is written, so dropping an invalid observation is safe.
       try {
         await runRuntimeObservationHookCommand(readFileSync(0, "utf8"), process.env);
@@ -1067,7 +1067,7 @@ export async function main(): Promise<void> {
         const task = store.getTask(taskId);
         if (task === null) throw usageError(`Task not found: ${taskId}.`);
         // Reject managed Task callers before inspecting or starting runtime resources.
-        if (taskActor(process.env, taskId) === "leader") {
+        if (taskLocalActor(store, process.env, taskId) === "leader") {
           throw usageError("Task execution stop/start requires the global Operator or a human user.");
         }
         if (task.executionGate.state === "stopped") {
@@ -1210,7 +1210,7 @@ export async function main(): Promise<void> {
         throw usageError("Task work capture usage: yui task work capture <task>/<work>.");
       }
       const reference = cliWorkItemReference(workItemId, process.env);
-      taskActor(process.env, reference.taskId);
+      assertTaskDeliveryAuthority(store, process.env, reference.taskId);
       const changeSets = await new WorkItemChangeSetManager(store).capture(
         reference.taskId,
         reference.localId,
@@ -1243,7 +1243,7 @@ export async function main(): Promise<void> {
       }
       const reference = cliWorkItemReference(workItemId, process.env);
       const qualified = `${reference.taskId}/${reference.localId}`;
-      taskActor(process.env, reference.taskId);
+      assertTaskDeliveryAuthority(store, process.env, reference.taskId);
       if (disposition === "--runtime-only") {
         let runtimeCleanup;
         try {
@@ -1447,14 +1447,14 @@ export async function main(): Promise<void> {
       if (item !== null && task !== null) {
         // Authority and pure Lane-shape checks precede every physical or
         // durable workspace preparation performed for dispatch.
-        taskActor(process.env, task.id);
+        assertTaskDeliveryAuthority(store, process.env, task.id);
         if (item.assignee !== undefined) {
           workItemDispatchLanePlan(resolved, store, item);
         }
       }
       // A rejected Candidate starts a new execution iteration. Release every
       // terminal Lane Role runtime before preparing the new Lane workspaces;
-      // durable Turns, Groups, Candidates, and workspace owners remain intact.
+      // durable AgentRuns, Groups, Candidates, and workspace owners remain intact.
       if (item?.status === "open"
         && currentWorkItemExecutionGroup(item)?.lanes.every(
           ({ disposition }) => disposition !== "open"
@@ -1630,7 +1630,8 @@ export async function main(): Promise<void> {
         const taskId = resolved[2];
         const task = taskId === undefined ? null : store.getTask(taskId);
         if (task !== null && task.status === "draft") {
-          taskWorkspaceActivation = await workspacePreparer.activateTaskWorkspace(task.id);
+          taskLocalActor(store, process.env, task.id);
+          taskWorkspaceActivation = await workspacePreparer.activateTaskWorkspace(task.id, process.env);
         }
       }
       const result = runTaskCommand(
@@ -1684,14 +1685,14 @@ export async function main(): Promise<void> {
         let reviewData: unknown;
         const resumesReviewDispatch = (resolved[1] === "review" && resolved[2] === "request")
           || (resolved[1] === "work" && resolved[2] === "review")
-          || (resolved[1] === "turn" && resolved[2] === "retry");
+          || (resolved[1] === "run" && resolved[2] === "retry");
         const reviewDispatchNeeded = requestedRound?.status === "pending"
           || (requestedRound?.status === "running"
             && resumesReviewDispatch
             && persistedRequestedRound?.executionGroup?.lanes.some((lane) => (
               lane.disposition === "open"
-              && (lane.currentTurnId === undefined
-                || store.getTurn(requestedRound.taskId, lane.currentTurnId)?.status === "failed")
+              && (lane.currentRunId === undefined
+                || store.getRun(requestedRound.taskId, lane.currentRunId)?.status === "failed")
             )) === true);
         if (reviewDispatchNeeded) {
           try {
@@ -1762,7 +1763,7 @@ export async function main(): Promise<void> {
                     kind: "started",
                     reviewerRoleName: requestedRound.reviewerRoleName,
                     reviewRoundId: requestedRound.id,
-                    turnId: run.id
+                    runId: run.id
                   },
               reviewRound: store.getReviewRound(requestedRound.taskId, requestedRound.id),
               ...(run === null ? {} : { reviewRun: run }),
@@ -1903,7 +1904,7 @@ export async function main(): Promise<void> {
         tmux.attachRole(result.taskId, result.roleName, "read-write");
       } finally {
         const currentTask = store.getTask(result.taskId);
-        // Completing or retiring the Task from inside the takeover Turn owns
+        // Completing or retiring the Task from inside the takeover AgentRun owns
         // Provider shutdown and clears the live binding. Do not turn that
         // successful terminal transition into a failing best-effort release.
         if (currentTask?.status === "active") {
@@ -2025,7 +2026,7 @@ async function preflightManagedTaskControlPlane(): Promise<ManagedTaskControlPla
   // internal callbacks run inside the Host process Yui itself launched; an Agent
   // command proves it is the Role's current runtime with its per-Session caller
   // key. Nothing here
-  // gates on the current Turn: which Turn is active is durable state that the
+  // gates on the current AgentRun: which AgentRun is active is durable state that the
   // command needing it reads, never a fact frozen into a process environment.
   const runtime: ManagedTaskCaller | undefined = internalCallback
     ? undefined
@@ -2169,13 +2170,13 @@ function cliWorkItemReference(
 
 function cliTaskRecordReference(
   value: string,
-  kind: "turn" | "reviewRound",
+  kind: "run" | "reviewRound",
   environment: NodeJS.ProcessEnv
 ) {
   try {
     return resolveTaskRecordReference(value, {
       kind,
-      label: kind === "turn" ? "Turn reference" : "ReviewRound reference",
+      label: kind === "run" ? "AgentRun reference" : "ReviewRound reference",
       ...(environment.YUI_TASK_ID === undefined
         ? {}
         : { contextTaskId: environment.YUI_TASK_ID })
@@ -2195,12 +2196,12 @@ function assertWorkItemExecutionDependenciesForCommand(
     && args[3] !== undefined) {
     const reference = cliWorkItemReference(args[3], environment);
     item = store.getWorkItem(reference.taskId, reference.localId) ?? undefined;
-  } else if (args[0] === "task" && args[1] === "turn" && args[2] === "retry"
+  } else if (args[0] === "task" && args[1] === "run" && args[2] === "retry"
     && args[3] !== undefined) {
-    const reference = cliTaskRecordReference(args[3], "turn", environment);
-    const turn = store.getTurn(reference.taskId, reference.localId);
-    item = turn?.purpose === "execution" && turn.workItemId !== undefined
-      ? store.getWorkItem(turn.taskId, turn.workItemId) ?? undefined
+    const reference = cliTaskRecordReference(args[3], "run", environment);
+    const run = store.getRun(reference.taskId, reference.localId);
+    item = run?.purpose === "execution" && run.workItemId !== undefined
+      ? store.getWorkItem(run.taskId, run.workItemId) ?? undefined
       : undefined;
   }
   if (item === undefined) return;
@@ -2268,7 +2269,7 @@ async function prepareExecutionLaneWorkspacesForCommand(
     if (store.getRole(item.taskId, roleName) === null) {
       throw usageError(`Task Role not found: ${item.taskId}/${roleName}.`);
     }
-    if (store.getActiveTurn(item.taskId, roleName) !== null) {
+    if (store.getActiveRun(item.taskId, roleName) !== null) {
       throw usageError(`${item.taskId}/${roleName} already has an active turn.`);
     }
   }
@@ -2321,7 +2322,7 @@ function workItemDispatchLanePlan(
       ? [args[index + 1]!]
       : []
   ));
-  const groupId = `execution-group-${store.peekNextTurnId(item.taskId)}`;
+  const groupId = `execution-group-${store.peekNextRunId(item.taskId)}`;
   return {
     groupId,
     ...planReplicatedWorkItemLanes(
@@ -2445,11 +2446,11 @@ async function actualTaskReviewCandidateForTaskCommand(
     if (round !== null && (round.scope ?? "work-item") === "task") {
       taskId = reference.taskId;
     }
-  } else if (args[1] === "turn"
+  } else if (args[1] === "run"
     && (args[2] === "retry" || args[2] === "settle")
     && args[3] !== undefined) {
-    const reference = cliTaskRecordReference(args[3], "turn", environment);
-    const run = store.getTurn(reference.taskId, reference.localId);
+    const reference = cliTaskRecordReference(args[3], "run", environment);
+    const run = store.getRun(reference.taskId, reference.localId);
     const round = run?.reviewRoundId === undefined
       ? null
       : store.getReviewRound(reference.taskId, run.reviewRoundId);
@@ -3036,7 +3037,7 @@ function selectionCall(
         : store.listInputRequests(taskId);
       return params.all === true ? requests : requests.filter((request) => request.status === "open");
     }
-    case "task.turn.list": return callOptional(reader, "listTurns", [params.taskId]);
+    case "task.turn.list": return callOptional(reader, "listRuns", [params.taskId]);
     case "task.decision.list": return callOptional(reader, "listDecisions", [params.taskId]);
     case "task.milestone.list": return presentSelectionTimes(
       callOptional(reader, "listMilestones", [params.taskId]),
@@ -3169,6 +3170,9 @@ export function cliIdentity(env: NodeJS.ProcessEnv): CliIdentity {
 
 function normalizeAliases(input: readonly string[]): string[] {
   const normalized = [...input];
+  // Existing immutable Session Manifests (through 0.15.8) name this entry.
+  // Remove once those Sessions are retired; both names share one handler.
+  if (normalized[0] === "task" && normalized[1] === "turn") normalized[1] = "run";
   if (normalized.length === 1 && (normalized[0] === "-v" || normalized[0] === "--version")) {
     return ["version"];
   }

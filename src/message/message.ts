@@ -1,4 +1,5 @@
 import { validateTaskRecordReference } from "../task/taskRecordReference.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 
 export const TASK_MESSAGE_KINDS = ["user", "operator", "role-result", "system"] as const;
 
@@ -9,6 +10,16 @@ export type TaskMessageAuthor =
   | Readonly<{ type: "operator" }>
   | Readonly<{ type: "role"; roleName: string }>
   | Readonly<{ type: "system" }>;
+
+/** Logical ownership is frozen at send time, never inferred from the latest
+ * native process occupying a Role. The referenced Run supplies the Assignment. */
+export type TaskMessageRecipient = Readonly<{
+  roleName: string;
+  /** Absent for a scoped Leader notification, which is not an Assignment. */
+  ownerRunId?: string;
+  workItemId?: string;
+  reviewRoundId?: string;
+}>;
 
 export type TaskMessage = {
   schemaVersion: 3;
@@ -21,20 +32,29 @@ export type TaskMessage = {
    * Machine-readable wake policy for user/operator messages (Issue 05).
    * - `leader`: the message is a directive that should wake the Leader.
    * - `none`: the message is informational context only; it must not wake
-   *   the Leader or create a Leader Turn.
+   *   the Leader or create a Leader AgentRun.
    * Absent on older messages and on role-result/system messages, which keep
    * their existing routing.
    */
   wakePolicy?: "leader" | "none";
-  turnId?: string;
+  runId?: string;
+  resultRef?: Readonly<{ type: "agent-run-result"; runId: string }>;
   workItemId?: string;
+  recipient?: TaskMessageRecipient;
+  continuation?: Readonly<{
+    runId?: string;
+    notDeliveredReason?: string;
+  }>;
+  handovers?: readonly Readonly<{ from: TaskMessageRecipient; at: string }>[];
   createdAt: string;
 };
 
 export type TaskMessageContext = Readonly<{
-  turnId?: string;
+  runId?: string;
+  resultRef?: Readonly<{ type: "agent-run-result"; runId: string }>;
   workItemId?: string;
   wakePolicy?: "leader" | "none";
+  recipient?: TaskMessageRecipient;
 }>;
 
 export type TaskMessageDraftUpdate = Readonly<{
@@ -62,12 +82,15 @@ export function createTaskMessage(
     ...(context.wakePolicy === undefined
       ? {}
       : { wakePolicy: context.wakePolicy }),
-    ...(context.turnId === undefined
+    ...(context.runId === undefined
       ? {}
-      : { turnId: requireSafeIdentity(context.turnId, "Message Turn id") }),
+      : { runId: requireSafeIdentity(context.runId, "Message AgentRun id") }),
+    ...(context.resultRef === undefined ? {} : { resultRef: { ...context.resultRef } }),
     ...(context.workItemId === undefined
       ? {}
       : { workItemId: requireSafeIdentity(context.workItemId, "Message Work item id") }),
+    ...(context.recipient === undefined ? {} : { recipient: { ...context.recipient },
+      ...(context.recipient.ownerRunId === undefined ? {} : { continuation: {} }) }),
     createdAt: now.toISOString()
   };
   validateTaskMessage(message);
@@ -76,6 +99,21 @@ export function createTaskMessage(
 
 export function taskMessageAuthorLabel(author: TaskMessageAuthor): string {
   return author.type === "role" ? author.roleName : author.type;
+}
+
+/** A role-result reference never duplicates the execution's report body. */
+export function expandTaskMessageResult(
+  message: TaskMessage,
+  getRun: (taskId: string, runId: string) => AgentRun | null
+) {
+  if (message.resultRef === undefined) return message;
+  const run = getRun(message.taskId, message.resultRef.runId);
+  if (run === null || run.taskId !== message.taskId
+    || message.author.type !== "role" || run.roleName !== message.author.roleName
+    || run.status === "active" || run.result === undefined) {
+    throw new Error(`Result Message has no matching terminal execution: ${message.id}.`);
+  }
+  return { ...message, result: run.result };
 }
 
 /** Replace only the mutable content of a Draft user/operator Message. */
@@ -114,15 +152,53 @@ export function validateTaskMessage(message: TaskMessage): void {
     && message.kind !== "operator") {
     throw new Error("Message wakePolicy is only valid for user/operator messages.");
   }
-  if (message.turnId !== undefined) requireSafeIdentity(message.turnId, "Message Turn id");
+  if (message.runId !== undefined) requireSafeIdentity(message.runId, "Message AgentRun id");
+  if (message.recipient !== undefined) {
+    requireSafeIdentity(message.recipient.roleName, "Recipient Role");
+    if (message.recipient.ownerRunId !== undefined) {
+      validateTaskRecordReference({ taskId: message.taskId, localId: message.recipient.ownerRunId }, "run");
+    } else if (message.recipient.roleName !== "leader") {
+      throw new Error("An execution recipient requires an owner Assignment.");
+    }
+    if (message.recipient.workItemId !== undefined) {
+      validateTaskRecordReference({ taskId: message.taskId, localId: message.recipient.workItemId }, "workItem");
+    }
+    if (message.recipient.reviewRoundId !== undefined) {
+      requireSafeIdentity(message.recipient.reviewRoundId, "Recipient ReviewRound");
+    }
+    if (message.recipient.workItemId === undefined && message.recipient.reviewRoundId === undefined) {
+      throw new Error("A recipient requires an exact WorkItem or ReviewRound.");
+    }
+  }
+  if (message.continuation !== undefined && message.recipient?.ownerRunId === undefined) {
+    throw new Error("Message continuation requires an owner Assignment.");
+  }
+  if (message.continuation?.runId !== undefined) {
+    validateTaskRecordReference({ taskId: message.taskId, localId: message.continuation.runId }, "run");
+  }
+  if (message.continuation?.notDeliveredReason !== undefined) {
+    requireText(message.continuation.notDeliveredReason, "Message nondelivery reason");
+    if (message.continuation.runId !== undefined) throw new Error("Assigned Message delivery is observed from its AgentRun.");
+  }
+  for (const handover of message.handovers ?? []) {
+    requireSafeIdentity(handover.from.roleName, "Previous Message Role");
+    requireSafeIdentity(handover.from.ownerRunId!, "Previous Message Assignment");
+    if (Number.isNaN(Date.parse(handover.at))) throw new Error("Message handover timestamp is invalid.");
+  }
+  if (message.resultRef !== undefined) {
+    if (message.kind !== "role-result" || message.resultRef.type !== "agent-run-result") {
+      throw new Error("Execution result references require a role-result Message.");
+    }
+    validateTaskRecordReference({ taskId: message.taskId, localId: message.resultRef.runId }, "run");
+  }
   if (message.workItemId !== undefined) {
     validateTaskRecordReference({
       taskId: message.taskId,
       localId: message.workItemId
     }, "workItem");
   }
-  if (message.turnId !== undefined) {
-    validateTaskRecordReference({ taskId: message.taskId, localId: message.turnId }, "turn");
+  if (message.runId !== undefined) {
+    validateTaskRecordReference({ taskId: message.taskId, localId: message.runId }, "run");
   }
   if (typeof message.createdAt !== "string" || Number.isNaN(Date.parse(message.createdAt))) {
     throw new Error("Message createdAt is invalid.");

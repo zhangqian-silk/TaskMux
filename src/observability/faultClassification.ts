@@ -1,5 +1,5 @@
 /** Stable fault classification from Core-owned execution facts only. */
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { ReviewRound } from "../review/reviewRound.js";
 import type { IntegrationAttempt } from "../integration/integrationAttempt.js";
 
@@ -39,9 +39,9 @@ function excerpt(text: string, max = 160): string {
   return normalized.length <= max ? normalized : `${normalized.slice(0, max)}…`;
 }
 
-/** Classify a failed Turn without inspecting Agent-authored output. */
-export function classifyTurnFailure(
-  run: Pick<Turn, "status" | "result">
+/** Classify a failed AgentRun without inspecting Agent-authored output. */
+export function classifyRunFailure(
+  run: Pick<AgentRun, "status" | "result">
 ): FaultClassification {
   if (run.status !== "failed") return NO_FAULT;
   const failureReason = run.result?.failureReason;

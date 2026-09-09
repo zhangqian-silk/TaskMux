@@ -35,6 +35,8 @@ type AgentHostProviderControlBase = Readonly<{
   authority: ProviderAuthorityFence;
   codexThread?: CodexThreadOptions;
   endpointImplementation?: ImplementationRef;
+  /** Session-only launch; the coordinator records its identity before any input. */
+  sessionOnly?: boolean;
 }>;
 
 /**

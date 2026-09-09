@@ -40,6 +40,7 @@ export type EffectiveLaunchContext = Readonly<RoleProfile>;
 
 type EffectiveLaunchBase = Readonly<{
   schemaVersion: 3;
+  executionAuthority: "planning" | "delivery";
   sourceDesiredRevision: number;
   agentId: string;
   /** Profile behavior intent captured for this Session; not a provider sandbox. */
@@ -80,6 +81,7 @@ export type EffectiveLaunchSnapshot =
 export type EffectiveLaunchRole = TaskRole | GlobalRole;
 
 export type ResolveEffectiveLaunchInput = Readonly<{
+  executionAuthority?: "planning" | "delivery";
   role: EffectiveLaunchRole;
   purpose: "execution" | "review" | "planning";
   workspace?: ManagedWorkspace;
@@ -92,6 +94,9 @@ export type ResolveEffectiveLaunchInput = Readonly<{
 export function resolveEffectiveLaunch(
   input: ResolveEffectiveLaunchInput
 ): EffectiveLaunchSnapshot {
+  if (input.purpose === "planning" && input.executionAuthority === "delivery") {
+    throw new Error("Planning cannot request delivery authority.");
+  }
   validateDesiredRole(input.role);
   const binding = input.role.agentBindings[input.role.activeAgentId]!;
   const workspace = snapshotWorkspace(input.role.workspace, input.workspace);
@@ -100,6 +105,7 @@ export function resolveEffectiveLaunch(
     clone(binding.config) as never
   ) as RoleAgentConfig;
   return snapshotFromConfig({
+    executionAuthority: input.executionAuthority ?? (input.purpose === "planning" ? "planning" : "delivery"),
     sourceDesiredRevision: input.role.launchRevision,
     agentId: binding.agentId,
     config,
@@ -210,12 +216,12 @@ export function sameEffectiveLaunch(
  * Only facts that make continuation impossible participate: the Session
  * protocol, the provider identity that owns the conversation, and the physical
  * workspace the Session runs in. Launch configuration such as model, effort,
- * permission, Role context, declared write scope, and Turn-scoped facts like
+ * permission, Role context, declared write scope, and AgentRun-scoped facts like
  * ReviewRound identity or candidate commits shape the next Host process
  * instead of ending the Session; that divergence is acknowledged where the
  * configuration changes and stays visible as launch provenance.
  *
- * Session kind needs no separate check: a Role's review Turns run in their own
+ * Session kind needs no separate check: a Role's review AgentRuns run in their own
  * ReviewRound workspace, so the physical workspace already separates a review
  * Session from an execution Session.
  */
@@ -239,7 +245,7 @@ export function effectiveLaunchWithTaskMainWorkspace(
   validateEffectiveLaunchSnapshot(existing);
   validateManagedWorkspace(workspace);
   if (workspace.owner.type !== "task") {
-    throw new Error("Only a Task-owned main workspace may refresh fixed Session Turn evidence.");
+    throw new Error("Only a Task-owned main workspace may refresh fixed Session AgentRun evidence.");
   }
   return validateEffectiveLaunchSnapshot({
     ...existing,
@@ -253,6 +259,7 @@ export function effectiveLaunchWithTaskMainWorkspace(
 function sessionContinuitySnapshot(snapshot: EffectiveLaunchSnapshot): unknown {
   return {
     schemaVersion: snapshot.schemaVersion,
+    executionAuthority: snapshot.executionAuthority,
     contextProtocolVersion: snapshot.contextProtocolVersion,
     agentId: snapshot.agentId,
     adapterId: snapshot.adapterId,
@@ -275,6 +282,9 @@ export function validateEffectiveLaunchSnapshot<T extends EffectiveLaunchSnapsho
 ): T {
   if (snapshot.schemaVersion !== 3) {
     throw new Error("Effective launch snapshot must use schemaVersion 3.");
+  }
+  if (snapshot.executionAuthority !== "planning" && snapshot.executionAuthority !== "delivery") {
+    throw new Error("Effective launch requires its captured execution authority.");
   }
   positiveInteger(snapshot.sourceDesiredRevision, "Source desired revision");
   identity(snapshot.agentId, "Effective Agent id");
@@ -365,6 +375,7 @@ export function effectiveRoleForLaunch<T extends EffectiveLaunchRole>(
 }
 
 function snapshotFromConfig(input: Readonly<{
+  executionAuthority: "planning" | "delivery";
   sourceDesiredRevision: number;
   agentId: string;
   config: RoleAgentConfig;
@@ -390,6 +401,7 @@ function snapshotFromConfig(input: Readonly<{
       };
   const common = {
     schemaVersion: 3 as const,
+    executionAuthority: input.executionAuthority,
     sourceDesiredRevision: positiveInteger(
       input.sourceDesiredRevision,
       "Source desired revision"

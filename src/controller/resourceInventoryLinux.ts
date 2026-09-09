@@ -91,7 +91,7 @@ type LinuxProcessIo = Readonly<{
 }>;
 
 const LINUX_PROCESS_SCAN_BATCH_SIZE = 64;
-export const INVENTORY_EVENT_LOOP_TURN_BUDGET_MS = 25;
+export const INVENTORY_EVENT_LOOP_RUN_BUDGET_MS = 25;
 
 export async function scanControllerResourceInventory(
   options: ControllerInventoryScanOptions
@@ -424,21 +424,21 @@ export async function forEachInEventLoopBatches<T>(
     throw new Error("Event-loop batch size must be a positive integer.");
   }
   const now = timing.now ?? (() => performance.now());
-  let turnStartedAt = now();
-  let entriesInTurn = 0;
+  let runStartedAt = now();
+  let entriesInRun = 0;
   for (let index = 0; index < entries.length; index += 1) {
     visit(entries[index]!, index);
-    entriesInTurn += 1;
+    entriesInRun += 1;
     if (
       index + 1 < entries.length
       && (
-        entriesInTurn >= batchSize
-        || now() - turnStartedAt >= INVENTORY_EVENT_LOOP_TURN_BUDGET_MS
+        entriesInRun >= batchSize
+        || now() - runStartedAt >= INVENTORY_EVENT_LOOP_RUN_BUDGET_MS
       )
     ) {
       await new Promise<void>((resolve) => setImmediate(resolve));
-      turnStartedAt = now();
-      entriesInTurn = 0;
+      runStartedAt = now();
+      entriesInRun = 0;
     }
   }
 }
@@ -844,7 +844,7 @@ function loadHomeState(
     const appendTaskRole = (task: Task, role: TaskRole): void => {
       const session = activeLiveRoleAgentSession(store.getRoleSessionSet(task.id, role.name));
       const binding = role.agentBindings[role.activeAgentId];
-      const run = store.getActiveTurn(task.id, role.name);
+      const run = store.getActiveRun(task.id, role.name);
       const agentId = session?.effective.agentId ?? role.activeAgentId;
       const adapterId = session?.effective.adapterId ?? binding?.adapterId;
       roles.push({
@@ -857,13 +857,13 @@ function loadHomeState(
         agentId,
         ...(adapterId === undefined ? {} : { adapterId }),
         ...(session === null ? {} : { nativeSessionId: session.nativeSessionId }),
-        ...(run === null ? {} : { turnId: run.id })
+        ...(run === null ? {} : { runId: run.id })
       });
     };
 
     // The current SQLite store owns bounded active-Task and current-Session
     // indexes. Use them only as selectors, then point-read the authoritative
-    // Task/Role/Session/Turn records so an index row cannot bypass ownership
+    // Task/Role/Session/AgentRun records so an index row cannot bypass ownership
     // fences.
     const indexedTaskIds = [...new Set(store.listActiveTaskIds())].sort(numericCompare);
     const sessionCandidates = store.listRuntimeSessionCandidates({ scope: "task" });

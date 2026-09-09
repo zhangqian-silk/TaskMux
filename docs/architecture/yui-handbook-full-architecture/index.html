@@ -16,7 +16,7 @@ pre.diagram{font-size:14px;line-height:1.45}pre.diagram code{display:block;width
 p code,li code{background:#f0f3f6;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;display:block;overflow:auto;margin:20px 0;font-size:14px}th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}th{background:#edf3f7}blockquote{margin:20px 0;border-left:4px solid var(--accent);background:#f3f7fa;padding:8px 20px}ul,ol{padding-left:25px}li{margin:6px 0}
 @media(max-width:960px){nav{position:relative;width:100%;max-height:380px;border-bottom:1px solid var(--line)}main{margin:0;padding:12px}article{padding:18px}header{padding:20px}.quickmap{gap:6px}}
 @media print{nav,.source,.quickmap{display:none}main{margin:0;padding:0;max-width:none}body{background:white}article{border:0;break-before:page;padding:0}pre,table{overflow:visible}pre{font-size:10px}a{color:inherit}}
-</style></head><body><nav aria-label="文档目录"><h2>Yui 设计手册</h2><p>架构 · 模块 · 契约 · 实施</p><p class="full-diagram-nav"><a href="#full-architecture">完整架构分层图</a></p><details open><summary>入口</summary><ul><li><a href="#doc-README-md">Yui 架构与实施手册</a></li></ul></details><details open><summary>总体架构</summary><ul><li><a href="#doc-architecture-01-overview-md">总体架构</a></li><li><a href="#doc-architecture-02-authority-and-interaction-md">职责、交互与任务生命周期</a></li><li><a href="#doc-architecture-03-state-and-configuration-md">事实、配置与持久化</a></li><li><a href="#doc-architecture-04-runtime-and-replacement-md">执行、连接与实现替换</a></li><li><a href="#doc-architecture-05-capabilities-and-resources-md">能力、插件与资源</a></li><li><a href="#doc-architecture-06-working-flows-md">端到端工作逻辑</a></li></ul></details><details open><summary>模块设计</summary><ul><li><a href="#doc-modules-README-md">模块设计索引</a></li><li><a href="#doc-modules-01-kernel-md">Kernel：事实与执行边界</a></li><li><a href="#doc-modules-02-task-md">Task：任务事实与交付责任</a></li><li><a href="#doc-modules-03-agent-context-md">Agent 与 Context：职责配置及工作视图</a></li><li><a href="#doc-modules-04-execution-runtime-md">Execution 与 Runtime：一次执行的可靠承载</a></li><li><a href="#doc-modules-05-project-resource-md">Project 与 Resource：背景、环境和工作成果</a></li><li><a href="#doc-modules-06-plugin-capability-md">Plugin 与 Capability：发现、实现和替换能力</a></li><li><a href="#doc-modules-07-surface-md">Surface：一致的用户与 Agent 操作入口</a></li></ul></details><details open><summary>接口约定</summary><ul><li><a href="#doc-contracts-README-md">接口与数据契约</a></li></ul></details><details open><summary>实施路线</summary><ul><li><a href="#doc-implementation-README-md">实施路线</a></li></ul></details><details open><summary>任务定义</summary><ul><li><a href="#doc-implementation-tasks-T00-implementation-baseline-md">T00｜实施基线与模块契约</a></li><li><a href="#doc-implementation-tasks-T01-kernel-host-md">T01｜基础宿主与操作事实</a></li><li><a href="#doc-implementation-tasks-T02-capability-entry-md">T02｜能力入口与内建实现接入</a></li><li><a href="#doc-implementation-tasks-T03-task-context-md">T03｜任务事实、角色配置与 Context</a></li><li><a href="#doc-implementation-tasks-T04-agent-endpoint-md">T04｜统一 AgentEndpoint 与运行时适配</a></li><li><a href="#doc-implementation-tasks-T05-project-resource-md">T05｜Project、Resource 与成果保存</a></li><li><a href="#doc-implementation-tasks-T06-surface-md">T06｜统一 CLI 与 Web 入口</a></li><li><a href="#doc-implementation-tasks-T07-acp-agent-md">T07｜ACP 接入与第三 Agent 验证</a></li><li><a href="#doc-implementation-tasks-T08-draft-leader-md">T08｜Draft Leader 与正式执行</a></li><li><a href="#doc-implementation-tasks-T09-plugin-sdk-md">T09｜插件开发工具与受权执行</a></li><li><a href="#doc-implementation-tasks-T10-self-extension-md">T10｜原 Task 中的 Agent 自扩展</a></li><li><a href="#doc-implementation-tasks-T11-hot-reload-md">T11｜按使用边界热插拔</a></li></ul></details><details open><summary>技术方案</summary><ul><li><a href="#doc-implementation-designs-T00-current-baseline-md">T00 实施证据｜当前代码、共享边界与采用顺序</a></li><li><a href="#doc-implementation-designs-T00-evidence-md">T00 验证记录</a></li><li><a href="#doc-implementation-designs-T00-implementation-baseline-md">T00 技术方案｜实施基线与模块契约</a></li><li><a href="#doc-implementation-designs-T01-evidence-md">T01 实现、验证与 T02 交接</a></li><li><a href="#doc-implementation-designs-T01-kernel-host-md">T01 技术方案｜基础宿主与操作事实</a></li><li><a href="#doc-implementation-designs-T02-capability-entry-md">T02 技术方案｜能力入口与内建实现接入</a></li><li><a href="#doc-implementation-designs-T02-evidence-md">T02 能力入口、验证与后继交接</a></li><li><a href="#doc-implementation-designs-T03-evidence-md">T03 实现与采用说明</a></li><li><a href="#doc-implementation-designs-T03-task-context-md">T03 技术方案｜任务事实、角色配置与 Context</a></li><li><a href="#doc-implementation-designs-T04-agent-endpoint-md">T04 技术方案｜统一 AgentEndpoint 与运行时适配</a></li><li><a href="#doc-implementation-designs-T04-evidence-md">T04 执行接口、采用边界与验证记录</a></li><li><a href="#doc-implementation-designs-T05-evidence-md">T05 资源、环境与固定成果交接</a></li><li><a href="#doc-implementation-designs-T05-project-resource-md">T05 技术方案｜Project、Resource 与成果保存</a></li><li><a href="#doc-implementation-designs-T06-surface-md">T06 技术方案｜统一 CLI 与 Web 入口</a></li><li><a href="#doc-implementation-designs-T07-acp-agent-md">T07 技术方案｜ACP 接入与第三 Agent 验证</a></li><li><a href="#doc-implementation-designs-T08-draft-leader-md">T08 技术方案｜Draft Leader 与正式执行</a></li><li><a href="#doc-implementation-designs-T09-plugin-sdk-md">T09 技术方案｜插件开发工具与受权执行</a></li><li><a href="#doc-implementation-designs-T10-self-extension-md">T10 技术方案｜原 Task 中的 Agent 自扩展</a></li><li><a href="#doc-implementation-designs-T11-hot-reload-md">T11 技术方案｜按使用边界热插拔</a></li></ul></details><details open><summary>参考与验收</summary><ul><li><a href="#doc-reference-acceptance-scenarios-md">验收场景</a></li><li><a href="#doc-reference-glossary-md">术语</a></li><li><a href="#doc-reference-implementation-principles-md">实现取舍原则</a></li><li><a href="#doc-reference-role-guidance-md">Role 行为指引</a></li></ul></details></nav><main id="top"><header><h1>Yui 架构与实施手册</h1><p>工作关系说明谁负责；逻辑分层说明能力如何承接；模块说明实现归属。</p><div class="quickmap"><a class="primary-link" href="#full-architecture">完整架构图</a><a href="full-architecture.html">单独打开完整架构图</a><a href="#doc-architecture-01-overview-md--工作关系图围绕-task-形成闭环">工作关系</a><a href="#doc-architecture-01-overview-md--逻辑分层图四个-plane一个内核横向插件机制">逻辑分层</a><a href="#doc-architecture-01-overview-md--逻辑层与七个代码模块的映射">模块映射</a><a href="#doc-architecture-01-overview-md--事实流与执行反馈">事实流</a><a href="#doc-architecture-01-overview-md--哪些实现可以替换">热重载边界</a></div></header><section id="full-architecture" class="full-architecture-section" aria-labelledby="full-architecture-title"><h2 id="full-architecture-title">完整架构分层图</h2><p class="diagram-intro">四个逻辑层、一个最小内核，以及贯穿各层的插件机制。图中能力是目标设计，实际可用范围以启用并验证的实现为准。</p><pre class="text diagram"><code>                                       User
+</style></head><body><nav aria-label="文档目录"><h2>Yui 设计手册</h2><p>架构 · 模块 · 契约 · 实施</p><p class="full-diagram-nav"><a href="#full-architecture">完整架构分层图</a></p><details open><summary>入口</summary><ul><li><a href="#doc-README-md">Yui 架构与实施手册</a></li></ul></details><details open><summary>总体架构</summary><ul><li><a href="#doc-architecture-01-overview-md">总体架构</a></li><li><a href="#doc-architecture-02-authority-and-interaction-md">职责、交互与任务生命周期</a></li><li><a href="#doc-architecture-03-state-and-configuration-md">事实、配置与持久化</a></li><li><a href="#doc-architecture-04-runtime-and-replacement-md">执行、连接与实现替换</a></li><li><a href="#doc-architecture-05-capabilities-and-resources-md">能力、插件与资源</a></li><li><a href="#doc-architecture-06-working-flows-md">端到端工作逻辑</a></li><li><a href="#doc-architecture-07-session-run-contract-md">Leader Session、AgentRun 与通知合同</a></li></ul></details><details open><summary>模块设计</summary><ul><li><a href="#doc-modules-README-md">模块设计索引</a></li><li><a href="#doc-modules-01-kernel-md">Kernel：事实与执行边界</a></li><li><a href="#doc-modules-02-task-md">Task：任务事实与交付责任</a></li><li><a href="#doc-modules-03-agent-context-md">Agent 与 Context：职责配置及工作视图</a></li><li><a href="#doc-modules-04-execution-runtime-md">Execution 与 Runtime：一次执行的可靠承载</a></li><li><a href="#doc-modules-05-project-resource-md">Project 与 Resource：背景、环境和工作成果</a></li><li><a href="#doc-modules-06-plugin-capability-md">Plugin 与 Capability：发现、实现和替换能力</a></li><li><a href="#doc-modules-07-surface-md">Surface：一致的用户与 Agent 操作入口</a></li></ul></details><details open><summary>接口约定</summary><ul><li><a href="#doc-contracts-README-md">接口与数据契约</a></li></ul></details><details open><summary>实施路线</summary><ul><li><a href="#doc-implementation-README-md">实施路线</a></li></ul></details><details open><summary>任务定义</summary><ul><li><a href="#doc-implementation-tasks-T00-implementation-baseline-md">T00｜实施基线与模块契约</a></li><li><a href="#doc-implementation-tasks-T01-kernel-host-md">T01｜基础宿主与操作事实</a></li><li><a href="#doc-implementation-tasks-T02-capability-entry-md">T02｜能力入口与内建实现接入</a></li><li><a href="#doc-implementation-tasks-T03-task-context-md">T03｜任务事实、角色配置与 Context</a></li><li><a href="#doc-implementation-tasks-T04-agent-endpoint-md">T04｜统一 AgentEndpoint 与运行时适配</a></li><li><a href="#doc-implementation-tasks-T05-project-resource-md">T05｜Project、Resource 与成果保存</a></li><li><a href="#doc-implementation-tasks-T06-surface-md">T06｜统一 CLI 与 Web 入口</a></li><li><a href="#doc-implementation-tasks-T07-acp-agent-md">T07｜ACP 接入与第三 Agent 验证</a></li><li><a href="#doc-implementation-tasks-T08-draft-leader-md">T08｜Draft Leader 与正式执行</a></li><li><a href="#doc-implementation-tasks-T09-plugin-sdk-md">T09｜插件开发工具与受权执行</a></li><li><a href="#doc-implementation-tasks-T10-self-extension-md">T10｜原 Task 中的 Agent 自扩展</a></li><li><a href="#doc-implementation-tasks-T11-hot-reload-md">T11｜按使用边界热插拔</a></li></ul></details><details open><summary>技术方案</summary><ul><li><a href="#doc-implementation-designs-T00-current-baseline-md">T00 实施证据｜当前代码、共享边界与采用顺序</a></li><li><a href="#doc-implementation-designs-T00-evidence-md">T00 验证记录</a></li><li><a href="#doc-implementation-designs-T00-implementation-baseline-md">T00 技术方案｜实施基线与模块契约</a></li><li><a href="#doc-implementation-designs-T01-evidence-md">T01 实现、验证与 T02 交接</a></li><li><a href="#doc-implementation-designs-T01-kernel-host-md">T01 技术方案｜基础宿主与操作事实</a></li><li><a href="#doc-implementation-designs-T02-capability-entry-md">T02 技术方案｜能力入口与内建实现接入</a></li><li><a href="#doc-implementation-designs-T02-evidence-md">T02 能力入口、验证与后继交接</a></li><li><a href="#doc-implementation-designs-T03-evidence-md">T03 实现与采用说明</a></li><li><a href="#doc-implementation-designs-T03-task-context-md">T03 技术方案｜任务事实、角色配置与 Context</a></li><li><a href="#doc-implementation-designs-T04-agent-endpoint-md">T04 技术方案｜统一 AgentEndpoint 与运行时适配</a></li><li><a href="#doc-implementation-designs-T04-evidence-md">T04 执行接口、采用边界与验证记录</a></li><li><a href="#doc-implementation-designs-T05-evidence-md">T05 资源、环境与固定成果交接</a></li><li><a href="#doc-implementation-designs-T05-project-resource-md">T05 技术方案｜Project、Resource 与成果保存</a></li><li><a href="#doc-implementation-designs-T06-evidence-md">T06 Surface 实现与采用</a></li><li><a href="#doc-implementation-designs-T06-surface-md">T06 技术方案｜统一 CLI 与 Web 入口</a></li><li><a href="#doc-implementation-designs-T07-acp-agent-md">T07 技术方案｜ACP 接入与第三 Agent 验证</a></li><li><a href="#doc-implementation-designs-T08-draft-leader-md">T08 技术方案｜Draft Leader 与正式执行</a></li><li><a href="#doc-implementation-designs-T09-plugin-sdk-md">T09 技术方案｜插件开发工具与受权执行</a></li><li><a href="#doc-implementation-designs-T10-self-extension-md">T10 技术方案｜原 Task 中的 Agent 自扩展</a></li><li><a href="#doc-implementation-designs-T11-evidence-md">T11 Session 实现固定与使用边界热插拔</a></li><li><a href="#doc-implementation-designs-T11-hot-reload-md">T11 技术方案｜按使用边界热插拔</a></li></ul></details><details open><summary>参考与验收</summary><ul><li><a href="#doc-reference-acceptance-scenarios-md">验收场景</a></li><li><a href="#doc-reference-glossary-md">术语</a></li><li><a href="#doc-reference-implementation-principles-md">实现取舍原则</a></li><li><a href="#doc-reference-role-guidance-md">Role 行为指引</a></li></ul></details></nav><main id="top"><header><h1>Yui 架构与实施手册</h1><p>工作关系说明谁负责；逻辑分层说明能力如何承接；模块说明实现归属。</p><div class="quickmap"><a class="primary-link" href="#full-architecture">完整架构图</a><a href="full-architecture.html">单独打开完整架构图</a><a href="#doc-architecture-01-overview-md--工作关系图围绕-task-形成闭环">工作关系</a><a href="#doc-architecture-01-overview-md--逻辑分层图四个-plane一个内核横向插件机制">逻辑分层</a><a href="#doc-architecture-01-overview-md--逻辑层与七个代码模块的映射">模块映射</a><a href="#doc-architecture-01-overview-md--事实流与执行反馈">事实流</a><a href="#doc-architecture-01-overview-md--哪些实现可以替换">热重载边界</a></div></header><section id="full-architecture" class="full-architecture-section" aria-labelledby="full-architecture-title"><h2 id="full-architecture-title">完整架构分层图</h2><p class="diagram-intro">四个逻辑层、一个最小内核，以及贯穿各层的插件机制。图中能力是目标设计，实际可用范围以启用并验证的实现为准。</p><pre class="text diagram"><code>                                       User
                                           <span class="dcell">│</span>
                                           <span class="dcell">▼</span>
 <span class="dcell">┌</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">─</span><span class="dcell">┐</span>
@@ -308,7 +308,7 @@ p code,li code{background:#f0f3f6;padding:1px 4px;border-radius:3px}table{border
 <h3 id="doc-architecture-01-overview-md--execution-plane执行已声明的请求">4.4 Execution Plane：执行已声明的请求</h3>
 <p>这一层承载已经被用户或 Agent 请求的工作。准入只检查当前角色是否忙碌、资源和实现是否可用；Mailbox 投递已保存输入；采集路径保存结果和必要回执；Wake 提醒读取新事实。</p>
 <p>Execution 通过 AgentEndpoint 使用不同 Agent。产品、协议和传输是内部接口分工，只组合实际支持的路径。资源工具负责自己的外部动作与实际环境，不要求所有 Task 都使用 Git 或工作目录。</p>
-<p>执行层不选择下一 WorkItem，不因失败次数自动换模型，不解析 Review 后建立修复拓扑，也不从原生 Turn 结束推断 Task 完成。</p>
+<p>执行层不选择下一 WorkItem，不因失败次数自动换模型，不解析 Review 后建立修复拓扑，也不从原生 AgentRun 结束推断 Task 完成。</p>
 <h3 id="doc-architecture-01-overview-md--minimal-kernel共同事实与执行基础">4.5 Minimal Kernel：共同事实与执行基础</h3>
 <p>Kernel 提供稳定身份、授权上下文、事务与必要操作记录，以及唯一的实现实例宿主。工作记录的语义仍由 Task、Agent、Execution、Resource 等所属模块解释，Kernel 不把所有业务对象变成自己的逻辑。</p>
 <p>纯读通常没有 Command；本地事务直接修改所属记录；具有外部效果的操作保留必要请求身份和回执。这样既不漏掉未决副作用，也不为每个读取动作建立多层日志。</p>
@@ -354,7 +354,7 @@ p code,li code{background:#f0f3f6;padding:1px 4px;border-radius:3px}table{border
 <tr>
 <td>Execution &amp; Runtime</td>
 <td>Execution Plane；在 Capability 层暴露控制操作</td>
-<td>执行请求、Turn、Session 必要引用、Endpoint 和结果采集</td>
+<td>执行请求、AgentRun、Session 必要引用、Endpoint 和结果采集</td>
 <td>决定重试策略或 Task 完成</td>
 </tr>
 <tr>
@@ -393,7 +393,7 @@ p code,li code{background:#f0f3f6;padding:1px 4px;border-radius:3px}table{border
                    |                <span class="dcell">▼</span>               <span class="dcell">▼</span>
              +-----+------------------------------------+
              |       <span class="dcell dwide">持</span><span class="dcell dwide">久</span><span class="dcell dwide">化</span><span class="dcell dwide">工</span><span class="dcell dwide">作</span><span class="dcell dwide">事</span><span class="dcell dwide">实</span> <span class="dcell">·</span> <span class="dcell dwide">唯</span><span class="dcell dwide">一</span><span class="dcell dwide">事</span><span class="dcell dwide">实</span><span class="dcell dwide">来</span><span class="dcell dwide">源</span>        |
-             | Task / Role / Message / Turn / Artifact  |
+             | Task / Role / Message / AgentRun / Artifact  |
              +---------------------+--------------------+
                                    |
                             <span class="dcell dwide">变</span><span class="dcell dwide">化</span><span class="dcell dwide">通</span><span class="dcell dwide">知</span> / Wake
@@ -402,7 +402,7 @@ p code,li code{background:#f0f3f6;padding:1px 4px;border-radius:3px}table{border
 
 <span class="dcell dwide">实</span><span class="dcell dwide">时</span><span class="dcell dwide">观</span><span class="dcell dwide">察</span> <span class="dcell">─</span><span class="dcell">─</span><span class="dcell">→</span> Context / Surface <span class="dcell dwide">附</span><span class="dcell dwide">带</span><span class="dcell dwide">展</span><span class="dcell dwide">示</span><span class="dcell dwide">（</span><span class="dcell dwide">来</span><span class="dcell dwide">源</span><span class="dcell dwide">、</span><span class="dcell dwide">时</span><span class="dcell dwide">间</span><span class="dcell dwide">、</span><span class="dcell dwide">不</span><span class="dcell dwide">可</span><span class="dcell dwide">用</span><span class="dcell dwide">说</span><span class="dcell dwide">明</span><span class="dcell dwide">）</span>
 <span class="dcell dwide">连</span><span class="dcell dwide">接</span><span class="dcell dwide">、</span><span class="dcell dwide">进</span><span class="dcell dwide">程</span><span class="dcell dwide">句</span><span class="dcell dwide">柄</span><span class="dcell dwide">、</span><span class="dcell dwide">缓</span><span class="dcell dwide">存</span> <span class="dcell">─</span><span class="dcell">─</span><span class="dcell">→</span> <span class="dcell dwide">临</span><span class="dcell dwide">时</span><span class="dcell dwide">运</span><span class="dcell dwide">行</span><span class="dcell dwide">状</span><span class="dcell dwide">态</span><span class="dcell dwide">，</span><span class="dcell dwide">可</span><span class="dcell dwide">丢</span><span class="dcell dwide">弃</span><span class="dcell dwide">或</span><span class="dcell dwide">重</span><span class="dcell dwide">建</span></code></pre>
-<p>Task、Role、Message、Turn 和 Artifact 等各有明确写入入口，共用同一持久化基础。Context 只组合读取，Surface 的展示只消费这些读结果，不反向生成新的业务状态。</p>
+<p>Task、Role、Message、AgentRun 和 Artifact 等各有明确写入入口，共用同一持久化基础。Context 只组合读取，Surface 的展示只消费这些读结果，不反向生成新的业务状态。</p>
 <p>“只读 Context”不代表 Agent 或 Web 永远不能写。写入经显式原子操作发生，而不是通过修改视图完成。Context 中附带的运行观察也不意味着 Context 成为监控或恢复决策者。</p>
 <p>持久化负责保存目标、配置、分配、结果和未决输入／效果。连接、进程对象、实时观察缓存和目录投影可以重建。运行对象丢失不导致已保存结果失效，读取结果也不要求启动生成它的旧插件。</p>
 <h2 id="doc-architecture-01-overview-md--哪些实现可以替换">7. 哪些实现可以替换</h2>
@@ -454,7 +454,7 @@ p code,li code{background:#f0f3f6;padding:1px 4px;border-radius:3px}table{border
 </table>
 <p>热重载更新的是实现，不是任务含义。generation 只标识调用或会话实际使用的实现，历史 Candidate 保存内容与来源即可，不决定旧代码的保留时间。更新进度、模板或插件不自动决定结果是否仍适用。</p>
 <h2 id="doc-architecture-01-overview-md--实现依赖与装配">8. 实现依赖与装配</h2>
-<p>Kernel 不依赖具体 Agent、领域资源或 Task 工作方法。Task 模块依赖存储和授权端口；Context 读取公开查询接口；Execution 保存自己的 Turn 证据并经公开能力关联任务；Runtime 与资源插件不直接写 Task 私有表。</p>
+<p>Kernel 不依赖具体 Agent、领域资源或 Task 工作方法。Task 模块依赖存储和授权端口；Context 读取公开查询接口；Execution 保存自己的 AgentRun 证据并经公开能力关联任务；Runtime 与资源插件不直接写 Task 私有表。</p>
 <p>一个装配入口知道内建实现并将其注册到宿主。其他模块依赖公开接口，允许普通的类型明确调用，不要求网络化。Agent 调用 Yui Tools 形成工作闭环，但不意味着源代码的 import 依赖必须形成环。</p>
 <p>架构无需增加 DomainBinding、固定任务领域枚举、多级角色插件作用域或额外恢复主管。实例与记录数量按实际工作需要产生，不按图中的方框数量产生。</p>
 <h2 id="doc-architecture-01-overview-md--工作推进与故障责任">9. 工作推进与故障责任</h2>
@@ -486,7 +486,7 @@ Leader <span class="dcell">↔</span> Worker / Reviewer<span class="dcell dwide"
 <h2 id="doc-architecture-02-authority-and-interaction-md--activation-的含义">4. Activation 的含义</h2>
 <p>Activation 表示用户或受权 Agent 允许任务开始正式交付。它记录当时的任务说明引用和执行配置，准备必要资源，并使 Task 进入 active。它不把方案变成不可变约束，也不使之后的每次需求修改都必须重新激活。</p>
 <p>环境可以为空。仅进行资料整理的 Task 不需要为了符合框架模型创建 Git worktree。需要准备外部环境时，先准备，再在一次状态更新中采用；准备失败仍可继续讨论 Draft。</p>
-<p>激活时不会把正在运行的 planning Turn 即时升权。由当前 planning Turn 发起的激活请求，可以记录在现有操作记录中并立即返回请求引用，在该 Turn 结束后采用；不让工具调用等待自身结束。</p>
+<p>激活时不会把正在运行的 planning AgentRun 即时升权。由当前 planning AgentRun 发起的激活请求，可以记录在现有操作记录中并立即返回请求引用，在该 AgentRun 结束后采用；不让工具调用等待自身结束。</p>
 <p>原生 Session 的环境和权限可安全续用时继续同一个会话。否则创建新 Session，由持久化 Context 承接。会话连续性是体验，不是高于权限和事实的硬要求。</p>
 <h2 id="doc-architecture-02-authority-and-interaction-md--对话中的信息管理">5. 对话中的信息管理</h2>
 <p>用户直接向 Leader 提供的信息，若影响之后的工作，由 Leader 写入当前 Brief、Decision 或 WorkItem。临时提问、试探性方案和一般交流可以留在原生对话中。</p>
@@ -495,7 +495,7 @@ Leader <span class="dcell">↔</span> Worker / Reviewer<span class="dcell dwide"
 <h2 id="doc-architecture-02-authority-and-interaction-md--工作完成与结果判断">6. 工作完成与结果判断</h2>
 <p>WorkItem 是独立责任；Candidate 是一版结果；Review 是针对结果的意见。它们帮助 Leader 管理交付，不规定所有 Task 必须使用同一套对象链。</p>
 <p>简单的 direct Task 可以由 Leader 提交完成说明和必要产物引用。需要独立验收的 WorkItem 则通过 Candidate 明确选择被接受的结果。框架检查引用和权限，不从 Reviewer 文本或测试退出码决定接受。</p>
-<p>任务状态变化不等于物理取消所有外部活动。Leader 完成或取消任务时，应明确仍在运行的执行怎样处理。迟到结果仍按原 Turn 保存，不自动重新打开任务或启动新的工作。</p>
+<p>任务状态变化不等于物理取消所有外部活动。Leader 完成或取消任务时，应明确仍在运行的执行怎样处理。迟到结果仍按原 AgentRun 保存，不自动重新打开任务或启动新的工作。</p>
 <h2 id="doc-architecture-02-authority-and-interaction-md--配置切换与干预">7. 配置切换与干预</h2>
 <p>Role 保存当前希望使用的 Agent、指令、Skills、模型、权限选择等。更换 Role 配置通常作用于下一次执行。已有 WorkItem、结果和消息继续存在。</p>
 <p>若 Operator 更换 Leader 的实际执行承载，需要让旧承载不再提交新的管理动作；旧执行已经产生的结果仍然可记录。撤销管理入口不代表物理进程已经停止，对相同资源的冲突执行应按实际环境处理。</p>
@@ -534,7 +534,7 @@ Leader <span class="dcell">↔</span> Worker / Reviewer<span class="dcell dwide"
 </tr>
 <tr>
 <td>工作成果</td>
-<td>Turn 输出、Candidate、Artifact、Review 引用、验收</td>
+<td>AgentRun 输出、Candidate、Artifact、Review 引用、验收</td>
 <td>保存结果本身及必要来源</td>
 </tr>
 <tr>
@@ -571,7 +571,7 @@ Brief
 <p><code>archived</code> 是显式终态，不是展示属性，也不是取消的别名。只有 completed 或 cancelled 在用户授权、活动和资源处置完成后才能归档；完成或取消不自动授权归档。归档保留原结束事实与结果来源，不能重开。完整转换和清理边界以 <a href="#doc-modules-02-task-md">Task 生命周期</a> 为准。</p>
 <p>结构可以固定到通用协调层，字段内容保持自由文本。Core 不解析 boundaries 是否是代码目录、预算或地域；需要强制执行的访问限制另通过授权和具体资源实现。</p>
 <h2 id="doc-architecture-03-state-and-configuration-md--可变状态与不可变事实">3. 可变状态与不可变事实</h2>
-<p>Brief 和 Role 当前配置是可变状态。Decision 保存重要选择及原因，变化时可明确替代先前决定。Turn 的最终输出和已经提交的 Candidate 是已发生事实，不能随当前配置改写。</p>
+<p>Brief 和 Role 当前配置是可变状态。Decision 保存重要选择及原因，变化时可明确替代先前决定。AgentRun 的最终输出和已经提交的 Candidate 是已发生事实，不能随当前配置改写。</p>
 <p>记录 revision 只解决并发修改：调用方读到一版记录，写入时检查是否覆盖了别人修改。它不是业务新鲜度判断，也不是候选是否可接受的总开关。</p>
 <p>可以为 Brief 保存必要审计历史，但不需要把全部系统做成事件溯源，也不需要独立的 Spec 服务、交付依据版本树或全局失效传播算法。</p>
 <h2 id="doc-architecture-03-state-and-configuration-md--结果适用性由-leader-判断">4. 结果适用性由 Leader 判断</h2>
@@ -582,11 +582,11 @@ Brief
 <p>Role 是 Task 或全局的稳定职责实例。模板和 Skill 是可复用配置，默认作为数据存储，而不是任意执行代码。</p>
 <pre class="text diagram"><code>Role <span class="dcell dwide">当</span><span class="dcell dwide">前</span><span class="dcell dwide">配</span><span class="dcell dwide">置</span> <span class="dcell">→</span> <span class="dcell dwide">选</span><span class="dcell dwide">择</span> Agent <span class="dcell dwide">与</span><span class="dcell dwide">指</span><span class="dcell dwide">令</span> <span class="dcell">→</span> Session <span class="dcell dwide">有</span><span class="dcell dwide">效</span><span class="dcell dwide">配</span><span class="dcell dwide">置</span>
                                       <span class="dcell">↓</span>
-                                Turn <span class="dcell dwide">实</span><span class="dcell dwide">际</span><span class="dcell dwide">来</span><span class="dcell dwide">源</span></code></pre>
+                                AgentRun <span class="dcell dwide">实</span><span class="dcell dwide">际</span><span class="dcell dwide">来</span><span class="dcell dwide">源</span></code></pre>
 <p>模板在应用时形成 Role 配置；模板后续变化不静默重写已有 Role。需要继承全局默认值时，明确哪些字段仍继承，并在实际启动时解析成一份有效配置。启动后的 Session 保留实际使用配置的引用或快照，不能通过读取当前模板猜测过去发生了什么。</p>
 <p>配置可以保存完整的 provider 扩展选项，但 Core 只理解自己确实需要的字段；不为所有模型参数建立通用枚举。密钥不写入快照，保存凭据引用或非敏感描述。</p>
 <h2 id="doc-architecture-03-state-and-configuration-md--runtime-信息何时仍需保留">6. Runtime 信息何时仍需保留</h2>
-<p>运行时的内存结构可以丢弃，但已经开始的操作可能仍在外部进行。恢复时至少需要知道其目标、提交关联、可能的原生 Session／Turn 身份以及目前是否已得到确定结果。</p>
+<p>运行时的内存结构可以丢弃，但已经开始的操作可能仍在外部进行。恢复时至少需要知道其目标、提交关联、可能的原生 Session／AgentRun 身份以及目前是否已得到确定结果。</p>
 <p>有可靠证据时继续连接或读取原执行；没有证据时保留 unknown，让 Leader 或 Operator 判断。不能因为本地进程不见了就假设输入没有执行。</p>
 <p>与此相对，当前 CPU、token 速率、上次屏幕内容和一个可以重建的状态索引，不需要成为任务继续运行的条件。</p>
 <h2 id="doc-architecture-03-state-and-configuration-md--写入者与消费者">7. 写入者与消费者</h2>
@@ -604,7 +604,7 @@ Brief
                    |                <span class="dcell">▼</span>               <span class="dcell">▼</span>
              +-----+------------------------------------+
              |       <span class="dcell dwide">持</span><span class="dcell dwide">久</span><span class="dcell dwide">化</span><span class="dcell dwide">工</span><span class="dcell dwide">作</span><span class="dcell dwide">事</span><span class="dcell dwide">实</span> <span class="dcell">·</span> <span class="dcell dwide">唯</span><span class="dcell dwide">一</span><span class="dcell dwide">事</span><span class="dcell dwide">实</span><span class="dcell dwide">来</span><span class="dcell dwide">源</span>        |
-             | Task / Role / Message / Turn / Artifact  |
+             | Task / Role / Message / AgentRun / Artifact  |
              +---------------------+--------------------+
                                    |
                             <span class="dcell dwide">变</span><span class="dcell dwide">化</span><span class="dcell dwide">通</span><span class="dcell dwide">知</span> / Wake
@@ -624,15 +624,15 @@ Brief
 <h2 id="doc-architecture-03-state-and-configuration-md--保留与清理">9. 保留与清理</h2>
 <p>结果保留与执行环境保留是两个策略。历史 Candidate 需要结果内容和必要来源，不要求对应插件和依赖包永远可执行。插件代码由活跃调用、活跃或明确计划续用的 Session、未决操作以及用户显式保留决定。</p>
 <p>临时文件和未采用环境可以清理；清理不得删除仍被工作结果引用的内容，也不能对仍可能存在写入者的资源作破坏性处理。具体资源采用自己的清理能力，Core 不建立万能垃圾回收工作流。</p>
-<p>归档后的 Task、Brief、Decision、Turn 原始结果、Candidate、Review 引用、完成或取消说明及未决效果的最终处置仍经普通查询读取。清理工作目录前先保证引用内容可独立读取；“可恢复读取”不意味着恢复旧进程或允许 archived 回到 active。</p>
+<p>归档后的 Task、Brief、Decision、AgentRun 原始结果、Candidate、Review 引用、完成或取消说明及未决效果的最终处置仍经普通查询读取。清理工作目录前先保证引用内容可独立读取；“可恢复读取”不意味着恢复旧进程或允许 archived 回到 active。</p>
 <h2 id="doc-architecture-03-state-and-configuration-md--持久化契约">10. 持久化契约</h2>
 <p>采用一个权威存储路径。纯读直接查询；本地修改用事务和必要版本检查；跨外部系统的副作用保存最小操作记录与回执。每次调用不必都生成多层事件、命令和日志副本。</p>
 <p>完整类型关系见<a href="#doc-contracts-README-md">数据契约</a>，读取和通知的具体职责见<a href="#doc-modules-03-agent-context-md">Agent 与 Context 模块</a>。</p>
 </article><article id="doc-architecture-04-runtime-and-replacement-md"><div class="source"><a href="architecture/04-runtime-and-replacement.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-architecture-04-runtime-and-replacement-md--执行连接与实现替换">执行、连接与实现替换</h1>
 <p><strong>层次位置：Execution Plane；通过 Capability Plane 提供执行管理入口，并由 Plugin Fabric 支持实现替换。</strong> 角色行为属于决策层，模型及工具的实际运行发生在本层。</p>
 <h2 id="doc-architecture-04-runtime-and-replacement-md--execution-的外部模型">1. Execution 的外部模型</h2>
-<p>Agent 选择某个 Role 执行明确的工作，Yui 创建相应 Turn 并负责把输入交给配置的 Agent。上层获得执行引用、必要状态和结果，不必理解通信协议。</p>
-<p>Turn 记录一次执行的目标、输入、Role、实际配置、关联身份、结果与错误。Session 是可复用的会话；Host 是持有连接或进程的实现。Task 不是其中任一对象的子生命周期。</p>
+<p>Agent 选择某个 Role 执行明确的工作，Yui 创建相应 AgentRun 并负责把输入交给配置的 Agent。上层获得执行引用、必要状态和结果，不必理解通信协议。</p>
+<p>AgentRun 记录一次执行的目标、输入、Role、实际配置、关联身份、结果与错误。Session 是可复用的会话；Host 是持有连接或进程的实现。Task 不是其中任一对象的子生命周期。</p>
 <p>Execution 只执行已经提出的请求。它可以因为同一 Role 正忙或资源容量不足暂缓启动，但不自己选择别的 Worker、模型或方案。</p>
 <h2 id="doc-architecture-04-runtime-and-replacement-md--agentendpoint">2. AgentEndpoint</h2>
 <p>统一入口保持少而明确：</p>
@@ -658,7 +658,7 @@ detach</code></pre>
    | <span class="dcell dwide">终</span><span class="dcell dwide">端</span><span class="dcell dwide">型</span> CLI     terminal           PTY          |
    +----------------------------------------------+
              |
-    <span class="dcell dwide">原</span><span class="dcell dwide">生</span> Session / Turn / <span class="dcell dwide">结</span><span class="dcell dwide">果</span>
+    <span class="dcell dwide">原</span><span class="dcell dwide">生</span> Session / AgentRun / <span class="dcell dwide">结</span><span class="dcell dwide">果</span>
              |
     <span class="dcell dwide">必</span><span class="dcell dwide">要</span><span class="dcell dwide">执</span><span class="dcell dwide">行</span><span class="dcell dwide">证</span><span class="dcell dwide">据</span><span class="dcell dwide">写</span><span class="dcell dwide">入</span><span class="dcell dwide">持</span><span class="dcell dwide">久</span><span class="dcell dwide">化</span><span class="dcell dwide">记</span><span class="dcell dwide">录</span></code></pre>
 <p>表中的连接组合由具体产品适配验证并声明。上层看到 AgentEndpoint，不需要配置或保存一棵协议图。</p>
@@ -683,7 +683,7 @@ detach</code></pre>
 </tr>
 <tr>
 <td>协议适配</td>
-<td>Session／Turn 交互、错误和事件解释</td>
+<td>Session／AgentRun 交互、错误和事件解释</td>
 <td>App Server、流式 JSON、ACP、终端模式</td>
 </tr>
 <tr>
@@ -698,11 +698,11 @@ detach</code></pre>
 <h2 id="doc-architecture-04-runtime-and-replacement-md--提交与返回">4. 提交与返回</h2>
 <p>一次输入可能得到：明确接受、仍在等待、明确未产生效果、结果未知。通信写入成功不是对所有协议都等价的接受确认；晚到的、可准确关联的最终响应也可以提供接受和完成证据。</p>
 <p>正常等待不能被统一超时策略判成业务失败。连接丢失之后，如果无法确认输入是否执行，保留原尝试身份并读取可得证据，不自动切换另一个实现重发。</p>
-<p>PTY 提供人工可用的终端入口，但不因此自动具备结构化执行确认。不能把终端空闲图案当作某个 managed Turn 已完成的证明。</p>
+<p>PTY 提供人工可用的终端入口，但不因此自动具备结构化执行确认。不能把终端空闲图案当作某个 managed AgentRun 已完成的证明。</p>
 <h2 id="doc-architecture-04-runtime-and-replacement-md--多路与后台执行">5. 多路与后台执行</h2>
 <p>多路执行共享一份明确 Assignment，记录副本与重试关联即可。Leader 决定参考哪些结果以及是否综合，不设置框架统一的成功数、投票或降级规则。</p>
 <p>多路写入需要分离工作环境或由资源能力明确支持并行。支付、发送、发布等外部动作不因 replicas 参数被自动复制。原生 subagent 可以辅助当前执行，但不会自动进入 Yui WorkItem 图。</p>
-<p>父 Turn 结束不一定代表所有后台活动都已经停止。只有需要继续使用可能冲突的资源时，才查看相关活动证据或采取停止／隔离操作；不把不相关的后台诊断变成整个 Task 的门禁。</p>
+<p>父 AgentRun 结束不一定代表所有后台活动都已经停止。只有需要继续使用可能冲突的资源时，才查看相关活动证据或采取停止／隔离操作；不把不相关的后台诊断变成整个 Task 的门禁。</p>
 <h2 id="doc-architecture-04-runtime-and-replacement-md--哪些可以热更新">6. 哪些可以热更新</h2>
 <table>
 <colgroup>
@@ -736,7 +736,7 @@ detach</code></pre>
 <tr>
 <td>Role 当前配置</td>
 <td>下一次兼容执行或新会话</td>
-<td>已运行 Turn 的实际配置</td>
+<td>已运行 AgentRun 的实际配置</td>
 </tr>
 <tr>
 <td>短工具实现</td>
@@ -758,7 +758,7 @@ detach</code></pre>
 <p>这里的“热”只表示不必重启整个 Yui，不代表所有正在运行的对象必须即时采用新代码。</p>
 <h2 id="doc-architecture-04-runtime-and-replacement-md--generation-的最小意义">7. generation 的最小意义</h2>
 <p>generation 是实现实例的身份，用于说明某次调用实际落到哪份代码和配置。普通 Agent 不必手动管理它。宿主在选择实现时取得句柄，直到调用或 Session 不再使用后才释放。</p>
-<p>新 Session 默认选择当前实现；同一旧 Session 的下一 Turn 通常继续原实现。需要换实现时，Leader 可以关闭或停用旧会话再创建新会话。通用透明状态迁移不是必要能力。</p>
+<p>新 Session 默认选择当前实现；同一旧 Session 的下一 AgentRun 通常继续原实现。需要换实现时，Leader 可以关闭或停用旧会话再创建新会话。通用透明状态迁移不是必要能力。</p>
 <p>只需要固定会话实际持有的状态型依赖；无状态目录查询不必把整个系统依赖树冻结下来。动态注册的新工具可以经稳定的 Yui 调用入口在同一 Session 后续使用，而无需重载原生工具列表。</p>
 <h2 id="doc-architecture-04-runtime-and-replacement-md--插件启停">8. 插件启停</h2>
 <p>启用新实例时先完成验证与注册准备，然后一次发布完整能力集合。注册初始化不执行业务副作用。准备失败不影响当前可用实现。</p>
@@ -835,19 +835,18 @@ plugin.create / validate / activate / disable</code></pre>
 <p>用户向 Operator 描述两个目标。Operator 判断它们可以独立交付，调用 Task 创建能力，分别建立 Draft 和 Leader Role。两份 Task 都持久化目标和必要背景，不要求立即启动两个常驻会话。</p>
 <p>用户进入 Task A，与 Leader A 细化方案；同时也可进入 Task B。Surface 根据 Task 路由到对应 Leader，没有“必须回 Operator 转述”的限制。跨任务资料使用共享 Project 知识或带来源的普通消息传递，不建立自动跨 Task DAG。</p>
 <p><strong>事实链：</strong> 用户请求 → Task／Brief → Leader Role。<br/>
-<strong>运行链：</strong> 用户进入 → 按需 Session → planning Turn。<br/>
-<strong>决定者：</strong> Operator 划 Task，Leader 划内部工作。</p>
+<strong>运行链：</strong> 用户进入 → 按需 Session → planning AgentRun。 <strong>决定者：</strong> Operator 划 Task，Leader 划内部工作。</p>
 <h2 id="doc-architecture-06-working-flows-md--draft-中持续对齐">2. Draft 中持续对齐</h2>
 <p>Leader 读取当前 Brief，讨论后直接更新要求或方案。对重要取舍写 Decision；日常进度写 currentFocus。必要资料通过 Artifact 保存，可从 Context 展开读取。</p>
-<p>用户同意开始后，Leader 或 Operator 提出 Activation。若由当前 planning Turn 发起，请求立即返回，Turn 完成后执行资源采用。正式 Session 能兼容续用就续用，不能则打开新会话读取同一 Task Context。</p>
+<p>用户同意开始后，Leader 或 Operator 提出 Activation。若由当前 planning AgentRun 发起，请求立即返回，AgentRun 完成后执行资源采用。正式 Session 能兼容续用就续用，不能则打开新会话读取同一 Task Context。</p>
 <p>Activation 的记录说明开始时依据什么，不限制之后继续讨论。临时实验内容可以显式引用或复制到交付环境，但不会因目录存在就自动被采用。</p>
 <h2 id="doc-architecture-06-working-flows-md--leader-直接完成一个小任务">3. Leader 直接完成一个小任务</h2>
 <p>任务只需要整理一份说明。Leader 使用已有能力读取材料、生成文件、保存结果，然后调用 Task 完成能力写入说明和产物引用。</p>
-<p>不需要合成 Worker、WorkItem、Lane、Review 或 Git Integration 来满足统一流程。Task 完成由明确操作产生，原生 Turn 的结束只保存该次回复。展示层读取两者各自的事实。</p>
+<p>不需要合成 Worker、WorkItem、Lane、Review 或 Git Integration 来满足统一流程。Task 完成由明确操作产生，原生 AgentRun 的结束只保存该次回复。展示层读取两者各自的事实。</p>
 <h2 id="doc-architecture-06-working-flows-md--两个-workitem-并行">4. 两个 WorkItem 并行</h2>
-<p>Leader 建立两个可以独立负责的 WorkItem，分别配置 Worker Role 并发出执行请求。Execution 检查角色是否忙碌及实际环境条件，创建 Turn 并调用 Endpoint。</p>
-<p>Worker 输出分别保存到原 Turn，通知 Leader。Leader 可以请求 Candidate、直接读取产物、发送反馈或接受结果。若一个 Worker 失败，另一个正常执行不受影响；失败只成为当前 Task 的一条事实。</p>
-<p>要求改变时，Leader决定哪些工作需要调整。框架不自动根据每个 Brief 修改取消所有 Turn，也不以所有候选拥有同一 revision 为完成前提。</p>
+<p>Leader 建立两个可以独立负责的 WorkItem，分别配置 Worker Role 并发出执行请求。Execution 检查角色是否忙碌及实际环境条件，创建 AgentRun 并调用 Endpoint。</p>
+<p>Worker 输出分别保存到原 AgentRun，通知 Leader。Leader 可以请求 Candidate、直接读取产物、发送反馈或接受结果。若一个 Worker 失败，另一个正常执行不受影响；失败只成为当前 Task 的一条事实。</p>
+<p>要求改变时，Leader决定哪些工作需要调整。框架不自动根据每个 Brief 修改取消所有 AgentRun，也不以所有候选拥有同一 revision 为完成前提。</p>
 <h2 id="doc-architecture-06-working-flows-md--同一工作多个独立尝试">5. 同一工作多个独立尝试</h2>
 <p>Leader 请求两个角色对相同 Assignment 独立研究。ExecutionGroup 仅关联副本和各次尝试。每个结果保留来源；失败后重试仍归同一副本，避免综合时把一次重试当成两个独立意见。</p>
 <p>Leader 可自己综合，也可委派一个主执行读取明确选择的结果。不默认“必须两个成功才能继续”，也不默认重复发布或发送。涉及写入时，先使用隔离环境或只读任务形态。</p>
@@ -857,7 +856,7 @@ plugin.create / validate / activate / disable</code></pre>
 <p>已保存结果继续可读。Leader可复用它、修复一部分或重新执行；这些判断不由 Framework 的“过期”标记替代。</p>
 <h2 id="doc-architecture-06-working-flows-md--切换角色使用的-agent">7. 切换角色使用的 Agent</h2>
 <p>Leader 将一个 Worker 的当前配置从 Agent A 改为 Agent B。Role 的逻辑身份不变，WorkItem 和消息不重建。</p>
-<p>旧 Turn 仍按原配置结束，或者由 Leader 明确取消。新执行使用新有效配置，必要时新建 Session 并读取 Assignment 与持久化结果。新的 Session 不必重现旧会话的全部 token 历史。</p>
+<p>旧 AgentRun 仍按原配置结束，或者由 Leader 明确取消。新执行使用新有效配置，必要时新建 Session 并读取 Assignment 与持久化结果。新的 Session 不必重现旧会话的全部 token 历史。</p>
 <p>配置切换不删除旧结果，也不需要全局重载所有插件。</p>
 <h2 id="doc-architecture-06-working-flows-md--在原-task-中补齐能力">8. 在原 Task 中补齐能力</h2>
 <p>Leader 需要处理一种当前目录没有覆盖的数据格式。它先查询现有能力，确认简单组合不足，再在授权的临时环境里编写转换插件。</p>
@@ -875,6 +874,213 @@ plugin.create / validate / activate / disable</code></pre>
 <p>Controller 重启后读取当前配置、待处理输入和未决操作，重建目录和读视图。可连接的原生 Session 可以继续观察；不可用的由负责人选择新 Session。</p>
 <p>任务目标、角色、WorkItem、结果和决定依然存在。Context 给出紧凑工作集，允许按引用展开。不存在“必须恢复终端屏幕或完整插件内存才能读 Task”的前提。</p>
 <p>这些过程的验证条件见<a href="#doc-reference-acceptance-scenarios-md">验收场景</a>。</p>
+</article><article id="doc-architecture-07-session-run-contract-md"><div class="source"><a href="architecture/07-session-run-contract.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-architecture-07-session-run-contract-md--leader-sessionagentrun-与通知合同">Leader Session、AgentRun 与通知合同</h1>
+<p>本合同统一 T03 的任务上下文和 T04 的执行证据边界。它不改变 Leader 对方案、 委派、验收和恢复的决策权，也不引入新的调度政策或结果存储。</p>
+<h2 id="doc-architecture-07-session-run-contract-md--正常入口">正常入口</h2>
+<p>用户直接与当前有效、未撤权的 Leader native Session 协作是正常入口。 Leader 使用 <code>yui task context &lt;task&gt; --json</code> 读取当前事实，保存 Brief、 Decision、Message 或其他合法本地修改；不需要先创建执行记录或给自己发 wake。 Context 读取、消息送达和要求落实是三件不同的事。</p>
+<p>明确委派的执行使用 <strong>AgentRun（执行记录）</strong>。Worker、Reviewer，以及需要单独追踪的 Leader 执行，通过 <code>yui task run context &lt;task/run&gt; --json</code> 加载其精确冻结上下文。 原生聊天、Goal 的后续原生回合和普通通知不自动生成 AgentRun。</p>
+<p>Session 身份来自现有 Role/Session 绑定。跨 Task、被替换的 Session、显式撤权、 Worker 的 Assignment 范围以及实际资源授权仍在对应操作边界检查。 active Run 指针不是 Leader 的通用权限凭证，也不能证明当前本地命令来自该 Run。 没有准确关联的 Leader 修改记录 native Session 来源，不借用同 Session 的另一个 Run。</p>
+<h2 id="doc-architecture-07-session-run-contract-md--一份意图一份投递证据">一份意图，一份投递证据</h2>
+<p>WorkItem、Task 和 Message 保留业务意图。Mailbox 保存尚未交付的输入批次； Provider runtime binding 保存当前输入的实际准入和原生关联。两者不是第二套 Task 状态。</p>
+<p>普通 Leader wake 使用已有 TaskWake 和 mailbox processing batch：</p>
+<ol type="1">
+<li>聚合后认领一个固定批次和通知窗口，不创建 AgentRun。</li>
+<li>通过同一 AgentHost/Endpoint 向固定 native Session 提交通知。</li>
+<li>确认接受后，只结清该批次。期间新增的 Operator 消息或结果仍在 pending 后缀。</li>
+</ol>
+<p>通知不要求自然语言最终报告，也不强制 steer 用户正在处理的原生会话。 存在当前原生执行时等待其可用；观察未知时保留原输入，不能换 Session 绕过它。 认领之后、提交证据产生之前崩溃，也不能仅因查不到接受记录就盲目重发。 不存在“读取 Context 即 ack”的路径。</p>
+<p>Leader 自己的事实修改不在产生端新增自唤醒，仍保留业务事件和 Task 状态通知。 其他来源的输入不因 Leader 忙碌而被清空、忽略或自动确认。</p>
+<h3 id="doc-architecture-07-session-run-contract-md--已有负责人的-message-续作">已有负责人的 Message 续作</h3>
+<p>首次 Dispatch 建立负责人、Assignment、工作区与冻结 effective；后续澄清和继续要求 使用 <code>task message send &lt;task&gt; &lt;body&gt; --to &lt;role&gt; --work-item &lt;id&gt;</code> 或 <code>--review-round &lt;id&gt;</code>。能力桥的 <code>message.send</code> 复用同一身份和写入事务。 Message 保存原 Role、工作关联和 ownerRunId；底层自动生成的 continuation Run 只是后续投递/结果关联，不要求 Leader 修改业务状态或提交未完成 Candidate。</p>
+<p>同 Role 忙时保存即可返回，原执行结束后检查待办。每批最多 16 条有序消息，与新 Run 和原 Mailbox 信号原子关联；重复终态不再次关联已分配输入。新 Snapshot 保持原 Assignment， 追加授权消息及前次原结果，原 effective、工作区和未提交文件不变。Context read 不 ack。 更换负责人不迁移旧消息；<code>task message handoff</code> 只将未分配输入显式交给同一工作已经 Dispatch 的继任者。已结束的 Task/WorkItem 或过期 Review 候选保留消息和明确未投递原因， 不自动重开。副本 Producer/综合 Assignment 仍通过原 Lane/Group 正式操作处理， 不由消息静默重写冻结血缘。</p>
+<p>未知通知保留原固定 TaskWake、输入窗口和投递事件。<code>task wake show</code> 展示窗口之后的 接受/unknown/处置事实。确认共享原生执行已经静止后，Agent/Operator 可用 <code>task wake resolve &lt;task&gt; &lt;wake&gt; --reason &lt;evidence&gt;</code> 释放该批次认领，让独立后续输入继续。 它不重投、不把 unknown 当作 not-accepted、不标记落实；存在原生 active/unknown 效果时 仍拒绝释放相应资源边界。没有自动恢复 Worker、结果副本或独立 outbox。</p>
+<h3 id="doc-architecture-07-session-run-contract-md--准入处置">准入处置</h3>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>证据</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>明确 busy / not-accepted</td>
+<td>保留原业务输入，后续用新的 attempt 恢复同一 Session</td>
+</tr>
+<tr>
+<td>原生接受</td>
+<td>不重发，等待准确终态；通知批次可在接受时结清</td>
+</tr>
+<tr>
+<td>仅 transport 写入</td>
+<td>保存 transport 证据，不冒称 Provider 已接受，不重发</td>
+</tr>
+<tr>
+<td>真正拒绝</td>
+<td>结清相应执行或通知占用，保留原因和原消息</td>
+</tr>
+<tr>
+<td>接受结果 unknown</td>
+<td>保留原 attempt 和资源约束，不自动重发或替换 Session</td>
+</tr>
+</tbody>
+</table>
+<p>新出现的 unknown 不提前伪造执行终态；Run 保持未结清，直到准确证据到达。 旧版本已经写入的失败记录仍不可变，不在迁移时猜测或改写。</p>
+<p>已封存 attempt 不改写成成功。<code>deferred</code> 是明确未接受的现有输入处置， 不是另一套业务重试工作流。首次尝试可能已经创建 Session；重试不能重复原始 <code>new</code> launch。<code>run.session-prepared</code> 保留该执行确实准备过的 Session 关联。</p>
+<p>原生可用状态及明确的 Controller <code>SESSION_BUSY</code> 是结构化事实。 不通过错误文案中的 “busy”“active turn”等词推断可重试性。 没有可靠否定证据的 RPC 错误保留为 unknown。</p>
+<h2 id="doc-architecture-07-session-run-contract-md--原生关联与结果">原生关联与结果</h2>
+<p>AgentRunResult 保留自动采集的原始可见输出、错误、准确的 Provider/attempt 身份。 文件成果仍归 Artifact。ReviewRound 只关联候选和 Reviewer Run，不复制报告， 不从自由文本推导自动验收结论。</p>
+<p>运行时在原有终态事务内保存结果并生成一次 <code>role-result</code> Message：</p>
+<div class="sourceCode" id="doc-architecture-07-session-run-contract-md--cb1"><pre class="sourceCode ts"><code class="sourceCode typescript"><span id="doc-architecture-07-session-run-contract-md--cb1-1"><a aria-hidden="true" href="#doc-architecture-07-session-run-contract-md--cb1-1" tabindex="-1"></a>resultRef<span class="op">:</span> { type<span class="op">:</span> <span class="st">"agent-run-result"</span><span class="op">,</span> runId<span class="op">:</span> <span class="st">"run-12"</span> }</span></code></pre></div>
+<p>Message.body 是简短通知，不是第二份报告。<code>task message show &lt;task/message&gt;</code> 和 Context 的 <code>task-message</code> inspect 可有界展开同一份结果。历史普通消息的 <code>runId</code> 关联不自动解释为新的 resultRef。</p>
+<p>重复终态在原执行身份上去重；迟到事件不会取得继任 Run 的 active 指针。 用户原生回合 A 与 Yui 请求 B 共用 Session，不代表 A 的结果属于 B。 已知 nativeTurnId 必须匹配；没有 nativeTurnId 的专用 stream 使用经过验证的 local attempt correlation，不把消息 UUID 伪装成执行 ID。</p>
+<p>准确观察到的原生输入 item ID 可追加 <code>provider/visible-input</code> 来源； Yui steer receipt 可追加 <code>yui/input-response</code> 来源。原始请求不被改写。 未暴露可靠输入身份的 Provider 不做全量聊天镜像或自动语义提取。 取消请求不等于已停止：只有准确终态才结清对应 Run，保留可见部分输出， 不自动取消 Task，也不撤销 Leader Session 身份。资源是否静止仍单独判断。</p>
+<h2 id="doc-architecture-07-session-run-contract-md--planning-与正式交付">Planning 与正式交付</h2>
+<p><code>EffectiveLaunchSnapshot.executionAuthority</code> 是该 Session 实际获得的 <code>planning | delivery</code> 权限，不能从 Task 当前 status 动态推导。 兼容 Session 检查包含此字段。普通本地规划写入仍可用；正式派发、候选采用、 集成和 managed-workspace Job 检查 delivery 权限。</p>
+<p>采用 T08 后，<code>resolveEffectiveLaunch({ ..., purpose: "planning" })</code> 自动捕获 planning 权限，并拒绝显式请求 delivery。首次 Draft 讨论建立 planning AgentRun； 后续已有会话上的普通消息保持通知语义，不强制创建执行报告。 当前 planning 执行通过 <code>task activation request</code> 原子保存意图，立即返回 <code>afterPlanningRun</code> 引用，不同步等待自己结束。准确终态释放激活请求，Controller 重新检查当前意图、资源与权限后采用；取消的请求不会恢复。</p>
+<p>采用环境与 Task 激活沿 T08 唯一事务边界完成。需要改变物理启动配置时， 保留原始执行和 planning 权限快照，通过现有 Host detach/handover 边界准备 delivery Session；不能直接修改活跃 Session 的实际权限。Leader 发起的请求 采用时保留来源，不添加自唤醒。scratch/local/empty 资源计划复用现有资源能力。 此权限不是 OS sandbox 声明；用户选用宽权限 native Agent 时，不能声称 Core 能够阻止它绕过 CLI 直接操作用户文件。</p>
+<h2 id="doc-architecture-07-session-run-contract-md--当前-api-与兼容边界">当前 API 与兼容边界</h2>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>旧称</th>
+<th>当前合同</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Turn</code> / <code>TurnResult</code></td>
+<td><code>AgentRun</code> / <code>AgentRunResult</code></td>
+</tr>
+<tr>
+<td><code>turnId</code> / <code>reviewerTurnId</code></td>
+<td><code>runId</code> / <code>reviewerRunId</code></td>
+</tr>
+<tr>
+<td><code>activeTurns</code> / <code>currentTurnId</code></td>
+<td><code>activeRuns</code> / <code>currentRunId</code></td>
+</tr>
+<tr>
+<td><code>getTurn</code> / <code>saveTurn</code> / <code>listTurns</code></td>
+<td><code>getRun</code> / <code>saveRun</code> / <code>listRuns</code></td>
+</tr>
+<tr>
+<td><code>turn/turn.ts</code></td>
+<td><code>agentRun/agentRun.ts</code></td>
+</tr>
+<tr>
+<td><code>turnContextPack</code> / <code>turnInputContract</code></td>
+<td><code>runContextPack</code> / <code>runInputContract</code></td>
+</tr>
+<tr>
+<td><code>task turn ...</code></td>
+<td><code>task run ...</code></td>
+</tr>
+<tr>
+<td>Context <code>turn</code> / <code>source-turn</code></td>
+<td>Context <code>run</code> / <code>source-run</code></td>
+</tr>
+<tr>
+<td>Yui <code>turn.*</code> Task events</td>
+<td>Yui <code>run.*</code> Task events</td>
+</tr>
+</tbody>
+</table>
+<p><code>task execution start/stop</code> 仍是 Task 的执行准入开关，不是单次 Run 操作。 Provider 原生 <code>nativeTurnId</code>、Provider <code>turn.*</code> observation kinds 和原生协议方法不改义。 <code>AgentEndpoint.inspect().activeNativeTurnId</code> 明确表示原生身份，而不是 Yui Run ID。</p>
+<p>旧 Session Manifest 已使用 <code>task turn</code>，所以 CLI 入口暂留一个同处理器别名； 旧 Manifests 全部退役后可删除。返回数据不提供双字段或双鉴权。</p>
+<p>Host 控制协议升级至 v5，拒绝旧协议连接；存储升级需使用既有离线维护边界， 先处理旧 Host 客户端，不能把断开客户端当作原生执行已取消。 已部署 inbox v1 的私有文件 wire key <code>turnId</code> 由单一 codec 保留，以读取升级前 尚未消费的原生事实；in-process/API 值统一是 runId。仅在 v1 生产者与 pending 文件全部排空、引入后续 inbox 协议时删除该 codec，不在普通领域 Store 中双读旧数据。</p>
+<h2 id="doc-architecture-07-session-run-contract-md--存储迁移与回退">存储迁移与回退</h2>
+<p>本任务采用主线 <code>48ffca4</code> 后使用中央迁移：storage <strong>12 → 13</strong>； 最低支持版本仍为 <strong>1</strong>，主线既有 1–12 迁移不变。迁移重命名结构化引用、 重算受影响的 ContextSnapshot resource/parent digest。T08 已存在合法 planning 记录，因此 Run 以原 purpose 判定，Session 以同 Task 的准确 planning launch 证据保留 planning；不能统一回填 delivery 或从 Task 当前状态推测权限。 Message 可选的 recipient/continuation/handovers 也属于同一未发布的 12→13 合同； 旧消息不猜负责人、不补发、不产生历史续作。</p>
+<p>历史 <code>turn-N</code>、receipt ID、native ID、原始报告和正文保持原值；新记录分配 <code>run-N</code>。 SQLite 的 <code>turns</code>、<code>active_turns</code> 和 <code>turn_id</code> 是保留的物理表/列名，不是公开双模型。 历史 rejected/unknown 不按文案猜测为成功、空闲或可重试。</p>
+<p>升级后的 Home 不交给旧二进制写入。回退使用中央 upgrade 保存的迁移前数据库备份， 并保留原 inbox 事实；不尝试手动逆向改字段或删除执行历史。 本任务不升级共享 Home，不发布或重启共享服务。</p>
+<h2 id="doc-architecture-07-session-run-contract-md--消费者采用">消费者采用</h2>
+<ul>
+<li><strong>T07</strong>：按 AgentEndpoint 的准确接受、终态和 local correlation 提供事实； 不在 ACP 适配器内另建 Run/Result 存储或以 Session ID 代替执行关联。</li>
+<li><strong>T08</strong>：复用 captured executionAuthority、Session 当前 Context、 Message.resultRef 与不自等待的 activation；不要通过自唤醒补权限。</li>
+<li><strong>T09</strong>：能力桥先验证当前 Session，再检查操作权限与资源 grant。 插件不能通过 actor 参数、伪造 TrustedCallContext 或原始结果文本取得管理身份。</li>
+</ul>
+<p>验证采用当前源码的 Host、Endpoint、假 WebSocket/stream-json Provider、原始收件箱、 Controller 和真实 SQLite；迁移使用基准版本二进制生成的旧 Home。 真实 Provider/model 作为测试对象未获授权，不属于本次证据。</p>
+<h3 id="doc-architecture-07-session-run-contract-md--本次隔离验证记录2026-09-08">本次隔离验证记录（2026-09-08）</h3>
+<p>以下是本次开发证据，不增加永久异常测试矩阵。临时脚手架在交付前移除。</p>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>验收</th>
+<th>实际检查</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td>无 Run 的有效 Leader 保存 Decision、合法 reopen；不新增自派发</td>
+</tr>
+<tr>
+<td>B</td>
+<td>submitting、rejected、deferred、unknown 旧请求存在时，本地事实写入仍可用，原处置不变</td>
+</tr>
+<tr>
+<td>C</td>
+<td>Leader 自写和 reopen 保留外部消息；通知接受只消费固定批次，后来消息保留 pending</td>
+</tr>
+<tr>
+<td>D</td>
+<td>CLI/capability 的跨 Task、替换 Session、撤权、伪造调用上下文和无 Assignment Worker 拒绝；规划交付与资源权限检查</td>
+</tr>
+<tr>
+<td>E</td>
+<td>实际 AgentHost→Endpoint→假协议→Controller/SQLite；busy 重试、Host 重启、注册后写入前崩溃、接受回执丢失、拒绝和 unknown 不重放</td>
+</tr>
+<tr>
+<td>F</td>
+<td>Worker/Reviewer 原始结果经真实采集链保存并生成引用消息；重复终态不重复；缺报告 Review 失败而非自动验收</td>
+</tr>
+<tr>
+<td>G</td>
+<td>同 Session 的 A 原生结果不结清 B；原生输入 item、steer receipt、取消及部分输出；Claude 消息 UUID 不冒充 nativeTurnId</td>
+</tr>
+<tr>
+<td>H</td>
+<td>基准二进制 <code>c432ad719e17d3b615829db9d2ec0a9115697220</code> 生成 storage 9 Home；升级保留报告字节、候选、接受关联、倒序 pass 时间的 Context 依赖和原 inbox v1 文件</td>
+</tr>
+<tr>
+<td>I</td>
+<td>CLI/Context/Web 显示记录状态与准入证据；本地浏览器 1280/390 宽度、键盘展开报告及容器溢出检查</td>
+</tr>
+<tr>
+<td>J</td>
+<td>正在执行的 planning Session 发起真实 Gitless activation，无自等待/自 wake；Session、原目录和 planning 权限保持，正式交付仍拒绝</td>
+</tr>
+</tbody>
+</table>
+<p><code>npm run build</code>、<code>npm run lint</code>、<code>npm run test:core</code> 通过；core 为原有规模 81 项，测试阶段约 4.6 秒。文档包、54 篇离线 HTML、119 个相对链接和契约 TypeScript 检查通过。正式 Claude Opus 固定候选审查由 Leader 在集成后另行安排。</p>
+<h3 id="doc-architecture-07-session-run-contract-md--message-续作增量的隔离证据2026-09-09">Message 续作增量的隔离证据（2026-09-09）</h3>
+<p>临时协议 fixture 使用公开 CLI、真正的 Controller daemon、SQLite、Codex App Server 协议接受与原始结果采集，不手写 AgentRunResult。合成 Task 与所有 native 进程均在独立 可丢弃 Home 中，未读取 task19 工作区，未调用真实模型作为测试对象。</p>
+<ul>
+<li>忙时先保存两条消息，原 Run 结束后有序合并为一次续作；未提交文件、原 WorkItem <code>open</code> 状态、空 Candidate 列表及冻结 effective 保持。</li>
+<li>Controller 重启不重复已接受输入；终态后新的消息自动续作。Provider 发出重复终态和 不相干 native Turn 的结果，仍只有每个准确 Run 的一份原报告及一条结果引用消息。</li>
+<li>fixture 用自己的真实受管 Session CLI 读取后续 Run Context；新消息和前次结果在有限 授权集中。Worker 的 <code>message.send</code> capability（显式 requestId）复用同一存储和 Leader 通知入口，不产生隐式 Leader Run。</li>
+<li>改负责人后旧消息显示 owner-changed；显式停止原 idle Session、正式建立继任执行再 handoff，原消息保留来源并在同一 WorkItem 继续。退役后迟到消息保留但不执行。</li>
+<li>同 ReviewRound 的澄清续作保持候选与 effective，Context 的 reviewerRunId 指向新执行， 两份原报告分别保留。新 Round 接管物理 Review workspace 后，旧 Round 消息不可抢占。</li>
+<li>P1 另以有界 SQLite 状态 fixture 建立 unknown 通知认领（不冒充真实 Provider 故障）： 原 unknown 仍被保留时，另一 Role 的真实消息执行链可以完成；公开 <code>wake resolve</code> 仅释放认领，原 wake 仍未 consumed、原 unknown 事件不变，后续输入使用新窗口且不重投。</li>
+<li>补充有界门禁检查：消息续作复用 <code>requireManagedTaskCaller</code>，同 Agent 的 revoked Leader Session 即使保留 active 标记也被拒绝；替换 native Session 不静默取得原 Assignment。 已验证 Leader 可在原 Run 仍 active 时修改 open WorkItem 的 objective/acceptance， <code>work.edited</code> 保留前后值，原 Run、冻结 Context/effective 与业务状态不变；原有资源/ 负责人变更门禁未放宽，已接受或退役的 WorkItem 定义不可改写。</li>
+</ul>
+<p><code>npm run build</code>、<code>npm run lint</code>、<code>npm run test:core</code> 通过，原有 81 项 core 全通过， 测试阶段约 4.34 秒。新增消息卡片元信息复用现有布局；本增量未追加浏览器交互验证。 临时 fixture/scripts 与私有测试进程在交付前清理，未增加永久回归矩阵。 组合候选的正式独立审查仍由 Leader 在固定新 commit 后安排；旧审查不覆盖此增量。</p>
+<h3 id="doc-architecture-07-session-run-contract-md--采用最新主线后的边界验证2026-09-09">采用最新主线后的边界验证（2026-09-09）</h3>
+<p>采用 <code>48ffca457d40e8be394d81bbb3435064fa5c31c7</code>（T08/T09/T10/T11）时， 将本分支未发布的迁移移至 13，原 1–12 的内容与校验保持不变。 用该主线真实构建生成 storage 12 Home 后验证升级：旧 planning Run、其 Session 快照保持 planning，延后激活的 <code>afterPlanningRun</code> 仍指向原不透明 ID， 重复 requestId 仍返回原请求。新 planning launch 拒绝 delivery 覆盖。 首次 Draft 请求产生 planning Run，已有 planning Session 的后续通知不新增 Run。</p>
+<p>Controller 只携带 Session 已记录的 Endpoint pin；实际 Host 才验证该 pin 是否 属于自己加载的代码。隔离检查覆盖原 pin 重用、异版本 pin 拒绝和引用释放， 未调用真实 Provider。激活遇到已知未结清的原生输入时保留请求并返回冲突， 不以“没有 active Run”冒充原生已经静止。</p>
+<p>本轮核心 smoke 为主线已有的 82 项（含插件主路径），未增加永久异常矩阵。 早先 9→10 的验证记录只描述当时的独立开发候选，不是当前部署升级指引。</p>
 </article><article id="doc-modules-README-md"><div class="source"><a href="modules/README.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-modules-README-md--模块设计索引">模块设计索引</h1>
 <h2 id="doc-modules-README-md--层与模块的关系">1. 层与模块的关系</h2>
 <p>逻辑层解释责任，模块解释代码和记录所有权，插件解释实现怎样被组合和替换。一层可包含多个模块，一个模块也可同时提供公开能力和执行实现，不要求按层拆成进程。</p>
@@ -963,7 +1169,7 @@ plugin.create / validate / activate / disable</code></pre>
 </tr>
 <tr>
 <td>Execution &amp; Runtime</td>
-<td>Turn、Session 必要关联、执行证据</td>
+<td>AgentRun、Session 必要关联、执行证据</td>
 <td>Task、Context、Operator</td>
 <td><a href="#doc-modules-04-execution-runtime-md">Execution &amp; Runtime</a></td>
 </tr>
@@ -1045,7 +1251,7 @@ Host.attach / acquire / release / detach</code></pre>
 <p>等待一个仍然连接正常的长操作属于 pending，不等于 unknown。最终准确关联的响应可以补齐已接受与结果信息。</p>
 <h2 id="doc-modules-01-kernel-md--授权与身份">5. 授权与身份</h2>
 <p>授权决定某个调用者能对哪个目标做什么。Task 模块定义角色关系，Kernel 验证可信上下文和目标范围。用户／Operator 的全局权限不由普通插件通过参数声明获得。</p>
-<p>Role 实际承载更换时，旧承载的管理凭据应失效；它的原执行结果仍可通过可信采集路径写到原 Turn。历史回执写入与新的管理动作必须分开识别。</p>
+<p>Role 实际承载更换时，旧承载的管理凭据应失效；它的原执行结果仍可通过可信采集路径写到原 AgentRun。历史回执写入与新的管理动作必须分开识别。</p>
 <p>资源授权和配置快照也分开：保存过去用过的权限配置不代表未来仍有权限。受控外部动作在执行前检查当前授权；已经发生的外部效果无法靠撤销令牌消除。</p>
 <h2 id="doc-modules-01-kernel-md--唯一实例宿主">6. 唯一实例宿主</h2>
 <p>Host 负责实例身份、生命周期和动态注册资源。插件模块负责选择包和构建贡献。二者共用同一个实例表述，不分别保存两套“当前活跃 Provider”权威。</p>
@@ -1065,15 +1271,15 @@ Host.attach / acquire / release / detach</code></pre>
 <p>分层位置与完整工作关系见<a href="#doc-architecture-01-overview-md">总体架构</a>。</p>
 <h2 id="doc-modules-02-task-md--定位与数据边界">1. 定位与数据边界</h2>
 <p>Task 模块保存用户目标和工作事实，暴露原子编辑及验收能力。它不运行模型、不选择工作顺序，也不假设所有结果都通过 Git 交付。</p>
-<p>核心记录包括 Task、Brief、Decision、WorkItem、Candidate、Review 引用和验收／完成说明。Message 与 Role 通过公开接口关联；Turn 结果由 Execution 保存，Task 不复制一份相同结果正文。</p>
+<p>核心记录包括 Task、Brief、Decision、WorkItem、Candidate、Review 引用和验收／完成说明。Message 与 Role 通过公开接口关联；AgentRun 结果由 Execution 保存，Task 不复制一份相同结果正文。</p>
 <pre class="text diagram"><code>Task <span class="dcell">→</span> Brief / Decisions
-     <span class="dcell">→</span> WorkItems <span class="dcell">→</span> Candidate <span class="dcell">→</span> Artifact / Turn result
+     <span class="dcell">→</span> WorkItems <span class="dcell">→</span> Candidate <span class="dcell">→</span> Artifact / AgentRun result
      <span class="dcell">→</span> completion note
-Review <span class="dcell">→</span> Candidate + Reviewer Turn</code></pre>
+Review <span class="dcell">→</span> Candidate + Reviewer AgentRun</code></pre>
 <h2 id="doc-modules-02-task-md--task-生命周期">2. Task 生命周期</h2>
 <p>生命周期是 draft、active、completed、cancelled、archived。它描述用户是否计划、执行、结束或归档该目标，不表达每种内部活动。</p>
 <p>Draft 可以进行对话、编辑与授权的规划实验。Active 允许正式交付。Completed 表示受权负责人明确确认结果；Cancelled 表示明确停止追求该目标。历史内容仍然可读。</p>
-<p>结束任务会停止新的自动派发，不证明旧进程已经停止。迟到结果保存到原 Turn，不自动重开 Task，也不把保存结果称为 Task 归档。</p>
+<p>结束任务会停止新的自动派发，不证明旧进程已经停止。迟到结果保存到原 AgentRun，不自动重开 Task，也不把保存结果称为 Task 归档。</p>
 <table>
 <colgroup>
 <col style="width: 33%"/>
@@ -1125,19 +1331,19 @@ Review <span class="dcell">→</span> Candidate + Reviewer Turn</code></pre>
 <p>修改来源和前后值与写入在同一事务保存为事件，便于查询规划怎样形成或找回被覆盖的旧值。历史用于理解，由 Leader 决定是否重新写入，不自动回滚或参与另一个调度状态机。旧版本未记录的编辑内容不能凭空恢复。</p>
 <h2 id="doc-modules-02-task-md--workitem">4. WorkItem</h2>
 <p>WorkItem 是 Leader 确认值得独立负责的一项工作，包含 objective、acceptance、可选依赖和 assignee。Requirements 较长时可保存在正文或引用材料，不必重复 Task 的全部字段。</p>
-<p>状态为 open、accepted、retired。运行与等待由 Turn 或执行请求派生；一次失败不把责任本身永久标成 failed。</p>
+<p>状态为 open、accepted、retired。运行与等待由 AgentRun 或执行请求派生；一次失败不把责任本身永久标成 failed。</p>
 <p>依赖用于 Leader 声明“这项工作需要那个结果”，不是让 scheduler 自主设计 DAG。执行准入根据已经声明的依赖检查是否有可用结果。若 Leader 调整策略，可以修改依赖并重新提交执行请求。退休不暗中把依赖转接到其他 WorkItem。</p>
 <p>同一 WorkItem 的 ordinary 执行避免无意重复写入；需要多路时显式使用 group。WorkItem 的编辑不会在运行中偷偷改写已经发出的 Assignment。</p>
 <h2 id="doc-modules-02-task-md--assignment-与执行快照">5. Assignment 与执行快照</h2>
-<p>一次派发保存实际交代的目标、上下文、Role 配置引用和资源范围。该信息可以存在 Turn 的 input snapshot 中，不必建立独立服务或表。</p>
+<p>一次派发保存实际交代的目标、上下文、Role 配置引用和资源范围。该信息可以存在 AgentRun 的 input snapshot 中，不必建立独立服务或表。</p>
 <p>Leader 修改当前 WorkItem 后，原执行快照仍是事实。它可以继续、停止或接受补充指令，由 Leader决定。框架不根据全部 revision 变化自动取消运行。</p>
 <h2 id="doc-modules-02-task-md--candidate">6. Candidate</h2>
-<p>Candidate 表示明确提交的一版结果。必要字段是所属 Task、可选 WorkItem、来源 Turn 或受权导入、简短说明及 Artifact 引用。提交后内容和来源不可变；新版本结果创建新 Candidate，而非覆盖已被讨论的版本。</p>
-<p>Artifact 可以是原始 Turn 输出、文件、外部版本或动作回执。没有额外文件的工作也可以把明确的结果文本作为产物，不应因为缺 Git commit 而无法提交。</p>
+<p>Candidate 表示明确提交的一版结果。必要字段是所属 Task、可选 WorkItem、来源 AgentRun 或受权导入、简短说明及 Artifact 引用。提交后内容和来源不可变；新版本结果创建新 Candidate，而非覆盖已被讨论的版本。</p>
+<p>Artifact 可以是原始 AgentRun 输出、文件、外部版本或动作回执。没有额外文件的工作也可以把明确的结果文本作为产物，不应因为缺 Git commit 而无法提交。</p>
 <p>Candidate 不拥有运行时，也不决定代码保留。其来源保存 Agent、插件版本等可解释元数据即可，不要求完整旧依赖包永久存在。</p>
 <h2 id="doc-modules-02-task-md--验收与-review">7. 验收与 Review</h2>
 <p>Leader 选择 Candidate 并接受 WorkItem，可附说明和 Review 引用。Core 验证权限、引用属于同一目标以及记录可读，不解析结果质量。</p>
-<p>Review 关联一个 Candidate 和实际 Reviewer Turn。Reviewer 的原始结果只存在 Turn；Review 不维护另一份 verdict 文字，也不自动 reject 或生成修复任务。</p>
+<p>Review 关联一个 Candidate 和实际 Reviewer AgentRun。Reviewer 的原始结果只存在 AgentRun；Review 不维护另一份 verdict 文字，也不自动 reject 或生成修复任务。</p>
 <p>要求变化后，Leader 可以明确说明旧结果仍满足需求并继续使用。Framework 不需要交付版本失效传播。需要撤回接受时保留历史验收，当前 WorkItem 回到 open，但不会自动重做已经消费过结果的其他工作。</p>
 <p>Task 级 direct 结果可以直接形成完成说明及引用，不强制创建一个假的 WorkItem 或 Candidate。用户明确要求独立 Review 等硬条件时，由相应显式要求和能力验证处理，不把它设为所有 Task 的默认门禁。</p>
 <h2 id="doc-modules-02-task-md--原子能力">8. 原子能力</h2>
@@ -1167,9 +1373,9 @@ Profile
 <p>模板作为数据应用到 Role。应用后形成明确的当前配置。再次更新模板不静默改写已有 Role；用户或 Leader 可以重新应用。动态继承全局默认字段时，应显示继承来源，启动时解析成实际配置。</p>
 <p>同一 Role 可以保留多份 Agent 绑定配置，只有一个明确当前选择。更换选择不删除其他配置，便于之后再用。数据存储可以复用现有 bindings，不要求建立新的配置服务。</p>
 <h2 id="doc-modules-03-agent-context-md--配置生效规则">3. 配置生效规则</h2>
-<p>Role edit 返回保存后的当前配置。正在执行的 Turn 保留实际配置；下一次派发解析新配置。若现有 Session 的 Agent、环境或安全相关设置不兼容，则由负责人决定停止或创建新 Session，不热改进程。</p>
+<p>Role edit 返回保存后的当前配置。正在执行的 AgentRun 保留实际配置；下一次派发解析新配置。若现有 Session 的 Agent、环境或安全相关设置不兼容，则由负责人决定停止或创建新 Session，不热改进程。</p>
 <p>不影响执行控制的展示字段可即时更新。指令和 Skills 的生效也以实际 Runtime 能力为准，不能因为数据库已改就声称运行中的模型已经读到。</p>
-<p>更换 Worker Agent 不改变 WorkItem 身份。Leader 承载更换也不重建 Task；原分配的 Worker 结果按原 Turn 保存后交给当前 Leader。</p>
+<p>更换 Worker Agent 不改变 WorkItem 身份。Leader 承载更换也不重建 Task；原分配的 Worker 结果按原 AgentRun 保存后交给当前 Leader。</p>
 <h2 id="doc-modules-03-agent-context-md--context-的返回内容">4. Context 的返回内容</h2>
 <pre class="text diagram"><code>core
   Task / Brief / active Decisions
@@ -1191,7 +1397,7 @@ observations
 <p>用户直接对 Leader 说“帮我修改全局配置”不会让该 Session 自动获得 Operator 身份。Leader 可以通知 Operator，或提示用户使用全局入口。权限扩大必须来自实际授权，不来自对话文本。</p>
 <h2 id="doc-modules-03-agent-context-md--message-与-inputrequest">7. Message 与 InputRequest</h2>
 <p>普通消息保留 from、to、task、body／reference 和 createdAt。用户问题可附回答状态和回答引用，以便重启后知道仍在等什么。不存在额外的 Message-driven 工作流。</p>
-<p>投递可以批量包含事件和消息引用。记录稳定 attempt 与被接受 Turn 的关系。忙碌时保留待投递输入，重复 Wake 合并；未知投递先保留证据，不因 Role 换绑自动再发。</p>
+<p>投递可以批量包含事件和消息引用。记录稳定 attempt 与被接受 AgentRun 的关系。忙碌时保留待投递输入，重复 Wake 合并；未知投递先保留证据，不因 Role 换绑自动再发。</p>
 <p>消息接受只说明输入到达，不证明 Agent 已经实施。对于重要要求，落实证据是后续持久化和工作结果。Context 读取是独立行为。</p>
 <h2 id="doc-modules-03-agent-context-md--责任上报">8. 责任上报</h2>
 <p>本地工具错误返回当前调用者。Worker／Reviewer 的执行失败和主动求助通知 Leader；Leader 承载不可用或主动求助通知 Operator。使用已有 Event／Message，不建立额外故障队列。</p>
@@ -1206,7 +1412,8 @@ observations
 <p><strong>层次位置：Execution Plane；在 Capability Plane 暴露派发、查看、停止等原子入口。</strong> 本模块执行已经提出的请求、采集结果；Runtime／Protocol／Transport 是内部接口分工，公开使用统一 AgentEndpoint。</p>
 <p>分层位置与完整工作关系见<a href="#doc-architecture-01-overview-md">总体架构</a>。</p>
 <h2 id="doc-modules-04-execution-runtime-md--责任">1. 责任</h2>
-<p>Execution 接受已明确请求的工作，建立 Turn，取得可用 Endpoint，收集输出并保存。它不对输出质量做判断，也不因为失败次数自动更换执行策略。</p>
+<p>Execution 接受已明确请求的工作，建立 AgentRun，取得可用 Endpoint，收集输出并保存。它不对输出质量做判断，也不因为失败次数自动更换执行策略。</p>
+<p>普通 Leader 通知和原生直聊不自动建立 AgentRun。消息批次在明确接受后结清，不依赖最终报告。 Session 身份、执行记录与 native admission 分别判断；当前详细边界见 <a href="#doc-architecture-07-session-run-contract-md">Session / AgentRun 合同</a>。</p>
 <p>Runtime 内部负责产品启动、协议交互和连接。上层只使用 AgentEndpoint，不直接解析 terminal 字符、Provider Hook 名字或 JSON 字段。</p>
 <h2 id="doc-modules-04-execution-runtime-md--执行对象">2. 执行对象</h2>
 <table>
@@ -1229,14 +1436,14 @@ observations
 <td>等待准入或被明确处置</td>
 </tr>
 <tr>
-<td>Turn</td>
+<td>AgentRun</td>
 <td>实际输入、配置、原生关联、输出／错误</td>
 <td>一次执行事实</td>
 </tr>
 <tr>
 <td>Session 引用</td>
 <td>原生会话 ID、有效配置、实现引用、环境</td>
-<td>可跨多个 Turn 续用</td>
+<td>可跨多个 AgentRun 续用</td>
 </tr>
 <tr>
 <td>Host</td>
@@ -1253,21 +1460,21 @@ observations
 <p>Session 元数据可以持久化，实际对象不保存。Host 退出不自动删除 Session，也不自动完成 Task。</p>
 <h2 id="doc-modules-04-execution-runtime-md--最小-endpoint-契约">3. 最小 Endpoint 契约</h2>
 <p>Endpoint 能打开或恢复会话、提交输入、检查事实、请求取消、可选 steer、读取事件并解除附件。每项操作的具体支持来自实际实现描述。</p>
-<p>提交结果包含 accepted、pending、not-submitted 或 unknown。accepted 的证据可以来自 Provider 确认或准确关联的终态；只有通信写入时明确标记证据较弱。内部可以分配本地 execution ID，但不把它命名为 Provider 返回的原生 Turn ID。</p>
-<p>事件入口必须能关联到原请求、Session 及相应实现。重复事件不重复创建结果；迟到事件写入原 Turn，不完成后继 Turn。</p>
+<p>提交结果包含 accepted、pending、not-submitted 或 unknown。accepted 的证据可以来自 Provider 确认或准确关联的终态；只有通信写入时保留 transport 证据，不确认业务输入已经接受。内部可以分配本地 execution ID，但不把它命名为 Provider 返回的 nativeTurnId。</p>
+<p>事件入口必须能关联到原请求、Session 及相应实现。重复事件不重复创建结果；迟到事件写入原 AgentRun，不完成后继 AgentRun。</p>
 <h2 id="doc-modules-04-execution-runtime-md--产品协议与载体组合">4. 产品、协议与载体组合</h2>
-<p>产品适配知道 binary、版本、认证配置和启动预设。协议适配知道 Session、Turn、事件和错误语义。载体知道打开与关闭何种连接。</p>
+<p>产品适配知道 binary、版本、认证配置和启动预设。协议适配知道 Session、AgentRun、事件和错误语义。载体知道打开与关闭何种连接。</p>
 <p>Endpoint 工厂只允许已声明兼容的组合。具体 CLI 是否支持 ACP、哪个版本或 native 连接，应在实现时探测验证。协议公共代码可以复用，但不同能力不被填成相同布尔值来掩盖差异。</p>
 <p>Codex 与其 App Server 适配可同包；通用 ACP 实现可供多个产品使用。一个只支持终端的 CLI 可以作为人工终端资源接入，不自动成为高保真 managed executor。</p>
 <h2 id="doc-modules-04-execution-runtime-md--准入与并行">5. 准入与并行</h2>
-<p>已经提出的执行请求检查 Role 是否有 active Turn、配置是否可解析、所需环境是否可使用。暂时不可用返回事实或保留同一请求，避免创建重复工作。</p>
+<p>明确执行检查自己的 Assignment、配置及环境边界；原生提交检查 Session 可用性和准确 attempt。active AgentRun 不是 Leader 本地操作的通用权限门槛。暂时不可用返回事实或保留同一请求，避免创建重复工作。</p>
 <p>同一 Role 普通输入串行处理。不同 Role 可并行。多路执行共享一份 Assignment，每个副本有自己的尝试编号，重试不变成新副本。</p>
 <p>资源写冲突优先通过分离环境处理。Execution 不建立全能资源锁系统，具体插件负责其资源的条件；已有写入证据不能只因管理配置切换就忽略。</p>
 <h2 id="doc-modules-04-execution-runtime-md--输入与用户共存">6. 输入与用户共存</h2>
 <p>用户可能直接使用原生会话。若它已忙，Yui 保留输入，不抢占或静默插入另一轮。运行中输入的语义必须明确是 native steer、排队下一轮还是不支持；不能用同一个函数名字把三者混为一谈。</p>
 <p>Controller 重启后可以根据保存的原生身份检查当前状态。可以证实的结果写回一次；不能确认接受与否的请求保持 unknown，不以新 Session 自动重发。</p>
 <h2 id="doc-modules-04-execution-runtime-md--结果取消与后台活动">7. 结果、取消与后台活动</h2>
-<p>原生终态结束相应 Turn 并保存原始可见结果。Task 层再由 Leader 使用结果。</p>
+<p>原生终态结束相应 AgentRun 并保存原始可见结果。Task 层再由 Leader 使用结果。</p>
 <p>取消分为 request 和 confirmation。请求成功不等于所有后代进程和外部服务已停止。Agent 需要重用冲突资源时，查询相关活动或更换独立环境；无关活动不阻止任务其他部分推进。</p>
 <p>原生 subagent 的输出可作为父执行证据保留，必要时单独引用已得到的结果。它们不自动形成独立 WorkItem，也不因父执行结束而假定全部已取消。</p>
 <h2 id="doc-modules-04-execution-runtime-md--实现更新">8. 实现更新</h2>
@@ -1296,7 +1503,7 @@ observations
 <p>用户选择 trusted-local 时，可以使用现有本地环境，但界面应明确其访问假设。需要更强隔离的自动代码使用已经验证的环境；框架不为缺少某种环境自动创造权限。</p>
 <h2 id="doc-modules-05-project-resource-md--environment-准备与采用">4. Environment 准备与采用</h2>
 <p>Environment 描述实际执行的 cwd、文件、挂载、网络、凭据引用和隔离方式。它可以复用一个授权本地目录，也可以由插件创建临时 worktree 或沙箱。</p>
-<p>需要创建资源时先 prepare，返回临时引用和准备结果，再由调用方采用到 Task／Turn。采用前重新确认相关目标、授权及资源配置仍适用。没有采用的临时资源可以清理。</p>
+<p>需要创建资源时先 prepare，返回临时引用和准备结果，再由调用方采用到 Task／AgentRun。采用前重新确认相关目标、授权及资源配置仍适用。没有采用的临时资源可以清理。</p>
 <p>准备成功但启动 Agent 失败，不说明环境不存在；采用成功的事实继续保留，Leader 决定重试启动或换方法。不能靠回滚 Task lifecycle 隐藏已实际创建的外部环境。</p>
 <p>无环境需求时采用空计划合法，不要求每个 Task 都有目录。</p>
 <h2 id="doc-modules-05-project-resource-md--draft-与正式环境">5. Draft 与正式环境</h2>
@@ -1315,8 +1522,8 @@ observations
 <p>检查失败、冲突或目标变化返回具体文件／版本和已有输出。Leader 决定修复、重新生成结果或改方案。Git 动作保护自己的实际写入条件，不将一次冲突自动升级成整个 Task 永久失败。</p>
 <p>非软件 Task 使用同一 Task／Candidate 模型，成果可能是报告、数据文件或动作回执。它无需加载 Git 插件才能结束。</p>
 <h2 id="doc-modules-05-project-resource-md--占用取消与清理">8. 占用、取消与清理</h2>
-<p>Role 配置改变和 Turn terminal 不是所有资源已停止写入的证明。只有进行冲突操作时才需要相关停止或隔离证据。可以直接使用独立资源绕开等待，不必全 Task 停住。</p>
-<p>清理按资源所有权和引用执行。用户拥有的目录不因为 Task 结束被自动删除；共享原生服务不被当作某个 Turn 的子进程杀掉。具体插件知道哪些句柄和文件是它实际创建的。</p>
+<p>Role 配置改变和 AgentRun terminal 不是所有资源已停止写入的证明。只有进行冲突操作时才需要相关停止或隔离证据。可以直接使用独立资源绕开等待，不必全 Task 停住。</p>
+<p>清理按资源所有权和引用执行。用户拥有的目录不因为 Task 结束被自动删除；共享原生服务不被当作某个 AgentRun 的子进程杀掉。具体插件知道哪些句柄和文件是它实际创建的。</p>
 <h2 id="doc-modules-05-project-resource-md--能力不可用时的数据读取">9. 能力不可用时的数据读取</h2>
 <p>资源插件离线时，已保存的描述、报告和回执仍然可以读取。需要实时查询或再次写入时才返回 capability unavailable。Context 不因缺少 Git 或浏览器插件而拒绝显示 Task 的目标与结果。</p>
 <h2 id="doc-modules-05-project-resource-md--验收要点">10. 验收要点</h2>
@@ -1354,7 +1561,7 @@ observations
 <h2 id="doc-modules-06-plugin-capability-md--agent-自扩展完整性">8. Agent 自扩展完整性</h2>
 <p>自扩展成功的标准不是 plugin loaded，而是原 Task 已经使用新能力取得有用结果。</p>
 <p>Leader 可以在同一 Task 内反复修改和验证，不因为失败自动创建开发 Task。缺少授信或网络凭据时向 Operator／用户提出具体请求。Leader 本身不可用交 Operator；Operator 的问题由用户处理。</p>
-<p>稳定的 Yui CLI 或能力桥在启动时就可用，不让 Agent 先安装元工具才能安装第一个插件。若 Runtime 只能在下一 Turn 使用新信息，明确采用下一 Turn，不虚构当前模型已经收到更新。</p>
+<p>稳定的 Yui CLI 或能力桥在启动时就可用，不让 Agent 先安装元工具才能安装第一个插件。若 Runtime 只能在下一 AgentRun 使用新信息，明确采用下一 AgentRun，不虚构当前模型已经收到更新。</p>
 <h2 id="doc-modules-06-plugin-capability-md--代码与历史保留">9. 代码与历史保留</h2>
 <p>活跃调用、活跃／明确计划续用的 Session、未决操作和用户固定引用决定哪些产物继续保留。历史 Candidate 只保存结果和来源，不默认固定所有旧依赖。</p>
 <p>代码删除后历史仍可读；再次执行需要重新安装可用实现，这是能力请求而不是结果读取的前提。</p>
@@ -1370,8 +1577,8 @@ observations
 <p>全局入口对应 Operator，Task 页面或 task enter 对应该 Task 的 Leader。Draft 页面同样有聊天入口。对话路由不以是否已经有常驻 Session 为前提，必要时由 Execution 按配置创建。</p>
 <p>用户可直接执行明确操作，不经过模型。原生会话入口也允许继续与 Leader 交流；Yui 对无法观察的输入不声称拥有完整历史。</p>
 <h2 id="doc-modules-07-surface-md--task-视图">3. Task 视图</h2>
-<p>默认展示目标、当前要求、Leader 当前关注点、工作责任、结果与待回答问题。运行细节在可展开区域，包括实际 Agent、Session、Turn、错误和活动观察。</p>
-<p>页面应让用户清楚区分：任务事实、当前配置和某次执行实际配置。Role 已改用新模型但旧 Turn 仍在运行时，显示两者而不是把历史执行标签重写成新模型。</p>
+<p>默认展示目标、当前要求、Leader 当前关注点、工作责任、结果与待回答问题。运行细节在可展开区域，包括实际 Agent、Session、AgentRun、错误和活动观察。</p>
+<p>页面应让用户清楚区分：任务事实、当前配置和某次执行实际配置。Role 已改用新模型但旧 AgentRun 仍在运行时，显示两者而不是把历史执行标签重写成新模型。</p>
 <p>不显示框架生成的强制下一步。可以提供当前对象支持的操作，但行动选择属于用户／Agent。</p>
 <h2 id="doc-modules-07-surface-md--读取与订阅">4. 读取与订阅</h2>
 <p>视图来自 Context 或受权查询。更新通知只触发重新读取或拉取 delta，不把通知正文当成另一份可写状态。网络断线后从游标补读或重建快照。</p>
@@ -1394,9 +1601,9 @@ observations
 <h2 id="doc-contracts-README-md--使用方式">使用方式</h2>
 <p><a href="contracts/model.ts">model.ts</a> 定义模块之间最少需要共享的结构；<a href="contracts/examples.ts">examples.ts</a> 展示配置切换、结果引用、调用和插件配置；<a href="contracts/capabilities.json">capabilities.json</a> 是设计级能力目录。</p>
 <p>这些是目标接口，不是当前发布 SDK。接口展示哪些信息应有明确所有权，不要求建立相同名称的类、服务或数据库表。已有实现可通过无持久化双写的边界包装满足契约；实现并存的限制见 <a href="#doc-implementation-designs-T00-current-baseline-md">T00 实施基线</a>。</p>
-<p>TaskState 包含 draft／active／completed／cancelled／archived。<code>archive</code> 仅在 archived 时必需，引用先前结束事实；TypeScript 的可选字段不代替运行时关联校验。允许转换、归档前置和不可重开规则由 <a href="#doc-modules-02-task-md">Task 模块</a> 唯一定义。Turn 的 cancelled 与 Task 的 cancelled 不是同一事实。</p>
+<p>TaskState 包含 draft／active／completed／cancelled／archived。<code>archive</code> 仅在 archived 时必需，引用先前结束事实；TypeScript 的可选字段不代替运行时关联校验。允许转换、归档前置和不可重开规则由 <a href="#doc-modules-02-task-md">Task 模块</a> 唯一定义。AgentRun 以 failed/cancelled 来源保留取消证据，不自动取消 Task。</p>
 <h2 id="doc-contracts-README-md--设计边界">设计边界</h2>
-<p>Task、Role、Turn 和 Candidate 是不同对象。Role 的当前配置可以更新，Session 和 Turn 记录实际使用的配置。Candidate 不引用一个可执行插件句柄；仅保留来源说明和结果引用。</p>
+<p>Task、Role、AgentRun 和 Candidate 是不同对象。Role 的当前配置可以更新，Session 和 AgentRun 记录实际使用的配置。Candidate 不引用一个可执行插件句柄；仅保留来源说明和结果引用。</p>
 <p><code>revision</code> 用于记录并发更新；它不具有自动判断业务过期的含义。接受操作不要求所有来源的 revision 与当前状态相同。</p>
 <p>只读调用不需要持久化操作账本。外部操作需要 requestId 和可核对的处置。<code>effect</code> 与 <code>outcome</code> 分开，失败可以伴随已经发生的效果。</p>
 <p>Endpoint 的本地 attemptId 与可选 nativeTurnId 分开。实现只能填入实际观察到的原生身份，不能用生成 UUID 冒充原生回执。</p>
@@ -1429,7 +1636,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <p>完整机器可读定义见 <a href="implementation/task-index.json">task-index.json</a>。各 Task 卡片包含目标、依赖、责任边界和证据要求；对应技术方案描述接口、存储、实施路径和异常处理。</p>
 <h2 id="doc-implementation-README-md--保持正常使用">3. 保持正常使用</h2>
 <p>纯新增能力可以直接接入；能完整等价替换的实现可以一次切换；暂时不宜替换的实现允许保留两份代码。每次调用或 Session 只选择其中一份，不在动作未知时自动执行另一份。</p>
-<p>允许并存的是实现，不是两套 Task、Role、Turn 或操作处置。使用一个 Controller 和一个权威 Store。Schema 更新走当前产品支持的显式升级契约，保留可验证备份，不假定任意旧 binary 能读新存储。</p>
+<p>允许并存的是实现，不是两套 Task、Role、AgentRun 或操作处置。使用一个 Controller 和一个权威 Store。Schema 更新走当前产品支持的显式升级契约，保留可验证备份，不假定任意旧 binary 能读新存储。</p>
 <p>在 Yui 仓库中，阶段并存还须满足 <a href="#doc-implementation-designs-T00-current-baseline-md">T00 基线的准入与删除条件</a>： 当前消费者确有需要、一个唯一写入者、明确采用后删除条件。它不授权旧 payload 双读、启发修复、unknown fallback 或泛化兼容层；没有现实需要时直接实施当前合同。</p>
 <p>每个迁移 Task 合并后应完整可用；开发中的中间提交不要求全部可发布。旧路径删除不是每个 Task 的必要目标，也不要求预先拆成机械的引入／切换／删除三个任务。</p>
 <h2 id="doc-implementation-README-md--验收分层">4. 验收分层</h2>
@@ -1605,7 +1812,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <p>硬依赖：T02。</p>
 <h2 id="doc-implementation-tasks-T04-agent-endpoint-md--交付目标">交付目标</h2>
 <p>用同一执行接口承载现有 Codex 和 Claude 路径，产品、协议和载体在 Runtime 内部分工。</p>
-<p><strong>完成状态：</strong> 上层按 Role 发起和读取 Turn，不依赖具体 Provider 字段；现有原生能力不被统一接口抹平。</p>
+<p><strong>完成状态：</strong> 上层按 Role 发起和读取 AgentRun，不依赖具体 Provider 字段；现有原生能力不被统一接口抹平。</p>
 <h2 id="doc-implementation-tasks-T04-agent-endpoint-md--责任范围">责任范围</h2>
 <ul>
 <li>定义 Endpoint、真实提交处置、Session 配置和事件关联。</li>
@@ -1628,7 +1835,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <ul>
 <li>当前 Codex／Claude 主路径可通过 Endpoint 完成。</li>
 <li>pending、unknown、已接受和未提交按证据区分。</li>
-<li>更换配置不改写已运行 Turn，不会重复未知输入。</li>
+<li>更换配置不改写已运行 AgentRun，不会重复未知输入。</li>
 </ul>
 <p>验收场景：S09、S11、S12、S14、S17、S18、S19、S21、S22、S23、S24、S35、S39、S41、S43。场景定义见<a href="#doc-reference-acceptance-scenarios-md">统一验收说明</a>。</p>
 <h2 id="doc-implementation-tasks-T04-agent-endpoint-md--实施入口">实施入口</h2>
@@ -1713,7 +1920,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <ol type="1">
 <li>验证候选 CLI 的实际协议。</li>
 <li>实现 ACP 适配及产品描述。</li>
-<li>完成受控真实 Turn 与复用检验。</li>
+<li>完成受控真实 AgentRun 与复用检验。</li>
 </ol>
 <p>这些分工供 Leader 判断，不要求按步骤建立 WorkItem。紧密耦合的实现应由同一责任单元完成。</p>
 <h2 id="doc-implementation-tasks-T07-acp-agent-md--不在范围内">不在范围内</h2>
@@ -1725,7 +1932,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <ul>
 <li>新增产品无需改 Task 核心。</li>
 <li>取消、恢复和身份按照实际支持呈现。</li>
-<li>一次真实输出可沿现有 Turn 结果路径保存。</li>
+<li>一次真实输出可沿现有 AgentRun 结果路径保存。</li>
 </ul>
 <p>验收场景：S11、S12、S24、S35。场景定义见<a href="#doc-reference-acceptance-scenarios-md">统一验收说明</a>。</p>
 <h2 id="doc-implementation-tasks-T07-acp-agent-md--实施入口">实施入口</h2>
@@ -1737,7 +1944,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <p><strong>完成状态：</strong> Draft 对话与持久化可用，Activation 不以创建 Leader 为含义；同一逻辑 Leader 贯穿全程。</p>
 <h2 id="doc-implementation-tasks-T08-draft-leader-md--责任范围">责任范围</h2>
 <ul>
-<li>按需创建 planning Session 和 Turn。</li>
+<li>按需创建 planning Session 和 AgentRun。</li>
 <li>提供 Brief／Decision／WorkItem 编辑及临时材料保存。</li>
 <li>实现安全资源采用、延后激活和兼容会话续用。</li>
 </ul>
@@ -1745,7 +1952,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <ol type="1">
 <li>打通 Draft 对话和恢复。</li>
 <li>实现激活采用边界。</li>
-<li>验证空环境、当前 Turn 发起激活和配置不兼容。</li>
+<li>验证空环境、当前 AgentRun 发起激活和配置不兼容。</li>
 </ol>
 <p>这些分工供 Leader 判断，不要求按步骤建立 WorkItem。紧密耦合的实现应由同一责任单元完成。</p>
 <h2 id="doc-implementation-tasks-T08-draft-leader-md--不在范围内">不在范围内</h2>
@@ -1756,7 +1963,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <h2 id="doc-implementation-tasks-T08-draft-leader-md--完成证据">完成证据</h2>
 <ul>
 <li>Draft 中与 Leader 对话并更新事实，重开后仍可读。</li>
-<li>当前 planning Turn 发起激活不产生自等待。</li>
+<li>当前 planning AgentRun 发起激活不产生自等待。</li>
 <li>不兼容 Session 可以读取 Context 接手。</li>
 </ul>
 <p>验收场景：S01、S02、S27、S40。场景定义见<a href="#doc-reference-acceptance-scenarios-md">统一验收说明</a>。</p>
@@ -1852,7 +2059,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 </ul>
 <h2 id="doc-implementation-tasks-T11-hot-reload-md--完成证据">完成证据</h2>
 <ul>
-<li>旧 Session 的后续 Turn 默认仍用旧实现，新 Session 用新实现。</li>
+<li>旧 Session 的后续 AgentRun 默认仍用旧实现，新 Session 用新实现。</li>
 <li>同 Session 可通过稳定桥调用新增短工具。</li>
 <li>历史 Candidate 不要求保留完整旧插件代码。</li>
 </ul>
@@ -2401,7 +2608,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <p>定位现有存储事务、命令调用、Controller 实例管理、授权和外部请求记录。新增的是共用宿主与统一处置语义，不是替换所有 Store 或再建一个 Command 数据库。</p>
 <h2 id="doc-implementation-designs-T01-kernel-host-md--实例宿主">2. 实例宿主</h2>
 <p>Host 保存一份进程内实例集合。每个实例有稳定实现引用、生命周期和 disposer 集合。接口可采用 attach／acquire／release／detach。acquire 返回具体句柄，使用方在 finally 或受控 Session 关闭时 release。</p>
-<p>普通调用计入短期引用，Session 计入长期引用。配置 scope 只有 Global／Project／Task，不为了计数再创建 Role／Turn 插件 scope。</p>
+<p>普通调用计入短期引用，Session 计入长期引用。配置 scope 只有 Global／Project／Task，不为了计数再创建 Role／AgentRun 插件 scope。</p>
 <p>宿主只认识贡献与依赖句柄，不认识 Review 或 Task 计划。模块在装配入口注册到同一宿主。无引用时按拥有关系释放 listeners、timers、routes 和本地进程附件，不能杀共享 Provider 服务。</p>
 <h2 id="doc-implementation-designs-T01-kernel-host-md--操作事实">3. 操作事实</h2>
 <p>将现有副作用记录映射成请求身份、输入摘要、调用者、目标、所选实现、状态、效果和回执。若已有记录承担同一职责，扩展它，而不是同步双写两套表。</p>
@@ -2413,7 +2620,7 @@ T04 + T09 <span class="dcell">─</span><span class="dcell">─</span><span clas
 <p>本地修改用临时数据库模拟并发 revision 更新。冲突不覆盖对方字段，错误带当前版本；不把 revision 冲突扩展为结果有效性规则。</p>
 <h2 id="doc-implementation-designs-T01-kernel-host-md--可信调用上下文">5. 可信调用上下文</h2>
 <p>用户 CLI、受控 Agent 工具和插件入口各自先认证，再构造调用上下文。插件输入中出现 actor=operator 不影响真实身份。Task／资源关系通过应用入口传入检查，Kernel 不内置所有业务角色策略。</p>
-<p>凭据引用可在当前授权下解析，值不能进入日志和持久化输入摘要。撤销管理绑定后旧承载不能发新管理命令，但可信采集器仍可写它已有 Turn 的迟到结果。</p>
+<p>凭据引用可在当前授权下解析，值不能进入日志和持久化输入摘要。撤销管理绑定后旧承载不能发新管理命令，但可信采集器仍可写它已有 AgentRun 的迟到结果。</p>
 <h2 id="doc-implementation-designs-T01-kernel-host-md--存储采用">6. 存储采用</h2>
 <p>新字段或操作索引通过当前支持的 migration 链增加。普通 Controller 启动不隐式猜测修复未知 schema。测试备份在隔离 Home，不能以可回退代码路径代替数据恢复验证。</p>
 <p>若暂时只有一部分动作使用共用入口，保持旧入口为当前事实写入者，新的 adapter 调用它；不能同时写新旧两份处置。</p>
@@ -2611,16 +2818,20 @@ yui task context inspect &lt;task&gt; --store &lt;store&gt; --ref &lt;id&gt; --d
 <p>隔离证据已通过：远端 schema6→8 且前六项账本／资源／Session 原文保持； 固定 Artifact→Candidate→接受→完成→重开 Store 后读取，缺失／跨 Task／ Reference 拒绝；native 身份与 A→B→A 撤权；受管 Context 授权；真实 Git clone/worktree/capture/Integration/cleanup 后保留 Task、WorkItem、 ChangeSet。build、lint、core 81/81（约 4.39 秒）通过；用例数变化来自 远端移除 generation 的既有调整，本次没有增加永久异常矩阵。</p>
 <p>独立审查发现普通多 WorkItem 的 <code>candidate-1</code> 会发生 Context 引用碰撞； 现已统一为 <code>work-item-N/candidate-M</code>，read、定向 inspect 和最终 Review 快照使用同一作用域，不改变 Candidate 的持久编号。两工作项同名候选 隔离证据及独立复核通过，无剩余实质发现。五份临时专项脚本按 Project Skill 清理，最终核心仍为 81/81。</p>
 <p>要求判断：T03 的任务事实、明确验收、受权 Context 及 Git 工作区主路径 已接通。T05 的通用 environment prepare/adopt/release 已存在且可读， 但采用的 <code>environmentRef</code> 尚未作为 T04 原生 Session／Turn 的实际启动 环境选择；保留原 managed workspace 启动路径，不能宣称空环境／任意 本地环境已端到端驱动原生 Agent。真实 Provider、付费／生产资源 E2E 也未运行。这些边界不通过新增工作流或隐式切换 cwd 掩盖。</p>
+<h2 id="doc-implementation-designs-T03-evidence-md--task-21有界工作集的未决提示">Task 21：有界工作集的未决提示</h2>
+<p>在 <code>4a205d8</code> 基线上修复历史 Artifact 占满预算后隐藏 unknown Job 的问题。 <code>context read</code> 增加只读 <code>attention</code>：<code>openInputs</code>、<code>pendingOperations</code> （queued/running Job）及 <code>unknownOperations</code>（包括已经 acknowledged 的 unknown Job）。每类保留准确 <code>count</code>、最多 8 个完整 <code>refs</code> 和 <code>omittedRefs</code>；引用样本另限 4 KiB，先从原 128 KiB 页预算预留，再装入 普通 records。即使未决项本身超量，分类计数也不会消失。</p>
+<p>所有计数、样本、正文仍来自同一次 caller 授权读取。样本携带原 store/refId/digest，可按现有 <code>context inspect</code> 展开；未采样条目通过原 领域查询定位，普通历史未被删除。delta 固定 through 上界、read 不 ack 及唯一事实所有者不变，没有持久结构或迁移变化。</p>
+<p>临时 SQLite 证据先复现原缺陷，再验证历史饱和、300 项未决输入与 300 项 unknown 的分类预算、Worker 可见性、CLI/能力读取及 delta 上界。 专项交付前清理，不增加永久异常回归测试；精确提交和最终接受以 Task 记录为准。</p>
 </article><article id="doc-implementation-designs-T03-task-context-md"><div class="source"><a href="implementation/designs/T03-task-context.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T03-task-context-md--t03-技术方案任务事实角色配置与-context">T03 技术方案｜任务事实、角色配置与 Context</h1>
 <p>硬依赖：T02。</p>
 <p>任务定义：<a href="#doc-implementation-tasks-T03-task-context-md">交付范围与证据</a>。</p>
 <h2 id="doc-implementation-designs-T03-task-context-md--目标模型与现有记录">1. 目标模型与现有记录</h2>
-<p>先定位当前 Task、Brief、WorkItem、Role、Turn 输出、Review、通知和 Context 的权威存储。通过公开接口提供目标视图，不为了让状态枚举变短立即删除已有历史或诊断字段。</p>
-<p>Task 对外生命周期为 draft／active／completed／cancelled／archived；WorkItem 表达 open／accepted／retired，执行细节从 Turn 读取。已有复杂字段如果仍有证据价值可继续保存，但不成为新的业务必经路径。转换、归档授权、保留与不可重开规则以 <a href="#doc-modules-02-task-md">Task 模块</a> 为准；当前 retired 到 cancelled 的采用走中央迁移并保留原隔离及结束证据，不能作为普通读写的双形态 adapter。</p>
+<p>先定位当前 Task、Brief、WorkItem、Role、AgentRun 输出、Review、通知和 Context 的权威存储。通过公开接口提供目标视图，不为了让状态枚举变短立即删除已有历史或诊断字段。</p>
+<p>Task 对外生命周期为 draft／active／completed／cancelled／archived；WorkItem 表达 open／accepted／retired，执行细节从 AgentRun 读取。已有复杂字段如果仍有证据价值可继续保存，但不成为新的业务必经路径。转换、归档授权、保留与不可重开规则以 <a href="#doc-modules-02-task-md">Task 模块</a> 为准；当前 retired 到 cancelled 的采用走中央迁移并保留原隔离及结束证据，不能作为普通读写的双形态 adapter。</p>
 <h2 id="doc-implementation-designs-T03-task-context-md--task-与结果">2. Task 与结果</h2>
-<p>Brief 在数据库事务内读取最新记录，只修改指定字段，不要求 expectedRevision。同一字段以后一次明确写入为准，更新前后值随事件在同一事务保存。Role 当前配置与实际执行配置分开。Assignment／Turn 保留实际输入说明；Candidate 固定提交结果与来源；Review 只引用 Candidate 和 Reviewer Turn。</p>
+<p>Brief 在数据库事务内读取最新记录，只修改指定字段，不要求 expectedRevision。同一字段以后一次明确写入为准，更新前后值随事件在同一事务保存。Role 当前配置与实际执行配置分开。Assignment／AgentRun 保留实际输入说明；Candidate 固定提交结果与来源；Review 只引用 Candidate 和 Reviewer AgentRun。</p>
 <p>结果适用性由 Leader 结合当前要求明确判断，不建立独立的自动失效版本体系。接受时保存明确选择和说明，不要求当前 Brief 与来源版本相等。Task／WorkItem 只保存当前结束和接受选择；历史由持久事件承载，不在对象内累计第二份历史数组。找回旧值后由 Leader 决定是否明确重写，不自动回滚。</p>
-<p>直接完成 Task 支持 summary 和 artifact refs，不强制合成 WorkItem。完成和取消阻止后续自动派发，迟到结果仍归原 Turn。显式重开不自动重放所有过去的通知和未知输入。</p>
+<p>直接完成 Task 支持 summary 和 artifact refs，不强制合成 WorkItem。完成和取消阻止后续自动派发，迟到结果仍归原 AgentRun。显式重开不自动重放所有过去的通知和未知输入。</p>
 <h2 id="doc-implementation-designs-T03-task-context-md--role-配置">3. Role 配置</h2>
 <p>为每个角色保存稳定身份、当前 Agent 选择、指令、Skills 和配置。模板应用为一次显式配置更新；需要动态继承的字段显示来源，执行时再解析为有效快照。</p>
 <p>更换 Leader 的承载时撤销旧管理入口，保留原 Worker 分配与所有结果。Role 修改不被误用为“旧进程已经停止”的证据，实际停止交 T04／T05 的执行资源路径。</p>
@@ -2630,7 +2841,7 @@ yui task context inspect &lt;task&gt; --store &lt;store&gt; --ref &lt;id&gt; --d
 <p>同一 caller 的访问范围同时作用于正文、计数和引用，避免只隐藏内容却泄漏其他 Task 的资源名称。</p>
 <p>复用授权判断，不要求所有查询构造整份 Context：消息查询读取消息，delta 读取事件，inspect 按目标记录读取。可选观察保留现有最小端口，不扩展插件框架或缓存。</p>
 <h2 id="doc-implementation-designs-T03-task-context-md--消息与通知">5. 消息与通知</h2>
-<p>复用现有 Message／Event／Turn 记录建立 batch、attempt 和 acceptedTurn 关系。Context read 不 ack；Provider 接受才记录送达；送达不等于已落实要求。</p>
+<p>复用现有 Message／Event／AgentRun 记录建立 batch、attempt 和 acceptedRun 关系。Context read 不 ack；Provider 接受才记录送达；送达不等于已落实要求。</p>
 <p>忙碌时保留同一输入，不启动竞争会话。未知批次换绑后仍需查证。故障通知只沿 Worker／Reviewer→Leader、Leader→Operator，Operator 自身问题由用户处理，不创建备用路由。</p>
 <p>普通工具错误返回当前调用者即可；不要对每个校验错误都广播全局故障。重复观察合并到原事实引用。</p>
 <h2 id="doc-implementation-designs-T03-task-context-md--数据与兼容">6. 数据与兼容</h2>
@@ -2647,18 +2858,18 @@ yui task context inspect &lt;task&gt; --store &lt;store&gt; --ref &lt;id&gt; --d
 <p>AgentEndpoint 是上层唯一执行接口。产品发现、native 参数和 protocol codec 可以在同一个插件包中；通信工具可以是普通共享库。Task 不保存一份可任意组合的 Runtime／Protocol／Transport 图。</p>
 <h2 id="doc-implementation-designs-T04-agent-endpoint-md--endpoint-行为">2. Endpoint 行为</h2>
 <p>open／resume 返回 Session 引用和实际有效配置。submit 接受稳定 attemptId 与 inputRef，返回 accepted／pending／not-submitted／unknown。inspect 提供事实，不解释任务进展。cancel 区分请求与确认；detach 只回收 Yui 自己的附件。</p>
-<p>对不同 Provider 保留实际能力：native steer 与排队下一 Turn 不等同，transport write 不等同 native ack，本地 attemptId 不等同 nativeTurnId。原生错误保留必要证据并映射为可读事实，不在适配器内选择新模型或新任务。</p>
+<p>对不同 Provider 保留实际能力：native steer 与排队下一 AgentRun 不等同，transport write 不等同 native ack，本地 attemptId 不等同 nativeTurnId。原生错误保留必要证据并映射为可读事实，不在适配器内选择新模型或新任务。</p>
 <h2 id="doc-implementation-designs-T04-agent-endpoint-md--codex-与-claude-的实现">3. Codex 与 Claude 的实现</h2>
 <p>读取实施时安装 CLI 的实际协议和配置支持，固定被验证版本。将现有 Codex native 会话路径和 Claude 结构化路径逐一对应到 Endpoint，不根据文档示例猜测某个 flag 或方法已经存在。</p>
 <p>现有共享会话或原生客户端共存行为应继续成立。Yui 管理自己的连接和自有子进程，不把共享 daemon 当作 Task 清理对象。用户原生执行占用会话时，Yui 输入保持待投递。</p>
 <p>配置更新默认作用于新执行。一个长期 Session 保留实际 driver 和必要状态依赖，新配置不覆盖历史快照。第三 Agent 的通用性在 T07 实际验证，不在本任务追求所有协议功能的提前统一。</p>
 <h2 id="doc-implementation-designs-T04-agent-endpoint-md--结果与事件">4. 结果与事件</h2>
-<p>事件入口核对原 Session、attempt／native ID 和实现引用，重复终态写一次原结果。早到终态可在接受回执之前被临时关联，最终归同一次 Turn；迟到事件不影响 successor Turn。</p>
+<p>事件入口核对原 Session、attempt／native ID 和实现引用，重复终态写一次原结果。早到终态可在接受回执之前被临时关联，最终归同一次 AgentRun；迟到事件不影响 successor AgentRun。</p>
 <p>结果原文存一次。Review 和 Candidate 引用它，不由适配器解析“通过”“完成”等文字推动 WorkItem。</p>
 <p>正常长请求保持 pending；连接中断且效果无法判断才成为 unknown。未知状态可以通过原会话查询澄清，但不能切到另一个 Provider 或 PTY 自动再发。</p>
 <h2 id="doc-implementation-designs-T04-agent-endpoint-md--轻量执行准入">5. 轻量执行准入</h2>
 <p>同一 Role 的普通执行避免重叠。已声明 WorkItem 依赖可以检查是否有当前可用结果。暂时没有资源时保留同一请求或返回事实，由 Leader调整，不自动选择另一个 Worker。</p>
-<p>ExecutionGroup 保存同 Assignment 的副本和尝试编号；综合输入显式引用选定的 Turn，框架不决定成功数量和投票规则。多路写入使用 T05 可提供的隔离或资源条件；外部发布动作不默认复制。</p>
+<p>ExecutionGroup 保存同 Assignment 的副本和尝试编号；综合输入显式引用选定的 AgentRun，框架不决定成功数量和投票规则。多路写入使用 T05 可提供的隔离或资源条件；外部发布动作不默认复制。</p>
 <h2 id="doc-implementation-designs-T04-agent-endpoint-md--取消与资源事实">6. 取消与资源事实</h2>
 <p>停止请求不能直接清空所有使用信息。Agent 需要重新利用可能冲突的目录时，获取已停止或隔离的证据。对未知或仍在后台执行的资源保留引用，但不冻结无关 Task 工作。</p>
 <p>Leader 换绑先影响新的管理动作，旧结果仍可归档。真正冲突的资源操作经当前 Resource 能力检查，不能只看数据库 Role 已变更。</p>
@@ -2852,6 +3063,9 @@ yui task context inspect &lt;task&gt; --store &lt;store&gt; --ref &lt;id&gt; --d
 <p>边界：empty 没有原生 cwd，拒绝选择并提示 scratch；read 环境仅允许显式 Codex read-only/never，Claude 不伪造文件系统只读能力；write 保持既有 原生权限，是 trusted-local 而非强沙箱。此集成不控制桌面端等外部原生 客户端直接发出的后续输入，不接入远程环境或凭据解析器。</p>
 <p>最终 build、lint、核心 81/81 通过（4.33 秒），没有新增永久专项测试。 独立复审通过；释放回归使用实际资源服务／Provider Binding／continuation 投影与轻量 Store 替身，验证 ended Host、无 turnId 的未结算输入、 history Session、detached continuation 均阻止释放，exact quiescent 后允许 释放。该项不冒充 SQLite 集成；启动／恢复和迁移另使用真实隔离 SQLite。 未运行真实模型、未升级共享 Home、未发布或重启共享服务。</p>
 <p>2026-09-08 PR 集成同步至 <code>97ad888</code>（T03 #316）。主线迁移 1–8 原样 保留，环境绑定迁移由独立开发时的 7 顺延为 9；普通旧数据仍不自动绑定。 代码从最新主线仅移入本次环境提交，避免重复包含已经 squash 合入的 T04 历史。此集成未运行真实模型、升级共享 Home 或重启服务。</p>
+<h3 id="doc-implementation-designs-T04-evidence-md--task-21环境修改入口一致性">Task 21：环境修改入口一致性</h3>
+<p>在 <code>4a205d8</code> 基线上补齐 <code>environment.bind</code> 遗漏的修改历史和通知。 能力与 CLI Role update 复用同一保存逻辑：Role、含来源及前后值的 <code>role.updated</code>、Task mailbox 同事务提交，入口在提交后通知 runtime。 CLI 同时修改其他 Role 字段和环境时，只保存一次 Role 和一次完整事件。 认证能力事件还保留可信 actorId 和 requestId，不新建请求账本。</p>
+<p>原授权、生命周期 guard、显式环境选择和 Session effective 不变。 临时 SQLite 证据覆盖真实能力入口、CLI 混合更新、通知次数、失败回滚、 跨 Task/empty 拒绝与 effective 保持；不请求真实 Provider，不改存储版本。 专项交付前清理，精确提交和最终接受以 Task 记录为准。</p>
 </article><article id="doc-implementation-designs-T05-evidence-md"><div class="source"><a href="implementation/designs/T05-evidence.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T05-evidence-md--t05-资源环境与固定成果交接">T05 资源、环境与固定成果交接</h1>
 <p>Task：task-17；基线：<code>b7d07394f68ac48a56bc8d03b6d91bf23be98051</code>。 日期：2026-09-07。精确交付提交、独立 Review 和接受状态以 Task 持久记录为准； 本报告不表示远端合并、共享环境升级或最终验收。</p>
 <h2 id="doc-implementation-designs-T05-evidence-md--实际交付与唯一所有者">1. 实际交付与唯一所有者</h2>
@@ -2984,6 +3198,144 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>每步都确认现有软件交付路径仍可用，尤其检查、目标更新和资源清理。接口通用化不应削弱实际 Git 动作的安全条件。</p>
 <h2 id="doc-implementation-designs-T05-project-resource-md--验收">8. 验收</h2>
 <p>S04／S27 验证无 Git 和空环境；S13 验证固定成果；S26 验证资源身份；S22／S23 验证并行与停止；S28 验证 scope 与授权；S37 验证历史读取不依赖旧代码。</p>
+</article><article id="doc-implementation-designs-T06-evidence-md"><div class="source"><a href="implementation/designs/T06-evidence.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T06-evidence-md--t06-surface-实现与采用">T06 Surface 实现与采用</h1>
+<p>Task：task-18。基线：<code>97ad88849c9a496230b134d2955f5f23e96deaa3</code>。 精确交付 commit 和完成裁定以 Task 记录为准。本变更不包含发布授权。 用户随后明确要求由 T06 直接补齐生产 Web 面板和准确错误反馈，Draft planning 继续留给 T08。下述当前实现已包含这两项；早期审查记录保留为历史证据。</p>
+<h2 id="doc-implementation-designs-T06-evidence-md--交付与唯一事实来源">交付与唯一事实来源</h2>
+<p>Web Task 主视图采用 T03 的紧凑 Context，优先展示要求、目标、责任、待答 问题、固定结果、消息和决策。执行细节单独展开。旧详情查询保留为可选 运行观察，不是核心读取的前提，也不成为第二套 Task 状态。</p>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>Surface 入口</th>
+<th>原应用所有者／效果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/tasks/:id/context</code></td>
+<td><code>readTaskContext</code>，原 coreCursor、引用、裁剪及 read-no-ack 语义</td>
+</tr>
+<tr>
+<td><code>GET .../delta</code></td>
+<td><code>readTaskContextDelta</code>，保留 after 与 continuation 的固定上界</td>
+</tr>
+<tr>
+<td><code>GET .../inspect</code></td>
+<td><code>inspectTaskContext</code>，按 store/ref/digest 读取当前记录</td>
+</tr>
+<tr>
+<td><code>POST .../metadata</code></td>
+<td><code>updateTaskMetadataCommand</code>，复用 capability <code>task.update</code> 的输入 schema 与空值语义</td>
+</tr>
+<tr>
+<td><code>POST .../messages</code></td>
+<td><code>sendTaskMessageCommand</code>，CLI <code>task message send</code> 使用同一个 Message/Mailbox 事务</td>
+</tr>
+<tr>
+<td><code>POST .../inputs/:input/answer</code></td>
+<td>原 <code>task input answer</code> handler，未新增问题或回答状态</td>
+</tr>
+<tr>
+<td><code>capability commands/panels</code></td>
+<td>原受管 <code>capability.search</code> dispatcher 的描述投影</td>
+</tr>
+<tr>
+<td><code>GET/POST .../panels</code></td>
+<td>Controller 的原 Registry/Host；受权目录、精确 Provider/generation，只读调用</td>
+</tr>
+</tbody>
+</table>
+<p>本地修改回执返回原记录、记录版本及请求关联 ID。请求 ID 不被冒充为本地 修改的幂等账本：响应丢失时显示 unknown，页面不自动重发。进行中的重复 点击被阻止；重连只读事实，不重放写入。消息的 queued 仅说明已为 Leader 排队，不证明 Provider 接受或目标完成。Job 的外部操作身份、效果与终态仍 由 T01/T02 的原 Job 记录负责；Surface 不创建替代操作记录或恢复流程。 输入解析或 Store-only 事务回调失败且原错误在回滚后返回时，明确标为 <code>not-submitted</code>；提交/回滚基础设施错误、提交后通知故障、响应丢失仍保留 unknown。已知拒绝显示原因并允许用户修正后重新提交，不自动重试；已归档 任务的标题输入和保存控件禁用。消息、标题及回答复用同一反馈合同。</p>
+<h2 id="doc-implementation-designs-T06-evidence-md--身份与对话目标">身份与对话目标</h2>
+<p>所有 HTTP API 使用实际本地页面 token；请求正文不能指定 actor、caller 或 Role。Controller 内的 Web 用户入口使用原本地用户 typed handler，不冒充受管 Session。 从 managed Session 启动用户 Web ingress 被拒绝；原 capability RPC 的 native Session 鉴权、跨 Task 限制和权限检查不变。</p>
+<p>全局入口保留 Operator Session。Task 页面提供发送给 Leader 的消息表单； 发送者始终按原用户身份记录，不因文本要求修改全局配置而变成 Operator。 原 Task terminal 保持只读并明确标注。Draft 可以保存消息作为上下文， 但 planning Session 尚不可用；页面不创建或伪造 T08 的运行时。</p>
+<h2 id="doc-implementation-designs-T06-evidence-md--读取显示及贡献">读取、显示及贡献</h2>
+<ul>
+<li>静默轮询直接读取当前 Context，断线保留上次读取，重连重建快照； 未提交表单不被后台渲染清空。独立 delta API 保持固定分页上界，但页面 不再先拉取、丢弃全部事件页后又无条件读取 Context。</li>
+<li>Role 当前配置和 Turn effective 分开。正文省略或记录截断导致无法判断 活动时显示 unknown，不填成 idle。旧运行观察选择 Turn 的实际 Agent Session，而不是当前选中的另一 Agent；返回原 native Session、Endpoint 实现引用与观察时间，不改写历史。</li>
+<li>Context 可选观察失败独立显示 unavailable。旧运行面板异步读取、有独立 客户端等待上限；核心视图和固定 Artifact 来源仍可读取。</li>
+<li><code>CapabilityDescriptor.surfaces</code> 是可选进程内描述，不是新持久 schema。 CLI name/help 映射明确 capability；面板仅允许纯文本、无凭据 HTTP(S) 链接和 query 的 JSON renderer。默认查询也有通用数据面板描述。</li>
+<li>注册校验在原 Registry 的原子发布前进行。贡献描述每次从当前受权目录 派生，不维护独立实例表；实际调用继续走现有 <code>capability call</code>， 生命周期沿原 Registry/Host。缺少专用面板不影响已保存结果。</li>
+<li><strong>Web 面板现在有生产装配方。</strong> <code>startFileTaskControllerRuntime</code> 将 HTTP 监听器和面板读取绑定到自己已有的 Kernel Registry/Host。内建 Task、 Context、Artifact 等只读能力无需测试注入即可显示和读取。贡献描述由 同一受权目录读取，停用/卸载及旧 generation 会在新查询时重新判断。 面板只呈现文本、受控链接及 JSON，不执行任意前端代码。</li>
+<li>Web query context 只在 Controller 内部、HTTP token 验证后签发； 受管 capability RPC 的 <code>scope:user</code> 仍被拒绝，不能用 JSON 伪造上下文。 query-only 权限也在 Registry 每次调用/委派时检查，面板不能调用写能力。 这是实际用户入口的独立凭据来源，不是伪造 Operator/Leader。</li>
+</ul>
+<h3 id="doc-implementation-designs-T06-evidence-md--运行方式">运行方式</h3>
+<p><code>yui web --port &lt;port&gt;</code> 通过现有私有 Controller 控制 socket 请求启动一个 loopback HTTP 监听器；它要求匹配当前构建的 Controller 已在运行，不自动 启动 Controller/Agent，也不在旧 Controller 不支持时回退到第二个 Host。 CLI 保持前台等待，Ctrl-C 仅停止自己的监听器；<code>yui web --status</code> 查询 当前监听器，<code>yui web --stop</code> 根据精确监听器 id 停止它，不停止 Controller 或 Agent。每个 Home 一个监听器，可供多个浏览器页面使用。 Controller 关闭时同时释放其监听器；监听器及 id 仅属进程资源，不保存为 第二份 Task 状态。旧 Controller 需在受授权维护窗口切换到新构建，本次未 升级或重启共享实例。</p>
+<p>没有新增数据库字段、迁移、确认阶段、后台重试或自动评审策略。 既有 CLI 命令及可读输出保留；不强制所有内部调用 JSON 化。</p>
+<h2 id="doc-implementation-designs-T06-evidence-md--首轮验证与独立审查候选-77503111">首轮验证与独立审查（候选 <code>77503111…</code>）</h2>
+<p>验证只使用本 Task 构建、一次性 Home、真实 SQLite/HTTP、合成 Task/Role/Turn 和浏览器。测试 CLI 使用本 checkout 的绝对 <code>output/dev/bin/yui</code>，清除继承 的 <code>YUI_*</code> 后指定隔离 Home。未使用当前 Task 的共享 Home 做测试。</p>
+<ul>
+<li>HTTP 专项：token 拒绝、伪造 actor 零写入、Web/typed CLI 同一记录、 Message/Mailbox 排队且不升级身份、Context read-no-ack、超过 100 事件的 固定分页上界、optional 失败/超时/卸载、卸载后 Artifact 和绝对 CLI 读取。</li>
+<li>贡献专项：真实 Registry/Host 与 dispatcher、CLI parser 的隔离集成； 非法脚本描述拒绝、原子发布、明确映射、歧义/不可用、generation、撤权、 detach、disable、正在执行调用的释放。未增加永久回归矩阵。</li>
+<li>真实浏览器：400px 窄屏 current B/effective A、跨两轮轮询保留草稿、 发送消息的 queued 回执、标题保存回执、已知 query 面板、Draft 仅保存 上下文；1280px 宽屏、键盘焦点、optional 运行面板不可用、断线保留核心、 unknown 提交不自动重发、重连后重新读取变化。窄/宽屏无横向溢出。</li>
+<li>独立只读审查指出三项 P2：后台更新清空输入、省略 Turn 误显示 idle、 Messages/Reviews 导航缺失。修复后独立复审关闭全部三项，未发现新增 重大问题。Leader 另完成 HTTP 和真实浏览器验证，接受该复审裁定。</li>
+</ul>
+<p>运行命令：<code>make install-local</code>、<code>npm run build</code>、<code>npm run lint</code>、 <code>npm run test:core</code>，以及临时 <code>node output/t06-evidence.mjs</code> 和 Browser Use 本地 server 流程。专项脚本交付前删除，不进入永久 suite 或 CI。 最终 build/lint 通过；核心测试 81/81，测试阶段约 4.37 秒。 上述面板调用、超时和浏览器 query 面板证据使用注入夹具，不能证明它们在 生产入口可达；该代码现已删除。此前子 Agent 审查没有可核验 Claude 身份， 不能称为 Claude 审查。</p>
+<h2 id="doc-implementation-designs-T06-evidence-md--正式-claude-审查及修正">正式 Claude 审查及修正</h2>
+<p>用户补审要求对应 <code>review-round-1 / turn-2</code>，冻结候选为 <code>project-1@77503111a9509eb19ea4b2faa2eab9560a2dd641</code>。 该 Turn 的 effective 为 <code>agentId=claude</code>、<code>adapterId=claude</code>、 <code>model=opus</code>、<code>effort=max</code>，原报告保存在 TurnResult.output。 Reviewer 独立构建、lint、核心 81/81、HTTP/SQLite 检查通过，报告两项 P2：</p>
+<ul>
+<li>A：生产入口未装配 Web 面板。Leader 接受可达性发现，选择移除未装配 调用通路而非制造新用户鉴权／Host，保留真实描述查询。首轮隔离调用证据 不被抹除，但也不证明生产可用。</li>
+<li>B：每轮完整拉取 delta 后丢弃。Leader 接受并删除该循环，采用已有 当前快照读取；没有改变 delta 服务自身的合同。</li>
+</ul>
+<p>两项均由 Task-main 局部修正，不创建 Repair WorkItem，不集成上游。 <code>review-round-2 / turn-5</code>（Claude opus/max）复核 <code>43bb4bb2…</code> 后关闭两项 P2，Leader 曾接受该冻结候选。此阶段没有生产 Web 面板，不能据此宣称 最终架构的面板能力已经齐备；后续用户补齐要求见下节。</p>
+<p>修正验证：<code>make install-local</code>、<code>npm run build</code>、<code>npm run lint</code> 通过； <code>npm run test:core</code> 81/81，测试阶段约 4.39 秒。临时 <code>node output/t06-review-fixes.mjs</code> 经实际本地 launcher 的 <code>task activate</code> 前置准备／原子工作区采用，再经 <code>task complete</code> 达到真实 completed 状态， 真实 HTTP 与 CLI 写入比较如下：</p>
+<table>
+<colgroup>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+</colgroup>
+<thead>
+<tr>
+<th>当前状态</th>
+<th>修改标题（HTTP / CLI）</th>
+<th>发送新消息（HTTP / CLI）</th>
+<th>Context 读取</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>active</td>
+<td>均允许</td>
+<td>均允许，原 user 身份</td>
+<td>不 ack</td>
+</tr>
+<tr>
+<td>completed</td>
+<td>均允许</td>
+<td>均拒绝且无新 Message</td>
+<td>不 ack</td>
+</tr>
+<tr>
+<td>archived</td>
+<td>均拒绝且不改记录</td>
+<td>均拒绝且无新 Message</td>
+<td>不 ack</td>
+</tr>
+</tbody>
+</table>
+<p>因此 completed 并不意味着所有写入都拒绝；metadata 编辑是原合同允许的。 archived 行用合法 <code>archiveTask</code> 领域转换建立夹具后比较真实入口，不代表 CLI 归档清理验证：Gitless CLI 归档另暴露既有缺少 workspaceIdentity 的 清理拒绝，本轮未改该路径。测试没有直接更新 SQL 或构造假的 active 状态。</p>
+<p>真实 Browser Use 使用独立服务、250 条事件历史验证连续两次轮询：至少 三次 Context 请求、零 delta／panels 请求；后台事实变化时未提交草稿保留， 断线后保留已有视图，重连清除草稿后显示新快照。400px 无横向溢出。 本轮没有重复未变动的完整宽屏交互矩阵。临时脚本和 Home 验证后清理。</p>
+<p>Reviewer 标明未复现首轮浏览器、未跑 live Controller 的 contribution 命令往返、未运行真实 Provider：这些证据边界保留，不用 Node 夹具冒充。 其提及的既有 Markdown fenced-code 渲染风险也未在本轮改动，留给 Operator 另行判断；不将其算作本候选新增缺陷。</p>
+<h2 id="doc-implementation-designs-T06-evidence-md--用户要求补齐-12生产链路证据">用户要求补齐 1/2：生产链路证据</h2>
+<p>本轮不恢复原先未使用的调用框架，而是交付真实 Controller 装配： <code>yui web</code> → Controller HTTP listener → HTTP token → query-only context → 原 Registry/Host → 原只读能力。当前用户修改仍走原 typed Store 操作； 它们不是面板查询权限的隐式扩大。没有迁移、第二个 Host、用户自报 Role、 自动重发或 SDK 实现的复制。</p>
+<p>临时 <code>t06-panels-check.mjs</code> 先在缺少受信任 Web 查询入口时失败，接通后通过： 普通 user 声明拒绝、Web 上下文不可伪造、Task/Context 查询成功、写能力拒绝。 临时 <code>t06-production-check.mjs</code> 启动真实生产 Controller factory，并以绝对 本地 launcher 启动 <code>yui web</code>，没有给 Web 注入替代面板端口：</p>
+<ul>
+<li>内建面板直接可见、可查询；在同一个实际 Host 注册的受控贡献也可读取。</li>
+<li>拒绝伪造 actor、跨 Task 输入和将面板引用改成写能力；无 token 为 403。</li>
+<li>Host detach 后旧查询不再执行，Registry disable 后目录不再列出贡献。</li>
+<li>原实例 disposer 执行一次；替换为同 id 的新 generation 后，旧引用明确拒绝， 新引用可查询。面板查询失败时核心 Context 仍可读取。</li>
+<li>已归档修改、非法 JSON 和空白标题明确返回 not-submitted，记录不变化。 提交后通知故障不会被错标为未提交，真实记录已保存。</li>
+<li><code>web --status</code> 可读当前 URL，<code>web --stop</code> 后原 Controller/Kernel 仍存活。</li>
+</ul>
+<p>真实 Browser Use 经上述生产链路验证：空白标题显示明确拒绝原因，修改 输入后无需重载即可保存；内建面板读取真实 Task 值；网络断开产生 unknown， 重连后保持锁定而不重发；归档编辑控件禁用。400px/1280px 页面无横向溢出。 测试发现普通领域校验也可能抛出 Error 而非 CliError，因此采用回滚边界 证明是否提交，而不按异常类名猜测效果。 关闭专项先复现了打开浏览器终端时 Web stop 被阻塞，再验证显式释放 WebSocket 后监听器及时关闭、恰好释放一个自有假终端连接；没有停止真实 Provider。 <code>make install-local</code>、build、lint 和核心 81/81 通过，最终核心测试阶段约 4.43 秒。</p>
+<p>这些证据只使用隔离 Home、独立 Controller、合成 Task 和受控贡献，不启动 Provider。SDK 外部包激活仍由 T09 负责；本轮验证的是其应消费的实际 Surface/Registry 接入，而非声称已集成尚未合并的 SDK。临时脚本不进入 永久测试，最终候选继续交由 Claude 正式复核。</p>
+<h2 id="doc-implementation-designs-T06-evidence-md--剩余边界">剩余边界</h2>
+<p>未验证真实 Provider 推理、真实 Operator 交互、付费 API、生产、共享 Controller 或资源。没有把截图、协议夹具或合成 Session 当作真实模型 E2E。 T07 ACP、T08 Draft planning、T09 SDK 激活与 environmentRef 原生启动消费 保持各自任务边界。不包含 push、PR、merge、tag、release、archive、全局 安装更新或共享服务重启。</p>
 </article><article id="doc-implementation-designs-T06-surface-md"><div class="source"><a href="implementation/designs/T06-surface.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T06-surface-md--t06-技术方案统一-cli-与-web-入口">T06 技术方案｜统一 CLI 与 Web 入口</h1>
 <p>硬依赖：T03。</p>
 <p>任务定义：<a href="#doc-implementation-tasks-T06-surface-md">交付范围与证据</a>。</p>
@@ -2994,7 +3346,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>定义 Global Operator 与 Task Leader 两种目标。Task 在 Draft 也可显示聊天入口；T08 提供实际 planning Session 时直接接入，T06 不自己伪造运行时。</p>
 <p>全局配置操作走用户或 Operator 的身份；Task 对话使用 Leader 的 Task 身份。自然语言文本不决定 API 权限，认证来源来自实际入口。</p>
 <h2 id="doc-implementation-designs-T06-surface-md--工作视图">3. 工作视图</h2>
-<p>Task 页先显示目标、当前要求、责任、结果、未答问题和明确进度。展开区域显示实际 Agent、Session、Turn 以及带观察时间的活动。</p>
+<p>Task 页先显示目标、当前要求、责任、结果、未答问题和明确进度。展开区域显示实际 Agent、Session、AgentRun 以及带观察时间的活动。</p>
 <p>同时展示 Role 当前配置与运行中有效配置，避免用户误认为刚修改模型就已切换当前进程。历史输出使用其来源信息，不随当前配置重命名。</p>
 <p>Context 的核心快照与 cursor 原样保留。可选观察和面板独立标注不可用，不把缺失数据填成正常。断线后按固定上界补读或重建快照。</p>
 <h2 id="doc-implementation-designs-T06-surface-md--调用反馈">4. 调用反馈</h2>
@@ -3021,13 +3373,13 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>如果第二个产品能复用该 ACP 代码，仅替换启动描述，应当无需改 Task、消息或结果归档。验证复用可以先用第二份产品 fixture；但第三 Agent 的主路径必须有真实 CLI 证据。</p>
 <h2 id="doc-implementation-designs-T07-acp-agent-md--endpoint-映射">3. Endpoint 映射</h2>
 <p>按实际协议区分 submit 后即时接受和请求直到最终响应才结束的情况。正常长连接等待映射 pending，准确关联的最终结果可以作为完成及接受证据；连接丢失后的无法确认状态是 unknown。</p>
-<p>协议 request ID、本地 attemptId 与原生 Session／Turn 身份分别保存。协议未提供原生 Turn ID 时保留 local-correlation，不生成一个 ID 冒称 native。</p>
+<p>协议 request ID、本地 attemptId 与原生 Session／AgentRun 身份分别保存。协议未提供原生 AgentRun ID 时保留 local-correlation，不生成一个 ID 冒称 native。</p>
 <p>取消的回应也只表达实际证明的内容。未确认所有资源停止时不能以 cancel 请求成功代表物理静止。</p>
 <h2 id="doc-implementation-designs-T07-acp-agent-md--不支持能力">4. 不支持能力</h2>
 <p>恢复、steer、用户原生并行输入、终端附件或工具用量可能未提供。Descriptor 如实表示，Agent选择其他方法；Controller 不增加产品名分支来模拟不存在的语义。</p>
 <p>PTY 可作为人工接口，但不是结构化提交失败后的自动兜底。Codex native 路径保持独立，不强制为了统一 ACP 丢失已具备能力。</p>
 <h2 id="doc-implementation-designs-T07-acp-agent-md--实施切入">5. 实施切入</h2>
-<p>先用协议录制／fixture 覆盖边界，再注册真实产品描述。通过 T02 能力目录发现它，使用 T04 的普通执行请求创建 Turn，结果沿同一归档路径保存。</p>
+<p>先用协议录制／fixture 覆盖边界，再注册真实产品描述。通过 T02 能力目录发现它，使用 T04 的普通执行请求创建 AgentRun，结果沿同一归档路径保存。</p>
 <p>如果必须修改 Task Core 才能识别第三 Agent，检查泄漏的是产品发现、协议差异还是高层假设，并在负责层解决；不把新 Agent 写进 Task 的枚举。</p>
 <h2 id="doc-implementation-designs-T07-acp-agent-md--验收">6. 验收</h2>
 <p>S11、S12 覆盖身份与长等待；S24 覆盖 busy 与输入控制；S35 覆盖创建会话时选择实现。运行一条可控只读／本地资料任务，保存实际 CLI 版本、输入、终态、结果及权限处理证据。</p>
@@ -3044,19 +3396,19 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>成果可以保存为规划 Artifact。Activation 不自动采用整个 scratch 目录；Leader 可以显式引用材料或把所选内容用于正式结果。</p>
 <h2 id="doc-implementation-designs-T08-draft-leader-md--激活请求">3. 激活请求</h2>
 <p>请求包含 Task、稳定 requestId、期望开始方式和必要资源配置。Activation 记录只说明当时采用的任务说明和环境，不建立后续所有结果的版本一致性门禁。</p>
-<p>若 planning Turn 已结束且资源可准备，可以立即采用；若请求来自仍在运行的 planning Turn，则在现有操作记录中保存 afterPlanningTurn，并立即返回请求引用。不要让同步工具等自己所属 Turn 结束。</p>
+<p>若资源可安全准备且交付目录与 planning 目录不重叠，可以立即原子采用；已有 planning Session 保持原工作区和捕获的 planning 权限，不热升权，也不自唤醒。若采用确实依赖 planning 执行结束，T08 可在现有操作记录中保存 afterPlanningRun 并立即返回真实请求引用；不能让同步工具等待自己。当前 Core 在目录冲突时返回明确诊断，不伪造已排队的操作。</p>
 <p>用户在等待中取消请求或取消 Task，采用时重新检查明确状态，不继续执行历史意图。相关授权或资源配置变化时重新读取，只有影响实际采用的变化才需要重新准备，不因普通进度备注要求重新规划整个任务。</p>
 <h2 id="doc-implementation-designs-T08-draft-leader-md--资源采用">4. 资源采用</h2>
 <p>调用 T05 prepare 得到临时环境，可以为空。准备完成后在受控事务里采用环境引用并将 Task 置 active。失败时 Task 保持可继续 Draft，释放能够确认未采用的临时资源。</p>
 <p>采用成功后 Agent 启动失败，保存 active 与环境事实，通知负责人决定再启动或换配置，不回滚成虚假的“什么都没有发生”。</p>
 <h2 id="doc-implementation-designs-T08-draft-leader-md--会话延续">5. 会话延续</h2>
 <p>当前 native Session 支持所需 cwd、权限和配置变化且已确认安全边界时可继续。否则创建新 Session，发送当前持久化 Context 和明确 delivery 指引。</p>
-<p>不要求所有协议具备透明 handover，也不为保留聊天而在当前 Turn 中热升权。逻辑 Leader 不变，用户仍在同一个 Task 对话目标下工作。</p>
+<p>不要求所有协议具备透明 handover，也不为保留聊天而在当前 AgentRun 中热升权。逻辑 Leader 不变，用户仍在同一个 Task 对话目标下工作。</p>
 <h2 id="doc-implementation-designs-T08-draft-leader-md--surface-配合">6. Surface 配合</h2>
 <p>Draft 页面始终提供 Leader 入口并显示 planning；激活后显示正式执行及实际环境。此展示不维护独立 lifecycle。使用 T06 现有 target 路由，不另建 Planner 页面和 Planner Role。</p>
 <p>Operator 可以创建多个 Draft 后让用户分别进入各 Leader，也可以对明确任务直接创建并激活。规划不是所有任务必须经历很长的一段流程。</p>
 <h2 id="doc-implementation-designs-T08-draft-leader-md--验收">7. 验收</h2>
-<p>S01／S02：用户在 Draft 对齐并持久化，关闭会话后再次进入能继续。S27：无资源准备的任务可激活。S40：当前 Turn 发起延后请求即时返回，结束后采用；取消或改变实际资源条件能够被正确识别。</p>
+<p>S01／S02：用户在 Draft 对齐并持久化，关闭会话后再次进入能继续。S27：无资源准备的任务可激活。S40：当前 AgentRun 发起延后请求即时返回，结束后采用；取消或改变实际资源条件能够被正确识别。</p>
 <p>还需分别验证可续用与不兼容需新建两条 Session 路径，结果不自动成为 Candidate。真实协议未验证兼容时默认新会话，不把文字声明当作证据。</p>
 </article><article id="doc-implementation-designs-T09-plugin-sdk-md"><div class="source"><a href="implementation/designs/T09-plugin-sdk.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T09-plugin-sdk-md--t09-技术方案插件开发工具与受权执行">T09 技术方案｜插件开发工具与受权执行</h1>
 <p>硬依赖：T02、T05。</p>
@@ -3093,7 +3445,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>本任务交付必须包含一个真实原 Task 的结果：仅注册一个 hello 插件不算完成。</p>
 <h2 id="doc-implementation-designs-T10-self-extension-md--稳定元工具">2. 稳定元工具</h2>
 <p>Session 启动时就提供 Yui CLI 或 describe／call 桥，以及 plugin.create／validate／activate。这个入口由可信内建提供，不能要求 Agent 先安装它才能安装第一个插件。</p>
-<p>目录变化后，后续桥调用读取当前可见能力。原生工具 schema、系统提示和 Endpoint 不要求被热改。即使模型只在下一 Turn 得知新工具，也可以继续同一 Task，不重启整个 Controller。</p>
+<p>目录变化后，后续桥调用读取当前可见能力。原生工具 schema、系统提示和 Endpoint 不要求被热改。即使模型只在下一 AgentRun 得知新工具，也可以继续同一 Task，不重启整个 Controller。</p>
 <h2 id="doc-implementation-designs-T10-self-extension-md--首个实现场景">3. 首个实现场景</h2>
 <p>使用授权的本地资料，任务需要把一份特殊 JSON 格式转换为报告。当前目录没有该转换能力。Leader 查询目录，选择实现小型解析／转换工具，写输入输出和测试，验证后在 Task scope 激活。</p>
 <p>Leader 随后真实调用新能力，保存报告内容，形成 Candidate 或 direct 完成说明。测试中可放入一个格式边界，使 Leader 在验证失败后修复代码并继续，而不是由测试脚本替 Agent写最终实现。</p>
@@ -3112,6 +3464,405 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <h2 id="doc-implementation-designs-T10-self-extension-md--验收">8. 验收</h2>
 <p>S32 证明原 Task 真实使用新能力；S33 证明验证失败能由 Leader 修复；S42 证明同 Session 通过稳定桥发现新工具；S28／S45 证明插件不扩权。</p>
 <p>完成证据包括 Agent 实际操作记录、验证报告、激活来源、工具调用回执和业务产物。自扩展是否有价值以结果为准，不以框架新增多少对象为准。</p>
+</article><article id="doc-implementation-designs-T11-evidence-md"><div class="source"><a href="implementation/designs/T11-evidence.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T11-evidence-md--t11-session-实现固定与使用边界热插拔">T11 Session 实现固定与使用边界热插拔</h1>
+<p>Task：task-27。基线：<code>013ffdc3154c18974f64c66b05ade018feb63c2b</code>（<code>feat(plugins): add validated Task-local SDK and persistent enable intent (#320)</code>）。精确交付 commit 和 完成裁定以 Task 记录为准。本变更不包含发布授权。</p>
+<p>本文件是对 candidate-1（<code>914073e</code>）与 candidate-2（<code>ed3968f</code>，均未被接受）的修正证据。 message-2 的 F1/F2/F3 与 message-4 的两项 P1 逐项处理见下；<strong>前两版的部分结论已被实测 推翻，相应文字一并改正，不保留原先的过度声明</strong>。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--前两版被推翻的结论先行更正">前两版被推翻的结论（先行更正）</h2>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>原写法</th>
+<th>实测</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>“<code>yui doctor</code> 正确拒绝 fake proxy：缺少 <code>--config</code>、<code>resume</code> 能力”，据此判定公共入口全链路”受禁止付费验证约束未覆盖”</td>
+<td><strong>错误。</strong> doctor 的 Agent 检查是对 <code>--version</code> / <code>--help</code> 的只读探测：最低版本见 <code>agentAdapter.ts:223</code>（codex <code>0.150.1</code>），必需能力面是 <code>missingRequiredCapabilities</code>（<code>agentAdapter.ts:766-787</code>，codex 仅需 <code>--config</code> 与行首 <code>resume</code>）。绝对路径本地夹具实现这两个能力面后 doctor 全绿（<code>agent:faux:command ok version=0.150.1</code>、<code>agent:faux:capability ok</code>），不需要付费模型。公共入口全链路已真实覆盖</td>
+</tr>
+<tr>
+<td>后续 Turn 的持久 Turn 发布”属 task23 边界”，仅断言”只允许在此拒绝”</td>
+<td><strong>错误的归因。</strong> 那是本 Task 自己的配置缺口，不是外部阻塞。已完整配置隔离 Task 并<strong>真实完成了后续 Turn</strong>，不再以拒绝充当通过</td>
+</tr>
+<tr>
+<td><code>generation</code> = 四个手写模块字节摘要，“每进程只计算一次”</td>
+<td>手写清单无法声称覆盖完整；且首次调用才读盘时，加载 A 之后磁盘换成 B 会把自己标成 B。已改为发布包字节摘要 + 模块加载期一次解析（F3）</td>
+</tr>
+<tr>
+<td>“<code>detectRunningRelease</code> … <code>packageDigest</code> 已是逐字节校验且 fail-closed”</td>
+<td><strong>错误的归属。</strong> <code>detectRunningRelease</code>（<code>runtimeRelease.ts:614-628</code>）只从运行脚本向上找到 manifest 并 <code>readReleaseManifest</code>，后者仅 <code>JSON.parse</code> + <code>validateManifest</code>（结构校验）。逐字节校验属 <code>verifyReleaseIntegrity</code>（<code>runtimeRelease.ts:169</code>），发生在 install/校验路径。见下方 F3 更正</td>
+</tr>
+<tr>
+<td>“start 失败后不遗留 lease”被写成生产已验证</td>
+<td><strong>不成立。</strong> 生产 open 失败的 catch（<code>agentHost.ts:727-755</code>）只发布不可恢复性、更新快照并 <code>throw</code>，<strong>没有立即 <code>release()</code></strong>；lease 的释放只发生在 <code>finally</code>。该结论仅在所有权层夹具成立，不能宣称生产已验证无残留</td>
+</tr>
+<tr>
+<td>“<code>ENDPOINT_DRAIN_TIMEOUT_MS</code> 到期后 Host 仍会退出并如实报告”</td>
+<td><strong>错误。</strong> 客户端持有继承的 stdio 管道时，Host 进程在超时后<strong>并不退出</strong>——这在基线 <code>013ffdc</code> 上同样如此（实测见下）。本轮把可保证的边界收紧为”最终清理有界返回、<code>control.close()</code> 可达”，不再声称进程退出</td>
+</tr>
+</tbody>
+</table>
+<h2 id="doc-implementation-designs-T11-evidence-md--交付与复用边界">交付与复用边界</h2>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>已有设计</th>
+<th>本轮接入方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/kernel/instanceHost.ts</code></td>
+<td>直接复用同一个 <code>InstanceHost</code> 类；attach/acquire/release/detach、引用计数、<code>drained</code>、一次性 <code>#dispose</code> 与身份保留语义全部沿用，<strong>未修改该文件</strong></td>
+</tr>
+<tr>
+<td><code>src/release/runtimeRelease.ts</code></td>
+<td>复用既有不可变发布与 <code>detectRunningRelease</code>；<strong>未新建配置框架，未重做 T07 配置层</strong></td>
+</tr>
+<tr>
+<td><code>src/runtime/tmuxAdapters.ts</code> / <code>src/tmux/tmuxManager.ts</code></td>
+<td>复用既有生产采用链，未新增第二套 Registry/Host</td>
+</tr>
+<tr>
+<td><code>src/runtime/agentEndpointIdentity.ts</code></td>
+<td><code>generation</code> 改为运行发布包摘要（F3）</td>
+</tr>
+<tr>
+<td><code>src/runtime/agentEndpointOwnership.ts</code></td>
+<td>真实退出驱动引用释放（F2）；在飞握手计入同一 Session 的真实持有、最终清理有界返回（P1-1/P1-2）</td>
+</tr>
+<tr>
+<td><code>src/executor/fileRoleLaunchPlanner.ts</code></td>
+<td>resume 携带 Session 既有 generation，由真正执行的 Host 裁定（F1）</td>
+</tr>
+</tbody>
+</table>
+<p>A/B 实际采用链与”由真正执行的 Host 裁定 pin”的设计经独立审查认可，本轮<strong>未重开</strong>， 未新增 Registry，未新增配置框架；本轮只修 P1-1 / P1-2 与本文件的三处归因。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--f1真实生产采用边界">F1：真实生产采用边界</h2>
+<p>message-2 指出 candidate-1 只固定了同进程同 builtin 工厂，1→2 引用不能证明版本替换， 且 Planner 仍以 <code>requireBuiltin(既有 pin)</code> 会在 B 代码下拒绝 A。</p>
+<p>按”先核实现有受支持 release/组件路径是否可消费”的要求，核实结果是<strong>可消费</strong>， 上一版”不能用”的假设不成立。既有生产采用链：</p>
+<ul>
+<li><code>tmuxAdapters.ts:592-598</code>：新 Agent Host 由 Controller 自己正在运行的 <code>cli.js</code> 派生， 因此新 Session 天然落在新代码上。</li>
+<li><code>tmuxManager.ts:241-263</code>：<code>ensureRoleWindowAsync</code> 复用未 dead 的既有 pane 且不重启， 旧 Host 路由在生产里已经成立。</li>
+<li><code>tmuxAdapters.ts:654-663</code>：既有存活 Host 经自己的控制 socket 收 Turn。</li>
+</ul>
+<p>唯一阻塞点是 Controller 侧 planner 在 resume 时调用 <code>requireBuiltinAgentEndpointImplementation</code>。修正为 <code>validateAgentEndpointImplementation</code>：planner 运行在 Controller，升级后它已是新代码， 无法代表仍在运行、真正拥有该 Session 的 Agent Host 发言；在此拒绝会让 Controller 升级终止存活 Session，改写成当前代码则会把 Session 静默搬到它从未启动过的代码上。 由真正执行实现的 Host 裁定：复用的存活 Host 接受自己的 generation，新启动的 Host 在代码不同时 fail closed。</p>
+<p>实测（两个真实安装的发布，各自 dist）：</p>
+<pre><code>STAGE=$(cat /tmp/t11-ab-path)   # A=d0c109f74d01a319…（1312 文件）B=c8b2997a1d19c4cb…
+node --test test/t11-f1-ab.test.mjs test/t11-ab-live.test.mjs</code></pre>
+<p><code>11/11</code> 通过（7 项发布层 + 4 项真实进程层）。真实进程层结论：</p>
+<ul>
+<li>发布 B 后，<strong>运行 A 的真实 Host 进程连续服务同一 Session 的 turn1 与 turn2</strong>， 两次都报 <code>d0c109f7…</code>，<code>nativeSessionId</code> 与 <code>processInstanceId</code> 连续。</li>
+<li>由 B 启动的 Host 为<strong>新</strong> Session pin <code>c8b2997a…</code>。</li>
+<li>B 拒绝 A 的 pin（<code>unavailable; explicitly select a new Session</code>），不静默改用当前代码。</li>
+<li>被篡改的发布副本被拒绝，因此 generation 无法伪造。</li>
+</ul>
+<h2 id="doc-implementation-designs-T11-evidence-md--p1-1最终清理必须有界返回">P1-1：最终清理必须有界返回</h2>
+<p>message-4：<code>stop(5000)</code> 之后 <code>agentHost</code> 的 <code>finally</code> 又 <code>await endpointOwner.close()</code>， 而 <code>close()</code> 是 <code>host.close()</code> → 对每个实例 <code>detach()</code> → <code>return instance.drained</code> （<code>instanceHost.ts</code>，本轮未修改该文件）——正是有界 <code>stop</code> 刚刚放弃等待的<strong>同一个</strong> promise，于是 <code>control.close()</code> 不可达。这不能归为”基线子进程存活”：新增的 await 阻断函数返回与控制清理，本身是本轮引入的新问题。</p>
+<p>修正：<code>close(timeoutMs)</code> 自己有界。detach 全部已 attach 的实现（不再接受新获取）， 共用一个截止时间等它们的 drain，到期即返回<strong>每个实现的真实 drain 事实</strong>， 既不假 release 无法证明的引用，也不杀掉不属于自己的共享 Provider。仍被持有的实现 按设计保持 detached 且未 dispose，事实继续可读，由调用方决定如何处理。 <code>agentHost.ts</code> 以 <code>ENDPOINT_DRAIN_TIMEOUT_MS</code> 调用它，并把仍被持有的引用与在飞握手 写进 Host 自己的 stderr（快照在 <code>control.close()</code> 前即不可达）。</p>
+<p><strong>契约边界差分</strong>（同一脚本跑两个构建的 dist，<code>stop(200)</code> 已超时于一个永不退出的已附着客户端）：</p>
+<pre><code>node test/t11-p1-close-differential.mjs /tmp/t11-rejected   # 拒绝构建 ed3968f
+node test/t11-p1-close-differential.mjs "$PWD"              # 本轮
+
+### t11-rejected (ed3968f)
+  stop: quiescent=false refs=1 timedOut=true
+  close: STILL PENDING after 1200ms (unbounded: waits on the same drain stop gave up on)
+### work-item-1 (本轮)
+  stop: quiescent=false refs=1 timedOut=true
+  close: RETURNED after 201ms (bound 200ms)</code></pre>
+<p><strong>可保证与不可保证（按修正后的实际行为）</strong>：有界的是”最终清理返回、<code>control.close()</code> 可达”。<strong>Host 进程在客户端仍持有继承的 stdio 管道时并不退出</strong>——基线 <code>013ffdc</code> （其 <code>finally</code> 里根本没有 endpoint owner）在同一夹具下同样不退出，实测见下节。 本轮不声称修好进程退出，也不用假 release 或强杀共享进程去制造退出。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--p1-2在飞握手计入同一-session-的真实持有">P1-2：在飞握手计入同一 Session 的真实持有</h2>
+<p>message-4：正常初次 open 或 Codex resume 等待握手时收到 SIGTERM，<code>session/current</code> 仍为空，<code>release</code> 误判无依赖而归零，之后 <code>track</code> 迟到成功的客户端被漏记。</p>
+<p>修正：<code>SessionHold</code> 增加 <code>opening</code> 计数，在 <code>await</code> 握手<strong>之前</strong>自增，因此停止落在 握手中途时该 Session 是真实持有者；<code>settle()</code> 仅在”已请求释放”且”无当前客户端” 且”无在飞握手”三者同时成立时才交还引用。握手迟到<strong>成功</strong>时客户端是真的，进入同一套 受控退出跟踪（若期间已请求停止，则 <code>detach()</code> 它，由它的真实退出释放持有）；迟到 <strong>失败</strong>时该持有不欠任何东西，按真实依赖立即释放。<code>AgentEndpointDrain</code> 增加 <code>opening</code>， <code>quiescent</code> 要求它为 0——在飞握手不再能被当成静止。</p>
+<p>未新增独立后台协议，未新增第二个 Host。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--p1-生产信号路径验证不只测-owner-helper">P1 生产信号路径验证（不只测 owner helper）</h2>
+<p>夹具 <code>test/fixtures/t11-stallable-app-server.mjs</code> 是<strong>可阻塞的假协议客户端</strong>： 生产客户端在子进程 stdio 上讲真正的 WebSocket （<code>structuredProviderHost.ts</code> 的 <code>new WebSocket("ws://localhost/rpc", { createConnection })</code> over <code>ChildProcessDuplex</code>），所以夹具完成真实 WebSocket 握手，然后可以在 <code>thread/start</code> / <code>thread/resume</code> 上<strong>扣住不答</strong>，并可选择迟到成功、迟到失败、 或忽略 SIGTERM。</p>
+<p>链路全部是生产的：真实 Controller 派发 → 真实 tmux pane → 真实 <code>yui internal agent-host</code> 进程 → 真实协议客户端；SIGTERM 用 <code>process.kill</code> 直接投给 <strong>我自己 Home 的</strong> Host 进程（按 <code>/proc/&lt;pid&gt;/environ</code> 里的 <code>YUI_HOME</code> 认定， 绝不匹配其他 Task 的 Host）。<code>control.close()</code> 只在 <code>server.close()</code> resolve 之后才 <code>rmSync</code> socket，因此”socket 被移除”是 <code>finally</code> 跑完的直接证据。</p>
+<pre><code>node test/t11-p1-production-signal.mjs      # 4/4（连续两次独立运行均 4/4）</code></pre>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>场景</th>
+<th>真实结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>停止发生在握手完成<strong>之前</strong>，客户端永不作答且忽略 SIGTERM</td>
+<td><code>Endpoint stop timed out after 5000ms (bound 5000ms); 1 reference(s), 1 opening client(s)</code>（不是静止）；<code>Endpoint cleanup returned … 1 reference(s) and 1 opening client(s) still held</code>；<code>control.close() reached: true</code></td>
+</tr>
+<tr>
+<td>握手<strong>迟到成功</strong></td>
+<td>Host 在 SIGTERM 后 <code>2420ms</code> 返回；该场景<strong>自己的</strong>客户端日志 <code>[app-server 2083750] late success for thread/resume id=2</code></td>
+</tr>
+<tr>
+<td>握手<strong>迟到失败</strong></td>
+<td>Host 在 SIGTERM 后 <code>2317ms</code> 返回；<code>[app-server 2088329] late failure for thread/resume id=2</code></td>
+</tr>
+<tr>
+<td>已附着客户端忽略 SIGTERM（P1-1 真正持有引用的条件）</td>
+<td><code>Endpoint stop timed out after 5004ms (bound 5000ms); 1 reference(s), 0 opening client(s)</code>；<code>Endpoint cleanup returned …</code>；<code>control.close() reached: true</code></td>
+</tr>
+</tbody>
+</table>
+<p>断言确有鉴别力：把同一套夹具指向被拒绝构建（<code>ed3968f</code>，由其自己的 Controller 派生 它自己的 dist、自己的隔离 Home）时 <strong>4 项里 3 项失败</strong>，失败点正是被报告的两个 P1：</p>
+<pre><code>### t11-rejected (ed3968f)  1/4
+FAIL 停止发生在握手完成之前 —— no bounded-stop diagnostic: a mid-handshake stop was
+     treated as quiescent（P1-2：整条 drain 诊断都没有，Session 被当成静止）
+FAIL 握手迟到成功 —— Host never returned after a late handshake success
+FAIL 已附着客户端忽略 SIGTERM —— final cleanup never reported: it is still waiting on
+     that same drain; control.close() NOT reached（P1-1，生产路径复现）
+     其 stop 行也没有 `opening client(s)` 字段</code></pre>
+<p>本轮构建 4/4。第一个场景<strong>故意不断言进程退出</strong>，只断言本变更拥有的端点契约 （有界 stop 如实报在飞握手、最终清理返回到 <code>control.close()</code>）。原因见下节： 进程存活在基线上同样发生。</p>
+<p><strong>夹具自身的一处缺陷（如实记录，曾产生假通过与假失败）</strong>：初版 harness 共用一个 ready 文件与一个日志，并把”我这个 Home 的所有 agent-host”都当作被测对象。 但场景 1 和 4 故意制造”客户端忽略 SIGTERM”的 Host，它会滞留到下一个场景， 于是上一场景的残留既可能满足下一场景的等待（假通过：一次运行里被记为 PASS 的 “迟到失败”实际引用了 pid 更低的上一批客户端日志），也可能污染 pid 集合（假失败）。 同一份 harness 因此一度报出 <code>2/4</code>。修正：每个场景独立 ready/日志路径；夹具把 <strong>自己的 pid</strong> 写进 ready 文件，被测 Host 取该客户端的<strong>父进程</strong>；出现意外滞留 Host 时直接判为”场景未隔离”而不是继续测量；夹具集合按 <code>T11_LOG</code> 前缀限定，避免与另一个 隔离 Home（基线/拒绝构建差分用）的 app-server 混淆。<strong>这是 harness 缺陷，不是产品缺陷</strong>， 修正后连续两次 4/4，拒绝构建 1/4。原始 <code>2/4</code> 不作为结论保留，但缺陷本身在此记录， 因为”测量工具会把别人的进程记到自己账上”正是这类证据最容易出错的地方。</p>
+<p>所有权层最小复现同时保留：</p>
+<pre><code>node test/t11-p1-repro.mjs</code></pre>
+<p>被拒绝构建：<code>close(): STILL PENDING after 30ms</code>、 <code>pending open -&gt; release -&gt; stop: quiescent=true references=0</code>，且迟到成功的客户端 <code>UNTRACKED by ownership</code>。本轮构建：<code>close(): returned</code>、 <code>pending open -&gt; release -&gt; stop: quiescent=false references=1</code>、迟到客户端 <code>tracked</code>。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--进程存活是既有行为实测不作推断">进程存活是既有行为（实测，不作推断）</h2>
+<p><code>test/t11-p1-baseline-differential.mjs</code> 用<strong>基线自己的隔离 Home</strong> （<code>/tmp/yui-t11-base-home-BIkG</code>）跑基线 <code>013ffdc</code> 自己的 dist、自己的 Controller、 自己的 launcher，夹具与信号完全相同：</p>
+<pre><code>T11_DIFF_HOME=/tmp/t11-base-home \
+  node test/t11-p1-baseline-differential.mjs /tmp/t11-baseline "BASELINE 013ffdc (no endpoint owner)"
+
+=== BASELINE 013ffdc (no endpoint owner) ===
+  handshake stalled; agent-host pid(s)=2222528
+  host exit: STILL RUNNING after 30000ms
+  control socket removed (control.close reached): true
+  stubborn client still alive: true
+{"label":"BASELINE 013ffdc (no endpoint owner)","tree":"/tmp/t11-baseline",
+ "exitedMs":null,"controlCloseReached":true,"clientAlive":true}</code></pre>
+<p>输出里<strong>没有</strong> <code>Endpoint stop</code> / <code>Endpoint cleanup</code> 行，这本身就是身份证明： 基线 dist 里 <code>endpointOwner</code> 与 <code>opening client</code> 的出现次数均为 <code>0</code> （<code>grep -c</code> 实测），它不可能打印这些字符串。基线的 <code>finally</code> 只有 <code>session?.detach()</code> 与 <code>await control.close()</code>，因此进程存活只能来自客户端持有的 继承管道，与本轮改动无关。</p>
+<p><strong>一次差分执行错误（如实记录）</strong>：每个 Home 只有一个 Controller，而 Controller 用 <strong>它自己正在运行的 <code>cli.js</code></strong> 派生 Agent Host。我曾把基线脚本指向 p1 Home 直接运行， 于是那个 Home 早已运行的 Controller 派生的是<strong>我的</strong> dist，输出里出现了 <code>opening client(s)</code>——这个字符串只有本轮构建才有，因此该次结果是我的构建而非基线， 已作废。修正后脚本要求显式传入 <code>T11_DIFF_HOME</code>（该树自己的 Home），并在结束时做 来源校验：若被测树不含 <code>opening client</code> 而 pane 里出现了它，直接判为”跑错树”并以 退出码 4 作废结果。该校验本身经反向对照验证——故意把基线树配上 p1 Home：</p>
+<pre><code>  ERROR: pane shows "opening client(s)" but /tmp/t11-baseline never emits it.
+  A Controller derives Agent Hosts from the cli.js IT runs, so this Home's
+  Controller served the dispatch from a different tree. Result discarded.
+  real exit=4</code></pre>
+<p>本轮修好的是”新增 await 阻断最终清理与控制清理”，不是进程退出；两者分开描述， 不互相冒充。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--f2真实退出驱动引用释放">F2：真实退出驱动引用释放</h2>
+<p>message-2 已复现：pending-exit 时 <code>endpoint.inspect</code> = attached + unknown 且 <code>waitForExit</code> 永不完成；<code>lease.release</code> 删除 holder 导致 <code>owner.stop</code> 谎报 <code>quiescent=true refs=0 sessions=[]</code>。</p>
+<p>修正：<code>SessionHold</code> 自己持有 handle，<code>release()</code> 只置 <code>releaseRequested</code>， 真正释放发生在 <code>settle()</code>——仅当”已请求释放”且”当前 Endpoint 已退出”同时成立时。 <code>waitForExit</code> 完成时调用 <code>settle</code>。即：<strong>真实退出（或必要的 pending 依赖）驱动释放</strong>， 不是 stop 意图驱动，也不只是措辞变化。另外补齐 message-2 点到的一处： <code>release()</code> 之后 <code>open()</code> 被拒绝，而不是跑在已让出的 generation 上。</p>
+<p>关于”start 失败后不遗留 lease”：该结论<strong>只在所有权层夹具成立</strong>。生产 open 失败的 catch（<code>agentHost.ts:727-755</code>）只发布不可恢复性、更新快照、清理 Turn 状态并 <code>throw</code>， <strong>没有立即 <code>release()</code></strong>；lease 的释放发生在同一函数的 <code>finally</code>。因此本文件不再宣称 生产路径已验证”无残留”，只记录夹具层事实与生产路径的实际释放位置。</p>
+<p>超时事实可观测：<code>AgentEndpointDrain</code> 增加 <code>waitedMs</code> / <code>timedOut</code> / <code>opening</code> 与逐 Session 的 <code>releaseAwaitingExit</code>；<code>agentHost.ts</code> 的 detach→release→stop 顺序保持不变 （让有界 stop 等在真实依赖上），并把 drain 明细写入 Host 自己的 stderr——快照在 <code>control.close()</code> 前即不可达，只写快照等于不可观测。</p>
+<pre><code>node --test test/t11-f2.test.mjs          # 5/5
+node --test test/t11-drain-live.test.mjs  # 1/1，倔强子进程忽略 SIGTERM</code></pre>
+<p>真实输出（本轮起额外报在飞握手数）：</p>
+<pre><code>Endpoint stop timed out after 5005ms (bound 5000ms); 1 reference(s), 0 opening client(s)
+and 0 pending effect(s) may still be in use. Owned client resources are unknown.
+Endpoint cleanup returned with 1 reference(s) and 0 opening client(s) still held across
+1 implementation(s) (bound 5000ms); those implementations stay detached and undisposed.
+Owned client resources are unknown.</code></pre>
+<p>对被拒绝的构建跑同一组夹具：<code>3/5</code> 失败（<code>quiescent: true !== false</code>），即该缺陷确被复现后修好。 不自动杀死不属于该 Endpoint 的共享 Provider；<code>forceKillTimer</code> 与基线 <code>013ffdc</code> 行为一致 （仅字面量 <code>10_000</code> 改为命名常量），Host 在子进程忽略 SIGTERM 时存活属既有行为，非本轮引入 （基线实测见上）。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--f3不可变加载与摘要边界">F3：不可变加载与摘要边界</h2>
+<p>message-2 指出：首次调用才读盘不等于已加载的代码；加载 A 后若磁盘已是 B，首次 pin 会误标成 B。</p>
+<p>边界明确定义为：<strong>运行中发布包的整包字节摘要</strong>，在<strong>模块加载期解析一次</strong>。 <code>detectRunningRelease</code>（<code>runtimeRelease.ts:614-628</code>）从正在运行的脚本向上找到自己的 manifest 并 <code>readReleaseManifest</code>——<strong>它只做读取与结构校验</strong>（<code>JSON.parse</code> + <code>validateManifest</code>），不做逐字节校验。逐字节校验是 <code>verifyReleaseIntegrity</code> （<code>runtimeRelease.ts:169</code>），发生在 install / 完整性校验路径。因此 generation 的 覆盖面来自 manifest 里已登记的整包摘要（不再是手写模块清单），而”这些字节此刻仍与 磁盘一致”由 install 期的 <code>verifyReleaseIntegrity</code> 保证，不由加载期这次读取保证。 本文件不再把两者混为一谈。</p>
+<p>开发检出没有 manifest，显式取 <code>checkout-</code> 前缀（如本轮实测 <code>checkout-7ca4e4b317a628083ce7b7f</code>），<strong>永远不可能与发布 generation 相等</strong>， 不静默回退成”看起来像某个发布”。不为假想扩展搭框架。</p>
+<pre><code>node test/t11-f3-differential.mjs   # 加载后改盘身份不变；子进程 加载→改盘→pin</code></pre>
+<p>对被拒绝的构建复现了 message-2 描述的误标：加载 A 却在首次 pin 报 <code>05f1a3f0…</code>（B 的字节）； 修正后报告实际加载的构建。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--公共入口真实-task-与真实后续-turn本轮补齐的证据缺口">公共入口真实 Task 与真实后续 Turn（本轮补齐的证据缺口）</h2>
+<p>完全隔离：<code>YUI_HOME=/tmp/yui-t11-cli-TnVD</code>，workspace <code>/tmp/yui-t11-ws-82mT</code>（均一次性）， <code>env -i</code> 清除会话继承的 <code>YUI_*</code>，Provider 是<strong>绝对路径本地启动器</strong> <code>/tmp/t11-launcher-…sh</code>（回答 <code>--version</code>/<code>--help</code>，其余 exec 协议假 App Server）。 无真实 Provider、无付费模型、无共享 Home/Controller。</p>
+<p>配置链（全部公共入口）：</p>
+<pre><code>node dist/cli.js config agent add faux2 --adapter codex --command /tmp/t11-launcher-…sh
+node dist/cli.js config role add leader|operator|worker --agent faux2
+node dist/cli.js config system set default-workspace /tmp/yui-t11-ws-82mT
+node dist/cli.js task create "…" ; node dist/cli.js task activate task-N
+node dist/cli.js task role bind task-N leader faux2
+node dist/cli.js doctor</code></pre>
+<p><code>doctor</code> 全绿（含 <code>git ok</code>、<code>tmux ok 3.4</code>、<code>agent:faux2:command ok version=0.150.1</code>、 <code>agent:faux2:capability ok</code>）。<strong>这直接推翻上一版”必须付费模型”的判断。</strong></p>
+<p>本轮（P1 修正）为验证生产信号路径另建了一个同样一次性的隔离 Home <code>YUI_HOME=/tmp/yui-t11-p1-home-6hBW</code>、workspace <code>/tmp/yui-t11-p1-ws-ooEU</code>， Agent 名为 <code>faux</code>，Provider 仍是绝对路径本地启动器 <code>/tmp/t11-p1-launcher.sh</code>。 其 doctor 同样全绿：</p>
+<pre><code>  yui home               ok       /tmp/yui-t11-p1-home-6hBW
+  storage schema         ok       current=11 latest=11 minimum=1
+  git                    ok       git: git version 2.43.0
+  tmux                   ok       tmux: tmux 3.4
+  agent:faux:command     ok       command=/tmp/t11-p1-launcher.sh adapter=codex version=0.150.1
+  agent:faux:capability  ok       start resume interrupt nativeSession=runtime</code></pre>
+<p>上一版 Home（<code>faux2</code>）与本轮 Home（<code>faux</code>）是两个独立的一次性隔离环境， 名字不同是真实差异，不是笔误；两者都无真实 Provider、无付费模型、无共享 Home/Controller。 基线与被拒绝构建的差分另用 <code>/tmp/yui-t11-base-home-BIkG</code>、<code>/tmp/yui-t11-rej-home-1rB0</code>。</p>
+<p>真实 Turn（<code>task work create</code> → <code>task work dispatch</code>，真实 tmux pane、真实 Agent Host、 真实 App Server 协议往返）：</p>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>场景</th>
+<th>命令与结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A/B 发布 + 真实请求</td>
+<td>task-2/turn-1 <code>Mode: new</code> <code>Status: completed</code> <code>Result: Fake Provider completed turn 1.</code></td>
+</tr>
+<tr>
+<td><strong>真实后续 Turn</strong></td>
+<td>task-2/turn-2 <code>Mode: resume</code> <code>Status: completed</code> <code>Result: … turn 2.</code>；turn-3 亦 completed；三个 Turn 同一 pane <code>pid=1728551</code>、同一 <code>fake-thread-1</code></td>
+</tr>
+<tr>
+<td>新 Host 接续既有 Session</td>
+<td>task-3 fence 前 <code>pid=1742184</code> → 后 <code>pid=1745141</code>，turn-2 <code>Mode: resume</code> <code>Status: completed</code></td>
+</tr>
+<tr>
+<td>普通 disable</td>
+<td><code>task execution stop --force</code> → <code>Progress was preserved; 0 active attempt(s) were terminated and 0 DurableJob(s) were cancelled.</code>；随后 dispatch 被拒：<code>Task execution is stopped: task-2. Run "yui task execution start task-2" before dispatching work.</code></td>
+</tr>
+<tr>
+<td>恢复</td>
+<td><code>task execution start</code> → dispatch 重新可用并 completed</td>
+</tr>
+<tr>
+<td>历史报告独立可读</td>
+<td>清理后 <code>task turn list task-2</code> 仍列 6 个 Turn，<code>task turn show task-2/turn-1</code> 仍返回 <code>completed</code> 与原始 Result</td>
+</tr>
+<tr>
+<td>初始化/注册失败</td>
+<td>见所有权层夹具（候选 <code>checkRegistration</code> 拒绝后 A 继续服务）</td>
+</tr>
+<tr>
+<td>新短工具桥接进旧 Session</td>
+<td>见所有权层夹具（可见且可调用，且不轮换该 Session 的 Endpoint generation）</td>
+</tr>
+<tr>
+<td>stop 非静止</td>
+<td>见 F2 真实 drain 输出</td>
+</tr>
+</tbody>
+</table>
+<p>夹具自身的一处缺陷（如实记录）：初版假 App Server 的 turn id 在进程内自增， Host 重启后重发 <code>fake-turn-1</code>，与已完成 Turn 的持久记录冲突，表现为 <code>delivery-unknown</code>。改为按 pid 唯一后同一 fence 循环 completed——<strong>这是夹具缺陷， 不是产品缺陷</strong>，未作为发现上报。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--覆盖层级据实标注">覆盖层级（据实标注）</h2>
+<table>
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<thead>
+<tr>
+<th>层级</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>真实生产入口、真实多进程</td>
+<td>F1 A/B 双发布真实 Host；真实 Task 的 new + resume Turn；fence/恢复；doctor 全绿；drain 真实输出；<strong>P1 生产信号路径 4/4</strong>（真实 Controller 派发 + 真实 tmux pane + 真实 <code>internal agent-host</code> + 真实 SIGTERM，覆盖握手完成前停止、迟到成功、迟到失败、已附着客户端拒绝退出）</td>
+</tr>
+<tr>
+<td>真实多进程差分（同夹具跨构建）</td>
+<td>被拒绝构建 <code>ed3968f</code> 生产路径 1/4（<code>control.close()</code> 不可达）；基线 <code>013ffdc</code> 生产路径进程存活实测；<code>close()</code> 有界性 201ms vs 仍挂起</td>
+</tr>
+<tr>
+<td>真实单元（真实 <code>InstanceHost</code>/<code>CapabilityRegistry</code>，非 fake）</td>
+<td>短调用 A/B 重叠、候选注册失败、短工具桥接、disable 与撤权、清理后历史可读（<code>test/t11-boundaries.test.mjs</code> 5/5）；P1 所有权层最小复现（<code>test/t11-p1-repro.mjs</code>）</td>
+</tr>
+<tr>
+<td><strong>未覆盖</strong></td>
+<td>真实 Provider 推理与付费模型；真实全局 Operator 认证会话——因此 <code>task grant revoke</code> 的<strong>CLI 层</strong>撤权未验证，撤权仅在上述真实单元层覆盖；生产或共享 Controller/资源；<code>session enter</code> 交互式 PTY 全链路；<strong>真实 Codex CLI 在握手中途收到 SIGTERM 的时序</strong>（本轮用可阻塞假客户端精确制造该窗口，真实 CLI 行为可能不同）；<strong>Host 进程在客户端不退出时的最终退出</strong>（基线同样不退出，本轮未修）</td>
+</tr>
+</tbody>
+</table>
+<p>未覆盖项一律不写成完成。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--检查结果">检查结果</h2>
+<p><code>npm run build</code>、<code>npm run lint</code> 通过；<code>npm test</code> 核心 <code>82/82</code> 通过（4.437 秒）。 T11 专项夹具合计：F1 发布层 7 + F1 真实进程 4 + F2 5 + F2 真实 drain 1 + F3 差分 1 + 所有权/边界 5 + 真实 Task 1 + <strong>P1 生产信号 4（连续两次 4/4）+ P1 所有权复现 1 + <code>close</code> 有界性差分 1 + 基线差分 1（另加”跑错树”反向对照 1，期望失败并退出 4）</strong> = <strong>31 项按预期通过 + 1 项按预期失败</strong>。这些夹具是临时脚手架，交付前移除， 未扩大永久回归矩阵；本文件保留可审计的精确命令、真实结果与覆盖层级。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--存储">存储</h2>
+<p>不新增迁移，存储保持 version 11。迁移 6 回填的 <code>generation = '1'</code> 属于已消亡的进程记录； 重写它会谎称旧记录来自当前代码。缺失旧实现的恢复请求由运行期明确拒绝。 未改动已发布迁移 1–11，未占用 10 或声称 12。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--剩余风险">剩余风险</h2>
+<ul>
+<li>开发检出的 <code>checkout-</code> generation 由 4 个模块字节派生；发布路径覆盖整包， 但检出路径仍是有限清单——检出不是可审计的交付形态，发布路径才是契约边界。</li>
+<li><code>ENDPOINT_DRAIN_TIMEOUT_MS</code> 到期后有界的是<strong>函数返回</strong>：有界 stop 与有界最终清理都会 返回，<code>control.close()</code> 可达，且如实报告”可能仍在使用”的引用与在飞握手。 <strong>它不保证静止，也不保证 Host 进程退出</strong>——客户端持有继承的 stdio 管道时进程仍存活， 这在基线 <code>013ffdc</code> 上同样如此（实测在上）。下游若需要真实静止必须读该报告， 不能假定 stop 或 cleanup 返回即静止；若需要进程一定消失，需要在此之外另行处理， 本轮未修、也未声称修。</li>
+<li>仍被持有的实现按设计保持 detached 且未 dispose，其客户端资源状态为 unknown： 这是有意的诚实上报，不是泄漏被掩盖，也不是通过假 release 或强杀共享 Provider 消除。</li>
+<li><code>detectRunningRelease</code> 只读取并结构校验 manifest；“磁盘字节仍与 manifest 一致”依赖 install 期的 <code>verifyReleaseIntegrity</code>，加载期这次读取不重新验证字节。</li>
+<li>未验证真实 Provider 的退出时序，真实 CLI 的 SIGTERM 行为（尤其握手中途）可能与夹具不同。</li>
+</ul>
+<h2 id="doc-implementation-designs-T11-evidence-md--消费者注记">消费者注记</h2>
+<p><code>AgentEndpointFactory</code> 为导出类型；Agent Host 进程内所有权入口是 <code>createAgentEndpointOwner</code>。 <code>generation</code> 不再是稳定字面量 <code>"1"</code>：发布形态下等于发布包摘要前 32 位， 检出形态下带 <code>checkout-</code> 前缀。任何依赖它为 <code>"1"</code> 的假设都不再成立。</p>
+<p><code>AgentEndpointDrain</code> 新增 <code>opening</code>（在飞握手数），且 <code>quiescent</code> 要求 <code>references === 0 &amp;&amp; opening === 0</code>：读取 <code>quiescent</code> 的消费者会正确地把 “停在握手中途”视为非静止。<code>AgentEndpointOwner.close(timeoutMs = 0)</code> 现在有界并返回 <code>readonly AgentEndpointDrain[]</code>；默认值 <code>0</code> 表示不等待，调用方必须自己选择截止时间， 不存在”无限等待”的默认。</p>
+<p>不包含 push、PR、merge、tag、release、archive、全局安装更新或共享服务重启。 未继承 task16/19 授权，未自行签发 grant，未启动其他 Task，未修改共享 Home/DB/全局安装/认证/Controller/Provider 服务，未强杀共享进程。 不声称受信任的本地任意用户代码获得 OS 级隔离。最终候选继续交由 Leader 独立复核。</p>
+<h2 id="doc-implementation-designs-T11-evidence-md--integration-1-core-smoke-sigabrt-诊断turn-13">integration-1 core-smoke SIGABRT 诊断（turn-13）</h2>
+<p>integration-1/job-1 在 <code>933edd9f9949a0b7b5553d31ab405b57c6909e2d</code> 上 <code>make install-local</code> 与 <code>npm run lint</code> 通过，<code>env -u YUI_HOME npm test</code> 失败：核心子进程 <code>test/core/core-smoke.test.js</code> 触发 Node 24.20.0 原生 <code>SIGABRT</code> —— <code>node::RemoveEnvironmentCleanupHook(env != nullptr)</code> （<code>../src/api/hooks.cc:142</code>），栈经 <code>better_sqlite3.node</code> 的 <code>Statement::~Statement()</code>。 汇总 36 项而非 82（35 通过 + 1 个崩溃的子文件），因此不能算通过。原始日志： <code>artifacts/jobs/task-27/job-1/logs/003-check-3.log</code>。</p>
+<p><strong>结论：与 T11 源码无关，根因是 better-sqlite3 原生附加件的构建来源（prebuilt 对 node-gyp 源码编译）， 而非 commit。</strong> 逐项证据如下。</p>
+<h3 id="doc-implementation-designs-T11-evidence-md--同一-commit字节相同的源码树两处工作区结果不同">1. 同一 commit、字节相同的源码树，两处工作区结果不同</h3>
+<ul>
+<li>Worker 工作区与 integration-1 都在 <code>933edd9</code>，两树受版本控制的源码 <code>git diff --stat</code> 为空； <code>better-sqlite3</code> 的 <code>src/</code> 源码树（排除 <code>build/</code>）在两处 sha256 相同 （<code>5e671220…</code>）。二者 better-sqlite3 均为 12.11.1。</li>
+<li>差异只在编译产物：Worker 的 <code>better_sqlite3.node</code> = <code>45cb92a1…</code>（mtime 6 月 16 日、无 <code>build/</code> 中间产物 → 下载的 <strong>prebuilt</strong>）；integration-1 的 = <code>2e5e2fc1…</code>（<code>build/</code> 内有 <code>Makefile</code>、<code>config.gypi</code>、 <code>obj.target</code>、<code>sqlite3.a</code> → 本地 <strong>node-gyp 源码编译</strong>）。</li>
+<li>关键判别：<code>nm -D --undefined-only</code> 显示 prebuilt <strong>只</strong>引用 <code>AddEnvironmentCleanupHook</code>； 源码编译版<strong>额外</strong>引用 <code>RemoveEnvironmentCleanupHook</code> —— 正是崩溃的那个符号。 该符号不来自 better-sqlite3 源码（源码仅在 <code>better_sqlite3.cpp:61</code> 调用 <code>Add</code>）， 而来自编译时所用的 Node 头文件 <code>node_object_wrap.h:128,132</code>：<code>ObjectWrap</code> 的 析构路径调用 <code>RemoveEnvironmentCleanupHook</code>，<code>Statement : public node::ObjectWrap</code> 因此继承。 换言之，是否发出该调用由<strong>编译时的头文件/内联</strong>决定，与被编译的 better-sqlite3 版本号无关。</li>
+</ul>
+<h3 id="doc-implementation-designs-T11-evidence-md--对照矩阵commit-构建来源每格-6-次">2. 2×2 对照矩阵（commit × 构建来源，每格 6 次）</h3>
+<p>在可丢弃 scratch 内对两个 commit 各注入两种来源的二进制，<code>cd</code> 进对应树运行 <code>node --test test/core/core-smoke.test.js</code>，仅统计栈帧指向本树二进制的 SIGABRT：</p>
+<table>
+<thead>
+<tr>
+<th>树</th>
+<th>二进制</th>
+<th>Remove-hook</th>
+<th>SIGABRT</th>
+<th>clean-pass</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>933edd9</code>（含 T11）</td>
+<td>prebuilt <code>45cb92a1</code></td>
+<td>无</td>
+<td>0/6</td>
+<td>6/6</td>
+</tr>
+<tr>
+<td><code>933edd9</code>（含 T11）</td>
+<td>源码编译 <code>2e5e2fc1</code></td>
+<td>有</td>
+<td>3/6</td>
+<td>2/6</td>
+</tr>
+<tr>
+<td><code>013ffdc</code>（基线，无 T11）</td>
+<td>prebuilt <code>45cb92a1</code></td>
+<td>无</td>
+<td>0/6</td>
+<td>6/6</td>
+</tr>
+<tr>
+<td><code>013ffdc</code>（基线，无 T11）</td>
+<td>源码编译 <code>2e5e2fc1</code></td>
+<td>有</td>
+<td>2/6</td>
+<td>1/6</td>
+</tr>
+</tbody>
+</table>
+<p>崩溃只随<strong>二进制来源</strong>出现，不随 commit 出现：<strong>基线（无任何 T11 代码）配源码编译版同样稳定复现 完全一致的断言崩溃</strong>（<code>Statement::~Statement</code> → <code>RemoveEnvironmentCleanupHook(env != nullptr)</code>）。 这直接证明 T11 未引入该崩溃。崩溃为进程退出期偶发（非每次），故用重复试次而非单次表述； prebuilt 侧另做 8/8 稳定确认（0 次崩溃）。</p>
+<h3 id="doc-implementation-designs-T11-evidence-md--为何-integration-1-编译了源码而干净-npm-ci-取到-prebuilt">3. 为何 integration-1 编译了源码，而干净 <code>npm ci</code> 取到 prebuilt</h3>
+<ul>
+<li>better-sqlite3 的安装脚本是 <code>prebuild-install || node-gyp rebuild --release</code>：先尝试下载 prebuilt， 失败才回退到源码编译。<code>prebuild-install</code> 从 <strong>GitHub Releases</strong> （<code>https://github.com/WiseLibs/better-sqlite3/releases/download/v12.11.1/</code>）取包， 与 npm registry（<code>https://registry.npmjs.org/</code>）<strong>是不同主机</strong>。</li>
+<li>复现（scratch，同 Node v24.20.0、同 12.11.1）：
+<ul>
+<li>干净 <code>npm ci</code>（registry 与 GitHub 均可达）→ prebuilt <code>45cb92a1…</code>（无 Remove hook），约 2–4 秒；</li>
+<li>空 HOME（空 prebuild 缓存）但在线 <code>npm ci</code> → 仍是 prebuilt <code>45cb92a1…</code>，约 4 秒（空缓存不是原因）；</li>
+<li>仅令 <code>prebuild-install</code> 的 GitHub 下载失败（registry 仍可达）→ 触发 <code>|| node-gyp rebuild</code>， 产出源码编译 <code>2e5e2fc1…</code>（有 Remove hook），耗时约 1 分钟。</li>
+</ul></li>
+<li>原 job 的 <code>check-1</code> 安装耗时 <strong>113s（“in 2m”）</strong>，正是源码编译签名（干净 prebuilt 仅数秒）。 由此判定 integration-1 的隔离环境<strong>可达 registry 但不可达 GitHub Releases 下载</strong>， 因而回退到 node-gyp 源码编译，得到带 <code>RemoveEnvironmentCleanupHook</code> 的二进制。</li>
+<li>Leader 在 integration-1 内跑的 <code>npm rebuild better-sqlite3 --build-from-source --offline</code> “rebuilt successfully”但仍崩溃，且 npm 提示 <code>Unknown cli config "--build-from-source"</code>： 已复现——<code>--build-from-source</code> 是 node-gyp/prebuild-install 的参数、<strong>不是 npm 的参数</strong>， 被 npm 忽略（故告警），该次 rebuild 只是原地再次源码编译，产出同样带 Remove hook 的二进制， 自然仍崩溃。它不是“环境已修复”，也不改变根因判断。</li>
+</ul>
+<h3 id="doc-implementation-designs-T11-evidence-md--t11-与该安装构建路径无因果">4. T11 与该安装/构建路径无因果</h3>
+<p><code>git diff --name-only 013ffdc 933edd9</code> 未触及 <code>package.json</code>、<code>package-lock.json</code>、<code>.npmrc</code>、 任何 <code>binding.gyp</code>/<code>Makefile</code>/install 脚本或 better-sqlite3；T11 改动的 6 个源文件中 <code>sqlite</code>/<code>better-sqlite3</code> 引用数均为 0。两个二进制的 Node ABI 目标相同（<code>node_register_module_v137</code>）， 故不是 ABI 不匹配，纯粹是 prebuilt 与源码编译的差异。</p>
+<h3 id="doc-implementation-designs-T11-evidence-md--干净安装交付验证933edd9全新-clone无拷贝-node_modules">5. 干净安装交付验证（<code>933edd9</code>，全新 clone、无拷贝 node_modules）</h3>
+<p>按 integration 步骤序在 scratch 全新树上执行，<code>node_modules</code> 事前不存在：</p>
+<ul>
+<li><code>check-1 make install-local</code> → exit 0；安装得到 prebuilt <code>45cb92a1…</code>（与 Worker 工作区二进制<strong>字节相同</strong>）；</li>
+<li><code>check-2 npm run lint</code> → exit 0；</li>
+<li><code>check-3 env -u YUI_HOME npm test</code> → <strong>tests 82 / pass 82 / fail 0</strong>，exit 0，无任何断言； 其中 <code>core-smoke.test.js</code> 自身 <strong>47/47</strong> 通过；prebuilt 上 core-smoke 重复 8 次 0 崩溃。</li>
+</ul>
+<p>证据日志见工作区 <code>evidence/turn-13-core-smoke-diagnosis/</code>（本 Turn 自建 scratch 的真实输出）。 该崩溃是隔离环境的构建来源问题，<strong>最小必要修正在 Integration 环境的网络/预编译获取一侧</strong> （使 <code>prebuild-install</code> 能取到 prebuilt，或显式允许其 GitHub 下载），不需要改本 Task 源码， 也不应新增永久异常矩阵或无依据改依赖版本。终态 job 回收 TMPDIR 造成的 ENOENT 已由 Leader 排除、 本诊断亦未据此立论。</p>
+<p><strong>身份与边界</strong>：本诊断由 Claude 在本 Task 的 endpoint-owner Turn（turn-9/11/13）内执行； 所有复现均在本 Task 隔离资源/临时本地 scratch 中，只读 integration-1 工作区与本 Task 日志， 未改 Integration/main/共享 Home/全局安装，未用真实 Provider/付费模型，未发布。 诊断结束仅清理本轮自建 scratch，保留 Leader 的 <code>/tmp/yui-task27-core-diagnostic-yY1poE</code>。</p>
 </article><article id="doc-implementation-designs-T11-hot-reload-md"><div class="source"><a href="implementation/designs/T11-hot-reload.md">Markdown 源文件</a> · <a href="#top">回到总览</a></div><h1 id="doc-implementation-designs-T11-hot-reload-md--t11-技术方案按使用边界热插拔">T11 技术方案｜按使用边界热插拔</h1>
 <p>硬依赖：T04、T09。</p>
 <p>任务定义：<a href="#doc-implementation-tasks-T11-hot-reload-md">交付范围与证据</a>。</p>
@@ -3125,7 +3876,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>call 在开始时 acquire Provider，到结果与必要回执保存后 release。新实现可以在旧调用进行时注册，后续独立调用使用新实现。当前调用即使发生 unknown，也不能为了 drain 直接再执行新实现。</p>
 <p>当操作结果未知且后续查询需要原实现时，保留必要产物；已有结果完全固定后，不因为历史 operationRef 存在而永久保留代码。</p>
 <h2 id="doc-implementation-designs-T11-hot-reload-md--长期-session">4. 长期 Session</h2>
-<p>Session 取得 Endpoint 和实际持有的状态型依赖。新 Turn 在同一 Session 默认仍使用这组实现。新 Session 使用当前 Provider，配置与来源分别记录。</p>
+<p>Session 取得 Endpoint 和实际持有的状态型依赖。新 AgentRun 在同一 Session 默认仍使用这组实现。新 Session 使用当前 Provider，配置与来源分别记录。</p>
 <p>不要求通用 live handover。负责人可以等待、显式取消或在适当时机新建 Session。Session 结束后旧实例引用归零即可清理；空闲但仍明确续用的 Session 可以继续持有。</p>
 <p>只固定有状态依赖，不把能力目录、所有 Project 和历史结果连成永久锁。动态新增短工具依然通过稳定桥在旧 Session 后续调用可见。</p>
 <h2 id="doc-implementation-designs-T11-hot-reload-md--停用与撤权">5. 停用与撤权</h2>
@@ -3136,7 +3887,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>清理后历史页面仍能读取报告和原输出。再次要求按旧实现执行时可以返回能力需要安装，而不是把历史结果标成损坏。</p>
 <h2 id="doc-implementation-designs-T11-hot-reload-md--实施验证">7. 实施验证</h2>
 <p>用可阻塞的工具实例 A 启动一次调用，再启用 B。证明 A 返回原结果、B 处理新调用，A 完全释放后才 dispose。模拟 B 注册失败，A 仍可用。</p>
-<p>再用长期 Session A 启动及结束一个 Turn，启用 B 后在同一 Session 发下一 Turn，确认仍由 A 处理；新建 Session 使用 B。测试在旧 Session 内通过稳定桥调用一个新短工具，证明两种更新边界相互独立。</p>
+<p>再用长期 Session A 启动及结束一个 AgentRun，启用 B 后在同一 Session 发下一 AgentRun，确认仍由 A 处理；新建 Session 使用 B。测试在旧 Session 内通过稳定桥调用一个新短工具，证明两种更新边界相互独立。</p>
 <p>最后停止旧会话并清理代码，验证历史 Candidate 可读。撤回 grant 后旧句柄不能继续发新的受控副作用。</p>
 <h2 id="doc-implementation-designs-T11-hot-reload-md--验收">8. 验收</h2>
 <p>S14／S35 验证 Session 边界；S25 验证短调用；S42 验证新能力可见；S37 验证结果与代码保留独立；S45 验证授权时效。</p>
@@ -3353,7 +4104,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 </tr>
 <tr>
 <td>S40</td>
-<td>当前 planning Turn 发起激活</td>
+<td>当前 planning AgentRun 发起激活</td>
 <td>T08</td>
 </tr>
 <tr>
@@ -3399,9 +4150,9 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p><strong>预期：</strong> 新会话能读取已经确认的规划信息；不需要恢复旧终端或完整工具日志。</p>
 <p>实施关联：T08。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s03role-配置与实际执行分开">S03｜Role 配置与实际执行分开</h2>
-<p><strong>前提：</strong> 一个 Worker 的 Turn 正使用 Agent A。</p>
+<p><strong>前提：</strong> 一个 Worker 的 AgentRun 正使用 Agent A。</p>
 <p><strong>操作：</strong> Leader 将 Role 当前配置改为 Agent B。</p>
-<p><strong>预期：</strong> 当前 Turn 仍保留 A 的实际配置和结果来源；后续明确执行可以选择 B，WorkItem 身份不变。</p>
+<p><strong>预期：</strong> 当前 AgentRun 仍保留 A 的实际配置和结果来源；后续明确执行可以选择 B，WorkItem 身份不变。</p>
 <p>实施关联：T03。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s04直接完成无-git-任务">S04｜直接完成无 Git 任务</h2>
 <p><strong>前提：</strong> Task 只需产出一份文本说明，没有 Project 或 Git 资源。</p>
@@ -3421,12 +4172,12 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <h2 id="doc-reference-acceptance-scenarios-md--s07review-原始结果单份保存">S07｜Review 原始结果单份保存</h2>
 <p><strong>前提：</strong> Reviewer 针对一个固定 Candidate 运行。</p>
 <p><strong>操作：</strong> Reviewer 返回包含建议、疑问或混合意见的文本。</p>
-<p><strong>预期：</strong> 原文只保存在 Reviewer Turn；Review 引用它，Core 不自动解析 verdict 或创建修复 WorkItem。</p>
+<p><strong>预期：</strong> 原文只保存在 Reviewer AgentRun；Review 引用它，Core 不自动解析 verdict 或创建修复 WorkItem。</p>
 <p>实施关联：T03。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s08责任不因尝试失败消失">S08｜责任不因尝试失败消失</h2>
 <p><strong>前提：</strong> WorkItem 仍为 open。</p>
-<p><strong>操作：</strong> 其 Worker Turn 因 CLI 错误结束。</p>
-<p><strong>预期：</strong> 错误和已有结果进入原 Turn，通知 Leader；WorkItem 仍可继续分配或由 Leader处理。</p>
+<p><strong>操作：</strong> 其 Worker AgentRun 因 CLI 错误结束。</p>
+<p><strong>预期：</strong> 错误和已有结果进入原 AgentRun，通知 Leader；WorkItem 仍可继续分配或由 Leader处理。</p>
 <p>实施关联：T03。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s09效果未知不自动重放">S09｜效果未知不自动重放</h2>
 <p><strong>前提：</strong> 外部服务接受了请求，但 Yui 未收到最终回执。</p>
@@ -3440,7 +4191,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>实施关联：T01、T03。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s11原生身份按证据保存">S11｜原生身份按证据保存</h2>
 <p><strong>前提：</strong> 一个 Endpoint 只提供本地关联或传输写入，未返回 native Turn ID。</p>
-<p><strong>操作：</strong> Yui 建立 Turn 并显示执行状态。</p>
+<p><strong>操作：</strong> Yui 建立 AgentRun 并显示执行状态。</p>
 <p><strong>预期：</strong> 本地 attempt 与 native ID 区分，缺失原生字段保持缺失，不伪造 native acceptance。</p>
 <p>实施关联：T04、T07。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s12长请求正常等待">S12｜长请求正常等待</h2>
@@ -3455,8 +4206,8 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>实施关联：T05。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s14既有-session-保持实现">S14｜既有 Session 保持实现</h2>
 <p><strong>前提：</strong> Session 已由实现 A 打开。</p>
-<p><strong>操作：</strong> 发布实现 B，并在该 Session 开始下一 Turn。</p>
-<p><strong>预期：</strong> 默认仍使用 A 和必要状态依赖，除非显式按可验证方式重建；不在每 Turn 强制升级。</p>
+<p><strong>操作：</strong> 发布实现 B，并在该 Session 开始下一 AgentRun。</p>
+<p><strong>预期：</strong> 默认仍使用 A 和必要状态依赖，除非显式按可验证方式重建；不在每 AgentRun 强制升级。</p>
 <p>实施关联：T04、T11。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s15context-核心一致读取">S15｜Context 核心一致读取</h2>
 <p><strong>前提：</strong> Task 在持续写入消息和结果。</p>
@@ -3489,9 +4240,9 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p><strong>预期：</strong> 保留普通事实和待处理输入；不自动创建备用 Operator、恢复 Task、专门 watchdog 或救援 Agent。</p>
 <p>实施关联：T01、T03、T06。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s21迟到和重复结果关联">S21｜迟到和重复结果关联</h2>
-<p><strong>前提：</strong> 旧 Turn 已有终态，后继 Turn 正在执行。</p>
+<p><strong>前提：</strong> 旧 AgentRun 已有终态，后继 AgentRun 正在执行。</p>
 <p><strong>操作：</strong> 旧执行终态重放或延迟到达。</p>
-<p><strong>预期：</strong> 只关联原 Turn，重复幂等；不完成或失败后继 Turn。</p>
+<p><strong>预期：</strong> 只关联原 AgentRun，重复幂等；不完成或失败后继 AgentRun。</p>
 <p>实施关联：T04。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s22多路尝试关系">S22｜多路尝试关系</h2>
 <p><strong>前提：</strong> 同一 Assignment 有两个副本，其中一个需要重试。</p>
@@ -3566,7 +4317,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <h2 id="doc-reference-acceptance-scenarios-md--s36展示当前配置与实际来源">S36｜展示当前配置与实际来源</h2>
 <p><strong>前提：</strong> Role 当前配置已变化，但旧执行仍存在。</p>
 <p><strong>操作：</strong> CLI 和 Web 显示当前任务。</p>
-<p><strong>预期：</strong> 清楚呈现当前配置与各 Turn 实际使用的配置，不把历史结果标签重写。</p>
+<p><strong>预期：</strong> 清楚呈现当前配置与各 AgentRun 实际使用的配置，不把历史结果标签重写。</p>
 <p>实施关联：T03、T06。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s37历史成果独立读取">S37｜历史成果独立读取</h2>
 <p><strong>前提：</strong> 旧插件已无使用者，其可执行代码按保留策略释放。</p>
@@ -3583,15 +4334,15 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p><strong>操作：</strong> 逐项切换新调用或创建新 Session。</p>
 <p><strong>预期：</strong> 一次工作只落一条路径，共用唯一 Store／Controller；效果未知不自动走另一实现。</p>
 <p>实施关联：T00、T02、T04。验证状态：planned。</p>
-<h2 id="doc-reference-acceptance-scenarios-md--s40当前-planning-turn-发起激活">S40｜当前 planning Turn 发起激活</h2>
+<h2 id="doc-reference-acceptance-scenarios-md--s40当前-planning-agentrun-发起激活">S40｜当前 planning AgentRun 发起激活</h2>
 <p><strong>前提：</strong> Leader 正在 Draft 对话中。</p>
-<p><strong>操作：</strong> 该 Turn 调用 Activation，随后结束；或用户在等待中取消。</p>
+<p><strong>操作：</strong> 该 AgentRun 调用 Activation，随后结束；或用户在等待中取消。</p>
 <p><strong>预期：</strong> 请求立即返回引用而不自等待；结束后按当前有效意图采用；已取消请求不被继续执行。</p>
 <p>实施关联：T08。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s41管理交接保留工作">S41｜管理交接保留工作</h2>
 <p><strong>前提：</strong> Operator 为 Task 更换 Leader 承载，旧 Worker 仍在工作。</p>
 <p><strong>操作：</strong> 原 Worker 返回结果，旧 Leader 尝试新管理操作。</p>
-<p><strong>预期：</strong> 结果归原 Turn 并交当前 Leader；旧管理入口不继续越权；Worker 分配不自动重建。</p>
+<p><strong>预期：</strong> 结果归原 AgentRun 并交当前 Leader；旧管理入口不继续越权；Worker 分配不自动重建。</p>
 <p>实施关联：T03、T04。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s42旧-session-使用新增工具">S42｜旧 Session 使用新增工具</h2>
 <p><strong>前提：</strong> Agent Session 已通过稳定 Yui 桥运行。</p>
@@ -3601,7 +4352,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <h2 id="doc-reference-acceptance-scenarios-md--s43结束与重开不重播历史">S43｜结束与重开不重播历史</h2>
 <p><strong>前提：</strong> Task 已结束，历史里有未决或已接受输入。</p>
 <p><strong>操作：</strong> 迟到结果到达，随后用户显式重开。</p>
-<p><strong>预期：</strong> 迟到结果只保存到原 Turn，不触发 Task 归档或重开；completed／cancelled 显式重开时不自动重新发送历史输入，负责人明确选择后续工作。另分别从 completed、cancelled 请求 archived：没有独立归档授权、仍有未处置操作或不安全工作区时拒绝且不删数据；满足前置后成为 archived，保留先前结束事实与结果来源。清理可丢弃执行资源后历史仍能读取；archived 拒绝重开。完成／取消本身不自动归档。</p>
+<p><strong>预期：</strong> 迟到结果只保存到原 AgentRun，不触发 Task 归档或重开；completed／cancelled 显式重开时不自动重新发送历史输入，负责人明确选择后续工作。另分别从 completed、cancelled 请求 archived：没有独立归档授权、仍有未处置操作或不安全工作区时拒绝且不删数据；满足前置后成为 archived，保留先前结束事实与结果来源。清理可丢弃执行资源后历史仍能读取；archived 拒绝重开。完成／取消本身不自动归档。</p>
 <p>实施关联：T03、T04。验证状态：planned。</p>
 <h2 id="doc-reference-acceptance-scenarios-md--s44存储采用有明确路径">S44｜存储采用有明确路径</h2>
 <p><strong>前提：</strong> 隔离 Home 使用当前受支持存储版本。</p>
@@ -3693,15 +4444,15 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 </tr>
 <tr>
 <td>Assignment</td>
-<td>一次实际委派的输入快照，可保存在 Turn 中</td>
+<td>一次实际委派的输入快照，可保存在 AgentRun 中</td>
 </tr>
 <tr>
-<td>Turn</td>
+<td>AgentRun</td>
 <td>一次 Agent 执行的输入、实际配置、结果及必要身份</td>
 </tr>
 <tr>
 <td>Session</td>
-<td>可跨多个 Turn 使用的原生会话与有效配置</td>
+<td>可跨多个 AgentRun 使用的原生会话与有效配置</td>
 </tr>
 <tr>
 <td>Host</td>
@@ -3713,7 +4464,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 </tr>
 <tr>
 <td>Review</td>
-<td>对 Candidate 的 Reviewer Turn 引用；结果原文不重复保存</td>
+<td>对 Candidate 的 Reviewer AgentRun 引用；结果原文不重复保存</td>
 </tr>
 <tr>
 <td>Context</td>
@@ -3793,7 +4544,7 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>能够由 Leader 根据现有事实判断的事项，优先提供信息和操作。需要跨会话接手、需要保护资源或需要确认外部效果的事项，才进入持久化和机械检查。</p>
 <p>不要把“有一个分支可以自动处理”直接等同于“必须建立自动恢复策略”。一个清楚的错误、结果引用和可调用工具往往已足够。</p>
 <h2 id="doc-reference-implementation-principles-md--少量概念具有明确责任">2. 少量概念具有明确责任</h2>
-<p>普通模块、插件包、数据库记录和运行实例不是一一对应关系。一个 Plugin 可以包含产品和协议代码；一个 Turn 可以保存 Assignment 快照；一份操作记录可以表达整个受控动作及部分回执。</p>
+<p>普通模块、插件包、数据库记录和运行实例不是一一对应关系。一个 Plugin 可以包含产品和协议代码；一个 AgentRun 可以保存 Assignment 快照；一份操作记录可以表达整个受控动作及部分回执。</p>
 <p>只有独立复用、替换或生命周期确实需要时才拆分。不要为每个 parser、每个 Hook 或每个领域名增加一级 Registry。</p>
 <h2 id="doc-reference-implementation-principles-md--查询不产生业务事实">3. 查询不产生业务事实</h2>
 <p>Context、目录、UI 状态和资源观察可以重建。读取不表示已经落实要求，也不表示消息已接受。运行观察带时间，不伪装成任务当前真相。</p>
@@ -3825,5 +4576,5 @@ yui task artifact show &lt;task&gt; &lt;artifact-id&gt;</code></pre>
 <p>可以使用当前 Agent 的内部辅助能力，但需要独立长期责任的工作由 Leader决定是否建立 WorkItem。记录能帮助后续接手的结果，不把详细聊天当成唯一交付物。</p>
 <h2 id="doc-reference-role-guidance-md--reviewer">Reviewer</h2>
 <p>你针对给定 Candidate 提供独立判断。阅读指定版本及必要背景，说明发现、依据、限制和建议。输出可以是自然语言，不要求生成机器可解析 verdict。</p>
-<p>你不直接创建修复工作流，也不替 Leader 接受或拒绝整个 Task。结果由原 Reviewer Turn 保存，Leader 决定怎样处理。</p>
+<p>你不直接创建修复工作流，也不替 Leader 接受或拒绝整个 Task。结果由原 Reviewer AgentRun 保存，Leader 决定怎样处理。</p>
 </article></main></body></html>

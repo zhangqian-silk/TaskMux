@@ -1,5 +1,5 @@
-export const MAX_TURN_RESULT_OUTPUT_BYTES = 512 * 1024;
-export const MAX_TURN_FAILURE_DIAGNOSTIC_BYTES = 16 * 1024;
+export const MAX_RUN_RESULT_OUTPUT_BYTES = 512 * 1024;
+export const MAX_RUN_FAILURE_DIAGNOSTIC_BYTES = 16 * 1024;
 
 export type TransportedAgentResult =
   | Readonly<{ status: "completed"; output: string }>
@@ -12,7 +12,7 @@ export type TransportedAgentResult =
 /**
  * Validate only the transport envelope of an Agent result. The accepted text
  * remains byte-for-byte unchanged; missing or untransportable text becomes a
- * Core-owned failed outcome so the exact Turn can still terminalize.
+ * Core-owned failed outcome so the exact AgentRun can still terminalize.
  */
 export function transportAgentResult(value: unknown): TransportedAgentResult {
   if (typeof value !== "string") {
@@ -37,10 +37,10 @@ export function transportAgentResult(value: unknown): TransportedAgentResult {
     };
   }
   const bytes = Buffer.byteLength(value, "utf8");
-  if (bytes > MAX_TURN_RESULT_OUTPUT_BYTES) {
+  if (bytes > MAX_RUN_RESULT_OUTPUT_BYTES) {
     return {
       status: "failed",
-      diagnostic: `Provider Agent result is ${bytes} bytes and exceeds the ${MAX_TURN_RESULT_OUTPUT_BYTES}-byte durable result limit; the result was not stored.`,
+      diagnostic: `Provider Agent result is ${bytes} bytes and exceeds the ${MAX_RUN_RESULT_OUTPUT_BYTES}-byte durable result limit; the result was not stored.`,
       failureReason: "runtime-failed"
     };
   }
@@ -52,22 +52,22 @@ export function transportAgentResult(value: unknown): TransportedAgentResult {
  * This is intentionally separate from Agent result transport: successful
  * Agent text is either retained exactly or rejected as a whole, never
  * truncated. Provider/Core diagnostics may be clipped because they are only
- * operational context for a failed Turn.
+ * operational context for a failed AgentRun.
  */
-export function boundedTurnFailureDiagnostic(
+export function boundedRunFailureDiagnostic(
   value: unknown,
-  fallback = "Provider reported a failed Agent Turn."
+  fallback = "Provider reported a failed Agent AgentRun."
 ): string {
   const candidate = typeof value === "string" && value.trim().length > 0
     ? value
     : fallback;
   const safe = candidate.replaceAll("\0", "\uFFFD");
-  if (Buffer.byteLength(safe, "utf8") <= MAX_TURN_FAILURE_DIAGNOSTIC_BYTES) {
+  if (Buffer.byteLength(safe, "utf8") <= MAX_RUN_FAILURE_DIAGNOSTIC_BYTES) {
     return safe;
   }
   const prefix = Buffer
     .from(safe, "utf8")
-    .subarray(0, MAX_TURN_FAILURE_DIAGNOSTIC_BYTES)
+    .subarray(0, MAX_RUN_FAILURE_DIAGNOSTIC_BYTES)
     .toString("utf8");
   return prefix.endsWith("\uFFFD") ? prefix.slice(0, -1) : prefix;
 }

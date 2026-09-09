@@ -23,13 +23,13 @@ import {
 import { defaultTableWidth, renderTable } from "../output/table.js";
 import { formatTimestamp } from "../output/timePresentation.js";
 import { type Role } from "../role/role.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import { enqueueWork } from "../coordination/workMailboxQueue.js";
 import type { MailboxTarget } from "../coordination/workMailbox.js";
 import {
-  isRoleTurnStalled,
-  TURN_RECOVERED_EVENT
-} from "../scheduler/roleTurnStall.js";
+  isRoleRunStalled,
+  RUN_RECOVERED_EVENT
+} from "../scheduler/roleRunStall.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import type { Task } from "../task/task.js";
 import {
@@ -129,7 +129,7 @@ function createRequest(
       { question, choices, blockedRefs, policy },
       now
     );
-    const wasStalled = isRoleTurnStalled(tx.listEvents(task.id), origin.turn.id);
+    const wasStalled = isRoleRunStalled(tx.listEvents(task.id), origin.run.id);
     tx.saveInputRequest(task.id, created);
     enqueueWork(tx, { kind: "operator" }, "input-requested", now, [
       { type: "input", taskId: task.id, id: created.id }
@@ -138,8 +138,8 @@ function createRequest(
       dedupeKey: `operator-input:${task.id}:${created.id}`
     });
     if (wasStalled) {
-      recordTaskEvent(tx, task.id, TURN_RECOVERED_EVENT, {
-        turnId: origin.turn.id,
+      recordTaskEvent(tx, task.id, RUN_RECOVERED_EVENT, {
+        runId: origin.run.id,
         roleName: LEADER_ROLE,
         progressAt: now.toISOString(),
         kind: "input-request"
@@ -147,7 +147,7 @@ function createRequest(
     }
     recordTaskEvent(tx, task.id, "input.requested", {
       requestId: created.id,
-      requesterTurnId: created.requester.turnId,
+      requesterRunId: created.requester.runId,
       policy: created.policy.kind
     }, now);
     return created;
@@ -311,39 +311,39 @@ function requireLeaderInputOrigin(
 ): Readonly<{
   requester: InputRequester;
   role: Role;
-  turn: Turn;
+  run: AgentRun;
   sessions: TaskRoleSessionSet | null;
 }> {
   const env = environment ?? {};
   const role = requireRole(store, taskId, LEADER_ROLE);
-  const turn = store.getActiveTurn(taskId, LEADER_ROLE);
+  const run = store.getActiveRun(taskId, LEADER_ROLE);
   if (
     env.YUI_SESSION_SCOPE !== "task"
     || env.YUI_TASK_ID !== taskId
     || env.YUI_ROLE !== LEADER_ROLE
-    || turn === null
-    || env.YUI_AGENT_ID !== turn.effective.agentId
-    || turn.status !== "active"
-    || turn.workItemId !== undefined
+    || run === null
+    || env.YUI_AGENT_ID !== run.effective.agentId
+    || run.status !== "active"
+    || run.workItemId !== undefined
   ) {
-    throw usageError("Task input request requires the active Leader Turn environment.");
+    throw usageError("Task input request requires the active Leader AgentRun environment.");
   }
   const sessions = store.getTaskRoleSessionSet(taskId, LEADER_ROLE);
   const nativeSessionId = trimmed(env.YUI_NATIVE_SESSION_ID);
   if (nativeSessionId !== undefined
-    && sessions?.sessions[turn.effective.agentId]?.nativeSessionId !== nativeSessionId) {
+    && sessions?.sessions[run.effective.agentId]?.nativeSessionId !== nativeSessionId) {
     throw usageError("Task input request native session does not match the active Leader session.");
   }
   return {
     requester: {
       taskId,
       roleName: "leader",
-      agentId: turn.effective.agentId,
-      turnId: turn.id,
+      agentId: run.effective.agentId,
+      runId: run.id,
       ...(nativeSessionId === undefined ? {} : { nativeSessionId })
     },
     role,
-    turn,
+    run,
     sessions
   };
 }
@@ -421,7 +421,7 @@ function parseInputBlockedRef(value: string, taskId: string): InputBlockedRef {
   const separator = value.indexOf(":");
   const type = value.slice(0, separator);
   const id = value.slice(separator + 1).trim();
-  if ((type !== "work-item" && type !== "turn") || separator <= 0 || id.length === 0) {
+  if ((type !== "work-item" && type !== "run") || separator <= 0 || id.length === 0) {
     throw usageError("--blocks must use work-item:<id> or turn:<id>.");
   }
   return { type, taskId, id };
@@ -435,7 +435,7 @@ function validateBlockedInputOwnership(
   for (const reference of references) {
     const record = reference.type === "work-item"
       ? store.getWorkItem(taskId, reference.id)
-      : store.getTurn(taskId, reference.id);
+      : store.getRun(taskId, reference.id);
     if (record === null) throw dataError(`Blocked ${reference.type} not found: ${reference.id}.`);
   }
 }
@@ -477,7 +477,7 @@ function renderInputRequest(request: InputRequest, timeZone: string | undefined)
     `Task: ${request.taskId}`,
     `Status: ${request.status}`,
     `Question: ${request.question}`,
-    `Requested by: ${request.requester.agentId}/${request.requester.turnId}`,
+    `Requested by: ${request.requester.agentId}/${request.requester.runId}`,
     ...(request.choices.length === 0
       ? ["Answer type: text"]
       : ["Choices:", ...request.choices.map((choice) => `  ${choice.key}: ${choice.label}`)]),

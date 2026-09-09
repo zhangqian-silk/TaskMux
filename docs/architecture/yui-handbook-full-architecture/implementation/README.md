@@ -30,7 +30,7 @@ T10 的 Active Task 闭环不依赖 Draft；需要同时验证 Draft 自扩展�
 
 纯新增能力可以直接接入；能完整等价替换的实现可以一次切换；暂时不宜替换的实现允许保留两份代码。每次调用或 Session 只选择其中一份，不在动作未知时自动执行另一份。
 
-允许并存的是实现，不是两套 Task、Role、Turn 或操作处置。使用一个 Controller 和一个权威 Store。Schema 更新走当前产品支持的显式升级契约，保留可验证备份，不假定任意旧 binary 能读新存储。
+允许并存的是实现，不是两套 Task、Role、AgentRun 或操作处置。使用一个 Controller 和一个权威 Store。Schema 更新走当前产品支持的显式升级契约，保留可验证备份，不假定任意旧 binary 能读新存储。
 
 在 Yui 仓库中，阶段并存还须满足 [T00 基线的准入与删除条件](designs/T00-current-baseline.md)：
 当前消费者确有需要、一个唯一写入者、明确采用后删除条件。它不授权旧 payload

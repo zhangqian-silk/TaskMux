@@ -37,7 +37,7 @@ export type AgentErrorInputDisposition = "accepted" | "not-accepted" | "unknown"
 export type AgentErrorSessionDisposition = "recoverable" | "unrecoverable" | "unknown";
 
 /**
- * Whether the durable Provider-Turn registration committed.
+ * Whether the durable Provider-AgentRun registration committed.
  *
  * This is a third fact, independent of whether the Provider accepted the
  * input. Registration runs before any Provider write, so a failed or
@@ -236,7 +236,7 @@ function errorMessageText(error: unknown): string {
 }
 
 /**
- * Renders a delivery failure as one readable line for a Turn summary. The
+ * Renders a delivery failure as one readable line for a AgentRun summary. The
  * complete record stays available on `runtime.agent-error`; this is the
  * bounded projection, never a replacement for the original cause.
  */
@@ -353,7 +353,7 @@ function rawPayloadText(value: unknown): string {
   try {
     const seen = new WeakSet<object>();
     const serialized = JSON.stringify(value, (key, member: unknown) => {
-      // Turn input is the Agent's prompt: Task context, quoted files, whatever
+      // AgentRun input is the Agent's prompt: Task context, quoted files, whatever
       // the Role was told. It is not a failure fact, and it reaches the same
       // durable, publicly-readable record as the rest of this payload. A
       // transport client that echoes its own request into the thrown error

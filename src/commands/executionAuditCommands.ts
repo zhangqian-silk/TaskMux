@@ -128,22 +128,22 @@ export function renderExecutionAudit(
     lines.push("", ...sectionError("tasks", report));
   }
 
-  if (report.turns.status === "ok" && report.turns.data !== undefined) {
-    const turns = report.turns.data;
+  if (report.runs.status === "ok" && report.runs.data !== undefined) {
+    const runs = report.runs.data;
     lines.push(
       "",
-      `Turns: ${turns.total} total · ${turns.failed} failed (${(turns.failureRate * 100).toFixed(1)}%) · ${turns.completed} completed · ${turns.active} active`,
-      `Duration: ${formatDuration(turns.cumulativeDurationMs)} total · ${formatDuration(turns.failedDurationMs)} in failed Turns`,
-      `By role: ${turns.byRole.leader} leader · ${turns.byRole.reviewer} reviewer · ${turns.byRole.implementer} implementer/worker · ${turns.byRole.other} other`,
-      `By purpose: ${turns.byPurpose.execution} execution · ${turns.byPurpose.review} review`
+      `AgentRuns: ${runs.total} total · ${runs.failed} failed (${(runs.failureRate * 100).toFixed(1)}%) · ${runs.completed} completed · ${runs.active} active`,
+      `Duration: ${formatDuration(runs.cumulativeDurationMs)} total · ${formatDuration(runs.failedDurationMs)} in failed AgentRuns`,
+      `By role: ${runs.byRole.leader} leader · ${runs.byRole.reviewer} reviewer · ${runs.byRole.implementer} implementer/worker · ${runs.byRole.other} other`,
+      `By purpose: ${runs.byPurpose.execution} execution · ${runs.byPurpose.review} review`
     );
-    const faultRows = Object.entries(turns.faultClasses)
+    const faultRows = Object.entries(runs.faultClasses)
       .filter(([, count]) => count > 0)
       .sort((left, right) => right[1] - left[1]);
     if (faultRows.length > 0) {
       lines.push(
         renderTable(
-          "Turn failure classes",
+          "AgentRun failure classes",
           [
             { header: "Class", minWidth: 24, maxWidth: 40 },
             { header: "Count", minWidth: 5, maxWidth: 8 }
@@ -153,16 +153,16 @@ export function renderExecutionAudit(
         )
       );
     }
-    if (turns.launchFailures.total > 0) {
-      const phaseRows = Object.entries(turns.launchFailures.byPhase)
+    if (runs.launchFailures.total > 0) {
+      const phaseRows = Object.entries(runs.launchFailures.byPhase)
         .filter(([, count]) => count > 0)
         .sort((left, right) => right[1] - left[1]);
-      const kindRows = Object.entries(turns.launchFailures.byKind)
+      const kindRows = Object.entries(runs.launchFailures.byKind)
         .filter(([, count]) => count > 0)
         .sort((left, right) => right[1] - left[1]);
       lines.push(
         "",
-        `Launch failures: ${turns.launchFailures.total}`,
+        `Launch failures: ${runs.launchFailures.total}`,
         `By phase: ${phaseRows.map(([name, count]) => `${name}=${count}`).join(" · ")}`,
         `By kind: ${kindRows.map(([name, count]) => `${name}=${count}`).join(" · ")}`
       );
@@ -175,10 +175,10 @@ export function renderExecutionAudit(
     const wakes = report.wakes.data;
     lines.push(
       "",
-      `Leader wakes: ${wakes.leaderTurns} Turns · ${wakes.withWakeReasons} with reasons`
+      `Leader wakes: ${wakes.leaderRuns} AgentRuns · ${wakes.withWakeReasons} with reasons`
     );
     if (wakes.suppressedWakes.status === "ok") {
-      lines.push(`Suppressed wakes: ${wakes.suppressedWakes.data ?? 0} (scheduler single-flight, not failed Turns)`);
+      lines.push(`Suppressed wakes: ${wakes.suppressedWakes.data ?? 0} (scheduler single-flight, not failed AgentRuns)`);
     } else if (wakes.suppressedWakes.status === "unsupported") {
       lines.push("Suppressed wakes: unsupported (no quiescence producer in this build)");
     }
@@ -207,10 +207,10 @@ export function renderExecutionAudit(
       `Sessions: ${sessions.count} count · ${sessions.broken} broken · ${sessions.stopped} stopped · ${sessions.other} other`,
       `Resets: ${sessions.resets} · Historical conversation switches ${sessions.conversationSwitches}`
         + ` · lifecycle events ${sessions.lifecycleEvents} · stop failures ${sessions.stopFailures}`,
-      `Terminal by Turn relation: ${sessions.terminalByTurnRelation.postTurnCompleted} post-turn-completed`
-        + ` · ${sessions.terminalByTurnRelation.turnFailed} turn-failed`
-        + ` · ${sessions.terminalByTurnRelation.activeTurn} active-turn`
-        + ` · ${sessions.terminalByTurnRelation.noTurn} no-turn`
+      `Terminal by AgentRun relation: ${sessions.terminalByRunRelation.postRunCompleted} post-turn-completed`
+        + ` · ${sessions.terminalByRunRelation.runFailed} turn-failed`
+        + ` · ${sessions.terminalByRunRelation.activeRun} active-turn`
+        + ` · ${sessions.terminalByRunRelation.noRun} no-turn`
     );
   } else {
     lines.push("", ...sectionError("sessions", report));
@@ -276,7 +276,7 @@ export function renderExecutionAudit(
           "Agent errors",
           [
             { header: "Task", minWidth: 8, maxWidth: 14 },
-            { header: "Turn", minWidth: 14, maxWidth: 24 },
+            { header: "AgentRun", minWidth: 14, maxWidth: 24 },
             { header: "Role", minWidth: 8, maxWidth: 12 },
             { header: "Category", minWidth: 12, maxWidth: 20 },
             { header: "Code", minWidth: 16, maxWidth: 32 },
@@ -286,7 +286,7 @@ export function renderExecutionAudit(
           ],
           errors.entries.map((entry) => [
             entry.taskId,
-            entry.turnId,
+            entry.runId,
             entry.roleName,
             entry.category,
             entry.code,
@@ -326,7 +326,7 @@ export function renderExecutionAudit(
         [
           { header: "Task", minWidth: 7, maxWidth: 14 },
           { header: "Type", minWidth: 8, maxWidth: 12 },
-          { header: "Turns", minWidth: 4, maxWidth: 6 },
+          { header: "AgentRuns", minWidth: 4, maxWidth: 6 },
           { header: "WIs", minWidth: 3, maxWidth: 5 },
           { header: "Review F/D/X", minWidth: 12, maxWidth: 16 },
           { header: "Integration A/F/R", minWidth: 17, maxWidth: 20 },
@@ -337,7 +337,7 @@ export function renderExecutionAudit(
         orchestration.tasks.map((task) => [
           task.taskId,
           task.taskType ?? "unspecified",
-          String(task.turns.total),
+          String(task.runs.total),
           String(task.workItems),
           `${task.reviews.full}/${task.reviews.delta}/${task.reviews.failed}`,
           `${task.integrations.attempts}/${task.integrations.failed}/${task.integrations.repeatedIdentities}`,
@@ -394,17 +394,17 @@ export function renderExecutionAudit(
       lines.push(
         "",
         renderTable(
-          "Top long-running Turns",
+          "Top long-running AgentRuns",
           [
             { header: "Task", minWidth: 8, maxWidth: 14 },
-            { header: "Turn", minWidth: 14, maxWidth: 24 },
+            { header: "AgentRun", minWidth: 14, maxWidth: 24 },
             { header: "Role", minWidth: 10, maxWidth: 20 },
             { header: "Status", minWidth: 8, maxWidth: 10 },
             { header: "Duration", minWidth: 8, maxWidth: 10 }
           ],
           entries.map((entry) => [
             entry.taskId,
-            entry.turnId,
+            entry.runId,
             entry.roleName,
             entry.status,
             formatDuration(entry.durationMs)

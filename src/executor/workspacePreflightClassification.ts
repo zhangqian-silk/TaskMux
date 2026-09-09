@@ -54,7 +54,7 @@ export type WorkspacePreflightClassification =
       reason: string;
       taskId: string;
       roleName: string;
-      turnId: string;
+      runId: string;
       diff: readonly string[];
     }>
   | Readonly<{
@@ -78,7 +78,7 @@ export function classifyWorkspacePreflight(
   store: TaskStore,
   task: Task,
   roleName: string,
-  activeTurn: { id: string; workspace?: ManagedWorkspace } | null,
+  activeRun: { id: string; workspace?: ManagedWorkspace } | null,
   inspectPhysical?: WorkspacePhysicalInspector
 ): WorkspacePreflightClassification | null {
   const main = store.getTaskWorkspace(task.id);
@@ -105,25 +105,25 @@ export function classifyWorkspacePreflight(
     };
   }
 
-  // 2. Turn snapshot validation: when the active Turn carries a workspace
+  // 2. AgentRun snapshot validation: when the active AgentRun carries a workspace
   //    snapshot its launch-stable identity must match the durable
   //    ManagedWorkspace. Audit timestamps may change without changing the
-  //    owner, root, or Project entries authorized for the Turn.
-  if (activeTurn?.workspace !== undefined) {
-    const durableRunWorkspace = store.getManagedWorkspace(activeTurn.workspace.owner);
+  //    owner, root, or Project entries authorized for the AgentRun.
+  if (activeRun?.workspace !== undefined) {
+    const durableRunWorkspace = store.getManagedWorkspace(activeRun.workspace.owner);
     if (durableRunWorkspace === null
-      || !sameManagedWorkspaceIdentity(durableRunWorkspace, activeTurn.workspace)) {
+      || !sameManagedWorkspaceIdentity(durableRunWorkspace, activeRun.workspace)) {
       const diff: string[] = [];
       if (durableRunWorkspace === null) {
-        diff.push(`durable ManagedWorkspace for owner ${JSON.stringify(activeTurn.workspace.owner)} is missing`);
+        diff.push(`durable ManagedWorkspace for owner ${JSON.stringify(activeRun.workspace.owner)} is missing`);
       } else {
-        if (durableRunWorkspace.root !== activeTurn.workspace.root) {
-          diff.push(`root: durable=${durableRunWorkspace.root} run=${activeTurn.workspace.root}`);
+        if (durableRunWorkspace.root !== activeRun.workspace.root) {
+          diff.push(`root: durable=${durableRunWorkspace.root} run=${activeRun.workspace.root}`);
         }
-        if (durableRunWorkspace.entries.length !== activeTurn.workspace.entries.length) {
-          diff.push(`entries: durable=${durableRunWorkspace.entries.length} run=${activeTurn.workspace.entries.length}`);
+        if (durableRunWorkspace.entries.length !== activeRun.workspace.entries.length) {
+          diff.push(`entries: durable=${durableRunWorkspace.entries.length} run=${activeRun.workspace.entries.length}`);
         }
-        for (const [index, entry] of activeTurn.workspace.entries.entries()) {
+        for (const [index, entry] of activeRun.workspace.entries.entries()) {
           const durableEntry = durableRunWorkspace.entries[index];
           if (durableEntry === undefined) {
             diff.push(`entry[${index}] ${entry.projectId}: missing from durable`);
@@ -139,10 +139,10 @@ export function classifyWorkspacePreflight(
       }
       return {
         kind: "workspace-stale",
-        reason: `Role Turn workspace is not the durable owner: ${task.id}/${roleName}.`,
+        reason: `Role AgentRun workspace is not the durable owner: ${task.id}/${roleName}.`,
         taskId: task.id,
         roleName,
-        turnId: activeTurn.id,
+        runId: activeRun.id,
         diff
       };
     }
@@ -153,7 +153,7 @@ export function classifyWorkspacePreflight(
   // from that immutable boundary. A reset/repoint outside the lineage is
   // physical drift and must fail before Provider launch.
   if (inspectPhysical !== undefined) {
-    const effective = activeTurn?.workspace ?? main;
+    const effective = activeRun?.workspace ?? main;
     for (const entry of effective.entries) {
       const physical = inspectPhysical(entry);
       if (!physical.recordedBaseIsAncestor) {
@@ -189,7 +189,7 @@ export function formatWorkspacePreflightError(
         + "` to inspect the binding, ManagedWorkspace, and physical HEAD.");
       break;
     case "workspace-stale":
-      lines.push(`  Turn ${classification.turnId} snapshot differs from the durable ManagedWorkspace:`);
+      lines.push(`  AgentRun ${classification.runId} snapshot differs from the durable ManagedWorkspace:`);
       for (const entry of classification.diff) {
         lines.push(`    - ${entry}`);
       }

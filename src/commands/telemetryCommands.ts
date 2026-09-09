@@ -9,7 +9,7 @@ import {
 import { CURRENT_DATABASE_FILENAME as COMMITTED_DATABASE_FILENAME } from "../storage/currentTaskStore.js";
 import {
   DEFAULT_TERMINAL_KEEP,
-  resolveTurnCap,
+  resolveRunCap,
   resolveTerminalKeep
 } from "../telemetry/telemetryConfig.js";
 import { resolveTelemetryEnabled } from "../config/yuiConfig.js";
@@ -50,7 +50,7 @@ export async function runTelemetryCommand(
       : `Unknown command: telemetry ${command}`,
     "yui telemetry status [--json]\n"
       + "yui telemetry prune [--task <id>] [--keep <n>] [--dry-run] [--json]\n"
-      + "yui telemetry read --task <id> [--turn <id>] [--aggregate] [--limit <n>] [--offset <n>]"
+      + "yui telemetry read --task <id> [--run <id>] [--aggregate] [--limit <n>] [--offset <n>]"
   );
 }
 
@@ -63,7 +63,7 @@ function telemetryStatus(args: string[], options: TelemetryCommandOptions): stri
   const telemetry = new SqliteTelemetryStore(options.home, {
     mode,
     terminalKeep: resolveTerminalKeep(storeConfig(options).telemetryTerminalKeep),
-    turnCap: resolveTurnCap(storeConfig(options).telemetryTurnCap)
+    runCap: resolveRunCap(storeConfig(options).telemetryRunCap)
   });
   try {
     const health = telemetry.health();
@@ -73,7 +73,7 @@ function telemetryStatus(args: string[], options: TelemetryCommandOptions): stri
       : store.listTasks().map((task) => ({
           taskId: task.id,
           rows: telemetry.count(task.id),
-          turns: telemetry.listTurnAggregates(task.id).length
+          runs: telemetry.listRunAggregates(task.id).length
         }));
     const report = {
       mode,
@@ -84,7 +84,7 @@ function telemetryStatus(args: string[], options: TelemetryCommandOptions): stri
       lastError: health.lastError,
       totalRows: health.rows,
       terminalKeep: resolveTerminalKeep(storeConfig(options).telemetryTerminalKeep),
-      turnCap: resolveTurnCap(storeConfig(options).telemetryTurnCap),
+      runCap: resolveRunCap(storeConfig(options).telemetryRunCap),
       tasks: perTask
     };
     if (options.json || flags.has("json")) return JSON.stringify(report, null, 2);
@@ -97,10 +97,10 @@ function telemetryStatus(args: string[], options: TelemetryCommandOptions): stri
       `Coalesced:       ${health.coalesced}`,
       ...(health.lastError === null ? [] : [`Last error:      ${health.lastError}`]),
       `Terminal keep:   ${report.terminalKeep}`,
-      `Turn cap:        ${report.turnCap}`
+      `AgentRun cap:        ${report.runCap}`
     ];
     for (const task of perTask) {
-      lines.push(`  ${task.taskId}: ${task.rows} rows across ${task.turns} Turn turn(s)`);
+      lines.push(`  ${task.taskId}: ${task.rows} rows across ${task.runs} AgentRun turn(s)`);
     }
     return lines.join("\n");
   } finally {
@@ -116,12 +116,12 @@ function telemetryPrune(args: string[], options: TelemetryCommandOptions): strin
   const keep = integerOption(args, "--keep", DEFAULT_TERMINAL_KEEP);
   const dryRun = flags.has("dry-run");
 
-  const cap = resolveTurnCap(storeConfig(options).telemetryTurnCap);
+  const cap = resolveRunCap(storeConfig(options).telemetryRunCap);
   const store = requireStore(options);
   const telemetry = new SqliteTelemetryStore(options.home, {
     mode: telemetryMode(storeConfig(options)),
     terminalKeep: keep,
-    turnCap: cap
+    runCap: cap
   });
   try {
     const tasks = taskId === undefined
@@ -131,11 +131,11 @@ function telemetryPrune(args: string[], options: TelemetryCommandOptions): strin
       taskId: string;
       terminalPruned: number;
       activeCapped: number;
-      turns: { turnId: string; kept: number; deleted: number }[];
+      runs: { runId: string; kept: number; deleted: number }[];
     }[] = [];
     for (const id of tasks) {
-      const terminalTurns = new Set(
-        store.listTurns(id)
+      const terminalRuns = new Set(
+        store.listRuns(id)
           .filter((run) => run.status !== "active")
           .map((run) => run.id)
       );
@@ -143,35 +143,35 @@ function telemetryPrune(args: string[], options: TelemetryCommandOptions): strin
         taskId: string;
         terminalPruned: number;
         activeCapped: number;
-        turns: { turnId: string; kept: number; deleted: number }[];
-      } = { taskId: id, terminalPruned: 0, activeCapped: 0, turns: [] };
-      for (const aggregate of telemetry.listTurnAggregates(id)) {
-        if (terminalTurns.has(aggregate.turnId)) {
-          const before = telemetry.count(id, aggregate.turnId);
+        runs: { runId: string; kept: number; deleted: number }[];
+      } = { taskId: id, terminalPruned: 0, activeCapped: 0, runs: [] };
+      for (const aggregate of telemetry.listRunAggregates(id)) {
+        if (terminalRuns.has(aggregate.runId)) {
+          const before = telemetry.count(id, aggregate.runId);
           const deleted = dryRun
             ? Math.max(0, before - keep)
-            : telemetry.pruneTurn(
+            : telemetry.pruneRun(
                 aggregate.taskId,
                 aggregate.roleName,
-                aggregate.turnId,
+                aggregate.runId,
                 keep
               );
           entry.terminalPruned += deleted;
-          entry.turns.push({
-            turnId: aggregate.turnId,
+          entry.runs.push({
+            runId: aggregate.runId,
             kept: Math.min(before, keep),
             deleted
           });
         }
       }
-      for (const run of store.listTurns(id)) {
+      for (const run of store.listRuns(id)) {
         if (run.status !== "active") continue;
         const before = telemetry.count(id, run.id);
         if (before <= cap) continue;
-        const deleted = dryRun ? before - cap : telemetry.capTurn(id, run.id, cap);
+        const deleted = dryRun ? before - cap : telemetry.capRun(id, run.id, cap);
         entry.activeCapped += deleted;
-        entry.turns.push({
-          turnId: run.id,
+        entry.runs.push({
+          runId: run.id,
           kept: Math.min(before, cap),
           deleted
         });
@@ -189,15 +189,15 @@ function telemetryPrune(args: string[], options: TelemetryCommandOptions): strin
     if (options.json || flags.has("json")) return JSON.stringify(result, null, 2);
     const lines = [
       `Telemetry prune (${dryRun ? "dry-run" : "applied"}):`,
-      `  terminal turns pruned: ${totals.terminalPruned} row(s) (keep ${keep})`,
-      `  active Turns capped:         ${totals.activeCapped} row(s) (cap ${cap})`
+      `  terminal runs pruned: ${totals.terminalPruned} row(s) (keep ${keep})`,
+      `  active AgentRuns capped:         ${totals.activeCapped} row(s) (cap ${cap})`
     ];
     for (const entry of report) {
-      if (entry.turns.length === 0) continue;
+      if (entry.runs.length === 0) continue;
       lines.push(`  ${entry.taskId}:`);
-      for (const turn of entry.turns) {
+      for (const run of entry.runs) {
         lines.push(
-          `    ${turn.turnId}: kept ${turn.kept}, deleted ${turn.deleted}`
+          `    ${run.runId}: kept ${run.kept}, deleted ${run.deleted}`
         );
       }
     }
@@ -213,32 +213,32 @@ function telemetryRead(args: string[], options: TelemetryCommandOptions): string
   const flags = parseFlags(args, new Set(["aggregate", "json"]));
   const taskId = stringOption(args, "--task");
   if (taskId === undefined) {
-    throw usageError("telemetry read requires --task <id>.", "yui telemetry read --task <id> [--turn <id>] [--aggregate]");
+    throw usageError("telemetry read requires --task <id>.", "yui telemetry read --task <id> [--run <id>] [--aggregate]");
   }
-  const turnId = stringOption(args, "--turn");
+  const runId = stringOption(args, "--run");
   const limit = integerOption(args, "--limit", 100);
   const offset = integerOption(args, "--offset", 0);
 
   const telemetry = new SqliteTelemetryStore(options.home, {
     mode: telemetryMode(storeConfig(options)),
     terminalKeep: resolveTerminalKeep(storeConfig(options).telemetryTerminalKeep),
-    turnCap: resolveTurnCap(storeConfig(options).telemetryTurnCap)
+    runCap: resolveRunCap(storeConfig(options).telemetryRunCap)
   });
   try {
     if (flags.has("aggregate")) {
-      if (turnId === undefined) {
-        const aggregates = telemetry.listTurnAggregates(taskId);
+      if (runId === undefined) {
+        const aggregates = telemetry.listRunAggregates(taskId);
         if (options.json || flags.has("json")) return JSON.stringify(aggregates, null, 2);
         return aggregates.map((aggregate) => formatAggregate(aggregate)).join("\n") || "(no telemetry)";
       }
-      const aggregate = telemetry.aggregate(taskId, turnId);
+      const aggregate = telemetry.aggregate(taskId, runId);
       if (options.json || flags.has("json")) return JSON.stringify(aggregate, null, 2);
-      return aggregate === null ? "(no telemetry for this Turn)" : formatAggregate(aggregate);
+      return aggregate === null ? "(no telemetry for this AgentRun)" : formatAggregate(aggregate);
     }
-    const page = telemetry.list(taskId, turnId, { limit, offset });
+    const page = telemetry.list(taskId, runId, { limit, offset });
     if (options.json || flags.has("json")) return JSON.stringify(page, null, 2);
     const lines = page.items.map((entry) =>
-      `${entry.receivedAt} ${entry.turnId}/${entry.progressId}`
+      `${entry.receivedAt} ${entry.runId}/${entry.progressId}`
       + `${entry.sequence === undefined ? "" : ` seq=${entry.sequence}`}`
     );
     if (page.nextOffset !== null) lines.push(`(next offset: ${page.nextOffset})`);
@@ -288,12 +288,12 @@ function integerOption(args: string[], name: string, fallback: number): number {
 }
 
 function formatAggregate(aggregate: {
-  turnId: string;
+  runId: string;
   firstAt: string;
   lastAt: string;
   count: number;
   maxSequence: number | null;
   errorCount: number;
 }): string {
-  return `${aggregate.turnId}/: count=${aggregate.count} first=${aggregate.firstAt} last=${aggregate.lastAt} maxSequence=${aggregate.maxSequence === null ? "-" : aggregate.maxSequence} errors=${aggregate.errorCount}`;
+  return `${aggregate.runId}/: count=${aggregate.count} first=${aggregate.firstAt} last=${aggregate.lastAt} maxSequence=${aggregate.maxSequence === null ? "-" : aggregate.maxSequence} errors=${aggregate.errorCount}`;
 }

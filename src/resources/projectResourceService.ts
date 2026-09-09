@@ -336,14 +336,14 @@ export function createProjectResources(store: TaskStore, now: () => Date = () =>
                 || continuation.observation !== "exact" || continuation.identityConflict)
               && (users.some((session) => session.agentId === continuation.identity.accountScope
                 && session.nativeSessionId === continuation.identity.conversationId)
-                || references(tx.getTurn(taskId, continuation.turnId)?.effective.executionEnvironment)))) {
+                || references(tx.getRun(taskId, continuation.runId)?.effective.executionEnvironment)))) {
               throw new Error("Environment still has a live or unknown native continuation.");
             }
           }
           if (value.directory && (
-            tx.listTurns(taskId).some((turn) => turn.status === "active"
-              && (references(turn.effective.executionEnvironment)
-                || (turn.workspace && overlaps(turn.workspace.root, value.directory!.path))))
+            tx.listRuns(taskId).some((run) => run.status === "active"
+              && (references(run.effective.executionEnvironment)
+                || (run.workspace && overlaps(run.workspace.root, value.directory!.path))))
             || sessionSets.some((set) =>
               [...Object.values(set.sessions), ...(set.history ?? [])].some((session) =>
                 session.status === "active" && references(session.effective.executionEnvironment)))

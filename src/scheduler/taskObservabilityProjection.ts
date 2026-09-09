@@ -4,7 +4,7 @@ import type {
   ExecutionGroup,
   WorkItemExecutionGroup
 } from "../execution/workItemExecution.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { SessionTokenMetrics } from "../runtime/sessionTokenMetrics.js";
 import type { WorkItem, WorkItemStatus } from "../workItem/workItem.js";
 
@@ -104,7 +104,7 @@ export type TaskObservabilityProjection = Readonly<{
 export type TaskObservabilityInput = Readonly<{
   workItems: readonly WorkItem[];
   executionGroups: readonly ExecutionGroup[];
-  turns: readonly Turn[];
+  runs: readonly AgentRun[];
   events: readonly TaskEvent[];
   contextSnapshots?: readonly ContextSnapshot[];
   sessionTokens?: readonly TaskSessionTokenProjection[];
@@ -123,9 +123,9 @@ export function buildTaskObservabilityProjection(
   const dag = projectDag(input.workItems);
   const workItems = input.workItems.map((item) => {
     const groups = item.executionGroups;
-    const itemCost = projectWorkItemCost(groups, input.turns, now);
-    const itemContext = projectContext(groups, input.turns, input.contextSnapshots);
-    const producerObservability = projectWorkItemProducerObservability(item, input.turns);
+    const itemCost = projectWorkItemCost(groups, input.runs, now);
+    const itemContext = projectContext(groups, input.runs, input.contextSnapshots);
+    const producerObservability = projectWorkItemProducerObservability(item, input.runs);
     return Object.freeze({
       workItemId: item.id,
       title: item.title,
@@ -136,8 +136,8 @@ export function buildTaskObservabilityProjection(
       resultCount: producerObservability?.resultCount ?? null
     });
   });
-  const cost = projectCost(input.executionGroups, input.turns, input.events, now);
-  const context = projectContext(input.executionGroups, input.turns, input.contextSnapshots);
+  const cost = projectCost(input.executionGroups, input.runs, input.events, now);
+  const context = projectContext(input.executionGroups, input.runs, input.contextSnapshots);
   return Object.freeze({
     dag,
     workItems,
@@ -149,24 +149,24 @@ export function buildTaskObservabilityProjection(
 
 function projectWorkItemProducerObservability(
   item: WorkItem,
-  turns: readonly Turn[]
+  runs: readonly AgentRun[]
 ): Readonly<{ resultCount: number }> | null {
   const successfulLanes = item.executionGroups.flatMap((group) => group.lanes.flatMap((lane) => (
     lane.disposition === "succeeded" ? [{ group, lane }] : []
   )));
   let resultCount = 0;
   for (const { group, lane } of successfulLanes) {
-    const turn = lane.successfulTurnId === undefined
+    const run = lane.successfulRunId === undefined
       ? undefined
-      : turns.find(({ id }) => id === lane.successfulTurnId);
-    if (turn === undefined
-      || turn.result === undefined
-      || turn.status !== "completed"
-      || turn.taskId !== item.taskId
-      || turn.workItemId !== item.id
-      || turn.executionGroupId !== group.id
-      || turn.executionLaneId !== lane.id
-      || turn.roleName !== lane.roleName) return null;
+      : runs.find(({ id }) => id === lane.successfulRunId);
+    if (run === undefined
+      || run.result === undefined
+      || run.status !== "completed"
+      || run.taskId !== item.taskId
+      || run.workItemId !== item.id
+      || run.executionGroupId !== group.id
+      || run.executionLaneId !== lane.id
+      || run.roleName !== lane.roleName) return null;
     resultCount += 1;
   }
   return { resultCount };
@@ -267,13 +267,13 @@ function dependencyEdgeStatus(
 
 function projectCost(
   groups: readonly ExecutionGroup[],
-  turns: readonly Turn[],
+  runs: readonly AgentRun[],
   _events: readonly TaskEvent[],
   now: Date
 ): TaskCostProjection {
   const uniqueGroups = [...new Map(groups.map((group) => [group.id, group])).values()];
   const groupIds = new Set(uniqueGroups.map(({ id }) => id));
-  const attempts = turns.filter(({ executionGroupId }) => (
+  const attempts = runs.filter(({ executionGroupId }) => (
     executionGroupId !== undefined && groupIds.has(executionGroupId)
   ));
   const laneCount = uniqueGroups.reduce((total, group) => total + group.lanes.length, 0);
@@ -296,11 +296,11 @@ function projectCost(
 
 function projectWorkItemCost(
   groups: readonly WorkItemExecutionGroup[],
-  turns: readonly Turn[],
+  runs: readonly AgentRun[],
   now: Date
 ): TaskCostProjection {
   const groupIds = new Set(groups.map(({ id }) => id));
-  const attempts = turns.filter(({ executionGroupId }) => (
+  const attempts = runs.filter(({ executionGroupId }) => (
     executionGroupId !== undefined && groupIds.has(executionGroupId)
   ));
   const wallClockSeconds = groups.reduce((total, group) => {
@@ -329,7 +329,7 @@ function projectWorkItemCost(
 
 function projectContext(
   groups: readonly ExecutionGroup[],
-  turns: readonly Turn[],
+  runs: readonly AgentRun[],
   snapshots?: readonly ContextSnapshot[]
 ): TaskContextProjection {
   const refs = new Map<string, {
@@ -342,8 +342,8 @@ function projectContext(
     const ref = group.assignment.contextSnapshotRef;
     if (ref !== undefined) refs.set(ref.id, ref);
   }
-  for (const turn of turns) {
-    const ref = turn.inputs[0]!.input.contextSnapshotRef;
+  for (const run of runs) {
+    const ref = run.inputs[0]!.input.contextSnapshotRef;
     if (ref !== undefined) refs.set(ref.id, ref);
   }
   const snapshotById = new Map((snapshots ?? []).map((snapshot) => [snapshot.id, snapshot]));

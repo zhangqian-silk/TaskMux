@@ -195,7 +195,7 @@ export async function scanLiveReferences(
     }
   }
 
-  // 6. Active durable workspace owners (e.g. an active Turn launch).
+  // 6. Active durable workspace owners (e.g. an active AgentRun launch).
   const activeOwners = input.ports?.activeWorkspaceOwners !== undefined
     ? input.ports.activeWorkspaceOwners()
     : [];

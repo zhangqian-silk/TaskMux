@@ -103,7 +103,7 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
     let preflightObserved = beforeHostStart === undefined;
     const observePreflight: RuntimeLaunchPreStart = (preflight) => {
       if (preflightObserved || !sameOwner(preflight.owner, request.owner)
-        || preflight.turnId !== request.turnId
+        || preflight.runId !== request.runId
         || preflight.agentId !== request.agentId
         || preflight.adapterId !== request.adapterId
         || !sameEffectiveLaunch(preflight.effective, request.effective)
@@ -121,7 +121,7 @@ export class RuntimeLaunchCoordinator implements RuntimeLaunchPreparationPort {
       effective,
       workspace: request.workspace,
       ...(isolation === undefined ? {} : { runtimeIsolation: isolation.descriptor }),
-      ...(request.turnId === undefined ? {} : { turnId: request.turnId }),
+      ...(request.runId === undefined ? {} : { runId: request.runId }),
       ...(request.environment === undefined ? {} : { environment: request.environment })
     };
     const callback = beforeHostStart === undefined ? undefined : observePreflight;

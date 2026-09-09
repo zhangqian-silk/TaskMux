@@ -16,7 +16,7 @@ import {
   validateEffectiveLaunchSnapshot,
   type EffectiveLaunchSnapshot
 } from "../executor/effectiveLaunch.js";
-import { MAX_SYNTHESIS_SOURCE_TURNS } from "../context/sourceTurnContext.js";
+import { MAX_SYNTHESIS_SOURCE_RUNS } from "../context/sourceRunContext.js";
 
 export const WORK_ITEM_EXECUTION_GROUP_SCHEMA_VERSION = 2 as const;
 export const WORK_ITEM_EXECUTION_LANE_SCHEMA_VERSION = 2 as const;
@@ -25,7 +25,7 @@ export const MINIMUM_EXECUTION_GROUP_LANES = 2;
 export const EXECUTION_GROUP_SCHEMA_VERSION = WORK_ITEM_EXECUTION_GROUP_SCHEMA_VERSION;
 export const EXECUTION_LANE_SCHEMA_VERSION = WORK_ITEM_EXECUTION_LANE_SCHEMA_VERSION;
 export const EXECUTION_ASSIGNMENT_SCHEMA_VERSION = WORK_ITEM_EXECUTION_ASSIGNMENT_SCHEMA_VERSION;
-export const MAXIMUM_SYNTHESIS_RESULTS = MAX_SYNTHESIS_SOURCE_TURNS;
+export const MAXIMUM_SYNTHESIS_RESULTS = MAX_SYNTHESIS_SOURCE_RUNS;
 
 export type WorkItemExecutionProjectBase = Readonly<{
   projectId: string;
@@ -83,7 +83,7 @@ export type WorkItemExecutionLaneWorkspace = Readonly<{
 }>;
 export type ExecutionLaneWorkspace = WorkItemExecutionLaneWorkspace;
 
-/** A recoverable logical producer slot; immutable attempts live in Turn. */
+/** A recoverable logical producer slot; immutable attempts live in AgentRun. */
 export type ExecutionLane = Readonly<{
   schemaVersion: typeof WORK_ITEM_EXECUTION_LANE_SCHEMA_VERSION;
   id: string;
@@ -92,8 +92,8 @@ export type ExecutionLane = Readonly<{
   roleName: string;
   effective?: EffectiveLaunchSnapshot;
   workspace?: WorkItemExecutionLaneWorkspace;
-  currentTurnId?: string;
-  successfulTurnId?: string;
+  currentRunId?: string;
+  successfulRunId?: string;
   disposition: WorkItemExecutionLaneDisposition;
   createdAt: string;
   updatedAt: string;
@@ -132,8 +132,8 @@ export type WorkItemExecutionGroupSummary = Readonly<{
     roleName: string;
     ordinal: number;
     disposition: WorkItemExecutionLaneDisposition;
-    currentTurnId?: string;
-    successfulTurnId?: string;
+    currentRunId?: string;
+    successfulRunId?: string;
     effective?: EffectiveLaunchSnapshot;
   }>[];
 }>;
@@ -143,7 +143,7 @@ export type WorkItemExecutionLaneInput = Readonly<{
   roleName: string;
   effective?: EffectiveLaunchSnapshot;
   workspace?: WorkItemExecutionLaneWorkspace;
-  currentTurnId?: string;
+  currentRunId?: string;
 }>;
 export type ExecutionLaneInput = WorkItemExecutionLaneInput;
 
@@ -218,7 +218,7 @@ export function createExecutionGroup<Assignment extends ExecutionAssignment>(
       roleName: lane.roleName,
       ...(lane.effective === undefined ? {} : { effective: lane.effective }),
       ...(lane.workspace === undefined ? {} : { workspace: lane.workspace }),
-      ...(lane.currentTurnId === undefined ? {} : { currentTurnId: lane.currentTurnId }),
+      ...(lane.currentRunId === undefined ? {} : { currentRunId: lane.currentRunId }),
       disposition: "open" as const,
       createdAt: timestamp,
       updatedAt: timestamp
@@ -243,8 +243,8 @@ export function updateExecutionLane<Assignment extends ExecutionAssignment>(
   group: ExecutionGroup<Assignment>,
   laneId: string,
   patch: Readonly<{
-    currentTurnId?: string;
-    successfulTurnId?: string;
+    currentRunId?: string;
+    successfulRunId?: string;
     disposition?: ExecutionLaneDisposition;
     effective?: EffectiveLaunchSnapshot;
     workspace?: ExecutionLaneWorkspace;
@@ -259,27 +259,27 @@ export function updateExecutionLane<Assignment extends ExecutionAssignment>(
     throw new Error(`Terminal ExecutionLane is immutable: ${laneId}.`);
   }
   const disposition = patch.disposition ?? current.disposition;
-  const currentTurnId = patch.currentTurnId ?? current.currentTurnId;
-  const successfulTurnId = patch.successfulTurnId ?? current.successfulTurnId;
+  const currentRunId = patch.currentRunId ?? current.currentRunId;
+  const successfulRunId = patch.successfulRunId ?? current.successfulRunId;
   const effective = patch.effective ?? current.effective;
   const workspace = patch.workspace ?? current.workspace;
   if ((effective === undefined) !== (workspace === undefined)) {
     throw new Error("ExecutionLane launch facts are incomplete.");
   }
   if (disposition === "succeeded") {
-    if (successfulTurnId === undefined || successfulTurnId !== currentTurnId) {
-      throw new Error("A succeeded Lane must identify its current successful Turn.");
+    if (successfulRunId === undefined || successfulRunId !== currentRunId) {
+      throw new Error("A succeeded Lane must identify its current successful AgentRun.");
     }
-  } else if (successfulTurnId !== undefined) {
-    throw new Error("Only a succeeded Lane may identify a successful Turn.");
+  } else if (successfulRunId !== undefined) {
+    throw new Error("Only a succeeded Lane may identify a successful AgentRun.");
   }
   const timestamp = now.toISOString();
   const updated: ExecutionLane = {
     ...current,
     ...(effective === undefined ? {} : { effective }),
     ...(workspace === undefined ? {} : { workspace }),
-    ...(currentTurnId === undefined ? {} : { currentTurnId }),
-    ...(successfulTurnId === undefined ? {} : { successfulTurnId }),
+    ...(currentRunId === undefined ? {} : { currentRunId }),
+    ...(successfulRunId === undefined ? {} : { successfulRunId }),
     disposition,
     updatedAt: timestamp,
     ...(disposition === "open" ? {} : { endedAt: timestamp })
@@ -297,8 +297,8 @@ export function updateWorkItemExecutionLane(
   group: WorkItemExecutionGroup,
   laneId: string,
   patch: Readonly<{
-    currentTurnId?: string;
-    successfulTurnId?: string;
+    currentRunId?: string;
+    successfulRunId?: string;
     disposition?: WorkItemExecutionLaneDisposition;
     effective?: EffectiveLaunchSnapshot;
     workspace?: WorkItemExecutionLaneWorkspace;
@@ -313,7 +313,7 @@ export function updateWorkItemExecutionLane(
 /**
  * Reopen only failed Lanes for an explicit retry of the same semantic
  * execution. Successful results remain settled, while each failed Lane
- * returns to the same state produced by a naturally failed Turn: open and
+ * returns to the same state produced by a naturally failed AgentRun: open and
  * still pointing at the failed attempt that dispatch must replace.
  *
  * This is the sole terminal-to-open Lane transition. Normal Lane updates keep
@@ -588,8 +588,8 @@ export function summarizeExecutionGroup(
       roleName: lane.roleName,
       ordinal: lane.ordinal,
       disposition: lane.disposition,
-      ...(lane.currentTurnId === undefined ? {} : { currentTurnId: lane.currentTurnId }),
-      ...(lane.successfulTurnId === undefined ? {} : { successfulTurnId: lane.successfulTurnId }),
+      ...(lane.currentRunId === undefined ? {} : { currentRunId: lane.currentRunId }),
+      ...(lane.successfulRunId === undefined ? {} : { successfulRunId: lane.successfulRunId }),
       ...(lane.effective === undefined ? {} : { effective: lane.effective })
     }))
   };
@@ -628,8 +628,8 @@ function validateWorkItemExecutionLane(
     "roleName",
     "effective",
     "workspace",
-    "currentTurnId",
-    "successfulTurnId",
+    "currentRunId",
+    "successfulRunId",
     "disposition",
     "createdAt",
     "updatedAt",
@@ -657,20 +657,20 @@ function validateWorkItemExecutionLane(
       "ExecutionLane writable Project"
     );
   }
-  if (lane.currentTurnId !== undefined && lane.effective === undefined) {
+  if (lane.currentRunId !== undefined && lane.effective === undefined) {
     throw new Error("A dispatched ExecutionLane requires launch facts.");
   }
-  if (lane.currentTurnId !== undefined) requireIdentity(lane.currentTurnId, "ExecutionLane current Turn id");
-  if (lane.successfulTurnId !== undefined) requireIdentity(lane.successfulTurnId, "ExecutionLane successful Turn id");
+  if (lane.currentRunId !== undefined) requireIdentity(lane.currentRunId, "ExecutionLane current AgentRun id");
+  if (lane.successfulRunId !== undefined) requireIdentity(lane.successfulRunId, "ExecutionLane successful AgentRun id");
   if (!["open", "succeeded", "failed"].includes(lane.disposition)) {
     throw new Error(`ExecutionLane disposition is invalid: ${String(lane.disposition)}.`);
   }
   if (lane.disposition === "succeeded") {
-    if (lane.currentTurnId === undefined || lane.successfulTurnId !== lane.currentTurnId) {
-      throw new Error("A succeeded Lane must identify its current successful Turn.");
+    if (lane.currentRunId === undefined || lane.successfulRunId !== lane.currentRunId) {
+      throw new Error("A succeeded Lane must identify its current successful AgentRun.");
     }
-  } else if (lane.successfulTurnId !== undefined) {
-    throw new Error("Only a succeeded Lane may identify a successful Turn.");
+  } else if (lane.successfulRunId !== undefined) {
+    throw new Error("Only a succeeded Lane may identify a successful AgentRun.");
   }
   requireTimestamp(lane.createdAt, "ExecutionLane createdAt");
   requireTimestamp(lane.updatedAt, "ExecutionLane updatedAt");

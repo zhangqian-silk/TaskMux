@@ -2,7 +2,7 @@
  * Read-only execution audit aggregator (Issue 11 §3).
  *
  * The audit answers "what happened in this Home" from durable records alone:
- * Turns/failures/durations, wake reasons, Runtime count, Review execution
+ * AgentRuns/failures/durations, wake reasons, Runtime count, Review execution
  * vs semantic failures, Integration failure classes and gate reuse, telemetry
  * volume, and the longest/stale executions. It never writes Task state, never
  * wakes a Leader, and never takes the storage write lock — it only calls the
@@ -16,11 +16,11 @@ import { join } from "node:path";
 import { openCurrentTaskStore } from "../storage/currentTaskStore.js";
 import { resolveTaskStoreBackendForHome } from "../storage/sqliteStore.js";
 import type { TaskStore } from "../storage/taskStore.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import type { TaskRoleSessionSet } from "../executor/agentExecutor.js";
 import { runtimeObservationFromTaskEvent } from "../runtime/runtimeObservation.js";
 import {
-  classifyTurnFailure,
+  classifyRunFailure,
   classifyIntegrationAttempt,
   classifyReviewRound,
   countFaultClasses,
@@ -52,7 +52,7 @@ export type AuditSection<T> = Readonly<{
   error?: string;
 }>;
 
-export type TurnsAudit = Readonly<{
+export type AgentRunsAudit = Readonly<{
   total: number;
   active: number;
   completed: number;
@@ -79,7 +79,7 @@ type MutableLaunchFailureCounts = {
 };
 
 export type WakesAudit = Readonly<{
-  leaderTurns: number;
+  leaderRuns: number;
   withWakeReasons: number;
   byReason: Readonly<Record<string, number>>;
   /** Wakes suppressed by scheduler single-flight (lifecycle lane busy). */
@@ -97,21 +97,21 @@ export type SessionsAudit = Readonly<{
   stopFailures: number;
   /**
    * Issue 09: terminal Sessions (stopped/broken) split by their relationship
-   * to the last Turn they carried, so a Session that stops after its Turn
-   * completed is never merged into the Turn failure rate.
+   * to the last AgentRun they carried, so a Session that stops after its AgentRun
+   * completed is never merged into the AgentRun failure rate.
    *
-   * - `postTurnCompleted`: the Session ended after its last Turn completed — a
-   *   post-completion Session stop, not a Turn failure.
-   * - `turnFailed`: the Session ended tied to a failed Turn's recovery.
-   * - `activeTurn`: the Session died while a Turn was still active (no terminal
-   *   receipt) — a Session failure that impacted a Turn.
-   * - `noTurn`: the Session ended without carrying any Turn.
+   * - `postTurnCompleted`: the Session ended after its last AgentRun completed — a
+   *   post-completion Session stop, not a AgentRun failure.
+   * - `turnFailed`: the Session ended tied to a failed AgentRun's recovery.
+   * - `activeTurn`: the Session died while a AgentRun was still active (no terminal
+   *   receipt) — a Session failure that impacted a AgentRun.
+   * - `noTurn`: the Session ended without carrying any AgentRun.
    */
-  terminalByTurnRelation: Readonly<{
-    postTurnCompleted: number;
-    turnFailed: number;
-    activeTurn: number;
-    noTurn: number;
+  terminalByRunRelation: Readonly<{
+    postRunCompleted: number;
+    runFailed: number;
+    activeRun: number;
+    noRun: number;
   }>;
 }>;
 
@@ -158,7 +158,7 @@ export type EventsAudit = Readonly<{
 export type AgentErrorAuditEntry = Readonly<{
   taskId: string;
   eventId: string;
-  turnId: string;
+  runId: string;
   roleName: string;
   source: string;
   phase: string;
@@ -207,9 +207,9 @@ export type RuntimeProtocolAudit = Readonly<{
   compactionEvents: number;
 }>;
 
-export type LongTurnEntry = Readonly<{
+export type LongRunEntry = Readonly<{
   taskId: string;
-  turnId: string;
+  runId: string;
   roleName: string;
   status: string;
   durationMs: number;
@@ -222,7 +222,7 @@ export type ExecutionAuditReport = Readonly<{
   homeIdentity: OptionalFact;
   scope: Readonly<{ taskId?: string; since?: string; until?: string }>;
   tasks: AuditSection<Readonly<{ total: number; archived: number; active: number }>>;
-  turns: AuditSection<TurnsAudit>;
+  runs: AuditSection<AgentRunsAudit>;
   wakes: AuditSection<WakesAudit>;
   sessions: AuditSection<SessionsAudit>;
   reviews: AuditSection<ReviewsAudit>;
@@ -241,7 +241,7 @@ export type ExecutionAuditReport = Readonly<{
   }>>;
   storage: AuditSection<StorageAudit>;
   runtimeProtocol: AuditSection<RuntimeProtocolAudit>;
-  topLongRunning: AuditSection<readonly LongTurnEntry[]>;
+  topLongRunning: AuditSection<readonly LongRunEntry[]>;
 }>;
 
 export type ExecutionAuditPorts = Readonly<{
@@ -301,7 +301,7 @@ function inWindow(createdAt: string, options: ExecutionAuditOptions): boolean {
   return true;
 }
 
-function roleBucket(roleName: string): keyof TurnsAudit["byRole"] {
+function roleBucket(roleName: string): keyof AgentRunsAudit["byRole"] {
   const normalized = roleName.toLowerCase();
   if (normalized === "leader") return "leader";
   if (normalized === "reviewer") return "reviewer";
@@ -311,9 +311,9 @@ function roleBucket(roleName: string): keyof TurnsAudit["byRole"] {
   return "other";
 }
 
-function durationMs(turn: Turn): number {
-  if (turn.result === undefined) return 0;
-  return Math.max(0, Date.parse(turn.result.completedAt) - Date.parse(turn.createdAt));
+function durationMs(run: AgentRun): number {
+  if (run.result === undefined) return 0;
+  return Math.max(0, Date.parse(run.result.completedAt) - Date.parse(run.createdAt));
 }
 
 function emptyLaunchFailureCounts(): MutableLaunchFailureCounts {
@@ -351,13 +351,13 @@ function addLaunchFailureCounts(
 
 /**
  * Issue 09: classify a terminal Session (stopped/broken) by its relationship
- * to the last Turn it carried. Turns and Sessions are separate axes: a Session
- * that stops after its Turn completed is a post-completion stop, not a Turn
+ * to the last AgentRun it carried. AgentRuns and Sessions are separate axes: a Session
+ * that stops after its AgentRun completed is a post-completion stop, not a AgentRun
  * failure. Correlation is by Role + Agent + Adapter (the durable identity a
- * Turn and its Session share) and the Session's terminal update timestamp.
+ * AgentRun and its Session share) and the Session's terminal update timestamp.
  */
-function classifyTerminalSessionTurnRelation(
-  turns: readonly Turn[],
+function classifyTerminalSessionRunRelation(
+  runs: readonly AgentRun[],
   roleName: string,
   session: Readonly<{
     agentId: string;
@@ -365,37 +365,37 @@ function classifyTerminalSessionTurnRelation(
     updatedAt: string;
   }>,
   counts: {
-    postTurnCompleted: number;
-    turnFailed: number;
-    activeTurn: number;
-    noTurn: number;
+    postRunCompleted: number;
+    runFailed: number;
+    activeRun: number;
+    noRun: number;
   }
 ): void {
   const terminalAt = Date.parse(session.updatedAt);
-  const carried = turns
-    .filter((turn) => (
-      turn.roleName === roleName
-      && turn.effective.agentId === session.agentId
-      && turn.effective.adapterId === session.adapterId
-      && Date.parse(turn.createdAt) <= terminalAt
+  const carried = runs
+    .filter((run) => (
+      run.roleName === roleName
+      && run.effective.agentId === session.agentId
+      && run.effective.adapterId === session.adapterId
+      && Date.parse(run.createdAt) <= terminalAt
     ))
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
-  const lastTurn = carried[0];
-  if (lastTurn === undefined) {
-    counts.noTurn += 1;
+  const lastRun = carried[0];
+  if (lastRun === undefined) {
+    counts.noRun += 1;
     return;
   }
-  if (lastTurn.status === "completed"
-    && lastTurn.result !== undefined
-    && Date.parse(lastTurn.result.completedAt) <= terminalAt) {
-    counts.postTurnCompleted += 1;
+  if (lastRun.status === "completed"
+    && lastRun.result !== undefined
+    && Date.parse(lastRun.result.completedAt) <= terminalAt) {
+    counts.postRunCompleted += 1;
     return;
   }
-  if (lastTurn.status === "failed") {
-    counts.turnFailed += 1;
+  if (lastRun.status === "failed") {
+    counts.runFailed += 1;
     return;
   }
-  counts.activeTurn += 1;
+  counts.activeRun += 1;
 }
 
 function ok<T>(data: T): AuditSection<T> {
@@ -447,7 +447,7 @@ export function runExecutionAudit(
       homeIdentity: UNSUPPORTED,
       scope,
       tasks: section,
-      turns: section,
+      runs: section,
       wakes: section,
       sessions: section,
       reviews: section,
@@ -496,7 +496,7 @@ export function runExecutionAudit(
     }
   })();
 
-  const turns = ((): AuditSection<TurnsAudit> => {
+  const runs = ((): AuditSection<AgentRunsAudit> => {
     try {
       let total = 0;
       let active = 0;
@@ -509,28 +509,28 @@ export function runExecutionAudit(
       const failures = [];
       const launchFailures: MutableLaunchFailureCounts = emptyLaunchFailureCounts();
       for (const taskId of taskIds) {
-        for (const turn of store.listTurns(taskId)) {
-          if (!inWindow(turn.createdAt, options)) continue;
+        for (const run of store.listRuns(taskId)) {
+          if (!inWindow(run.createdAt, options)) continue;
           total += 1;
-          byRole[roleBucket(turn.roleName)] += 1;
-          if (turn.purpose === "review") byPurpose.review += 1;
+          byRole[roleBucket(run.roleName)] += 1;
+          if (run.purpose === "review") byPurpose.review += 1;
           else byPurpose.execution += 1;
-          const duration = durationMs(turn);
-          if (turn.status === "active") {
+          const duration = durationMs(run);
+          if (run.status === "active") {
             active += 1;
             cumulativeDurationMs += Math.max(
               0,
-              Date.now() - Date.parse(turn.createdAt)
+              Date.now() - Date.parse(run.createdAt)
             );
-          } else if (turn.status === "completed") {
+          } else if (run.status === "completed") {
             completed += 1;
             cumulativeDurationMs += duration;
-          } else if (turn.status === "failed") {
+          } else if (run.status === "failed") {
             failedCount += 1;
             failedDurationMs += duration;
             cumulativeDurationMs += duration;
-            addLaunchFailureCounts(launchFailures, turn.result?.diagnostic);
-            failures.push(classifyTurnFailure(turn));
+            addLaunchFailureCounts(launchFailures, run.result?.diagnostic);
+            failures.push(classifyRunFailure(run));
           }
         }
       }
@@ -548,22 +548,22 @@ export function runExecutionAudit(
         launchFailures
       });
     } catch (error) {
-      return failed<TurnsAudit>(error);
+      return failed<AgentRunsAudit>(error);
     }
   })();
 
   const wakes = ((): AuditSection<WakesAudit> => {
     try {
-      let leaderTurns = 0;
+      let leaderRuns = 0;
       let withWakeReasons = 0;
       let suppressedWakes = 0;
       const byReason = new Map<string, number>();
       for (const taskId of taskIds) {
-        for (const turn of store.listTurns(taskId)) {
-          if (turn.roleName !== "leader") continue;
-          if (!inWindow(turn.createdAt, options)) continue;
-          leaderTurns += 1;
-          const match = WAKE_REASON_PATTERN.exec(turn.inputs[0]!.input.directive ?? "");
+        for (const run of store.listRuns(taskId)) {
+          if (run.roleName !== "leader") continue;
+          if (!inWindow(run.createdAt, options)) continue;
+          leaderRuns += 1;
+          const match = WAKE_REASON_PATTERN.exec(run.inputs[0]!.input.directive ?? "");
           if (match === null) continue;
           withWakeReasons += 1;
           const reasons = match[1]!.split(",").map((value) => value.trim()).filter(Boolean);
@@ -578,14 +578,14 @@ export function runExecutionAudit(
         }
       }
       return ok({
-        leaderTurns,
+        leaderRuns,
         withWakeReasons,
         byReason: Object.fromEntries(
           [...byReason.entries()].sort((left, right) => right[1] - left[1])
         ),
         // Scheduler single-flight suppression: wakes that were coalesced
         // because the Role runtime lifecycle lane was busy. These are
-        // scheduler outcomes, never failed Turns.
+        // scheduler outcomes, never failed AgentRuns.
         suppressedWakes: { status: "ok", data: suppressedWakes }
       });
     } catch (error) {
@@ -603,14 +603,14 @@ export function runExecutionAudit(
       let conversationSwitches = 0;
       let lifecycleEvents = 0;
       let stopFailures = 0;
-      const terminalByTurnRelation = {
-        postTurnCompleted: 0,
-        turnFailed: 0,
-        activeTurn: 0,
-        noTurn: 0
+      const terminalByRunRelation = {
+        postRunCompleted: 0,
+        runFailed: 0,
+        activeRun: 0,
+        noRun: 0
       };
       for (const taskId of taskIds) {
-        const turns = store.listTurns(taskId);
+        const runs = store.listRuns(taskId);
         for (const set of store.listRoleSessionSets(taskId)) {
           const history = Array.isArray(set.history) ? set.history : [];
           for (const session of [...history, ...Object.values(set.sessions)]) {
@@ -619,11 +619,11 @@ export function runExecutionAudit(
             else if (session.status === "ended") stopped += 1;
             else other += 1;
             if (session.status === "ended") {
-              classifyTerminalSessionTurnRelation(
-                turns,
+              classifyTerminalSessionRunRelation(
+                runs,
                 set.owner.roleName,
                 session,
-                terminalByTurnRelation
+                terminalByRunRelation
               );
             }
           }
@@ -647,7 +647,7 @@ export function runExecutionAudit(
         conversationSwitches,
         lifecycleEvents,
         stopFailures,
-        terminalByTurnRelation
+        terminalByRunRelation
       });
     } catch (error) {
       return failed<SessionsAudit>(error);
@@ -816,7 +816,7 @@ export function runExecutionAudit(
           entries.push({
             taskId,
             eventId: event.id,
-            turnId: event.payload.turnId ?? "",
+            runId: event.payload.runId ?? "",
             roleName: event.payload.roleName ?? "",
             source: event.payload.source ?? "unknown",
             phase: event.payload.phase ?? "unknown",
@@ -872,7 +872,7 @@ export function runExecutionAudit(
         if (task === null) return [];
         return [projectTaskOrchestration({
           task,
-          turns: withinWindow(store.listTurns(taskId), options),
+          runs: withinWindow(store.listRuns(taskId), options),
           roleSessionSets: sessionSetsWithinWindow(store.listRoleSessionSets(taskId), options),
           workItems: withinWindow(store.listWorkItems(taskId), options),
           changeSets: withinWindow(store.listChangeSets(taskId), options),
@@ -936,7 +936,7 @@ export function runExecutionAudit(
       let processExitObservations = 0;
       let compactionEvents = 0;
       for (const taskId of taskIds) {
-        for (const run of store.listTurns(taskId)) {
+        for (const run of store.listRuns(taskId)) {
           if (!inWindow(run.createdAt, options)) continue;
           const version = String(run.effective.contextProtocolVersion);
           protocolVersions.set(version, (protocolVersions.get(version) ?? 0) + 1);
@@ -986,23 +986,23 @@ export function runExecutionAudit(
     }
   })();
 
-  const topLongRunning = ((): AuditSection<readonly LongTurnEntry[]> => {
+  const topLongRunning = ((): AuditSection<readonly LongRunEntry[]> => {
     try {
-      const entries: LongTurnEntry[] = [];
+      const entries: LongRunEntry[] = [];
       for (const taskId of taskIds) {
-        for (const turn of store.listTurns(taskId)) {
-          if (!inWindow(turn.createdAt, options)) continue;
-          const duration = turn.status === "active"
-            ? Math.max(0, Date.now() - Date.parse(turn.createdAt))
-            : durationMs(turn);
+        for (const run of store.listRuns(taskId)) {
+          if (!inWindow(run.createdAt, options)) continue;
+          const duration = run.status === "active"
+            ? Math.max(0, Date.now() - Date.parse(run.createdAt))
+            : durationMs(run);
           if (duration <= 0) continue;
           entries.push({
             taskId,
-            turnId: turn.id,
-            roleName: turn.roleName,
-            status: turn.status,
+            runId: run.id,
+            roleName: run.roleName,
+            status: run.status,
             durationMs: duration,
-            startedAt: turn.createdAt
+            startedAt: run.createdAt
           });
         }
       }
@@ -1012,7 +1012,7 @@ export function runExecutionAudit(
           .slice(0, 10)
       );
     } catch (error) {
-      return failed<readonly LongTurnEntry[]>(error);
+      return failed<readonly LongRunEntry[]>(error);
     }
   })();
 
@@ -1022,7 +1022,7 @@ export function runExecutionAudit(
     homeIdentity,
     scope,
     tasks,
-    turns,
+    runs,
     wakes,
     sessions,
     reviews,

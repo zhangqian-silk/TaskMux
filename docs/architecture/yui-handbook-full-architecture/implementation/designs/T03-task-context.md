@@ -6,17 +6,17 @@
 
 ## 1. 目标模型与现有记录
 
-先定位当前 Task、Brief、WorkItem、Role、Turn 输出、Review、通知和 Context 的权威存储。通过公开接口提供目标视图，不为了让状态枚举变短立即删除已有历史或诊断字段。
+先定位当前 Task、Brief、WorkItem、Role、AgentRun 输出、Review、通知和 Context 的权威存储。通过公开接口提供目标视图，不为了让状态枚举变短立即删除已有历史或诊断字段。
 
-Task 对外生命周期为 draft／active／completed／cancelled／archived；WorkItem 表达 open／accepted／retired，执行细节从 Turn 读取。已有复杂字段如果仍有证据价值可继续保存，但不成为新的业务必经路径。转换、归档授权、保留与不可重开规则以 [Task 模块](../../modules/02-task.md) 为准；当前 retired 到 cancelled 的采用走中央迁移并保留原隔离及结束证据，不能作为普通读写的双形态 adapter。
+Task 对外生命周期为 draft／active／completed／cancelled／archived；WorkItem 表达 open／accepted／retired，执行细节从 AgentRun 读取。已有复杂字段如果仍有证据价值可继续保存，但不成为新的业务必经路径。转换、归档授权、保留与不可重开规则以 [Task 模块](../../modules/02-task.md) 为准；当前 retired 到 cancelled 的采用走中央迁移并保留原隔离及结束证据，不能作为普通读写的双形态 adapter。
 
 ## 2. Task 与结果
 
-Brief 在数据库事务内读取最新记录，只修改指定字段，不要求 expectedRevision。同一字段以后一次明确写入为准，更新前后值随事件在同一事务保存。Role 当前配置与实际执行配置分开。Assignment／Turn 保留实际输入说明；Candidate 固定提交结果与来源；Review 只引用 Candidate 和 Reviewer Turn。
+Brief 在数据库事务内读取最新记录，只修改指定字段，不要求 expectedRevision。同一字段以后一次明确写入为准，更新前后值随事件在同一事务保存。Role 当前配置与实际执行配置分开。Assignment／AgentRun 保留实际输入说明；Candidate 固定提交结果与来源；Review 只引用 Candidate 和 Reviewer AgentRun。
 
 结果适用性由 Leader 结合当前要求明确判断，不建立独立的自动失效版本体系。接受时保存明确选择和说明，不要求当前 Brief 与来源版本相等。Task／WorkItem 只保存当前结束和接受选择；历史由持久事件承载，不在对象内累计第二份历史数组。找回旧值后由 Leader 决定是否明确重写，不自动回滚。
 
-直接完成 Task 支持 summary 和 artifact refs，不强制合成 WorkItem。完成和取消阻止后续自动派发，迟到结果仍归原 Turn。显式重开不自动重放所有过去的通知和未知输入。
+直接完成 Task 支持 summary 和 artifact refs，不强制合成 WorkItem。完成和取消阻止后续自动派发，迟到结果仍归原 AgentRun。显式重开不自动重放所有过去的通知和未知输入。
 
 ## 3. Role 配置
 
@@ -36,7 +36,7 @@ Brief 在数据库事务内读取最新记录，只修改指定字段，不要�
 
 ## 5. 消息与通知
 
-复用现有 Message／Event／Turn 记录建立 batch、attempt 和 acceptedTurn 关系。Context read 不 ack；Provider 接受才记录送达；送达不等于已落实要求。
+复用现有 Message／Event／AgentRun 记录建立 batch、attempt 和 acceptedRun 关系。Context read 不 ack；Provider 接受才记录送达；送达不等于已落实要求。
 
 忙碌时保留同一输入，不启动竞争会话。未知批次换绑后仍需查证。故障通知只沿 Worker／Reviewer→Leader、Leader→Operator，Operator 自身问题由用户处理，不创建备用路由。
 

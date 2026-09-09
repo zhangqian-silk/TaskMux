@@ -4,7 +4,7 @@ import {
   type MailboxTarget,
   type WorkMailbox
 } from "../coordination/workMailbox.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import { runtimeLifecycleTarget } from "../runtime/lifecycleReservation.js";
 import type { ReviewRound } from "./reviewRound.js";
 
@@ -12,7 +12,7 @@ export type ReviewerBusy = Readonly<{
   kind: "busy";
   reviewerRoleName: string;
   phase: "review-slot" | "active-turn" | "runtime-lifecycle";
-  activeTurnId?: string;
+  activeRunId?: string;
   activeReviewRoundId?: string;
   startedAt?: string;
   retryable: true;
@@ -28,7 +28,7 @@ export type ReviewerAvailable = Readonly<{
 export type ReviewerAvailability = ReviewerBusy | ReviewerAvailable;
 
 export type ReviewerAvailabilityStore = Readonly<{
-  getActiveTurn(taskId: string, roleName: string): Turn | null;
+  getActiveRun(taskId: string, roleName: string): AgentRun | null;
   listReviewRounds(taskId: string): readonly ReviewRound[];
   getWorkMailbox(target: MailboxTarget): WorkMailbox | null;
 }>;
@@ -39,13 +39,13 @@ export function projectReviewerAvailability(
   taskId: string,
   reviewerRoleName: string
 ): ReviewerAvailability {
-  const active = store.getActiveTurn(taskId, reviewerRoleName);
+  const active = store.getActiveRun(taskId, reviewerRoleName);
   if (active !== null) {
     return {
       kind: "busy",
       reviewerRoleName,
       phase: "active-turn",
-      activeTurnId: active.id,
+      activeRunId: active.id,
       ...(active.reviewRoundId === undefined
         ? {}
         : { activeReviewRoundId: active.reviewRoundId }),

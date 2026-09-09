@@ -2,10 +2,11 @@ import { usageError, taskNotFound } from "../errors/cliError.js";
 import { resolveManagedTaskCaller } from "../runtime/managedCaller.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import { contextContentDigest } from "./contextSnapshot.js";
-import { buildTurnContextPack } from "./turnContextPack.js";
-import { sourceTurnContextValue } from "./sourceTurnContext.js";
-import type { TaskMessage } from "../message/message.js";
+import { buildRunContextPack } from "./runContextPack.js";
+import { sourceRunContextValue } from "./sourceRunContext.js";
+import { expandTaskMessageResult, type TaskMessage } from "../message/message.js";
 import { managedWorkspaceKey } from "../worktree/managedWorkspace.js";
+import { runExecutionObservation, type AgentRun } from "../agentRun/agentRun.js";
 
 const MAX_RECORDS = 256;
 const MAX_VALUE_BYTES = 4096;
@@ -43,12 +44,18 @@ export function readTaskContext(
     // page. Counts and samples come from the exact same authorized read.
     const attention = summarizeAttention(entries);
     let bytes = Buffer.byteLength(JSON.stringify(attention));
-    const records: Array<{ ref: Ref; summary?: string; value?: unknown; omitted: boolean }> = [];
+    const records: Array<{ ref: Ref; summary?: string; value?: unknown; omitted: boolean;
+      execution?: ReturnType<typeof runExecutionObservation> }> = [];
+    const runtimeEvents = entries.some((entry) => entry.ref.store === "run") ? reader.listEvents(taskId) : [];
     for (const entry of entries) {
       const valueBytes = Buffer.byteLength(JSON.stringify(entry.value));
-      const record = valueBytes > MAX_VALUE_BYTES
+      const content = valueBytes > MAX_VALUE_BYTES
         ? { ref: entry.ref, summary: summarize(entry.value), omitted: true }
         : { ...entry, omitted: false };
+      const record = { ...content, ...(entry.ref.store === "run" ? {
+        execution: runExecutionObservation(entry.value as AgentRun,
+          reader.getTaskRoleSessionSet(taskId, (entry.value as AgentRun).roleName)?.providerBinding, runtimeEvents)
+      } : {}) };
       const size = Buffer.byteLength(JSON.stringify(record));
       if (records.length >= MAX_RECORDS || bytes + size > MAX_PAGE_BYTES) break;
       records.push(record);
@@ -163,7 +170,19 @@ export function inspectTaskContext(
     if (Buffer.byteLength(JSON.stringify(entry.value)) > MAX_INSPECT_BYTES) {
       throw usageError("Context value exceeds the bounded inspect limit.", undefined, { ref: entry.ref, maxBytes: MAX_INSPECT_BYTES });
     }
-    return { ...entry, coreCursor: encode(currentCursor(reader, taskId)) };
+    const expansion = selector.store === "task-message"
+      ? expandTaskMessageResult(value as TaskMessage, (task, run) => reader.getRun(task, run))
+      : undefined;
+    const response = { ...entry, ...(expansion !== undefined && "result" in expansion
+      ? { result: expansion.result } : {}),
+      ...(selector.store === "run" ? { execution: runExecutionObservation(value as AgentRun,
+        reader.getTaskRoleSessionSet(taskId, (value as AgentRun).roleName)?.providerBinding, reader.listEvents(taskId)) } : {}),
+      coreCursor: encode(currentCursor(reader, taskId)) };
+    if (Buffer.byteLength(JSON.stringify(response)) > MAX_INSPECT_BYTES) {
+      throw usageError("Expanded Context exceeds the bounded inspect limit.", undefined,
+        { ref: entry.ref, maxBytes: MAX_INSPECT_BYTES });
+    }
+    return response;
   });
 }
 
@@ -234,11 +253,11 @@ function authorizeContext(store: TaskStore, taskId: string, environment: NodeJS.
   if (task === null) throw taskNotFound(taskId);
   let allow: Set<string> | undefined;
   if (caller !== undefined && caller.roleName !== "leader") {
-    if (caller.currentTurnId === undefined) throw usageError("A managed Role needs a current Turn to read its scoped Context.");
-    const pack = buildTurnContextPack(store, taskId, caller.currentTurnId);
+    if (caller.currentRunId === undefined) throw usageError("A managed Role needs a current AgentRun to read its scoped Context.");
+    const pack = buildRunContextPack(store, taskId, caller.currentRunId);
     allow = new Set(pack.authority.readableRefs.map((ref) => `${ref.store}:${ref.refId}`));
     allow.add(`role:${caller.roleName}`);
-    allow.add(`turn:${caller.currentTurnId}`);
+    allow.add(`turn:${caller.currentRunId}`);
   }
   return { task, allow, caller };
 }
@@ -295,21 +314,21 @@ function inspectValue(
         .find((candidate) => candidate.id === parts[1]) ?? null;
     }
     case "task-message": return store.listMessages(taskId).find((message) => message.id === refId) ?? null;
-    case "turn": return store.getTurn(taskId, refId);
-    case "source-turn": {
+    case "run": return store.getRun(taskId, refId);
+    case "source-run": {
       if (!allow?.has(`source-turn:${refId}`)) return null;
-      const turn = store.getTurn(taskId, refId);
-      return turn === null ? null : sourceTurnContextValue(turn);
+      const run = store.getRun(taskId, refId);
+      return run === null ? null : sourceRunContextValue(run);
     }
     case "review-round": return store.getReviewRound(taskId, refId);
     case "artifact": return store.getArtifact(taskId, refId);
     case "environment-preparation": return store.getEnvironmentPreparation(taskId, refId);
     case "change-set": return store.getChangeSet(taskId, refId);
     case "managed-workspace": {
-      // Existing frozen Turn overlays use the Task/Role alias; owner keys
+      // Existing frozen AgentRun overlays use the Task/Role alias; owner keys
       // identify the durable workspace in current Task reads.
-      if (caller?.currentTurnId !== undefined && refId === `${taskId}/${caller.roleName}`) {
-        return store.getTurn(taskId, caller.currentTurnId)?.workspace ?? null;
+      if (caller?.currentRunId !== undefined && refId === `${taskId}/${caller.roleName}`) {
+        return store.getRun(taskId, caller.currentRunId)?.workspace ?? null;
       }
       return store.listManagedWorkspaces(taskId)
         .find((workspace) => managedWorkspaceKey(workspace.owner) === refId) ?? null;
@@ -363,15 +382,15 @@ function authorizedEntries(store: TaskStore, taskId: string, environment: NodeJS
   for (const artifact of store.listArtifacts(taskId)) add("artifact", artifact.id, artifact);
   for (const preparation of store.listEnvironmentPreparations(taskId)) add("environment-preparation", preparation.id, preparation);
   for (const workspace of store.listManagedWorkspaces(taskId)) add("managed-workspace", managedWorkspaceKey(workspace.owner), workspace);
-  if (caller?.currentTurnId !== undefined) {
+  if (caller?.currentRunId !== undefined) {
     add("managed-workspace", `${taskId}/${caller.roleName}`,
-      store.getTurn(taskId, caller.currentTurnId)?.workspace ?? null);
+      store.getRun(taskId, caller.currentRunId)?.workspace ?? null);
   }
   for (const changeSet of store.listChangeSets(taskId)) add("change-set", changeSet.id, changeSet);
   for (const message of store.listMessages(taskId).reverse()) add("task-message", message.id, message);
-  for (const turn of store.listTurns(taskId).reverse()) {
-    add("turn", turn.id, turn);
-    if (allow?.has(`source-turn:${turn.id}`)) add("source-turn", turn.id, sourceTurnContextValue(turn));
+  for (const run of store.listRuns(taskId).reverse()) {
+    add("run", run.id, run);
+    if (allow?.has(`source-turn:${run.id}`)) add("source-run", run.id, sourceRunContextValue(run));
   }
   for (const round of store.listReviewRounds(taskId).reverse()) add("review-round", round.id, round);
   for (const request of store.listInputRequests(taskId).filter((r) => r.status !== "open")) add("input-request", request.id, request);

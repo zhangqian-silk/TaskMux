@@ -175,9 +175,9 @@ export type AgentDriverMappedHook = Readonly<{
 export type AgentDriverHookClassification = Readonly<{
   /** How a first Session Hook may establish identity before projection exists. */
   startupSession?: "preallocated" | "discovered";
-  /** Terminal Hooks remain admissible after the exact Turn has completed. */
+  /** Terminal Hooks remain admissible after the exact AgentRun has completed. */
   terminal?: boolean;
-  /** Existing native child identity that can recover its original Turn fence. */
+  /** Existing native child identity that can recover its original AgentRun fence. */
   continuationId?: string;
 }>;
 
@@ -191,7 +191,7 @@ export type AgentDriver = AgentDriverDescriptor & Readonly<{
   runtime: Readonly<{
     /** Resolve the provider's stable Session identity at the Driver edge. */
     nativeSessionId(input: AgentDriverNativeHook): string | undefined;
-    /** Resolve the provider's stable Turn identity without leaking its field names into core. */
+    /** Resolve the provider's stable AgentRun identity without leaking its field names into core. */
     nativeTurnId(input: AgentDriverNativeHook): string | undefined;
     /** Recognize one complete Provider exception as policy-free failure facts. */
     mapError(input: AgentDriverErrorInput): AgentErrorClassification;

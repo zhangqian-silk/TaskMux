@@ -13,6 +13,9 @@ engine. Its core owns durable identity, user authority, workspace isolation,
 and atomic state changes. Provider Sessions and runtime observations support
 execution and continuity, but they are not competing sources of Task truth.
 
+The [Session / AgentRun / notification contract](docs/architecture/yui-handbook-full-architecture/architecture/07-session-run-contract.md)
+describes direct Leader collaboration, execution results and storage migration.
+
 The current implementation restores the useful Role/Agent/session and CLI framework without restoring the later data-maintenance, lease, schedule, and recovery-ledger systems.
 
 The [target architecture handbook](docs/architecture/README.md) preserves the
@@ -89,7 +92,7 @@ enter only through the explicit upgrade boundary.
 
 Every Task-owned record family allocates a monotonically increasing local ID
 inside its Task. Different Tasks may therefore both contain `work-item-1`,
-`turn-1`, or `input-1`. A managed Task session may use that short local ID
+`run-1`, or `input-1`. A managed Task session may use that short local ID
 because `YUI_TASK_ID` supplies the scope. Outside a Task session, use the
 qualified form `<task-id>/<local-id>`; Yui never searches every Task for a bare
 ID. Commands that already take a Task explicitly, such as `task work create`
@@ -176,7 +179,7 @@ constraints); explicit Role options in the same command apply afterward.
 This Yui Agent Profile is separate from a Codex native config profile also
 named `--profile`.
 
-Current Role selection is distinct from a Turn's immutable effective
+Current Role selection is distinct from a AgentRun's immutable effective
 configuration. Updating a Worker from A to B preserves A's active Assignment;
 future explicit execution selects B. Leader replacement revokes the old
 management entry without rebuilding Worker assignments.
@@ -296,7 +299,7 @@ before the swap leaves only a removable staging clone).
 
 `project retire` is the auditable soft deprecation: it records who retired the Project, when, and
 why, while retaining the catalog record, checkout, and every historical
-Task/Turn/Review/Integration/Publication reference. A retired Project cannot be refreshed,
+Task/AgentRun/Review/Integration/Publication reference. A retired Project cannot be refreshed,
 updated, migrated, reset, replaced, maintained through Knowledge writes (add/retire/propose/
 accept/reject), or bound to new Tasks, WorkItems, or Integrations; Knowledge reads (`list`,
 `show`, `proposals list/show`) stay open so the evidence stays auditable.
@@ -308,7 +311,7 @@ then moves the checkout to a tombstone before removing the catalog record, resto
 failure so the catalog and checkout never disagree unrecoverably. `project show` and
 `project list` display the lifecycle status and retirement record.
 
-Use `task context` as the first detailed read of an existing Task. It combines the Task, Brief, active Decisions, recent Milestones, Roles, current and recent WorkItems with their Turns, recent Messages, open and resolved InputRequests, and recent Events. Terminal output keeps histories and long text compact; `yui --json task context <task-id>` returns the complete records in the top-level `data` field.
+Use `task context` as the first detailed read of an existing Task. It combines the Task, Brief, active Decisions, recent Milestones, Roles, current and recent WorkItems with their AgentRuns, recent Messages, open and resolved InputRequests, and recent Events. Terminal output keeps histories and long text compact; `yui --json task context <task-id>` returns the complete records in the top-level `data` field.
 
 Leader wakeups stay deliberately small: the wake envelope carries only the
 aggregated wake reasons, a delta window, and read pointers. The durable wake
@@ -320,8 +323,8 @@ yui task wake show <task-id> <wake-id>
 ```
 
 `wake list` shows the dispatch history with status, reasons, and consuming
-Turn; `wake show` renders one wake's delta window — the Events, Messages, and
-Turns recorded between its cursors. A human or Agent can still force a wake
+AgentRun; `wake show` renders one wake's delta window — the Events, Messages, and
+AgentRuns recorded between its cursors. A human or Agent can still force a wake
 with `yui task wake <task-id> --force --reason "<text>"`.
 
 Human-facing timestamps default to Beijing time (`Asia/Shanghai`) while durable
@@ -354,7 +357,7 @@ Every result entering Leader acceptance is one explicit candidate on its
 existing WorkItem. The current global rule applies to the next candidate in
 every existing or new Task; that candidate snapshots the rule, so later
 `set`/`clear` changes do not rewrite an in-flight decision.
-`always` starts a ReviewRound for every candidate, including a completed Role Turn
+`always` starts a ReviewRound for every candidate, including a completed Role AgentRun
 or a Leader-managed direct result; `leader` leaves the candidate awaiting
 acceptance so the Leader can accept it directly or run
 `yui task work review <task-id>/<work-item-id>`. A configured review rule therefore keeps
@@ -365,12 +368,12 @@ contract requires one. The Round snapshots the exact Task-main Project heads
 directly, so even a Leader-owned Task with no WorkItem can be reviewed without
 locking the mutable Task workspace. A changed frozen head needs a new semantic
 Round; the same Reviewer Session continues in its
-stable workspace, while every Turn remains bound to its exact Round and head.
+stable workspace, while every AgentRun remains bound to its exact Round and head.
 The Reviewer follows Project Policy/Knowledge and reports reachable, material,
 actionable findings across the complete Task.
 A ReviewRound freezes the Candidate's exact Git commit and updates the
 Reviewer Role's stable writable workspace to that head while recording exact
-Round-owned workspace evidence. Its Turn may edit,
+Round-owned workspace evidence. Its AgentRun may edit,
 test, and optionally commit diagnostic evidence there, but never changes the
 Candidate or Worker workspace and never creates another WorkItem, Candidate,
 ChangeSet, or recursive review. The result wakes the Leader, who decides whether
@@ -393,18 +396,18 @@ yui task review request <task-id> --role reviewer \
   --lane-role security-reviewer --lane-role correctness-reviewer
 ```
 
-Direct Review creates one main Reviewer Turn with no ExecutionGroup or Lane.
+Direct Review creates one main Reviewer AgentRun with no ExecutionGroup or Lane.
 Replicated Review requires at least two distinct Producer Roles, all inspecting
 the identical frozen Assignment in isolated Lane workspaces. Yui waits for
 every Lane to settle and requires at least two successful Producer results
-before creating one idempotent main Reviewer synthesis Turn. Successful
+before creating one idempotent main Reviewer synthesis AgentRun. Successful
 Producers are never rerun during Lane or main retry. Producer output is durable
-non-authoritative evidence; only the exact completed main Reviewer Turn
-completes the Round. The Leader reads that Turn's original result and decides
+non-authoritative evidence; only the exact completed main Reviewer AgentRun
+completes the Round. The Leader reads that AgentRun's original result and decides
 what it means.
 
 Task context and next-action expose the Review shape, every frozen Project
-commit, its relation to the current candidate, Producer and main Turns, and
+commit, its relation to the current candidate, Producer and main AgentRuns, and
 their owned workspaces. A request that fails after Round creation retains the ReviewRound
 and reports its exact reason; the Leader opens that Round and decides whether
 to retry, inspect or clean the workspace, use another Reviewer, or continue
@@ -424,7 +427,7 @@ portable collaboration behavior; Project Policy/Knowledge supplies
 project-specific build, test, migration, release, and review rules; the Task
 Contract supplies the current objective and acceptance. Project-backed Workers
 commit and leave the Develop workspace clean before ending the Provider Turn.
-Yui stores the final Turn result and freezes each writable Project's HEAD in the Candidate
+Yui stores the final AgentRun result and freezes each writable Project's HEAD in the Candidate
 snapshot; ReviewRound worktrees are recreated from those exact commits even if
 Develop later advances during repair.
 
@@ -546,7 +549,7 @@ yui task execution stop <task-id> --force --reason "<why execution must be fence
 yui task execution start <task-id>
 ```
 
-`stop` terminates disposable Turns and Sessions while preserving WorkItems,
+`stop` terminates disposable AgentRuns and Sessions while preserving WorkItems,
 repository changes, Messages, reviews, and other Task progress. `start` admits
 one new Leader attempt from those durable records; it does not recover an old
 Agent conversation.
@@ -595,21 +598,21 @@ yui task work dispatch <task-id>/<work-item-id> \
 ```
 
 Each Lane is a recoverable logical slot. A successful Lane points to its
-immutable Producer Turn result; a failed Turn leaves the Lane open and visible
-as `needs-attention`. The Leader retries or explicitly settles that exact Turn:
+immutable Producer AgentRun result; a failed AgentRun leaves the Lane open and visible
+as `needs-attention`. The Leader retries or explicitly settles that exact AgentRun:
 
 ```sh
-yui task turn retry <task-id>/<failed-turn-id>
-yui task turn settle <task-id>/<failed-turn-id>
+yui task run retry <task-id>/<failed-run-id>
+yui task run settle <task-id>/<failed-run-id>
 ```
 
 Yui waits until every Lane is settled. At least two successful Producer results
-create one idempotent main Turn for the WorkItem assignee; fewer results fail
-the WorkItem attempt without falling back to a single result. A main Turn retry
+create one idempotent main AgentRun for the WorkItem assignee; fewer results fail
+the WorkItem attempt without falling back to a single result. A main AgentRun retry
 keeps the same source Group and never reruns successful Lanes. Only a successful
-main Turn can become the Candidate used by Review and Integration. `task work
+main AgentRun can become the Candidate used by Review and Integration. `task work
 show`, `task work list`, Task context, and the Web control room derive execution
-shape, recovery targets, synthesis eligibility, main Turn, Candidate provenance,
+shape, recovery targets, synthesis eligibility, main AgentRun, Candidate provenance,
 next action, and owner from the same persisted facts. Missing facts stay
 `unknown` or `unobserved`; token, duration, and tool-call totals are display-only.
 
@@ -620,7 +623,7 @@ set. Codex options are `sandbox` and `approval`; Claude options are `mode`,
 `allowedTools`, and `disallowedTools`. Provider permission is independent from
 Profile behavior and Project write authority: only an exact WorkItem scope and
 matching managed workspace grant normal Project writes. A ReviewRound is the only non-WorkItem write
-purpose and must match its Turn, reviewRoundId, frozen base, and
+purpose and must match its AgentRun, reviewRoundId, frozen base, and
 ReviewRound-owned main workspace or exact isolated Producer Lane workspace;
 every mismatch fails closed. Its diagnostic commit
 is visible history but is
@@ -633,7 +636,7 @@ without a commit; the worktree is retained and cleanup refuses it until it is
 clean.
 
 Every Role desired launch change increments its revision and applies only to a
-future launch. Each Turn and native Role Session stores the complete actual
+future launch. Each AgentRun and native Role Session stores the complete actual
 agent, adapter, model, effort, Profile access intent, exact writable Projects,
 permission strategy and native options, workspace, context, and source desired revision. Updating,
 switching, or clearing Role overrides never
@@ -641,12 +644,12 @@ hot-mutates an existing process. When the Role has a live Session,
 `task role update`, `config role update`, and `config agent update` report that
 Session once and require `--yes`, so the change is recorded in the knowledge
 that it applies to the next activation; stopping the Session applies it
-immediately instead. `task context`, Role views, Turn history,
+immediately instead. `task context`, Role views, AgentRun history,
 Events, and Web show desired/effective revisions, Profile intent, permission, and
 pending next-launch drift.
 
-Both Codex and Claude deliver a managed Turn through the Provider's native Turn
-terminal. Yui stores the final assistant response as the exact Turn result,
+Both Codex and Claude deliver a managed AgentRun through the Provider's native Turn
+terminal. Yui stores the final assistant response as the exact AgentRun result,
 submits the WorkItem for Leader review, and queues the Leader. It does not
 accept the WorkItem. A Leader never wakes itself; any pending Operator or Worker
 wake remains durable until the Leader is idle.
@@ -655,7 +658,7 @@ If the outcome cannot be determined, label the handoff `uncertain`,
 `incomplete`, `blocked`, or `requiring Leader judgment` and submit the most
 complete truthful identities, actions, repository state, checks and errors,
 lifecycle boundary, unfinished work, open decisions, risks, confidence, and
-bounded next options. The Turn result is immutable execution evidence only; it
+bounded next options. The AgentRun result is immutable execution evidence only; it
 does not imply acceptance, WorkItem completion, ChangeSet capture,
 Integration, or Task completion.
 
@@ -689,10 +692,10 @@ yui task work update <task-id>/<work-item-id> done \
 Use `inherited` or `unknown` when the native runtime does not expose an actual
 model or effort; do not guess. The three supported paths remain deliberately
 small: Leader direct execution, a conversation-native subagent, or a Task Role
-Turn when work needs its own provider, credentials, interaction, or durable
+AgentRun when work needs its own provider, credentials, interaction, or durable
 Session.
 
-For an isolated Task Role result, the Leader first reviews the stored Turn result.
+For an isolated Task Role result, the Leader first reviews the stored AgentRun result.
 An insufficient result is rejected with feedback and redispatched in the same
 workspace. An acceptable result is captured and integrated in a candidate
 worktree. Checks run there, and the target advances only if its recorded HEAD
@@ -716,7 +719,7 @@ yui task integration resolve <task-id>/<integration-id> \
 yui task integration continue <task-id>/<integration-id>
 ```
 
-Worker Turn completion is not WorkItem completion. The Leader accepts only after reviewing
+Worker AgentRun completion is not WorkItem completion. The Leader accepts only after reviewing
 the result, validations, and the latest ChangeSet integration:
 
 ```sh
@@ -733,14 +736,14 @@ operational projections without deleting their audit records:
 
 ```sh
 yui task message retire <task>/<message> --reason "Superseded instruction"
-yui task turn retire <task>/<turn> --reason "Invalid launch record"
+yui task run retire <task>/<run> --reason "Invalid launch record"
 ```
 
 These commands append a retirement fact. Lists and audit views retain the
-original Message, WorkItem, or Turn and mark it retired; managed Turn context,
+original Message, WorkItem, or AgentRun and mark it retired; managed AgentRun context,
 actionability, recovery, review evidence, and scheduling ignore it. Retiring
-an active Turn first terminalizes that exact Turn, and retirement is
-idempotent. Only the user or global Operator may retire Messages or Turns;
+an active AgentRun first terminalizes that exact AgentRun, and retirement is
+idempotent. Only the user or global Operator may retire Messages or AgentRuns;
 WorkItems may also be retired by their Task Leader.
 
 For long-running Tasks, the Leader keeps Yui—not a native transcript—as the
@@ -751,7 +754,7 @@ Brief focus and Leader summary before ending each Provider Turn, records materia
 Decisions, adds phase outcomes as Milestones, and promotes only cross-Task
 stable facts to Project Knowledge.
 
-When an active Leader Turn cannot continue without a user decision, it creates a durable InputRequest and ends its Provider Turn with a truthful blocked result:
+When an active Leader AgentRun cannot continue without a user decision, it creates a durable InputRequest and ends its Provider Turn with a truthful blocked result:
 
 ```sh
 yui task input request <task-id> --question "Which format should be the default?" \
@@ -771,7 +774,7 @@ yui task input request <task-id> --question "Which format should be the default?
 
 The recommendation is shown to the user. If no answer arrives, the nearest-deadline timer wakes the Controller to atomically apply that exact choice and queue the fixed Leader session to resume. Free-text and user-required requests never auto-resolve.
 
-`task input list` is the authoritative global open-input Inbox; add a Task ID to scope it, or `--all` to include answered and cancelled requests. Task completion, retirement, Leader attention, stalls, and open input are queued to the global Operator mailbox only as immutable TaskEvent or InputRequest references. The Controller merges one pending mailbox batch into one receipt-backed `[Yui updates]` user message for an existing ready Operator; the Operator reads the referenced records through the CLI and decides what is worth presenting. A running or unavailable Operator is never started or interrupted: the whole batch remains durable and is retried after native turn completion or a later Controller pass. This path is a user message, not a tool call, and it never inspects or classifies Agent terminal text. Answers may be submitted by the user or Operator. An open request prevents unrelated pending wakes and Task completion or archival. The originating Leader may instead run `yui task input cancel <task-id> <input-id> --reason "..."`; cancellation queues that fixed Leader session to resume.
+`task input list` is the authoritative global open-input Inbox; add a Task ID to scope it, or `--all` to include answered and cancelled requests. Task completion, retirement, Leader attention, stalls, and open input are queued to the global Operator mailbox only as immutable TaskEvent or InputRequest references. The Controller merges one pending mailbox batch into one receipt-backed `[Yui updates]` user message for an existing ready Operator; the Operator reads the referenced records through the CLI and decides what is worth presenting. A running or unavailable Operator is never started or interrupted: the whole batch remains durable and is retried after native run completion or a later Controller pass. This path is a user message, not a tool call, and it never inspects or classifies Agent terminal text. Answers may be submitted by the user or Operator. An open request prevents unrelated pending wakes and Task completion or archival. The originating Leader may instead run `yui task input cancel <task-id> <input-id> --reason "..."`; cancellation queues that fixed Leader session to resume.
 
 Inspect the result:
 
@@ -779,7 +782,7 @@ Inspect the result:
 yui task context <task-id>
 ```
 
-Use the narrower `task work`, `task message`, `task turn`, and Task Knowledge commands when you need one collection or record.
+Use the narrower `task work`, `task message`, `task run`, and Task Knowledge commands when you need one collection or record.
 
 Record a Task's confirmed PR/MR delivery state with one idempotent command:
 
@@ -886,7 +889,7 @@ audit records the authorization and, on completion, the accepted Project,
 Publication, optional ReviewRound, both commits, and tree.
 
 Completed Tasks reject messages, dispatch, Provider authority changes, retry,
-and late Turn delivery until explicitly reopened, while retaining Task main for
+and late AgentRun delivery until explicitly reopened, while retaining Task main for
 inspection or integration. Terminal WorkItem, Review, Integration, and Lane
 worktrees are non-blocking completion advisories, but they must be settled
 before archive. Every isolated WorkItem worktree is explicitly cleaned as
@@ -918,10 +921,10 @@ remains visible and directly usable in Desktop. Task execution stop terminates
 Yui's Agent Host and proxy while leaving the daemon and thread untouched; start
 creates a fresh proxy attachment.
 If the proxy disconnects, the Host may attach a bounded replacement client and
-reconcile the exact owned Turn from native history. A failed fresh attachment
-is released instead of becoming a cleanup prerequisite for later Turns.
+reconcile the exact owned AgentRun from native history. A failed fresh attachment
+is released instead of becoming a cleanup prerequisite for later AgentRuns.
 Claude Code keeps its independent stream-json process. Agent Host is the sole
-writer to that process, so a completed stream write accepts the Turn; the
+writer to that process, so a completed stream write accepts the AgentRun; the
 later provider `result` event settles it. An uncertain write becomes
 `delivery-unknown` and is never automatically retried.
 
@@ -935,17 +938,17 @@ yui task role release <task-id> <role>
 
 For an independently hosted Provider such as Claude, these commands are the
 supported human-control boundary. A Codex Role uses an ordinary shared thread
-and may be operated directly in Desktop; an active Desktop Turn creates bounded
-backpressure for Yui rather than a failed Turn.
+and may be operated directly in Desktop; an active Desktop AgentRun creates bounded
+backpressure for Yui rather than a failed AgentRun.
 
-Turn is the only durable Role scheduling state. Conversation state does not
-carry a second current-Turn pointer. A Yui-dispatched Provider Turn carries the
-durable Turn id that correlates its visible input and terminal result; a direct
+AgentRun is the only durable Role scheduling state. Conversation state does not
+carry a second current-AgentRun pointer. A Yui-dispatched Provider Turn carries the
+durable AgentRun id that correlates its visible input and terminal result; a direct
 Provider Turn is recorded as direct conversation history without entering the
-scheduling pointer. A native Turn terminal completes that Turn, after which Yui
-may claim the next Turn and submit it through the same Session.
+scheduling pointer. A native Turn terminal completes that AgentRun, after which Yui
+may claim the next AgentRun and submit it through the same Session.
 TaskRole itself stores identity and desired launch configuration, not runtime
-status; Role status shown by CLI/Web is derived from the active Turn plus
+status; Role status shown by CLI/Web is derived from the active AgentRun plus
 Session/Driver lifecycle facts.
 
 Global Operator and global Role sessions remain native interactive CLIs. Codex
@@ -954,7 +957,7 @@ between Yui and Desktop without transferring a rollout writer or losing its
 Global Context entry. A thin Host in the same pane transparently forwards the
 native TUI's App Server connection and acknowledges its exact `thread/start`
 or `thread/resume` response. Yui records that Thread ID before the first user
-Turn, without depending on `notify`, scanning history, or creating a bootstrap
+AgentRun, without depending on `notify`, scanning history, or creating a bootstrap
 message. The attachment outlives Controller restarts but exits with the TUI:
 
 ```sh
@@ -987,25 +990,25 @@ An explicit launch can rebuild the exact dead window; tmux refuses to replace
 a live pane. An unidentified live Operator still cannot be overwritten.
 
 The Role's active binding is desired state for the next launch. A
-running Turn and its native Session continue under their immutable
+running AgentRun and its native Session continue under their immutable
 effective snapshot even if the Role is edited or switched. Resume is refused
 only when continuation is impossible: no recoverable native Session, a
 different Agent or adapter, or a different physical workspace. Desired launch
 configuration such as model, effort, permission, Role context, Skills, or
 declared write scope shapes the next activation instead of ending the Session,
-and Turn-scoped facts such as ReviewRound identity or candidate commits never
+and AgentRun-scoped facts such as ReviewRound identity or candidate commits never
 affect reuse. When continuation is impossible Yui starts a new Session after
 the old process has stopped and keeps the terminal Session's immutable
 effective snapshot in history. Managed
 Sessions invoke the ordinary `yui` command; their Manifest and durable
-Role/Turn fences authenticate scope while protocol and storage compatibility
+Role/AgentRun fences authenticate scope while protocol and storage compatibility
 allow a CLI package or Controller upgrade in place. Exact internal callbacks
 remain fenced to their originating runtime snapshot.
 
 Use `yui config role unbind <global-role> <agent-id>` or `yui task role unbind <task-id> <role> <agent-id>` to retire a dormant binding. The active binding and any non-stopped native session are rejected; a stopped session record is removed atomically with the binding.
 
 Claude session IDs are preallocated at launch. Codex discovers its native
-thread identity from App Server responses. Managed Task Turns use structured
+thread identity from App Server responses. Managed Task AgentRuns use structured
 Provider observations for both CLIs. Global Codex uses the native TUI's exact
 App Server startup response and the existing Host acknowledgement. Legacy
 global `notify` callbacks cannot register a Session or change its lifecycle.
@@ -1019,15 +1022,15 @@ human-facing transcript read and has no lifecycle authority.
 
 The [AgentRuntime Driver architecture](docs/agent-runtime-drivers.md) keeps
 native Codex/Claude event names at the edge. Core consumes exact-fenced
-Session, Turn, operation, waiting, host, and activity observations. A positive
+Session, AgentRun, operation, waiting, host, and activity observations. A positive
 token delta is evidence of recent runtime activity; an unchanged counter is
 not. A live tmux pane proves only that the host exists. Runtime activity and
 durable workflow progress use independent clocks, so token/tool/resource
 movement cannot conceal a workflow that is not advancing.
 
-Stable Role context never creates a separate bootstrap Turn. Task execution Turns use the generic Leader or Worker Skill, while review Turns use the generic Reviewer Skill based on durable Turn purpose rather than a configured Role name. The provider either carries the Skill through a safe additive native context channel or points to it from the ordinary Task delivery. These Yui-owned Role Skills define portable orchestration only. Project Skills remain ordinary versioned files in the Project and are discovered, selected, and loaded by the Agent through its native project mechanism; Yui does not scan, parse, copy, or inject them.
+Stable Role context never creates a separate bootstrap AgentRun. Task execution AgentRuns use the generic Leader or Worker Skill, while review AgentRuns use the generic Reviewer Skill based on durable AgentRun purpose rather than a configured Role name. The provider either carries the Skill through a safe additive native context channel or points to it from the ordinary Task delivery. These Yui-owned Role Skills define portable orchestration only. Project Skills remain ordinary versioned files in the Project and are discovered, selected, and loaded by the Agent through its native project mechanism; Yui does not scan, parse, copy, or inject them.
 
-Managed Codex keeps the user's native developer instructions unchanged. The ordinary Task message includes a compact absolute Session Manifest pointer, and the manifest identifies the matching Yui-owned Role Skill for Codex to read on demand. Model, effort, permission, workspace, and shell settings are supplied to `thread/start` or `thread/resume` through the shared App Server daemon; a Codex native config profile is rejected because it cannot be isolated to one shared-daemon thread. The underlying Codex config file is never mutated. App Server notifications are the managed thread's lifecycle authority; Yui installs no managed Codex Hook and does not claim `notify`. Interactive Codex Sessions may still use Yui's structured `notify` callback, and Doctor reports any effective configuration conflict. `skills.config` is not misused because it only enables or disables already-discovered Skills. Claude receives the same Yui-owned Role Skill content from a private `0600` managed context file rather than a large or sensitive argv value; retries and resumes reuse the purpose-specific Role path. Non-Operator global Roles stay neutral and receive no Task orchestration Skill. Operator therefore opens at an empty native composer, so the user's text remains its first user message. Leader wakeups and Worker or Reviewer Turn assignments remain real mailbox-delivered work messages.
+Managed Codex keeps the user's native developer instructions unchanged. The ordinary Task message includes a compact absolute Session Manifest pointer, and the manifest identifies the matching Yui-owned Role Skill for Codex to read on demand. Model, effort, permission, workspace, and shell settings are supplied to `thread/start` or `thread/resume` through the shared App Server daemon; a Codex native config profile is rejected because it cannot be isolated to one shared-daemon thread. The underlying Codex config file is never mutated. App Server notifications are the managed thread's lifecycle authority; Yui installs no managed Codex Hook and does not claim `notify`. Interactive Codex Sessions may still use Yui's structured `notify` callback, and Doctor reports any effective configuration conflict. `skills.config` is not misused because it only enables or disables already-discovered Skills. Claude receives the same Yui-owned Role Skill content from a private `0600` managed context file rather than a large or sensitive argv value; retries and resumes reuse the purpose-specific Role path. Non-Operator global Roles stay neutral and receive no Task orchestration Skill. Operator therefore opens at an empty native composer, so the user's text remains its first user message. Leader wakeups and Worker or Reviewer AgentRun assignments remain real mailbox-delivered work messages.
 
 ## Controller and failure handling
 
@@ -1063,34 +1066,34 @@ successful `upgrade` restores a Controller only when it stopped one for the
 migration. `update` starts the replacement only after migration and health
 checks pass.
 
-Its recovery reconciliation runs every 120 seconds by default. Normal durable state changes enqueue a Task, Role, or Operator key and return immediately; keys received in the same fixed 100 ms window trigger one non-overlapping targeted pass. Operator presentation has an independent lane, so a blocked Task workspace operation cannot delay a user question. Periodic Git/worktree work is limited to Tasks with durable Task-mailbox work, while active Role liveness uses one tmux inventory. Structured Agent Driver observations, whether received from native provider events or supported Hooks, are exact-fenced before they reach the durable runtime inbox. A terminal Turn observation atomically records the exact Turn result. Durable mailboxes freeze the current batch while new signals merge into the next batch. Task-orchestration failures retain the exact Controller-owned processing batch for two bounded fast retries and later periodic recovery; a successful retry completes that batch before newer pending work is claimed. Recommended InputRequest and pending Turn deadlines share one nearest-deadline selector and therefore do not wait for the recovery interval. Explicit `task reconcile` still requests an immediate recovery pass. The retained loop is:
+Its recovery reconciliation runs every 120 seconds by default. Normal durable state changes enqueue a Task, Role, or Operator key and return immediately; keys received in the same fixed 100 ms window trigger one non-overlapping targeted pass. Operator presentation has an independent lane, so a blocked Task workspace operation cannot delay a user question. Periodic Git/worktree work is limited to Tasks with durable Task-mailbox work, while active Role liveness uses one tmux inventory. Structured Agent Driver observations, whether received from native provider events or supported Hooks, are exact-fenced before they reach the durable runtime inbox. A terminal AgentRun observation atomically records the exact AgentRun result. Durable mailboxes freeze the current batch while new signals merge into the next batch. Task-orchestration failures retain the exact Controller-owned processing batch for two bounded fast retries and later periodic recovery; a successful retry completes that batch before newer pending work is claimed. Recommended InputRequest and pending AgentRun deadlines share one nearest-deadline selector and therefore do not wait for the recovery interval. Explicit `task reconcile` still requests an immediate recovery pass. The retained loop is:
 
 1. dispatch pending Leader wakes whose Task workspaces are already ready;
 2. prepare active Project Task main worktrees with durable orchestration work;
-3. deliver active Role Turns from durable active-Turn state, using ordinary
+3. deliver active Role AgentRuns from durable active-AgentRun state, using ordinary
    Role mailboxes only as optional delivery hints;
-4. resolve due Turn completions and reconcile Role liveness;
+4. resolve due AgentRun completions and reconcile Role liveness;
 5. dispatch Leader work created or unblocked by the later recovery phases.
 
-Automated input is sent only through tmux. Each pass performs one non-blocking process-state readiness check; a busy startup is retried through a small bounded mailbox timer, while later busy sessions are woken by canonical Agent Driver terminal observations. A pane-local receipt prevents the same Turn input from being typed twice after a Controller retry.
+Automated input is sent only through tmux. Each pass performs one non-blocking process-state readiness check; a busy startup is retried through a small bounded mailbox timer, while later busy sessions are woken by canonical Agent Driver terminal observations. A pane-local receipt prevents the same AgentRun input from being typed twice after a Controller retry.
 
-If a Role process exits without a terminal Provider result, the Controller fails that Turn and queues the Leader. A replicated WorkItem or Review Producer Lane remains open for exact retry or explicit settlement; completed sibling results remain reusable. Recovery failures are exposed through the small Jobs view:
+If a Role process exits without a terminal Provider result, the Controller fails that AgentRun and queues the Leader. A replicated WorkItem or Review Producer Lane remains open for exact retry or explicit settlement; completed sibling results remain reusable. Recovery failures are exposed through the small Jobs view:
 
 ```sh
 yui jobs list
 yui jobs retry leader-recovery:<task-id>
 yui task reconcile <task-id>
-yui task turn retry <failed-turn-id>
-yui task turn settle <failed-turn-id>
+yui task run retry <failed-run-id>
+yui task run settle <failed-run-id>
 ```
 
 `jobs` is not a restored generic queue: it presents durable pending Leader wakes and Leader recovery failures only.
 
-`task turn settle` records that the Leader will no longer recover the exact
-current failed Producer Lane Turn. Only then does the Lane become failed and the
+`task run settle` records that the Leader will no longer recover the exact
+current failed Producer Lane AgentRun. Only then does the Lane become failed and the
 settled Group become eligible for WorkItem or Review synthesis when at least
 two Producer results succeeded. The same command retains its narrow repair for an obsolete failed
-Reviewer Turn whose Task-final ReviewRound is stranded on an old frozen
+Reviewer AgentRun whose Task-final ReviewRound is stranded on an old frozen
 candidate; that repair never creates a retry Round.
 
 Completion is the reversible execution fence. Archiving is terminal and is accepted only after active work is settled: it stops the Task's tmux session and removes clean managed worktrees. Dirty worktrees keep the Task completed and are preserved for deliberate resolution.
@@ -1106,7 +1109,7 @@ yui web
 
 Use `--port <port>` or `--host 127.0.0.1|::1|localhost` to change the
 listener. Yui rejects non-loopback hosts because the control room exposes Task
-metadata, Briefs, Roles, WorkItems, Turns, messages, Decisions, Milestones, and
+metadata, Briefs, Roles, WorkItems, AgentRuns, messages, Decisions, Milestones, and
 InputRequests. A random token embedded in the served page protects its write
 and terminal endpoints.
 
@@ -1124,14 +1127,14 @@ question and urgency so you can answer without drilling in, and the list of
 currently active tasks. Each task row carries a derived execution status
 (progressing, needs attention, blocked, recovering) so stalled or failed
 work is visible before you open a task. Selecting a task opens an anchored
-detail view (Summary, Focus, Work items, Turns, Roles, History, Messages)
+detail view (Summary, Focus, Work items, AgentRuns, Roles, History, Messages)
 with a sticky tab bar that tracks the visible section. The Summary tab leads
 with an execution band that consolidates the Task's owner, current action,
 attention list, blockers, and fail-closed indicators; Work items surface
 their current ExecutionGroup with per-lane status, Candidates, and
-retirement disposition; Turns show purpose, execution lineage, final result,
+retirement disposition; AgentRuns show purpose, execution lineage, final result,
 and Leader disposition; Reviews show direct or replicated shape, frozen
-Assignment, Producer Lane state, main synthesis Turn, and authoritative result.
+Assignment, Producer Lane state, main synthesis AgentRun, and authoritative result.
 
 The control room supports English and Simplified Chinese, selecting an initial locale from the browser and remembering manual changes. The theme selector switches between the dark Control Room, the light Paper Ledger, and the dark-blue Atlas themes. Both choices are stored only in browser `localStorage`; they do not modify `YUI_HOME`.
 

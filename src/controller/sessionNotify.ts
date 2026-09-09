@@ -2,7 +2,7 @@ import { callController } from "../core/controllerClient.js";
 import type { JsonValue } from "../core/protocol.js";
 import {
   FileRuntimeEventInbox,
-  type RuntimeTurnTerminalOutcome
+  type RuntimeRunTerminalOutcome
 } from "./runtimeEventInbox.js";
 import { transportAgentResult } from "../domain/agentResultTransport.js";
 import { runtimeLifecycleSignalKey } from "../runtime/lifecycleReservation.js";
@@ -21,7 +21,7 @@ export type CodexSessionNotification = Readonly<{
   nativeSessionId: string;
   nativeTurnId: string;
   title?: string;
-  outcome: RuntimeTurnTerminalOutcome;
+  outcome: RuntimeRunTerminalOutcome;
 }>;
 
 type ControllerCall = (
@@ -46,9 +46,9 @@ export async function runSessionNotifyCommand(
   // Global identity is committed from App Server at successful host start.
   if (params.scope === "global") return;
   const home = requireText(environment.YUI_HOME, "YUI_HOME");
-  // The caller reports native identity; durable state supplies the current Turn.
-  const current = currentNotifyTurn(home, params);
-  const enqueued = new FileRuntimeEventInbox(home).enqueueTurnTerminal({
+  // The caller reports native identity; durable state supplies the current AgentRun.
+  const current = currentNotifyRun(home, params);
+  const enqueued = new FileRuntimeEventInbox(home).enqueueRunTerminal({
     scope: params.scope,
     ...(params.scope === "task" ? { taskId: params.taskId } : {}),
     roleName: params.roleName,
@@ -56,7 +56,7 @@ export async function runSessionNotifyCommand(
     adapterId: params.adapterId,
     nativeSessionId: params.nativeSessionId,
     nativeTurnId: params.nativeTurnId,
-    ...(current.turnId === undefined ? {} : { turnId: current.turnId }),
+    ...(current.runId === undefined ? {} : { runId: current.runId }),
     ...(params.title === undefined ? {} : { title: params.title }),
     providerStatus: "completed",
     outcome: params.outcome
@@ -82,19 +82,19 @@ export async function runSessionNotifyCommand(
     },
     { timeoutMs: 100 }
   ).catch(() => {});
-  if (enqueued.created && shouldSetThreadName(home, params, current.turnId)) {
+  if (enqueued.created && shouldSetThreadName(home, params, current.runId)) {
     const request = threadNameRequest(params, environment);
     if (request !== null) await setThreadName(request).catch(() => {});
   }
 }
 
 /**
- * Resolve the active Turn only when the notifying native Session matches.
+ * Resolve the active AgentRun only when the notifying native Session matches.
  */
-function currentNotifyTurn(
+function currentNotifyRun(
   home: string,
   params: CodexSessionNotification
-): Readonly<{ turnId?: string }> {
+): Readonly<{ runId?: string }> {
   if (params.scope !== "task" || params.taskId === undefined) {
     return {};
   }
@@ -102,10 +102,10 @@ function currentNotifyTurn(
     const store = openCurrentTaskStore(home);
     const session = store.getTaskRoleSessionSet(params.taskId, params.roleName)
       ?.sessions[params.agentId];
-    const activeTurn = store.getActiveTurn(params.taskId, params.roleName);
+    const activeRun = store.getActiveRun(params.taskId, params.roleName);
     if (session?.nativeSessionId !== params.nativeSessionId) return {};
     return {
-      ...(activeTurn === null ? {} : { turnId: activeTurn.id })
+      ...(activeRun === null ? {} : { runId: activeRun.id })
     };
   } catch {
     return {};
@@ -178,16 +178,16 @@ function requireText(value: unknown, label: string): string {
 function shouldSetThreadName(
   home: string,
   params: CodexSessionNotification,
-  turnId: string | undefined
+  runId: string | undefined
 ): boolean {
   if (
     params.scope !== "task"
     || params.title === undefined
-    || turnId === undefined
+    || runId === undefined
   ) return false;
   try {
     const store = openCurrentTaskStore(home);
-    return store.getTurn(params.taskId!, turnId)?.mode === "new";
+    return store.getRun(params.taskId!, runId)?.mode === "new";
   } catch {
     return false;
   }

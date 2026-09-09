@@ -123,7 +123,7 @@ unconfirmed step fails the run rather than guessing.
 
 A run always starts from the **resume cursor**: the first plan step whose
 status is not terminal (`succeeded` or `skipped`). There is no "start over" —
-confirmed steps are never re-turn.
+confirmed steps are never re-run.
 
 Because every state transition is persisted before the next external call, a
 process exit at any point is recoverable: re-invoke `run` (or `resume`) and
@@ -157,7 +157,7 @@ blind re-submission:
 Run outcomes: `succeeded`, `failed`, `unknown`, `unauthorized`,
 `unconfirmed`, `budget-exhausted`. Each carries a machine-readable
 `stopReason` (for example `unknown:publish`, `unauthorized:grant-revoked`,
-`budget-exhausted:verify`) and the list of step ids attempted that turn.
+`budget-exhausted:verify`) and the list of step ids attempted that run.
 
 ## Idempotency key contract
 
@@ -181,7 +181,7 @@ the test suite proves at-most-once execution directly.
 The unreleased Storage 4 migration (planned for 0.15.8, after released 0.15.7 /
 Storage 3) removes Agent launch generations and per-Host caller keys through the
 central migration chain (including the released storage-3 boundary). Session
-and Turn history remain; telemetry is grouped by Role/Turn and process owners
+and AgentRun history remain; telemetry is grouped by Role/AgentRun and process owners
 by PID/start identity. Accepted Jobs retain only authority that was valid before
 the migration. Old runtime directories are not renamed or deleted: they remain
 resource inventory for explicit Agent cleanup. This storage change requires the

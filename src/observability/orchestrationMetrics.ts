@@ -6,8 +6,8 @@ import type { DurableJob } from "../job/durableJob.js";
 import type { ChangeSet } from "../integration/changeSet.js";
 import type { IntegrationAttempt } from "../integration/integrationAttempt.js";
 import type { PublicationReference } from "../task/publicationReference.js";
-import type { Turn } from "../turn/turn.js";
-import { isCompletedReviewExecutionFromTurns } from "../review/reviewAcceptance.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
+import { isCompletedReviewExecutionFromRuns } from "../review/reviewAcceptance.js";
 import type { ReviewRound } from "../review/reviewRound.js";
 import { projectFirstProgressAdvisory } from "../runtime/firstProgressAdvisory.js";
 import type { Task } from "../task/task.js";
@@ -30,7 +30,7 @@ export type TaskOrchestrationMetrics = Readonly<{
   taskId: string;
   taskType: string | null;
   timeToFirstProjectCommitMs: number | null;
-  turns: Readonly<{
+  runs: Readonly<{
     total: number;
     byStatus: Readonly<Record<string, number>>;
     byRole: Readonly<Record<string, number>>;
@@ -55,7 +55,7 @@ export type TaskOrchestrationMetrics = Readonly<{
 
 export type TaskOrchestrationFacts = Readonly<{
   task: Task;
-  turns: readonly Turn[];
+  runs: readonly AgentRun[];
   roleSessionSets: readonly TaskRoleSessionSet[];
   workItems: readonly WorkItem[];
   changeSets: readonly ChangeSet[];
@@ -125,10 +125,10 @@ export function projectTaskOrchestration(
     timeToFirstProjectCommitMs: firstCommitAt === undefined
       ? null
       : Math.max(0, Date.parse(firstCommitAt) - Date.parse(facts.task.createdAt)),
-    turns: {
-      total: facts.turns.length,
-      byStatus: counts(facts.turns.map(({ status }) => status)),
-      byRole: counts(facts.turns.map(({ roleName }) => roleName))
+    runs: {
+      total: facts.runs.length,
+      byStatus: counts(facts.runs.map(({ status }) => status)),
+      byRole: counts(facts.runs.map(({ roleName }) => roleName))
     },
     workItems: facts.workItems.length,
     reviews: {
@@ -177,7 +177,7 @@ function projectAdvisories(
     });
   }
   const completedFull = fullRounds.filter((round) => (
-    isCompletedReviewExecutionFromTurns(round, facts.turns)
+    isCompletedReviewExecutionFromRuns(round, facts.runs)
   ))
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const recent = completedFull.slice(-3);

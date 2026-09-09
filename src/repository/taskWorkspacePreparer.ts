@@ -28,6 +28,7 @@ import {
   runtimeLifecycleTarget,
   RUNTIME_HOST_DETACH_REQUIRED_REASON
 } from "../runtime/lifecycleReservation.js";
+import { taskLocalActor } from "../commands/taskActor.js";
 import {
   attachReviewRoundWorkspace,
   recordReviewWorkspaceDisposition,
@@ -73,7 +74,7 @@ import {
   type WorkspaceProjectEntry
 } from "../worktree/managedWorkspace.js";
 import type { ExecutionLaneGitSnapshot } from "./executionLaneGitSnapshot.js";
-import type { Turn } from "../turn/turn.js";
+import type { AgentRun } from "../agentRun/agentRun.js";
 import {
   NodeGitWorkspace,
   worktreeIdentity,
@@ -178,7 +179,7 @@ export class ReviewRoundWorkspaceEvidenceError extends Error {
 
 export interface TaskWorkspacePreparer {
   prepareTaskWorkspace(taskId: string): Promise<TaskWorkspacePreparation>;
-  activateTaskWorkspace(taskId: string): Promise<TaskWorkspaceActivation>;
+  activateTaskWorkspace(taskId: string, environment?: NodeJS.ProcessEnv): Promise<TaskWorkspaceActivation>;
 }
 
 /**
@@ -244,10 +245,13 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
    * later launch failure can never present itself as "activation never
    * happened".
    */
-  async activateTaskWorkspace(taskId: string): Promise<TaskWorkspaceActivation> {
+  async activateTaskWorkspace(taskId: string, environment: NodeJS.ProcessEnv = {}): Promise<TaskWorkspaceActivation> {
     for (let attempt = 0; ; attempt += 1) {
       try {
         const task = requireTask(this.store, taskId);
+        const caller = taskLocalActor(this.store, environment, task.id);
+        const actor = task.activationRequest?.operation.actorId === `task:${task.id}/role:leader`
+          ? "leader" : caller;
         if (task.status === "active") {
           if (taskOwnsManagedWorkspace(task)) {
             const workspace = this.store.getTaskWorkspace(task.id);
@@ -269,10 +273,15 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
           };
         }
         validateDraftTaskForActivation(this.store, task);
-        const environment = await this.#adoptActivationEnvironment(task);
-        return environment.workspaceFree
-          ? this.#activateWorkspaceFreeTask(task.id, environment)
-          : await this.#prepareActivatedTaskWorkspace(task, environment);
+        const provider = this.store.getTaskRoleSessionSet(task.id, LEADER_ROLE)?.providerBinding;
+        if (provider?.run != null
+          && ["submitting", "accepted", "delivery-unknown"].includes(provider.run.status)) {
+          throw new Error("Planning native input is unsettled; preserve activation intent and retry after its exact terminal.");
+        }
+        const adopted = await this.#adoptActivationEnvironment(task);
+        return adopted.workspaceFree
+          ? this.#activateWorkspaceFreeTask(task.id, adopted, actor)
+          : await this.#prepareActivatedTaskWorkspace(task, adopted, actor);
       } catch (error) {
         if (error instanceof StorageConflictError
           && attempt < TASK_WORKSPACE_PREPARE_MAX_CONFLICT_RETRIES) {
@@ -286,11 +295,12 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
   /** Prepares the managed workspace of a Task being activated, under its fences. */
   async #prepareActivatedTaskWorkspace(
     task: Task,
-    environment: AdoptedActivationEnvironment
+    environment: AdoptedActivationEnvironment,
+    actor: "user" | "operator" | "leader"
   ): Promise<TaskWorkspaceActivation> {
     const { release, current } = this.#acquireTaskProjectMaintenanceLocks(task);
     try {
-      return await this.#prepareTaskWorkspaceLocked(current.id, true, environment);
+      return await this.#prepareTaskWorkspaceLocked(current.id, true, environment, actor);
     } finally {
       release();
     }
@@ -348,7 +358,8 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
    */
   #activateWorkspaceFreeTask(
     taskId: string,
-    environment: AdoptedActivationEnvironment
+    environment: AdoptedActivationEnvironment,
+    actor: "user" | "operator" | "leader"
   ): TaskWorkspaceActivation {
     const task = this.store.transaction((tx) => {
       const latest = requireTask(tx, taskId);
@@ -383,7 +394,7 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
         timestamp
       );
       tx.saveTask(activated);
-      recordTaskActivation(tx, latest, activated, timestamp);
+      recordTaskActivation(tx, latest, activated, timestamp, actor);
       return activated;
     });
     return { task, taskId, status: "ready", changed: true };
@@ -518,7 +529,8 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
     taskId: string,
     activate: boolean,
     /** Environment and request identity the activation adopted, when one exists. */
-    activationEnvironment: AdoptedActivationEnvironment = { workspaceFree: false }
+    activationEnvironment: AdoptedActivationEnvironment = { workspaceFree: false },
+    actor: "user" | "operator" | "leader" = "user"
   ): Promise<TaskWorkspaceActivation> {
     const task = requireTask(this.store, taskId);
     if (activate && task.status !== "draft") {
@@ -533,6 +545,20 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
       throw new Error(`Task is not open for workspace preparation: ${task.id}.`);
     }
     if (activate) validateDraftTaskForActivation(this.store, task);
+    if (activate) {
+      const planning = planningLeaderSession(this.store, task.id);
+      if (planning !== undefined) {
+        const target = resolve(this.#taskWorkspaceRoot(task.id));
+        const scratch = resolve(planning.effective.workspace.root);
+        const within = (parent: string, child: string) => {
+          const path = relative(parent, child);
+          return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+        };
+        if (within(target, scratch) || within(scratch, target)) {
+          throw new Error("Planning and delivery workspaces overlap; preserve the planning Session and select an isolated delivery workspace.");
+        }
+      }
+    }
     const existing = this.store.getTaskWorkspace(task.id);
     if (activate && (
       task.workspaceIdentity !== undefined
@@ -609,12 +635,13 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
           if (!isDeepStrictEqual(next, latest)) tx.saveTask(next);
           if (current === null) tx.saveManagedWorkspace(workspace);
           for (const role of tx.listRoles(task.id)) {
+            if (activate && role.name === "leader" && planningLeaderSession(tx, task.id) !== undefined) continue;
             if (role.workspace !== root) {
               retireWorkspaceBoundSession(tx, task.id, role.name, timestamp);
               tx.saveRole(task.id, updateRole(role, { workspace: root }, timestamp));
             }
           }
-          if (activate) recordTaskActivation(tx, latest, next, timestamp);
+          if (activate) recordTaskActivation(tx, latest, next, timestamp, actor);
           return next;
         });
         return {
@@ -878,17 +905,18 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
           );
         }
         for (const role of tx.listRoles(task.id)) {
+          if (activate && role.name === "leader" && planningLeaderSession(tx, task.id) !== undefined) continue;
           // The Role field is only a cwd/snapshot hint. Preserve it while a
           // durable WorkItem or ReviewRound workspace owns that cwd; Task-main
           // preparation must not move a Reviewer Session out from under an
           // active or retained ReviewRound. Other Roles use Task main.
-          // Prefer the active Turn's exact WorkItem, then a retained direct
+          // Prefer the active AgentRun's exact WorkItem, then a retained direct
           // WorkItem owning this cwd, before considering queued assignments.
-          const activeRoleTurn = tx.getActiveTurn(task.id, role.name);
-          const activeTurnItem = activeRoleTurn !== null
-            && activeRoleTurn.purpose === "execution"
-            && activeRoleTurn.workItemId !== undefined
-            ? tx.getWorkItem(task.id, activeRoleTurn.workItemId)
+          const activeRoleRun = tx.getActiveRun(task.id, role.name);
+          const activeRunItem = activeRoleRun !== null
+            && activeRoleRun.purpose === "execution"
+            && activeRoleRun.workItemId !== undefined
+            ? tx.getWorkItem(task.id, activeRoleRun.workItemId)
             : null;
           // Rejection ends an execution iteration, not its workspace ownership.
           // Preserve this direct WorkItem's existing cwd while dispatch prepares
@@ -900,10 +928,10 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
               && currentWorkItemExecutionGroup(candidate) === undefined
               && tx.getWorkItemWorkspace(task.id, candidate.id)?.root === role.workspace
           ));
-          const assignedItem = activeTurnItem !== null
-            && activeTurnItem.assignee === role.name
-            && !["accepted", "retired"].includes(activeTurnItem.status)
-            ? activeTurnItem
+          const assignedItem = activeRunItem !== null
+            && activeRunItem.assignee === role.name
+            && !["accepted", "retired"].includes(activeRunItem.status)
+            ? activeRunItem
             : retainedItem ?? tx.listWorkItems(task.id).find((candidate) => (
               candidate.assignee === role.name
                 && !["accepted", "retired"]
@@ -936,7 +964,7 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
             tx.saveRole(task.id, updateRole(role, { workspace: target }, timestamp));
           }
         }
-        if (activate) recordTaskActivation(tx, latest, persistedTask, timestamp);
+        if (activate) recordTaskActivation(tx, latest, persistedTask, timestamp, actor);
         return persistedTask;
       });
       return {
@@ -1295,14 +1323,14 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
             || !isDeepStrictEqual(latestItem.writeProjectIds, item.writeProjectIds)) {
             throw new Error(`Work item changed while preparing its workspace: ${item.id}.`);
           }
-          const activeDevelopTurn = tx.listTurns(lockedTask.id)
+          const activeDevelopRun = tx.listRuns(lockedTask.id)
             .find((run) => run.status === "active" && run.workItemId === item.id);
-          if (activeDevelopTurn !== undefined) {
-            throw new Error(`Work Item already has an active Develop Turn: ${activeDevelopTurn.id}.`);
+          if (activeDevelopRun !== undefined) {
+            throw new Error(`Work Item already has an active Develop AgentRun: ${activeDevelopRun.id}.`);
           }
           if (latestItem.assignee !== undefined
-            && tx.getActiveTurn(lockedTask.id, latestItem.assignee) !== null) {
-            throw new Error(`Role has an active Turn: ${lockedTask.id}/${latestItem.assignee}.`);
+            && tx.getActiveRun(lockedTask.id, latestItem.assignee) !== null) {
+            throw new Error(`Role has an active AgentRun: ${lockedTask.id}/${latestItem.assignee}.`);
           }
           const existingWorkspace = tx.getWorkItemWorkspace(lockedTask.id, item.id);
           if (existingWorkspace !== null && (
@@ -2014,9 +2042,9 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
             `ReviewRound changed while preparing its workspace: ${round.id}.`
           );
         }
-        if (tx.getActiveTurn(task.id, reviewer.name) !== null) {
+        if (tx.getActiveRun(task.id, reviewer.name) !== null) {
           throw new ReviewRoundWorkspaceEvidenceError(
-            `Reviewer Role has an active Turn: ${task.id}/${reviewer.name}.`
+            `Reviewer Role has an active AgentRun: ${task.id}/${reviewer.name}.`
           );
         }
         const currentWorkspace = tx.getReviewRoundWorkspace(task.id, round.id);
@@ -2107,9 +2135,9 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
         `Previous Task-final Review workspace cannot be continued: ${previous.id}.`
       );
     }
-    if (this.store.getActiveTurn(task.id, reviewer.name) !== null) {
+    if (this.store.getActiveRun(task.id, reviewer.name) !== null) {
       throw new ReviewRoundWorkspaceEvidenceError(
-        `Reviewer Role has an active Turn: ${task.id}/${reviewer.name}.`
+        `Reviewer Role has an active AgentRun: ${task.id}/${reviewer.name}.`
       );
     }
     const expected = new Map(frozenEntries.map((entry) => [entry.projectId, entry] as const));
@@ -2183,7 +2211,7 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
           || currentRound.workspace !== undefined
           || !isDeepStrictEqual(currentRound.taskCandidate, round.taskCandidate)
           || tx.getReviewRoundWorkspace(task.id, round.id) !== null
-          || tx.getActiveTurn(task.id, reviewer.name) !== null) {
+          || tx.getActiveRun(task.id, reviewer.name) !== null) {
           throw new ReviewRoundWorkspaceEvidenceError(
             `Task-final Review workspace changed before reassignment: ${previous.id}/${round.id}.`
           );
@@ -2722,9 +2750,10 @@ function recordTaskActivation(
   store: TaskStore,
   previous: Task,
   active: Task,
-  now: Date
+  now: Date,
+  actor: "user" | "operator" | "leader"
 ): void {
-  enqueueWork(
+  if (actor !== "leader") enqueueWork(
     store,
     { kind: "role", taskId: active.id, roleName: LEADER_ROLE },
     "task-created",
@@ -2742,9 +2771,15 @@ function recordTaskActivation(
     store.nextEventId(active.id),
     active.id,
     "task.activated",
-    { fromStatus: previous.status, status: active.status },
+    { fromStatus: previous.status, status: active.status, by: actor },
     now
   ));
+}
+
+function planningLeaderSession(store: TaskStore, taskId: string) {
+  const sessions = store.getTaskRoleSessionSet(taskId, "leader");
+  const current = sessions?.sessions[sessions.activeAgentId];
+  return current?.status === "active" && current.effective.executionAuthority === "planning" ? current : undefined;
 }
 
 function requireTask(store: TaskStore, taskId: string): Task {
@@ -2810,9 +2845,9 @@ function executionLaneLineage(
     if (round === null) throw new Error(`ReviewRound not found: ${hint.reviewRoundId}.`);
     return { purpose: "review", reviewRoundId: round.id };
   }
-  // Prefer the active Turn's exact WorkItem for this Lane; fall back to the
-  // first queued WorkItem only when no active Turn owns the Lane.
-  const activeLaneRun = store.listTurns(task.id)
+  // Prefer the active AgentRun's exact WorkItem for this Lane; fall back to the
+  // first queued WorkItem only when no active AgentRun owns the Lane.
+  const activeLaneRun = store.listRuns(task.id)
     .find((run) => run.status === "active"
       && run.purpose === "execution"
       && run.executionGroupId === executionGroupId
@@ -2844,13 +2879,13 @@ function assertWorkItemWorkspaceEligible(
   if (["accepted", "retired"].includes(item.status)) {
     throw new Error(`Work item is already terminal: ${item.id}.`);
   }
-  const activeDevelopTurn = store.listTurns(task.id)
+  const activeDevelopRun = store.listRuns(task.id)
     .find((run) => run.status === "active" && run.workItemId === item.id);
-  if (activeDevelopTurn !== undefined) {
-    throw new Error(`Work Item already has an active Develop Turn: ${activeDevelopTurn.id}.`);
+  if (activeDevelopRun !== undefined) {
+    throw new Error(`Work Item already has an active Develop AgentRun: ${activeDevelopRun.id}.`);
   }
-  if (item.assignee !== undefined && store.getActiveTurn(task.id, item.assignee) !== null) {
-    throw new Error(`Role has an active Turn: ${task.id}/${item.assignee}.`);
+  if (item.assignee !== undefined && store.getActiveRun(task.id, item.assignee) !== null) {
+    throw new Error(`Role has an active AgentRun: ${task.id}/${item.assignee}.`);
   }
 }
 
@@ -2885,8 +2920,8 @@ function assertWorkspaceSessionsRetirable(
   roleName: string,
   now: Date
 ): void {
-  if (store.getActiveTurn(taskId, roleName) !== null) {
-    throw new Error(`Role has an active Turn: ${taskId}/${roleName}.`);
+  if (store.getActiveRun(taskId, roleName) !== null) {
+    throw new Error(`Role has an active AgentRun: ${taskId}/${roleName}.`);
   }
   const sessions = store.getTaskRoleSessionSet(taskId, roleName);
   if (sessions !== null) retireTaskRoleSessionsForWorkspace(sessions, now);
@@ -2898,8 +2933,8 @@ function retireWorkspaceBoundSession(
   roleName: string,
   now: Date
 ): void {
-  if (store.getActiveTurn(taskId, roleName) !== null) {
-    throw new Error(`Role has an active Turn: ${taskId}/${roleName}.`);
+  if (store.getActiveRun(taskId, roleName) !== null) {
+    throw new Error(`Role has an active AgentRun: ${taskId}/${roleName}.`);
   }
   const sessions = store.getTaskRoleSessionSet(taskId, roleName);
   if (sessions !== null) {
@@ -2936,9 +2971,9 @@ function handOverPlanningSession(
   // A planning Turn that is still running owns this Session. Deferred
   // activation is adopted only after it ends, so reaching here with an active
   // Turn means the caller raced it; fail closed rather than cut it off.
-  if (store.getActiveTurn(taskId, LEADER_ROLE) !== null) {
+  if (store.getActiveRun(taskId, LEADER_ROLE) !== null) {
     throw new Error(
-      `Leader has an active Turn while activating its Task: ${taskId}/${LEADER_ROLE}.`
+      `Leader has an active AgentRun while activating its Task: ${taskId}/${LEADER_ROLE}.`
     );
   }
   let next = sessions;
@@ -2997,7 +3032,7 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
     .sort();
   if (!isDeepStrictEqual(writableProjects, [...item.writeProjectIds].sort())) return false;
 
-  const run = store.getActiveTurn(taskId, role.name);
+  const run = store.getActiveRun(taskId, role.name);
   const identity = taskRoleRuntimeIdentity(role, run);
   if (
     run === null
@@ -3037,7 +3072,7 @@ function canCorrectActiveWorkItemRoleWorkspaceHint(
 }
 
 function sameEffectiveWorkspace(
-  effective: Turn["effective"]["workspace"],
+  effective: AgentRun["effective"]["workspace"],
   workspace: ManagedWorkspace
 ): boolean {
   return effective.root === workspace.root
