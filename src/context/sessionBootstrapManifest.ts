@@ -53,6 +53,25 @@ export type SessionCliRefreshResult = Readonly<{
 
 const ordinarySessionCli = ["#!/bin/sh", "exec yui \"$@\"", ""].join("\n");
 
+/** Portable read pointers accompany every managed input, including the first
+ * notification on a fresh Session. No Task content or credentials are copied. */
+export function withSessionContextPointer(
+  text: string,
+  environment: Readonly<Record<string, string | undefined>>
+): string {
+  const manifest = environment.YUI_SESSION_MANIFEST;
+  if (manifest === undefined) return text;
+  return [
+    `Read the Yui Session Manifest at ${manifest}.`,
+    "Follow its referenced Role Skills and role profile. It gives the exact Context load command.",
+    ...(environment.YUI_SESSION_CLI === undefined ? [] : [
+      `Use this absolute CLI entry for Yui commands: ${environment.YUI_SESSION_CLI}`
+    ]),
+    "",
+    text
+  ].join("\n");
+}
+
 /** Where a managed Session's commands run: this installation, nothing more. */
 export type SessionEntryPoint = Readonly<{
   executable: string;

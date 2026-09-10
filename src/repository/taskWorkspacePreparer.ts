@@ -46,6 +46,7 @@ import {
 import {
   admitStoredTaskActivation,
   adoptTaskActivationResources,
+  recordFailedTaskActivation,
   recordAdoptedTaskActivation
 } from "../task/taskActivationService.js";
 import type { TaskActivationRequest } from "../task/taskActivation.js";
@@ -247,6 +248,7 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
    */
   async activateTaskWorkspace(taskId: string, environment: NodeJS.ProcessEnv = {}): Promise<TaskWorkspaceActivation> {
     for (let attempt = 0; ; attempt += 1) {
+      let attemptedRequest: TaskActivationRequest | undefined;
       try {
         const task = requireTask(this.store, taskId);
         const caller = taskLocalActor(this.store, environment, task.id);
@@ -272,12 +274,14 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
             changed: false
           };
         }
-        validateDraftTaskForActivation(this.store, task);
         const provider = this.store.getTaskRoleSessionSet(task.id, LEADER_ROLE)?.providerBinding;
         if (provider?.run != null
           && ["submitting", "accepted", "delivery-unknown"].includes(provider.run.status)) {
           throw new Error("Planning native input is unsettled; preserve activation intent and retry after its exact terminal.");
         }
+        const admission = admitStoredTaskActivation(this.store, task.id);
+        if (admission.disposition === "ready") attemptedRequest = admission.request;
+        validateDraftTaskForActivation(this.store, task);
         const adopted = await this.#adoptActivationEnvironment(task);
         return adopted.workspaceFree
           ? this.#activateWorkspaceFreeTask(task.id, adopted, actor)
@@ -286,6 +290,13 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
         if (error instanceof StorageConflictError
           && attempt < TASK_WORKSPACE_PREPARE_MAX_CONFLICT_RETRIES) {
           continue;
+        }
+        if (attemptedRequest !== undefined) {
+          const outcome = error instanceof Error ? error.message : String(error);
+          const current = this.store.getTask(taskId)?.activationRequest;
+          if (current?.disposition !== "failed" || current.outcome !== outcome) {
+            recordFailedTaskActivation(this.store, taskId, attemptedRequest, outcome, {}, this.now());
+          }
         }
         throw error;
       }
@@ -918,14 +929,11 @@ export class FileTaskWorkspacePreparer implements TaskWorkspacePreparer {
             && activeRoleRun.workItemId !== undefined
             ? tx.getWorkItem(task.id, activeRoleRun.workItemId)
             : null;
-          // Rejection ends an execution iteration, not its workspace ownership.
-          // Preserve this direct WorkItem's existing cwd while dispatch prepares
-          // the Task before atomically reopening the failed WorkItem. Merely
-          // reading Task context must not migrate its resumable Worker either.
+          // Semantic acceptance/retirement does not release a workspace.
+          // Preserve its cwd until explicit cleanup/reassignment removes that
+          // durable owner; Task-main preparation must not migrate its Session.
           const retainedItem = tx.listWorkItems(task.id).find((candidate) => (
             candidate.assignee === role.name
-              && candidate.status === "open"
-              && currentWorkItemExecutionGroup(candidate) === undefined
               && tx.getWorkItemWorkspace(task.id, candidate.id)?.root === role.workspace
           ));
           const assignedItem = activeRunItem !== null
@@ -2753,10 +2761,12 @@ function recordTaskActivation(
   now: Date,
   actor: "user" | "operator" | "leader"
 ): void {
-  if (actor !== "leader") enqueueWork(
+  // Activation is the explicit request to enter delivery, not an ordinary
+  // Leader-local edit. Preserve that transition for the replacement Session.
+  enqueueWork(
     store,
     { kind: "role", taskId: active.id, roleName: LEADER_ROLE },
-    "task-created",
+    "execution-started",
     now,
     [{ type: "task", id: active.id }]
   );

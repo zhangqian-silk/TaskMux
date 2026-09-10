@@ -17,7 +17,8 @@ import {
   type StructuredProviderTurnReceipt,
   type StructuredProviderTurnStarted,
   type StructuredProviderTurnTerminal,
-  type StructuredProviderInputObserved
+  type StructuredProviderInputObserved,
+  type StructuredProviderActivity
 } from "./structuredProviderHost.js";
 
 /** These are attachment facts, not another durable Task/AgentRun state machine. */
@@ -32,10 +33,19 @@ export type AgentEndpointInput = StructuredProviderTurnInput & Readonly<{
   inputRef: string;
 }>;
 
+export type AgentEndpointCancellation = Readonly<{
+  status: "requested" | "not-active" | "unknown";
+  resources: "unknown";
+  /** Native evidence, not a signal-send receipt. No model output is carried. */
+  terminal?: Omit<StructuredProviderTurnTerminal, "input" | "output" | "error" | "rawError">;
+}>;
+
 export type AgentEndpointEvent = Readonly<{
   implementation: ImplementationRef;
   processInstanceId: string;
 }> & (
+  | Readonly<{ type: "accepted"; value: StructuredProviderTurnReceipt }>
+  | Readonly<{ type: "activity"; value: StructuredProviderActivity }>
   | Readonly<{ type: "started"; value: StructuredProviderTurnStarted }>
   | Readonly<{ type: "terminal"; value: StructuredProviderTurnTerminal }>
   | Readonly<{ type: "goal"; value: StructuredProviderGoal | null }>
@@ -52,6 +62,8 @@ export type AgentEndpointConfiguration = Readonly<{
 }>;
 
 export interface AgentEndpoint {
+  readonly ownedProcessId?: number;
+  readonly nativeAccountHome?: string;
   readonly adapterId: StructuredProviderSession["adapterId"];
   readonly nativeSessionId: string;
   readonly conversationId: string;
@@ -81,7 +93,7 @@ export interface AgentEndpoint {
     resources: "unknown";
   }>;
   events(listener: (event: AgentEndpointEvent) => void): () => void;
-  cancel(attemptId: string): Promise<Readonly<{ status: "requested" | "not-active" | "unknown"; resources: "unknown" }>>;
+  cancel(attemptId: string): Promise<AgentEndpointCancellation>;
   detach(signal?: NodeJS.Signals): void;
   waitForExit(): Promise<StructuredProviderProcessExit>;
 }
@@ -136,12 +148,14 @@ export function createAgentEndpointFactory(
       else endpoint.observe(event);
     };
     const opened = await start(payload, {
+      onAccepted: (value) => emit({ type: "accepted", value }),
+      onActivity: (value) => emit({ type: "activity", value }),
       onStarted: (value) => emit({ type: "started", value }),
       onTerminal: (value) => emit({ type: "terminal", value }),
       onInput: (value) => emit({ type: "input", value }),
       onGoal: (value) => emit({ type: "goal", value })
     });
-    endpoint = new BuiltinAgentEndpoint(opened.session, configuration);
+    endpoint = new BuiltinAgentEndpoint(opened.session, configuration, opened.recoveredTerminal);
     for (const event of openingEvents) endpoint.observe(event);
     return Object.freeze({
       session: endpoint,
@@ -164,12 +178,16 @@ function freezeConfiguration<T>(value: T): T {
 }
 
 type EventValue =
+  | Readonly<{ type: "accepted"; value: StructuredProviderTurnReceipt }>
+  | Readonly<{ type: "activity"; value: StructuredProviderActivity }>
   | Readonly<{ type: "started"; value: StructuredProviderTurnStarted }>
   | Readonly<{ type: "terminal"; value: StructuredProviderTurnTerminal }>
   | Readonly<{ type: "goal"; value: StructuredProviderGoal | null }>
   | Readonly<{ type: "input"; value: StructuredProviderInputObserved }>;
 
 class BuiltinAgentEndpoint implements AgentEndpoint {
+  get ownedProcessId(): number | undefined { return this.driver.ownedProcessId; }
+  get nativeAccountHome(): string | undefined { return this.driver.nativeAccountHome; }
   readonly capabilities;
   readonly conversationRecoverability: "recoverable" | "unknown";
   readonly #listeners = new Set<(event: AgentEndpointEvent) => void>();
@@ -179,13 +197,18 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
     operation: "submit" | "steer";
     disposition: AgentEndpointSubmission;
   }>();
+  readonly #terminals = new Map<string, NonNullable<AgentEndpointCancellation["terminal"]>>();
   #attachment: "attached" | "detach-requested" | "exited" = "attached";
   #cancellation: "not-requested" | "requested" = "not-requested";
 
   constructor(
     private readonly driver: StructuredProviderSession,
-    readonly configuration: AgentEndpointConfiguration
+    readonly configuration: AgentEndpointConfiguration,
+    recoveredTerminal?: StructuredProviderTurnTerminal
   ) {
+    if (recoveredTerminal?.clientOwned && recoveredTerminal.attemptId !== undefined) {
+      this.#terminals.set(recoveredTerminal.attemptId, cancellationProof(recoveredTerminal));
+    }
     // The registered Driver, not the adapter name, states which control
     // affordances this Session really has: a Session that sends a native
     // cancel message must not be reported as one that can only kill its
@@ -297,6 +320,11 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
     if (value.type !== "goal"
       && (value.value.nativeSessionId !== this.nativeSessionId || value.value.conversationId !== this.conversationId)) return;
     if (value.type === "goal" && value.value !== null && value.value.conversationId !== this.conversationId) return;
+    if (value.type === "accepted") {
+      const attempt = this.#attempts.get(value.value.attemptId);
+      if (attempt === undefined || value.value.acceptance !== "provider") return;
+      attempt.disposition = { status: "accepted", receipt: value.value };
+    }
     if (value.type === "terminal" && value.value.clientOwned && value.value.attemptId !== undefined) {
       const attempt = this.#attempts.get(value.value.attemptId);
       if (attempt !== undefined) {
@@ -317,6 +345,7 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
           }
         };
       }
+      this.#terminals.set(value.value.attemptId, cancellationProof(value.value));
     }
     const event = Object.freeze({
       ...value, implementation: this.configuration.implementation, processInstanceId: this.processInstanceId
@@ -334,7 +363,23 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
   async cancel(attemptId: string): ReturnType<AgentEndpoint["cancel"]> {
     this.#cancellation = "requested";
     const status = await this.driver.cancelTurn(attemptId);
-    return Object.freeze({ status, resources: "unknown" });
+    let terminal = this.#terminals.get(attemptId);
+    if (terminal === undefined && status !== "unknown") {
+      terminal = await new Promise<NonNullable<AgentEndpointCancellation["terminal"]> | undefined>(resolve => {
+        const timer = setTimeout(() => { this.#listeners.delete(listener); resolve(undefined); }, 8_000);
+        const listener = (event: AgentEndpointEvent) => {
+          if (event.type !== "terminal" || !event.value.clientOwned || event.value.attemptId !== attemptId) return;
+          clearTimeout(timer);
+          this.#listeners.delete(listener);
+          resolve(cancellationProof(event.value));
+        };
+        this.#listeners.add(listener);
+      });
+    }
+    if (terminal === undefined || this.driver.activeTurnId !== undefined) {
+      return { status: "unknown", resources: "unknown" };
+    }
+    return Object.freeze({ status, resources: "unknown", terminal });
   }
 
   detach(signal: NodeJS.Signals = "SIGTERM"): void {
@@ -345,4 +390,9 @@ class BuiltinAgentEndpoint implements AgentEndpoint {
   }
 
   waitForExit(): Promise<StructuredProviderProcessExit> { return this.driver.waitForExit(); }
+}
+
+function cancellationProof(terminal: StructuredProviderTurnTerminal): NonNullable<AgentEndpointCancellation["terminal"]> {
+  const { input: _input, output: _output, error: _error, rawError: _rawError, ...proof } = terminal;
+  return Object.freeze(proof);
 }

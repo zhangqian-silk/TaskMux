@@ -63,9 +63,34 @@ export const AGENT_OPERATIONAL_ENVIRONMENT_NAMES = [
   "SSH_AUTH_SOCK"
 ] as const;
 
+/** Native account context. Credential values remain volatile and belong only
+ * to this adapter; they are never copied into Roles, Tasks or launch arguments.
+ * Do not inherit numeric credential FDs across unrelated processes. */
+const CLAUDE_NATIVE_ENVIRONMENT_NAMES = [
+  "CLAUDE_CONFIG_DIR",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_CUSTOM_HEADERS",
+  "ANTHROPIC_PROFILE",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_GATEWAY",
+  "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+  "CLAUDE_CODE_HOST_CREDS_FILE",
+  "CLAUDE_CODE_API_KEY_HELPER_TTL_MS",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+  "DISABLE_AUTOUPDATER"
+] as const;
+
 export const NATIVE_AGENT_ENVIRONMENT_NAMES = [
-  "CODEX_HOME",
-  "CLAUDE_CONFIG_DIR"
+  "CODEX_HOME", ...CLAUDE_NATIVE_ENVIRONMENT_NAMES
 ] as const;
 
 export function nativeAgentEnvironmentNames(
@@ -73,7 +98,7 @@ export function nativeAgentEnvironmentNames(
 ): readonly string[] {
   switch (adapterId) {
     case "codex": return ["CODEX_HOME"];
-    case "claude": return ["CLAUDE_CONFIG_DIR"];
+    case "claude": return CLAUDE_NATIVE_ENVIRONMENT_NAMES;
     // ACP standardizes the protocol, not where a product keeps its
     // configuration. Naming a variable here would be a product branch, so an
     // ACP Agent that needs one declares it as an ordinary environment binding.

@@ -18,6 +18,7 @@ export const WAKE_REASON_KINDS = Object.freeze([
   "input-timeout",
   "role-turn-stalled",
   "agent-error",
+  "activation-failed",
   "agent-session-recovery",
   "review-failed",
   "task-reopened",
@@ -39,6 +40,13 @@ export type WakeReason = Readonly<{
 }>;
 
 const IMMEDIATE_KINDS: ReadonlySet<string> = new Set([
+  "operator-input",
+  "user-message",
+  "task-created",
+  "execution-started",
+  "session-replaced",
+  "force-wake",
+  "activation-failed",
   "task-reopened",
   "leader-turn-failed",
   "role-turn-failed"

@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createConnection, createServer, type Server } from "node:net";
 import { createInterface } from "node:readline";
 import { assertAgentExecutionEnvironment } from "./executionEnvironment.js";
+import { withSessionContextPointer } from "../context/sessionBootstrapManifest.js";
 
 import { builtinAgentDriverRegistry } from "./builtinAgentDrivers.js";
 
@@ -19,6 +20,8 @@ import { callFileTaskController } from "../controller/clientRuntime.js";
 import { isForeignHandoverLockHeld } from "../release/runtimeRelease.js";
 import {
   publishStructuredProviderAccepted,
+  publishStructuredProviderAttachmentExit,
+  publishStructuredProviderActivity,
   publishStructuredProviderInputSettlement,
   publishStructuredProviderInputObserved,
   publishStructuredProviderGoal,
@@ -37,12 +40,15 @@ import {
   ProviderTurnBusyError,
   ProviderTurnRejectedError,
   type StructuredProviderGoal,
+  type StructuredProviderActivity,
+  type StructuredProviderTurnReceipt,
   type StructuredProviderTurnStarted,
   type StructuredProviderTurnInput,
   type StructuredProviderTurnTerminal
 } from "./structuredProviderHost.js";
 import {
   type AgentEndpoint,
+  type AgentEndpointCancellation,
   type AgentEndpointSubmission
 } from "./agentEndpoint.js";
 import {
@@ -85,6 +91,11 @@ import {
 } from "./agentRunConfiguration.js";
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 import type { PromptPushOutcome } from "./ports.js";
+import { openCurrentTaskStore } from "../storage/currentTaskStore.js";
+import { createSessionOwnerIdentity, readLinuxProcessIdentity } from "./sessionOwnerIdentity.js";
+import { yuiTmuxServerName, yuiTmuxSessionName } from "../tmux/tmuxManager.js";
+import { tmuxSocketDirectory } from "../tmux/tmuxSocketEndpoint.js";
+import { createTaskEvent } from "../event/taskEvent.js";
 
 export const AGENT_HOST_CONTROL_PROTOCOL = "yui-agent-host/v5" as const;
 const HOST_CONTROL_MAX_BYTES = 32 * 1024;
@@ -200,7 +211,7 @@ export type AgentHostControlResult = Readonly<{
    * without a protocol break.
    */
   failure?: ProviderDeliveryFailure;
-  cancellation?: Readonly<{ status: "requested" | "not-active" | "unknown"; resources: "unknown" }>;
+  cancellation?: AgentEndpointCancellation;
 }>;
 
 export function serializeAgentHostLaunchControl(control: AgentHostLaunchControl): string {
@@ -230,6 +241,8 @@ export async function runAgentHost(input: Readonly<{
   let endpointAdapterId: AgentHostSnapshot["adapterId"];
   let sessionPayload: AgentHostLaunchPayload | undefined;
   let activeRunPayload: AgentHostLaunchPayload | undefined;
+  let lastTerminalPayload: AgentHostLaunchPayload | undefined;
+  let lastTerminal: StructuredProviderTurnTerminal | undefined;
   let activeRunAttemptId: string | undefined;
   let activeNativeTurnId: string | undefined;
   let codexClientAttachedAt: number | undefined;
@@ -261,6 +274,41 @@ export async function runAgentHost(input: Readonly<{
       authorityHolderId: authority.holderId
     })
   });
+
+  const handleAccepted = (receipt: StructuredProviderTurnReceipt): void => {
+    const observedPayload = activeRunPayload;
+    if (observedPayload === undefined || receipt.acceptance !== "provider"
+      || receipt.attemptId !== activeRunAttemptId
+      || receipt.nativeSessionId !== session?.nativeSessionId) return;
+    void enqueueSerialized(async () => {
+      if (activeRunPayload !== observedPayload || activeRunAttemptId !== receipt.attemptId
+        || snapshot.attemptId === receipt.attemptId && snapshot.inputAcceptance === "provider") return;
+      await publishStructuredProviderAccepted({
+        home: input.home, environment: observedPayload.environment, receipt
+      });
+      updateSnapshot(hostSnapshot("ready", {
+        adapterId: session!.adapterId,
+        processInstanceId: session!.processInstanceId,
+        nativeSessionId: receipt.nativeSessionId,
+        conversationId: receipt.conversationId,
+        attemptId: receipt.attemptId,
+        nativeTurnId: receipt.nativeTurnId,
+        inputAcceptance: "provider",
+        ...authorityFields()
+      }));
+      signalRoleMailbox(input.home, observedPayload);
+    }).catch(() => {});
+  };
+
+  const handleActivity = (activity: StructuredProviderActivity): void => {
+    const observedPayload = activeRunPayload;
+    if (observedPayload === undefined || activity.attemptId !== activeRunAttemptId
+      || activity.nativeSessionId !== session?.nativeSessionId) return;
+    void enqueueSerialized(async () => {
+      if (activeRunPayload !== observedPayload || activity.attemptId !== activeRunAttemptId) return;
+      await publishStructuredProviderActivity({ home: input.home, environment: observedPayload.environment, activity });
+    }).catch(() => {});
+  };
 
   const handleStarted = (
     started: StructuredProviderTurnStarted,
@@ -338,6 +386,8 @@ export async function runAgentHost(input: Readonly<{
       || (terminal.nativeTurnId !== undefined && activeNativeTurnId !== undefined
         && terminal.nativeTurnId !== activeNativeTurnId)) return;
     const terminalAttemptId = terminal.attemptId;
+    lastTerminalPayload = terminalPayload;
+    lastTerminal = terminal;
     void enqueueSerialized(async () => {
       if (activeRunPayload !== terminalPayload
         || activeRunAttemptId !== terminalAttemptId) return;
@@ -460,7 +510,9 @@ export async function runAgentHost(input: Readonly<{
         sessionPayload = currentPayload;
         started.session.events((event) => {
           if (session !== started.session && event.type !== "terminal") return;
-          if (event.type === "started") handleStarted(event.value, currentPayload);
+          if (event.type === "accepted") handleAccepted(event.value);
+          else if (event.type === "activity") handleActivity(event.value);
+          else if (event.type === "started") handleStarted(event.value, currentPayload);
           else if (event.type === "terminal") handleTerminal(event.value);
           else if (event.type === "goal") handleGoal(event.value);
           else void enqueueSerialized(() => publishStructuredProviderInputObserved({
@@ -523,8 +575,10 @@ export async function runAgentHost(input: Readonly<{
   ): void => {
     void providerSession.waitForExit().then((result) => enqueueSerialized(async () => {
       const ownsCurrentSession = session === providerSession;
-      const currentPayload = ownsCurrentSession ? sessionPayload ?? launched : launched;
+      const currentPayload = ownsCurrentSession
+        ? activeRunPayload ?? lastTerminalPayload ?? sessionPayload ?? launched : launched;
       const exitAuthority = authorityFields();
+      const stopRequested = hostStopRequested || providerSession.inspect().cancellation === "requested";
       const reconnectableCodexClient = ownsCurrentSession
         && providerSession.adapterId === "codex"
         && !hostStopRequested;
@@ -595,11 +649,22 @@ export async function runAgentHost(input: Readonly<{
           processKind: "provider-child",
           ...(result.code === null ? {} : { exitCode: result.code }),
           ...(result.signal === null ? {} : { signal: result.signal }),
-          ...(hostStopRequested ? { stopRequested: true } : {}),
+          ...(stopRequested ? { stopRequested: true } : {}),
           observedAt
         }));
       } catch (error) {
         failures.push(`process exit: ${errorText(error)}`);
+      }
+      if (ownsCurrentSession && currentPayload.environment.YUI_SESSION_SCOPE === "task") {
+        try {
+          await publishStructuredProviderAttachmentExit({
+            home: input.home, environment: currentPayload.environment,
+            nativeSessionId: providerSession.nativeSessionId,
+            attemptId: activeRunAttemptId ?? lastTerminal?.attemptId,
+            nativeTurnId: activeNativeTurnId ?? lastTerminal?.nativeTurnId,
+            failed: !stopRequested, observedAt
+          });
+        } catch (error) { failures.push(`attachment exit: ${errorText(error)}`); }
       }
       if (hostStopRequested || !ownsCurrentSession) return;
       updateSnapshot(hostSnapshot(failures.length === 0 ? "exited" : "failed", {
@@ -680,6 +745,10 @@ export async function runAgentHost(input: Readonly<{
           ? endpointLease.open(next) : endpointLease.resume(next));
         session = started.session;
         sessionPayload = next;
+        recordOwnedProviderProcess(input.home, next.environment, started.session);
+        recordNativeConnection(input.home, next, started.session);
+        lastTerminalPayload = undefined;
+        lastTerminal = undefined;
         // Recoverable means a later process can rebind this Conversation by
         // its native id. The Endpoint answers that from the Driver capability
         // or, where the protocol settles it per connection, from what this
@@ -688,7 +757,9 @@ export async function runAgentHost(input: Readonly<{
         conversationRecoverability = started.session.conversationRecoverability;
         started.session.events((event) => {
           if (session !== started.session && event.type !== "terminal") return;
-          if (event.type === "started") handleStarted(event.value, next);
+          if (event.type === "accepted") handleAccepted(event.value);
+          else if (event.type === "activity") handleActivity(event.value);
+          else if (event.type === "started") handleStarted(event.value, next);
           else if (event.type === "terminal") handleTerminal(event.value);
           else if (event.type === "goal") handleGoal(event.value);
           else void enqueueSerialized(() => publishStructuredProviderInputObserved({
@@ -917,6 +988,7 @@ export async function runAgentHost(input: Readonly<{
       assertAgentExecutionEnvironment(input.home, activeRunPayload);
       const receipt = endpointReceipt(await session.submit({
         ...request.run,
+        boundedText: withSessionContextPointer(request.run.boundedText, activeRunPayload.environment),
         inputRef: request.runId ?? request.run.attemptId
       }), request.run.attemptId);
       transportAccepted = true;
@@ -1047,6 +1119,7 @@ export async function runAgentHost(input: Readonly<{
       assertAgentExecutionEnvironment(input.home, sessionPayload);
       const receipt = endpointReceipt(await session.steer({
         ...request.run,
+        boundedText: withSessionContextPointer(request.run.boundedText, sessionPayload.environment),
         inputRef: request.run.attemptId
       }), request.run.attemptId);
       if (receipt.nativeTurnId !== request.nativeTurnId) {
@@ -1349,6 +1422,52 @@ export async function runAgentHost(input: Readonly<{
     await control.close();
     void sessionPayload;
   }
+}
+
+/** Host-restart-independent OS custody. No secret or launch payload is stored. */
+function recordOwnedProviderProcess(home: string, environment: NodeJS.ProcessEnv, endpoint: AgentEndpoint): void {
+  if (endpoint.ownedProcessId === undefined || environment.YUI_SESSION_SCOPE !== "task") return;
+  const identity = readLinuxProcessIdentity(endpoint.ownedProcessId);
+  if (identity === undefined) throw new Error("Dedicated Provider process identity was lost before registration.");
+  const taskId = environment.YUI_TASK_ID!;
+  const roleName = environment.YUI_ROLE!;
+  const store = openCurrentTaskStore(home);
+  try {
+    store.saveSessionOwner(createSessionOwnerIdentity({
+      owner: { scope: "task", taskId, roleName },
+      agentId: environment.YUI_AGENT_ID!, adapterId: endpoint.adapterId,
+      nativeSessionId: endpoint.nativeSessionId,
+      tmux: {
+        serverName: yuiTmuxServerName(home),
+        socketPath: join(tmuxSocketDirectory(environment), yuiTmuxServerName(home)),
+        sessionName: yuiTmuxSessionName(home, taskId), windowName: roleName, panePid: process.pid
+      },
+      providerRoot: { pid: identity.pid, startIdentity: identity.startIdentity,
+        processGroupId: identity.processGroupId, processSessionId: identity.processSessionId,
+        attribution: "owned-child" },
+      recordedAt: new Date()
+    }));
+  } finally { store.close(); }
+}
+
+function recordNativeConnection(home: string, payload: AgentHostLaunchPayload, endpoint: AgentEndpoint): void {
+  if (endpoint.adapterId !== "codex" || payload.environment.YUI_SESSION_SCOPE !== "task") return;
+  const taskId = payload.environment.YUI_TASK_ID!;
+  const store = openCurrentTaskStore(home);
+  try {
+    if (store.listEvents(taskId).some(event => event.type === "runtime.native-connection-bound"
+      && event.payload.nativeSessionId === endpoint.nativeSessionId)) return;
+    const userHome = resolve(payload.cwd, payload.environment.HOME ?? homedir());
+    store.saveEvent(taskId, createTaskEvent(store.nextEventId(taskId), taskId, "runtime.native-connection-bound", {
+      roleName: payload.environment.YUI_ROLE!, agentId: payload.environment.YUI_AGENT_ID!,
+      nativeSessionId: endpoint.nativeSessionId,
+      // Account location is needed after Controller/Host loss. Never retain
+      // resolved credentials or duplicate the full process environment.
+      home: userHome,
+      codexHome: resolve(payload.cwd, payload.environment.CODEX_HOME ?? join(userHome, ".codex")),
+      ...(endpoint.nativeAccountHome === undefined ? {} : { nativeAccountHome: endpoint.nativeAccountHome })
+    }, new Date()));
+  } finally { store.close(); }
 }
 
 export function agentHostControlSocketPath(input: Readonly<{

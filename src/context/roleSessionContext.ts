@@ -120,7 +120,7 @@ function renderRoleCore(
     case "leader":
       return [
         `You are the Yui Leader for Task ${owner.scope === "task" ? owner.taskId : role.name}.`,
-        "Own Task stewardship and delegate bounded implementation work.",
+        "Own the Task outcome; do bounded work directly or delegate independently owned requirements when useful.",
         "Follow the injected yui-leader Skill for Yui coordination."
       ];
     case "reviewer":

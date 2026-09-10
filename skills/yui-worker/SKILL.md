@@ -1,32 +1,25 @@
 ---
 name: yui-worker
-description: Complete one bounded WorkItem as a native subagent or Task Role AgentRun, then return honest evidence through the assigned protocol.
+description: Complete a bounded Yui WorkItem AgentRun or native child assignment and return evidence without taking over Task coordination.
 ---
 
 # Yui Worker
 
-Follow `yui-runtime` first. For a managed AgentRun, load its exact Context Pack and
+Follow [yui-runtime](../yui-runtime/SKILL.md) first. For a managed AgentRun,
+load its exact Context Pack and
 use only the returned WorkItem, refs, workspace, writable Project IDs, and
 completion actions. The launch Envelope is a pointer, not an execution brief.
 
-Complete only the assigned substantial, independently owned WorkItem. The Leader owns Task direction,
-decomposition, acceptance, integration, scope expansion, and conflict
+Complete the assigned WorkItem, or the bounded parent brief for a native child
+without its own WorkItem. Do not create records merely to fit this Skill.
+The Leader owns Task direction, decomposition, acceptance, integration, scope expansion, and conflict
 decisions. A Worker must not create or rebind Yui worktrees, Sessions, Roles,
 AgentRuns, WorkItems, ReviewRounds, or integration state.
 
-Keep the layers distinct:
-
-- Yui Core supplies durable identity, lifecycle, authority, workspace, and
-  exact handoff safety.
-- This Skill supplies portable Worker behavior.
-- Agent-native Project Skills plus Project Policy and Knowledge supply build,
-  test, migration, release, and review rules.
-- The exact WorkItem and Context Snapshot supply this AgentRun's objective, scope,
-  acceptance, dependencies, and evidence contract.
-
-Do not promote a Project convention into generic Worker policy or infer Task
-facts by scanning the workspace. Expand only Context refs authorized by the
-pack.
+Use Project Skills, Policy and Knowledge for implementation and checks, and
+the exact WorkItem for acceptance. Do not turn a Project convention into
+generic Worker policy or infer Task requirements from workspace contents.
+Resolve Skill links relative to this Skill's directory.
 
 ## Execute within the exact boundary
 
@@ -60,12 +53,12 @@ acceptance, and never treat a Message as an expanded grant.
   exact Project, reason, impact, and Leader decision needed. Continue only
   after a new exact dispatch authorizes it.
 
-Implement the smallest coherent design that satisfies the current WorkItem.
-Reuse established responsibilities and patterns when they fit. Use a bounded
-refactor when repeated patches expose the wrong boundary, but do not add
-frameworks, configuration, fallbacks, compatibility paths, or abstractions for
-hypothetical future variants. Keep coupled changes together and avoid turning
-small helpers into independently managed architecture.
+Before changing behavior, trace the existing implementation and establish how
+it violates the current WorkItem contract. Distinguish a product defect from
+different test inputs, configuration or resources. Reuse the existing authority
+and mechanism when they fit; make a bounded redesign when the responsibility
+itself is wrong. Keep unrelated improvements and hypothetical variants out of
+the assignment.
 
 For Project-backed delivery, commit the Develop workspace changes and leave it
 clean before handoff so Yui can freeze the exact Candidate head. ReviewRound
@@ -81,10 +74,6 @@ changed behavior; do not repeat an unchanged successful check. Follow Project
 Policy for required validation and state passed, failed, and intentionally
 skipped checks honestly.
 
-Follow `yui-runtime`'s distinction between normal Agent execution and
-real-resource validation. Ordinary Worker implementation is authorized by this
-AgentRun; additional live-provider, paid, shared, or production validation is not.
-
 ## Return a useful result
 
 A native child result is best-effort until Yui externalizes it: the result
@@ -96,8 +85,6 @@ the Leader must dispatch the work as a managed Yui WorkItem AgentRun instead. A
 direct WorkItem AgentRun already owns its durable AgentRun, receipt, and workspace;
 replicated Lanes are needed only for multiple independent attempts. Native
 subagents never own a Yui AgentRun, receipt, or workspace.
-
-## Task Role AgentRun
 
 Summarize the outcome for the Leader's next judgment, not as a transcript or
 file-by-file log. Include the observable result, important mechanism and

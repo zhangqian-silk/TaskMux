@@ -502,16 +502,16 @@ function classifyLayer(
   if (current.run === "waiting") {
     return `waiting-${current.waitingReason ?? "external"}` as RuntimeHealthLayer;
   }
+  if (current.session === "ready"
+    || current.run === "completed"
+    || current.run === "failed"
+    || current.run === "cancelled") return "ready";
   // No durable semantic progress past fifteen minutes: display only. The
   // scheduler's coalesced read-only diagnostic remains a separate 30m clock.
   if (semanticIdleMs >= policy.diagnosticAfterMs) return "diagnostic-needed";
   // A live turn with no recent structured activity is quiet, not dead.
   if (runtimeIdleMs >= policy.quietAfterMs) return "quiet";
   if (current.run === "accepted" || current.session === "active") return "active-quiet";
-  if (current.session === "ready"
-    || current.run === "completed"
-    || current.run === "failed"
-    || current.run === "cancelled") return "ready";
   if (current.session === "started") return "awaiting-provider-acceptance";
   if (current.host === "alive") return "runtime-unobservable";
   return "starting";
@@ -525,7 +525,7 @@ function runtimeHealthReason(
     case "broken":
       return "the Agent Driver runtime is broken";
     case "stopped":
-      return "the Provider Activation ended while the Yui AgentRun remains active";
+      return "the Provider execution attachment has ended";
     case "subagent-active":
     case "tool-active":
     case "model-active":
@@ -544,7 +544,7 @@ function runtimeHealthReason(
     case "waiting-external":
       return `the Agent Driver is ${layer.replaceAll("-", " ")}`;
     case "ready":
-      return "the Provider turn ended while the Yui AgentRun is still active";
+      return "the Provider turn has ended; Task progress is recorded separately";
     case "awaiting-provider-acceptance":
       return "the submitted active AgentRun is awaiting Provider acceptance";
     case "runtime-unobservable":

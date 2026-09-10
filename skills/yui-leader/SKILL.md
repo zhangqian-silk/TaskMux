@@ -5,42 +5,37 @@ description: Lead one Yui Task from outcome through execution, review judgment, 
 
 # Yui Leader
 
-Follow `yui-runtime` first. For explicit dispatch, load the exact AgentRun Context
-Pack and deltas. For direct user collaboration, read current Task context from
+Follow [yui-runtime](../yui-runtime/SKILL.md) first. For explicit dispatch, load
+the exact AgentRun Context Pack and deltas. For direct user collaboration, read current Task context from
 your valid Leader Session; no active AgentRun or self-dispatch is required. Session
 identity grants management scope, not permission to bypass Assignment,
 planning/delivery, workspace or resource boundaries. Never infer authority
 from launch text, workspace layout, or transcript memory.
 
-Own Task direction, decomposition, architecture and product decisions,
-acceptance, integration, and durable context. The global Operator may perform
-the same legal Task actions when useful; responsibility is not a second
-permission system. Read current durable state and let Yui's transactional
-boundaries resolve races.
+Own Task direction, decomposition, acceptance, integration and durable context
+within the Runtime authority contract. Read current state and let Yui's
+transactional boundaries resolve races. Resolve Skill links relative to this
+Skill's directory.
+
+Read the actual user/Operator message bodies and current Brief, not only their
+IDs or summaries. Use that durable intent to decide and take the next action.
+In Draft, revise plans and independently owned requirements as discussion evolves;
+do not start delivery until requested. An activation request is that request to
+start: once the Task is active, continue from its durable facts without requiring
+the user to repeat "continue." Ordinary fact edits do not require a self-wake.
 
 ## Choose the simplest coherent result
 
-Optimize for the lowest total lifecycle complexity that satisfies the current
-Task Contract. Include implementation, verification, coordination, operation,
-maintenance, and likely revision cost. “Long-term” does not mean designing for
-every imaginable future requirement or failure.
+Start from the current Task Contract and trace the existing implementation,
+ownership and supported operating path before choosing a change. Establish
+whether a failure is reachable with the user's actual inputs and configuration;
+do not make a test fixture's accidental differences into new product policy.
 
-- Start from the user's outcome, current commitments, observed behavior, and
-  hard authority or data-integrity boundaries.
-- Separate established requirements from hypothetical extensions. Preserve a
-  future option only when current evidence makes it reasonably foreseeable and
-  the present cost is proportionate.
-- Reuse an existing concept or responsibility when it expresses the result
-  cleanly. Prefer a bounded redesign when repeated patches expose a misplaced
-  responsibility or an incoherent boundary.
-- Do not add a framework, policy layer, state, acknowledgement, retry loop,
-  fallback, compatibility path, configuration switch, or abstraction merely
-  because a future edge case can be imagined.
-- Split modules or execution units only when they have meaningfully different
-  responsibilities, authority, lifecycles, or independently useful outcomes.
-  Small helpers and files do not need their own architecture.
-- Prefer one clear authority for each decision. Derived views may explain
-  state, but must not become competing workflow truth.
+Choose the lowest total implementation, verification, coordination and
+maintenance cost that satisfies the contract. Reuse a coherent responsibility;
+redesign a misplaced boundary when that lowers the complete cost. Add a
+mechanism only for a demonstrated requirement or hard boundary that existing
+primitives cannot satisfy. Derived views must not become competing truth.
 
 Make routine legal choices yourself. Do not ask the user to choose among
 implementation patterns, scheduling options, review routing, or recoverable
@@ -69,17 +64,10 @@ independent progress, normally in parallel, and the coordination and
 Integration cost is lower than keeping one coherent owner. Keep coupled
 changes together.
 
-An ordinary assigned WorkItem uses its existing owner or assignee directly.
-Dispatch it without `--lane-role`. Request replicated execution only when
-multiple independent attempts at the same frozen Assignment have concrete
-value that exceeds their comparison and Integration cost. Review lanes are a
-separate decision and default to one Reviewer.
-
-Configured Leader, Worker, Reviewer, and native child Agents are normal
-execution resources. Their ordinary development and review work does not
-become a real-resource validation merely because they use a real model. Follow
-the separate validation boundary in `yui-runtime`; do not create an
-InputRequest for routine Agent allocation.
+An ordinary WorkItem uses its assignee directly; dispatch without `--lane-role`.
+Use [replicated execution](references/replicated-execution.md) only when
+independent attempts over the same frozen Assignment repay their coordination
+cost. Direct managed execution already provides durable ownership.
 
 ## Give Agents outcomes, not premature implementations
 
@@ -105,6 +93,14 @@ and test rules in that Project-owned layer.
 Use `yui task context <task-id>` and `yui task next-action <task-id>` as
 decision support. They expose current facts, exact refs, and legal
 alternatives; they do not replace Leader judgment.
+An empty WorkItem list does not mean the user requested direct execution.
+Honor explicit delegation and independent Review requirements in the user's
+messages and Task Brief. Neither `next-action` nor a disabled default review
+policy authorizes dropping them to make completion easier.
+
+An Integration Job's success is not the final target update. For that
+notification, read [Integration](references/integration.md) and finish the same
+attempt; do not start a duplicate operation.
 
 Before dispatch, Review, Integration, or completion, inspect
 `liveTaskState.activeRuns` and `liveTaskState.activeTaskReviews` in the current
@@ -114,12 +110,9 @@ global Task lock.
 
 Maintain only context that changes future decisions:
 
-- Keep the Brief's objective, boundaries, approach, current focus, and Leader
-  summary current after material semantic progress.
-  Use `task brief update` with only the fields you intend to change; no version
-  token is required. Same-field edits use the last explicit write. Inspect
-  `task event list` for before/after values if a prior value is needed, then
-  decide whether to restore it through another explicit update.
+- Keep the Brief current after material semantic progress. Use
+  `task brief update` with only intended fields; same-field edits use the last
+  explicit write. Read `task event list` before deliberately restoring a value.
 - Record a Decision when a material product or technical choice changes future
   work.
 - Add a Milestone for an independently meaningful phase result.
@@ -151,12 +144,9 @@ recipient; transfer still-pending input only with explicit `task message handoff
 Late input to terminal work or an obsolete Review remains visible with a bounded
 nondelivery reason. Use the existing formal operation for new scope or Review.
 
-If a notification's acceptance is unknown, preserve its fixed wake and do not
-replay it. After establishing shared-native quiescence, `task wake resolve
-<task> <wake> --reason <evidence>` releases only its claim, leaves the original
-unknown record intact, and permits independent later inputs. It neither asserts
-acceptance nor implements the Message. Native uncertainty still blocks conflicting
-execution; unrelated authorized local work remains available.
+For unknown delivery or Session replacement, read
+[runtime recovery](../yui-runtime/references/recovery.md). Preserve the original
+input; do not replay uncertainty or treat it as a global Task lock.
 
 For direct work, change only Task main, keep it on its managed branch, commit
 the result, and leave it clean. Run the smallest check that can catch the
@@ -184,10 +174,11 @@ yui task work update <work-id> done --summary "<result and evidence>"
 yui task work accept <work-id> --summary "<explicit acceptance and evidence>"
 ```
 
-For a native child, keep the WorkItem roleless, mark it running, select the
-closest applicable Profile, pass its constraints in the brief, and use the
-provider's native child tools. Native children inherit the current AgentRun's
-authority and gain no Yui Role, AgentRun, Session, or broader workspace. Their
+For a native child, pass a bounded brief and applicable Profile constraints
+through the provider's child tools. A small investigation needs no synthetic
+WorkItem. If the child implements an existing Leader-owned WorkItem, keep that
+WorkItem roleless and mark it running. Native children inherit only current
+parent authority and gain no Yui Role, AgentRun, Session or broader workspace. Their
 results are best-effort until Yui externalizes them; use a managed Task Role
 when independent durability matters. Inspect the returned result before
 submitting `done` or recording failure progress. `done` creates a Candidate;
@@ -223,38 +214,12 @@ silently replace it merely because its remote branch later moves.
 
 ## Extend capabilities within this Task's authority
 
-Use the stable Session CLI's `capability search`, `describe`, and `call` to
-inspect current tools when a capability is missing. Prefer an existing tool,
-composition, or one-off script when sufficient; a plugin is useful when the
-Task needs a reusable named capability. Do not create a separate development
-Task or register every temporary script by default.
-
-The authenticated Leader may create, scan, validate, activate, and disable
-Task-local plugins through `plugin.*`. Use an adopted writable environment.
-Read each capability's schema before calling it; `plugin.scan` reports the
-actual package digest without executing code, `plugin.validation` reads saved
-validation evidence, and `plugin.inspect` distinguishes persistent enable
-intent from the Host's current implementation.
-
-Management permission does not authorize executable code. A trusted-local
-build, validation, activation, or call requires an existing `plugin.execute`
-grant bound to the exact plugin id, digest, environment, trust and phase, with
-current remaining uses and validity. Source changes do not inherit the old
-digest's grant. Trusted-local subprocesses are not an OS sandbox. Do not issue
-your own grants or impersonate Operator; request only a genuinely missing
-resource or trust boundary, never the same authorization already available.
-Do not modify the core installation, core namespaces, global configuration or
-the Endpoint carrying this Session to obtain a new tool.
-
-Keep validation failures and any operation receipts as evidence; decide how to
-repair from those facts. An unknown or partial external effect is not permission
-to rerun the whole action chain. After activation, query the directory again
-and call the new capability through the same bridge and native Session; no
-native tool-schema change or Controller restart is needed. Save the actual
-business result using `artifact.save` and retain its reference in Task results.
-Plugin source or successful loading alone is not the Task outcome. Historical
-Artifacts remain readable after disable or Controller restart; saved enable
-intent does not automatically execute code on restart.
+Use `capability search`, `describe`, and `call` to inspect current tools.
+Prefer existing tools, composition or a one-off script when sufficient.
+For reusable Task-local capabilities, read [Task plugins](references/task-plugins.md)
+before creation, validation or activation. Plugin management permission does
+not grant code execution or broader external effects. Never issue your own
+grants, impersonate Operator, or modify the core installation to obtain a tool.
 
 ## Validate and make the review judgment
 
@@ -272,25 +237,17 @@ review would add useful evidence:
 - rely on an already completed applicable Review.
 
 This is Leader judgment inside the acceptance decision, not a separate record,
-checklist, or workflow phase. A managed Reviewer is optional. Do not create a
+checklist, or workflow phase. A managed Reviewer is optional unless the user,
+Project or Task Contract requires it. Do not create a
 Reviewer Role or ReviewRound for ceremony. Honor an existing Candidate's
 snapshotted `always` policy and any immutable Task-final Review contract.
 Otherwise choose whether another review adds enough evidence to justify its
 cost.
 
-Use direct Review by default: one main Reviewer AgentRun owns the authoritative
-result without an ExecutionGroup or Lane. Choose replicated Review only when
-independent inspection of the same frozen Assignment materially improves the
-evidence enough to repay its coordination cost. It requires at least two
-distinct Producer Lane Roles plus a separate main Reviewer. Producer results
-are durable evidence only; Core does not choose a success count or vote.
-Select the original source AgentRuns explicitly with
-`task review synthesize <task>/<review-round> --source-run <task>/<run> ...`.
-For replicated WorkItems use `task work synthesize <task>/<work> --source-run <task>/<run> ...`.
-The main Agent receives those frozen sources, resolves disagreement through
-judgment, and submits one original result. Finishing or settling a Lane does
-not dispatch synthesis automatically. A Lane retry remains the same replica.
-Automatic policy-triggered Candidate Review remains direct.
+Use one direct main Reviewer by default. If independent replicas materially
+improve evidence, read [replicated execution](references/replicated-execution.md)
+before dispatch or synthesis. Honor required review contracts even when a
+cheaper execution path is otherwise available.
 
 When several WorkItems contribute to one outcome, prefer one independent
 Task-final Review after their accepted results are integrated over repeating a
@@ -320,32 +277,21 @@ main synthesis through its exact AgentRun, preserving its selected source snapsh
 A Worker or Reviewer AgentRun result is evidence, not acceptance. Inspect the
 result, diff, checks, and current Candidate before deciding.
 
-If a WorkItem result is insufficient, reject it with bounded feedback and
-redispatch the same WorkItem and Role while its scope remains valid. If it is
-acceptable and contains isolated Git changes, capture and integrate its latest
-Candidate before acceptance:
+If a result is insufficient, reject it with bounded feedback and redispatch
+the same WorkItem and Role while scope remains valid. Before accepting isolated
+Git changes, read [Integration](references/integration.md) to capture and
+integrate the latest Candidate. Do not edit managed refs or bypass Yui's
+compare-and-swap boundary.
 
-```sh
-yui task work capture <work-id>
-yui task integration start <task-id> --project <project> \
-  --change-set <change-set-id> \
-  --check "<Project Policy command>"
-yui task work accept <work-id> --summary "<decision and evidence>"
-```
+After an authorized PR/MR operation, follow
+[publication recording](../yui-runtime/references/publication.md).
+External delivery and Task completion remain separate facts.
 
-Resolve a failed Integration from its exact conflict or check evidence. Do not
-bypass compare-and-swap, update managed refs manually, or create a replacement
-WorkItem for an ordinary Integration correction.
-
-Immediately after creating, updating, closing, reopening, or merging a PR/MR,
-record the confirmed fact with `yui task publication upsert`; do not wait for
-another Role to infer it. Supply only information already known from the
-operation itself. When the current authorization covers an external provider
-read, use `yui task publication verify` after the merge; otherwise preserve
-reported evidence and state the gap. Track PR/MR identity, state, commits, URL,
-merge time, and evidence—not CI or deployment state. Publication describes
-external delivery and never replaces Candidate, Review, Integration,
-acceptance, or completion.
+After a ReviewRound is terminal, the Leader or authorized Operator owns
+`task work review cleanup <task>/<round>`. Preserve dirty diagnostic evidence
+and resolve it explicitly; do not ask a Reviewer to clean its own runtime
+after its final report. Cleanup can remain advisory at completion, but all
+required resources must be settled before user-authorized archive.
 
 Complete only when the Task outcome is satisfied, required checks and review
 contracts are settled, WorkItems are accepted or deliberately retired, latest
@@ -358,6 +304,13 @@ yui task complete <task-id> \
 
 Completion records the exact Project heads. Archive is a separate,
 user-authorized Operator action.
+
+If completion reports `pending-user-input`, new user intent has not yet reached
+the current notification window. End this native turn so the next notification
+can be delivered, then read the original messages and reassess the outcome.
+Do not spin on completion, drop messages, or manufacture another Run to proceed.
+A current Leader Session can create a formal InputRequest during an ordinary
+notification; no active AgentRun is required.
 
 ## Finish every Leader AgentRun
 
@@ -379,8 +332,6 @@ needs updating. Do not poll managed Roles or emit waiting Messages. Managed
 results enter a later Leader notification; that notification is not an implicit
 AgentRun and requires no separate execution report. An unchanged active Task remains quiet.
 
-For a runtime failure, inspect the exact `runtime.agent-error`, AgentRun, and
-Session facts. Retry the failed AgentRun on the same recoverable Session when useful.
-Replace a Session only when the Driver proves it cannot continue. After
-repeated replacement failures, report the evidence and bounded options instead
-of adding another recovery mechanism.
+Use the shared [runtime recovery](../yui-runtime/references/recovery.md) contract
+for failed execution. Persist successor context before replacing yourself,
+then end this turn; engineering cleanup is not discarded Task intent.

@@ -229,10 +229,15 @@ export class BoundedRpcClient<Request, Response> {
 
   #newReadyPromise(): Promise<void> {
     this.#readyFired = false;
-    return new Promise<void>((resolve, reject) => {
+    const ready = new Promise<void>((resolve, reject) => {
       this.#readyResolve = resolve;
       this.#readyReject = reject;
     });
+    // Closing during startup is legal even if no request has awaited ready.
+    // Observe that rejection without replacing the original promise: send()
+    // still receives the failure instead of an invented ready worker.
+    void ready.catch(() => undefined);
+    return ready;
   }
 
   #workerUrl(): URL {
@@ -305,6 +310,7 @@ export class BoundedRpcClient<Request, Response> {
       }
       // Brief backoff to avoid a hot crash loop.
       await new Promise((resolve) => setTimeout(resolve, this.#restartBackoffMs));
+      if (this.#closed) return;
       this.#generation += 1;
       this.#port?.close();
       this.#ready = this.#newReadyPromise();

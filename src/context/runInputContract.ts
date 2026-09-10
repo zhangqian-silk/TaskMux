@@ -145,7 +145,12 @@ export function serializeRunInputEnvelope(value: AgentRunInputEnvelope): string 
     normalized.deltaRefIds.length === 0
       ? "delta=none"
       : `delta=${normalized.deltaRefIds.join(",")}`,
-    "Load the exact AgentRun context before acting; fail closed if it is unavailable or mismatched."
+    ...(normalized.subject.taskId === undefined ? [] : [
+      `Load the exact AgentRun context: yui task run context ${normalized.subject.taskId}/${normalized.runId} --json.`
+    ]),
+    "Use the Session Manifest's CLI entry. Fail closed if the exact Context is unavailable or mismatched.",
+    "Then read the relevant referenced requirements and perform the assigned work. Context loading is not the deliverable.",
+    "During planning, fulfill the user's Draft discussion request without starting delivery before it is requested."
   ];
   const serialized = lines.join("\n");
   if (Buffer.byteLength(serialized, "utf8") > RUN_INPUT_MAX_BYTES) {

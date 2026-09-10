@@ -23,6 +23,8 @@ import {
   detachRoleAgentSessionHost,
   updateRoleAgentSessionStatus,
   updateTaskRoleProviderRuntime,
+  selectNewTaskRoleSession,
+  taskRoleControlTarget,
   type AgentSessionStatus,
   type GlobalRoleSessionSet,
   type RoleAgentSession,
@@ -30,6 +32,7 @@ import {
 } from "../executor/agentExecutor.js";
 import {
   acceptProviderTurn,
+  cancelQuiescentProviderInput,
   beginProviderTurn,
   createProviderRuntimeBinding,
   currentProviderConversation,
@@ -75,7 +78,7 @@ import {
   classifyRuntimeProcessExit,
   validateRuntimeProcessExitObservation
 } from "../runtime/processExitObservation.js";
-import { terminalizeExactTaskRun } from "../lifecycle/exactRunTerminalization.js";
+import { terminalizeExactTaskRun, cancelQuiescentRoleRuns } from "../lifecycle/exactRunTerminalization.js";
 import {
   createCanonicalLifecycleEvent,
   foldCanonicalLifecycleEvent,
@@ -461,10 +464,19 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       if (hasPersistedRuntimeObservation(store.listEvents(input.fence.taskId!), input)) {
         return "applied";
       }
-      const run = store.getRun(input.fence.taskId!, input.fence.runId!);
+      const run = input.fence.runId === undefined ? null : store.getRun(input.fence.taskId!, input.fence.runId);
       const active = store.getActiveRun(input.fence.taskId!, input.fence.roleName);
       const sessions = store.getTaskRoleSessionSet(input.fence.taskId!, input.fence.roleName);
       const session = sessions?.sessions[input.fence.agentId];
+      if (input.fence.runId === undefined
+        && ["operation.started", "operation.completed", "operation.failed", "activity.observed"].includes(input.kind)) {
+        const native = sessions?.providerBinding?.run;
+        return native?.runId === undefined && input.fence.receiptId !== undefined
+          && native?.attemptId === input.fence.receiptId && native.status === "accepted"
+          && session?.nativeSessionId === input.fence.nativeSessionId
+          && (native.nativeTurnId === undefined || native.nativeTurnId === input.fence.nativeTurnId)
+          ? "applied" : "obsolete";
+      }
       const knownContinuation = input.kind.startsWith("continuation.") && projectProviderContinuations(store.listEvents(input.fence.taskId!)).some((entry) => (
           entry.runId === input.fence.runId
           && entry.identity.providerNamespace === input.fence.driverId
@@ -534,10 +546,17 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
     now: Date
   ): ProviderLifecycleObservation {
     return this.store.transaction((store) => {
-      const run = store.getRun(input.fence.taskId!, input.fence.runId!);
+      const run = input.fence.runId === undefined ? null : store.getRun(input.fence.taskId!, input.fence.runId);
       const sessions = store.getTaskRoleSessionSet(input.fence.taskId!, input.fence.roleName);
       const session = sessions?.sessions[input.fence.agentId];
-      if (run === null || run.roleName !== input.fence.roleName || run.effective.agentId !== input.fence.agentId || this.drivers.requireByAdapterId(run.effective.adapterId).id !== input.fence.driverId || session === undefined || session.nativeSessionId !== input.fence.nativeSessionId) {
+      const native = sessions?.providerBinding?.run;
+      const exactInput = input.fence.receiptId !== undefined && native?.attemptId === input.fence.receiptId;
+      const validRun = input.fence.runId === undefined ? exactInput
+        : run !== null && run.roleName === input.fence.roleName && run.effective.agentId === input.fence.agentId
+          && this.drivers.requireByAdapterId(run.effective.adapterId).id === input.fence.driverId;
+      if (!validRun || session === undefined || session.nativeSessionId !== input.fence.nativeSessionId
+        || (input.fence.receiptId !== undefined && (!exactInput
+          || (native?.nativeTurnId !== undefined && native.nativeTurnId !== input.fence.nativeTurnId)))) {
         recordCanonicalObservationObsolete(store, input, "runtime-session-not-current", now);
         return "obsolete";
       }
@@ -1245,6 +1264,13 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
     now: Date;
   }>): void {
     this.store.transaction((store) => {
+      const task = store.getTask(input.taskId);
+      if (task === null || !["active", "draft"].includes(task.status) || task.executionGate.state !== "enabled"
+        || hasRuntimeCleanupObligation(store.getWorkMailbox(runtimeLifecycleTarget({
+          scope: "task", taskId: input.taskId, roleName: input.roleName
+        })))) {
+        throw new AgentHostProviderTurnFenceError("Session execution admission is stopped or being replaced.");
+      }
       const sessions = store.getTaskRoleSessionSet(input.taskId, input.roleName);
       const session = sessions?.sessions[input.agentId];
       const binding = sessions?.providerBinding;
@@ -1732,7 +1758,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       if (mailbox === null || disposition === null) return false;
       if (mailbox.processing !== null) {
         if (
-          !mailbox.processing.batch.reasons.every(isRuntimeCleanupReason)
+          disposition !== "replace-session" && !mailbox.processing.batch.reasons.every(isRuntimeCleanupReason)
         ) {
           return false;
         }
@@ -1741,8 +1767,8 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const pending = mailbox.pending;
       if (pending !== null) {
         if (
-          pending.reasons.length === 0
-          || !pending.reasons.every(isRuntimeCleanupReason)
+          disposition !== "replace-session" && (pending.reasons.length === 0
+          || !pending.reasons.every(isRuntimeCleanupReason))
         ) {
           return false;
         }
@@ -1754,8 +1780,43 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         }), batchId);
       }
       const owner = runtimeOwnerFromTarget(target);
-      if (disposition === "end-session") {
+      if (disposition !== "detach-host" && owner.scope === "task") {
+        // Physical quiescence was proven by stopOwner. Runs are engineering
+        // attempts: cancel only this Role, never Task intent or other workers.
+        cancelQuiescentRoleRuns(store, owner.taskId, owner.roleName,
+          "Session execution stopped on request; durable Task context and workspace progress were preserved.", now);
+        let set = store.getTaskRoleSessionSet(owner.taskId, owner.roleName);
+        if (set !== null) {
+          // Late observations cannot resurrect engineering occupancy after
+          // the exact native/process stop just completed.
+          if (set.providerBinding !== null) {
+            let binding = set.providerBinding;
+            if (binding.run !== null) binding = cancelQuiescentProviderInput(binding, {
+              attemptId: binding.run.attemptId, cancelledAt: now.toISOString(),
+              reason: "Session replacement after verified resource stop."
+            });
+            set = updateTaskRoleProviderRuntime(set, clearProviderGoal(binding), now);
+          }
+          store.saveTaskRoleSessionSet(set);
+        }
         endRuntimeOwnerSession(store, owner, now);
+      }
+      if (disposition === "replace-session" && owner.scope === "task") {
+        const set = store.getTaskRoleSessionSet(owner.taskId, owner.roleName);
+        if (set !== null) store.saveTaskRoleSessionSet(selectNewTaskRoleSession(set, set.activeAgentId, now));
+        const event = createTaskEvent(store.nextEventId(owner.taskId), owner.taskId,
+          "runtime.session-replaced", { roleName: owner.roleName }, now);
+        store.saveEvent(owner.taskId, event);
+        // Accepted notification batches are already consumed; unresolved old
+        // claims belong to the discarded runtime, not to its successor.
+        const leaderTarget = { kind: "role", taskId: owner.taskId, roleName: "leader" } as const;
+        const leaderMailbox = store.getWorkMailbox(leaderTarget);
+        if (owner.roleName === "leader" && leaderMailbox?.processing?.owner.startsWith("leader-notification:")) {
+          store.saveWorkMailbox(releaseProcessing(leaderMailbox, leaderMailbox.processing.batchId));
+        }
+        enqueueWork(store, leaderTarget, "session-replaced", now, [{ type: "event", taskId: owner.taskId, id: event.id }]);
+      } else if (disposition === "end-session") {
+        if (owner.scope === "global") endRuntimeOwnerSession(store, owner, now);
       } else {
         detachRuntimeOwnerHost(store, owner, now);
       }
@@ -1799,14 +1860,15 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
   enqueueRuntimeCleanup(
     owner: RuntimeRoleOwner,
     now = new Date(),
-    expectedDormantCandidate?: DormantRuntimeOwnerCandidate
+    expectedDormantCandidate?: DormantRuntimeOwnerCandidate,
+    allowActiveRun = false
   ): RuntimeLifecycleTarget | null {
     return this.store.transaction((store) => {
       if (
         expectedDormantCandidate !== undefined
         && (
           !sameRuntimeOwner(owner, expectedDormantCandidate.owner)
-          || !dormantRuntimeCandidateIsCurrent(store, expectedDormantCandidate)
+          || !dormantRuntimeCandidateIsCurrent(store, expectedDormantCandidate, allowActiveRun)
         )
       ) {
         return null;
@@ -1890,6 +1952,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const task = store.getTask(taskId);
       if (task?.status !== "draft" || task.executionGate.state !== "enabled") return false;
       if (store.getActiveRun(taskId, "leader") !== null) return true;
+      if (store.listRuns(taskId).some(run => run.roleName === "leader" && run.purpose === "planning")) return false;
       const sessions = store.getTaskRoleSessionSet(taskId, "leader");
       if (activeLiveRoleAgentSession(sessions) !== null) return false;
       const role = requireRole(store, taskId, "leader");
@@ -1906,9 +1969,13 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const frozen = withRunContextSnapshot(run, contextSnapshotRef(snapshot));
       store.saveRun(frozen);
       store.saveActiveRun(frozen);
-      // Associate the existing pending prefix with this first execution.
-      enqueueRoleRunDispatch(store, { taskId, roleName: "leader", runId: run.id,
-        reason: "planning-requested", occurredAt: now });
+      // Freeze the initial notification prefix against this planning Run.
+      // Later messages remain pending; acceptance or an exact terminal settles
+      // only this batch, so a failed initial launch cannot replay it forever.
+      const batchId = formatRunReceiptId(taskId, run.id);
+      store.saveWorkMailbox(bindExecution(claimPending(mailbox, {
+        batchId, owner: `planning:${run.id}`, startedAt: now.toISOString()
+      }), batchId, { type: "run", taskId, id: run.id }));
       return true;
     });
   }
@@ -1964,6 +2031,7 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
       const wakeId = store.nextTaskWakeId(taskId);
       const wake = createTaskWake({
         id: wakeId, taskId, reasons: mailbox.pending.reasons,
+        refs: mailbox.pending.refs,
         fromCursor: latest?.toCursor ?? task.createdAt,
         toCursor: new Date(Math.max(now.getTime(), Date.parse(mailbox.pending.lastQueuedAt))).toISOString(), now
       });
@@ -2324,6 +2392,11 @@ export class FileSchedulerStoreAdapter implements SchedulerStorePort {
         nativeSessionId: input.nativeSessionId,
         turnId: canonicalRunId
       }, now);
+      if (input.observation?.payload.failure?.error.sessionDisposition === "unrecoverable"
+        && sessions.providerBinding !== null) {
+        sessions = updateTaskRoleProviderRuntime(sessions,
+          updateProviderConversationRecoverability(sessions.providerBinding, "unrecoverable"), now);
+      }
       store.saveTaskRoleSessionSet(sessions);
       let terminalRun: AgentRun | undefined;
       if (recordedProviderTurn && observedRun?.status === "active") {
@@ -3300,23 +3373,22 @@ function sameRuntimeOwner(
 
 function dormantRuntimeCandidateIsCurrent(
   store: TaskStore,
-  candidate: DormantRuntimeOwnerCandidate
+  candidate: DormantRuntimeOwnerCandidate,
+  allowActiveRun = false
 ): boolean {
   const { owner } = candidate;
-  if (hasRuntimeLifecycleWork(
-    store.getWorkMailbox(runtimeLifecycleTarget(owner))
-  )) {
-    return false;
-  }
   if (
-    owner.scope === "task"
+    !allowActiveRun && owner.scope === "task"
     && store.getActiveRun(owner.taskId, owner.roleName) !== null
   ) {
     return false;
   }
   const sessions = runtimeOwnerSessionSet(store, owner);
-  const active = sessions?.sessions[sessions.activeAgentId];
-  return active !== undefined && active.status === "active" && active.agentId === candidate.agentId && active.adapterId === candidate.adapterId && active.nativeSessionId === candidate.nativeSessionId && active.updatedAt === candidate.sessionUpdatedAt;
+  const active = allowActiveRun && owner.scope === "task"
+    ? taskRoleControlTarget(store.getTaskRoleSessionSet(owner.taskId, owner.roleName))
+    : sessions?.sessions[sessions.activeAgentId];
+  return active !== undefined && active.agentId === candidate.agentId && active.adapterId === candidate.adapterId
+    && active.nativeSessionId === candidate.nativeSessionId && (allowActiveRun || active.updatedAt === candidate.sessionUpdatedAt);
 }
 
 function endRuntimeOwnerSession(

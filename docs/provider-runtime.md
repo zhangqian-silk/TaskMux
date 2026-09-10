@@ -1,187 +1,163 @@
-# Managed Provider Runtime
+# Provider runtime
 
-Yui treats a provider conversation as the user's conversation. It adds the
-Role's Yui Skill and a pointer to the Session Manifest, then uses provider-native
-requests to deliver durable Task work. Yui does not own the transcript or
-require every user interaction to pass through Yui.
+Native conversations belong to the user and Provider. Yui adds its Role Skill
+and Session Manifest pointers, delivers scoped input through structured native
+protocols, and records exact execution evidence. It does not mirror the complete
+transcript or require every user interaction to pass through Yui.
 
-Task state and conversation state have different responsibilities:
+## Component and connection
 
-- Codex or Claude owns native messages, Turns, tool activity, and native history.
-- Yui owns Tasks, WorkItems, AgentRuns, workspaces, durable messages, and wake
-  hints. An open AgentRun records outstanding execution intent, not actual
-  Agent activity or Leader authority.
-- A Provider binding owns Session, Activation, authority, Goal, and native Turn
-  facts. It does not maintain a second execution record alongside Yui's AgentRun.
-- The Role Skill tells the Agent when and how to read or update Yui through the
-  Session Manifest's exact `YUI_SESSION_CLI` entry point.
+| Execution component | Connection plan | Managed transport |
+| --- | --- | --- |
+| `codex-cli` | `codex` | App Server WebSocket through a byte-forwarding proxy |
+| `claude-code-cli` | `claude` | Persistent stream-json process |
+| `claude-agent-sdk` | `acp` | ACP bridge over stdio |
+| `unknown-acp-agent` | `acp` | ACP over stdio, with product identity unconfirmed |
 
-## Components
+An executable name does not prove its product identity. The component selects
+one connection plan; the protocol does not infer which product is running.
 
-| Component | Responsibility |
-| --- | --- |
-| Controller | Schedule durable Task work and submit Provider-native Turns |
-| Agent Host | Keep one Yui client attachment alive and relay structured requests |
-| Provider Adapter | Start/resume a native conversation and submit or inspect AgentRuns |
-| Provider conversation | Hold the user-visible transcript and native execution history |
+## Host and Endpoint
 
-The normal delivery path is:
+Controller owns durable input selection and observation processing. AgentHost
+owns its disposable connection and serializes requests. AgentEndpoint exposes
+open/resume, submit/steer, inspect, events, cancel, detach and exit observation.
+Driver maps protocol evidence into the common observation/error vocabulary.
 
-```text
-Explicit execution -> AgentRun -> Provider input
-Message/wake       -> mailbox  -> Provider input
-                                  -> exact Provider Runtime Binding evidence
-```
+Endpoint submission distinguishes accepted, pending, not-submitted and unknown.
+Acceptance requires Provider evidence correlated to the exact owned input:
+a native receipt, or a response on an exclusively owned serialized stream.
+Neither bytes written, a PID nor a tmux pane proves acceptance.
 
-Yui's internal authority epoch fences only Yui's own submissions.
-It is not a claim that Yui is the only client allowed to use the conversation.
+Session, attachment and AgentRun identities are distinct. A Session can span
+multiple explicit Runs and ordinary native chat. Goal is Session-level Provider
+evidence, not a Yui Task completion state.
 
-## Codex: ordinary shared-daemon threads
+## Codex and Claude Code
 
-Managed Codex establishes the App Server WebSocket protocol through the
-byte-forwarding `codex app-server proxy` and reaches the same native daemon used
-by interactive Codex clients. The daemon owns the thread and its writer state.
-The Agent Host owns only its disposable proxy process and WebSocket attachment.
+Managed Codex connects to the shared native daemon. Host owns its proxy and
+WebSocket, not that daemon or the native thread. Direct native clients may use
+the same conversation; Yui waits for native availability and correlates its own
+input rather than treating another client's terminal as its result.
 
-Global Codex Roles keep the native TUI presentation, but Yui connects that TUI
-to the same default App Server daemon. The connection endpoint is internal
-runtime configuration and cannot be overridden by Agent or Role arguments.
-The TUI is therefore a client attachment rather than a second rollout writer.
-Its Session Manifest carries a self-contained Global Context command, so
-opening the same thread in Desktop does not depend on environment inherited
-from the Yui-created TUI process.
+Global Codex Roles retain the native TUI. The thin interactive Host observes
+the TUI's exact thread start/resume identity and applies the reserved workspace,
+Role settings, Manifest pointer and scoped CLI environment to that same native
+startup request. Remote TUI flags alone are not authority for the server's
+working directory; no second Thread or daemon-wide configuration is created.
+A live pane alone does not establish
+an authenticated Session; a dead pane is retained evidence until explicit action.
 
-For Global Codex, a thin Agent Host transparently relays that native TUI's
-WebSocket connection through a disposable shared-daemon proxy. Its loopback
-endpoint requires an ephemeral bearer token and accepts only the owning TUI.
-The Host correlates the TUI's exact startup request and response, then exposes
-the returned Thread ID through the existing startup acknowledgement. Core
-commits the Session only after that acknowledgement and a live pane check.
-The Host and relay have the TUI's lifetime, not the Controller's lifetime.
+Managed Claude Code uses a persistent stream-json process, exact user-message
+correlation and one local input in flight. Its first main assistant response
+confirms acceptance before the final result; init, user echo and child responses
+do not. Message UUIDs suppress duplicate observations, not identify native
+Turns. Yui-owned generic Role context uses private files; Project Skills remain
+native Project material discovered by the Agent.
 
-This is deliberately the TUI's own `thread/start`, not a pre-created empty
-Thread followed by `resume`: the supported Codex 0.150.1 cannot resume such a
-Thread before its first message has materialized a rollout. No bootstrap
-message is inserted. An unavailable or rejected startup returns an error and
-leaves no active Session; retained dead panes remain diagnostic evidence.
-Previously recorded Sessions still use their exact native resume identity.
-Global `notify` is not an identity or lifecycle source.
+Global Claude Code keeps its interactive interface and native authentication
+selection. Yui forwards the configured environment and settings paths without
+injecting an authentication helper or writing onboarding/key-approval records.
+Native confirmation and policy remain enforced. See
+[native authentication](roles-and-configuration.md#native-authentication).
 
-The shared daemon must already be available through the installed Codex client.
-Yui never starts, restarts, or stops it in response to a Task, thread, or proxy
-error; daemon/CLI repair remains outside Task lifecycle recovery.
+Main-session tool start/result and model activity feed the same exact-input
+observations for Runs and runless notifications. Tool failure ends that operation,
+not the whole Agent execution. Missing activity evidence remains unobserved.
+An owned Claude process exit without a result fails its current input; deliberate
+cancellation records cancelled instead. Neither invents a native Turn ID.
 
-For a new Role conversation Yui calls `thread/start` with:
+Native observations are durably queued before asking the Controller to apply
+them. Controller absence, timeout or transport loss leaves those exact facts
+for normal inbox replay; it does not turn a healthy native result into a failed
+Host. The eager Controller application hint has a short deadline, so an outage
+does not accumulate a long synchronous wait for every native event.
+Persistence or actual application-validation failures still surface as
+errors. Terminal input evidence remains terminal as time passes, independently
+of Task completion and later Runs.
 
-- the Role workspace and configured model/effort/permission settings;
-- the Role's runtime workspace roots; and
-- the small config overrides already selected for that Role.
+Managed input uses structured protocols, not terminal keystrokes or prompt
+glyph parsing. Terminal attachment is a presentation channel.
 
-The ordinary Task message carries the Session Manifest pointer. The manifest
-points to `yui-runtime` and the matching Role Skill such as `yui-leader`,
-`yui-worker`, or `yui-reviewer`. This keeps the user's native developer
-instructions intact. No Yui-specific hook configuration is written to the
-user's global Codex config.
+## ACP
 
-The returned `threadId` is the Role's native Session identity already retained
-by the Task Role Session Set. It remains an ordinary Codex thread that is
-visible and directly usable in Desktop. Yui does not require a takeover to use
-it from another native Codex client.
+ACP negotiates initialization and Session capabilities, opens or loads an exact
+Session, sends prompts, observes updates and maps terminal/error responses.
+Authentication requirements and unsupported operations remain explicit.
+The codec must not implement another Task/Run Store or invent native Turn IDs.
 
-If an already-running native Turn is observed while Yui resumes a thread, Yui
-classifies its attempted delivery as `busy`. The pending input and mailbox batch
-stay durable until that native Turn settles. A Yui AgentRun reaches terminal state
-only from the native Provider terminal; there is no separate `yield` outcome.
-The final visible assistant response becomes the AgentRun result.
+Model, effort and permission requests are compiled against the peer's offered
+configuration axes and checked after application. Setters can change other axes;
+final observed values must still satisfy the requested launch before prompt.
+An acknowledgement without a reported value is weaker than an observed match.
+Unknown ACP products do not inherit a guessed bypass mode from another product.
 
-If a proxy disconnects, the Agent Host may attach a bounded replacement client
-and resume the same thread from exact native history. Task execution stop
-terminates the Agent Host and proxy, but leaves the shared daemon and native
-thread untouched. Start creates a new proxy attachment. A failed fresh
-attachment is stopped and its launch reservation is released; it cannot leave
-`runtimeCleanupPending` as a prerequisite for the next attempt.
+Yui distinguishes three configuration layers:
 
-A Codex native config profile is rejected for Managed Codex because it cannot
-be scoped to one shared-daemon thread. Role model, effort, permissions,
-workspace, and shell settings remain thread-scoped. Yui never mutates the
-underlying Codex config.
+1. desired Role/Agent binding;
+2. frozen effective launch request;
+3. live Agent-reported configuration, or `unknown` / `unsupported`.
 
-## Claude Code: independent structured process
+Within observed configuration, an axis can remain `unobserved`. Inspection reads
+current reports without configuring or prompting the Agent. Reported model names
+are Provider evidence, not independent proof of backend model identity.
 
-Managed Claude continues to use a persistent `--input-format stream-json` and
-`--output-format stream-json` process. Yui preallocates the native Session ID,
-and Agent Host is that process's sole input writer. A completed pipe write is
-transport evidence, not native acceptance. The matching Claude `result` supplies
-acceptance and terminal evidence through the exact local attempt. A result-message
-UUID is not a nativeTurnId.
+## Environments and replacement
 
-The tmux view/takeover gateway remains the human-control boundary for providers
-with an independent managed process, such as Claude. Codex users operate the
-ordinary shared thread directly in Desktop.
+Adopted execution environments retain their directory identity, access,
+preparation and grants. Launch, resume and Yui-controlled submission recheck the
+same boundary. Desired environment changes do not move a running Session or
+silently fall back to managed cwd.
 
-## Delivery outcomes
+Read-only adoption requires actual adapter enforcement. Empty environments
+cannot supply a native CLI cwd; scratch or an explicitly adopted directory can.
+Trusted-local environments are not a general OS sandbox.
 
-Before Yui writes a Task-owned input, it records a `submitting` Provider Turn
-observation using a stable attempt id. The provider result is one of:
+A Session pins the Endpoint implementation actually loaded by its Host.
+New Sessions may select another implementation; existing references drain on
+their own boundary. A drain deadline bounds waiting, not a guarantee that all
+native descendants exit. Cleanup reports unresolved ownership honestly.
 
-- `accepted`: exact Provider evidence, including verified local stream correlation;
-- `busy`: another ordinary client has an active native Turn, so Yui keeps the work
-  pending;
-- `rejected`: the provider definitively rejected the input before creating a
-  native Turn; or
-- `delivery-unknown`: the write may have happened but no exact receipt was
-  observed.
+Stopping Yui's attachment does not cancel the Task, erase the native thread or
+prove shared execution stopped. Unknown native effects must be resolved before
+conflicting resource release. See [Session/Run](managed-turn-and-session-runtime.md)
+and [Drivers](agent-runtime-drivers.md).
 
-`delivery-unknown` is never retried automatically. `busy` is safe to retry
-because the provider proved that Yui's input was not accepted.
+Task Session termination first cancels its exact unsettled input and requires
+matching terminal evidence before signalling the Host or releasing occupancy.
+Codex uses native interruption; Claude stops the owned execution process.
+An interrupt acknowledgement alone is insufficient. If terminal evidence is
+unavailable, cleanup is visibly blocked and retains the native input identity;
+it does not kill the shared daemon or label unknown execution as stopped.
 
-## Recovery
+Dedicated Claude execution uses a small Linux child subreaper. If the CLI dies,
+the kernel reparents its orphaned tools to that owner, including tools that
+created another process session. The owner signals only its actual children,
+reaps them, and exits only after none remain. Thus a killed CLI cannot leave a
+foreground Bash tool writing while Yui reports its owned process ended.
+Failure to drain remains a live ownership dependency, not false quiescence.
+This is OS process custody, not a Task workflow or a claim about unrelated
+external services.
 
-Conversation recovery uses provider-native evidence:
+The dedicated process's PID/start identity is retained as engineering control
+data independently of AgentHost. Recovery never needs the old Host's in-memory
+connection. For Codex, a separate metadata/control client can inspect and stop
+the recorded native execution without submitting another prompt; unknown
+acceptance can be abandoned after actual native quiescence without inventing a
+native Turn ID or successful Run result.
+Codex connection location and the account Home reported by its native handshake
+are also retained without credentials. Recovery can use current executable code,
+but verifies the actual native account before treating a missing Thread as
+absence. An unproven connection must not turn “not found” into a stop receipt.
+Control uses native runtime metadata and, when a receipt was lost, one
+metadata-only Turn page rather than loading the entire conversation. Explicit
+Session stop checks native Goals and background terminals even when Yui's cached
+input is already terminal. It never starts another model Turn to recover.
 
-| Observation | Available Agent choice |
-| --- | --- |
-| Thread has Yui's exact persisted active AgentRun | Reattach and continue observing it |
-| Thread has another client's active native Turn | Wait; retain pending Yui work |
-| Yui's persisted AgentRun is terminal in native history | Fold the recovered terminal exactly once |
-| Thread exists and is idle | Resume and deliver the pending input |
-| Driver proves the thread is missing, ended, expired, or out of context | Settle the current AgentRun, explicitly stop the exact Session/Host, then dispatch a new AgentRun on a new Session; the complete prior error and identities remain readable |
-| Availability, capacity, or `429`; input was accepted and Session is recoverable | Submit a new AgentRun in the same Session when useful |
-| Delivery is unknown | Inspect native history and preserve identity; do not blindly duplicate the input |
+## Verification boundary
 
-A dead pane, process exit, timeout, or App Server disconnect is not proof that
-a thread is missing. Yui may replace its owned process, but it replaces a
-thread only after exact Driver evidence that the native conversation is dead
-or cannot continue because its context is exhausted.
-
-## Required invariants
-
-1. A stable Provider Turn attempt exists before its provider write.
-2. Provider acceptance carries exact native identity or verified local correlation.
-3. Ambiguous delivery is never automatically duplicated.
-4. A busy ordinary thread keeps Yui work pending instead of failing the AgentRun.
-5. A replacement conversation is created only after the responsible Agent
-   explicitly ends the old Session; Core never replaces it as error policy.
-6. Yui Skill/config does not mutate global Codex config.
-7. Task stop owns and terminates every Yui Agent Host and proxy without treating
-   the shared Codex daemon or native conversation as Task cleanup.
-8. Provider runtime state is not the Leader's general management authority.
-9. TaskRole carries desired configuration only; displayed activity is derived
-   from native evidence separately from AgentRun lifecycle.
-
-## Direct dialogue and Goal
-
-Only explicitly requested tracked work becomes an AgentRun. Ordinary notifications,
-native dialogue and Goal continuation do not automatically create one.
-Yui-delivered execution input retains its source/channel; accurately observed native
-items may append `provider/visible-input` without attributing an unverified human
-origin. Reasoning and tool traffic remain Provider-native.
-
-A Session may span many AgentRuns. An explicit Codex Goal event or Claude
-`active_goal` fact is Session-scoped and may span those AgentRuns. A AgentRun terminal
-does not imply Goal, WorkItem, or Task completion, and Yui never guesses Goal
-completion from a quiet interval. Leader alone updates durable WorkItem and
-Task meaning.
-
-See [Session, AgentRun and notification boundaries](architecture/yui-handbook-full-architecture/architecture/07-session-run-contract.md)
-for the current API, result Messages, planning authority and migration.
+Protocol fixtures can establish framing, configuration, correlation and scoped
+persistence without calling a model. They do not prove a real peer's tool
+permissions, cancellation, concurrency or long-running behavior. Real-peer
+validation must name the component, connection, configuration and effects tested;
+it does not imply all components support equivalent behavior.

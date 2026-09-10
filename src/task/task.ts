@@ -592,8 +592,8 @@ export function taskOwnsManagedWorkspace(
 
 export function stopTaskExecution(task: Task, now: Date): Task {
   validateTask(task);
-  if (task.status !== "active") {
-    throw new Error(`Only an active Task can be stopped: ${task.id}.`);
+  if (task.status !== "active" && task.status !== "draft") {
+    throw new Error(`Only an open Task can be stopped: ${task.id}.`);
   }
   if (task.executionGate.state === "stopped") return task;
   return validateTask({
@@ -605,8 +605,8 @@ export function stopTaskExecution(task: Task, now: Date): Task {
 
 export function startTaskExecution(task: Task, now: Date): Task {
   validateTask(task);
-  if (task.status !== "active") {
-    throw new Error(`Only an active Task can be started: ${task.id}.`);
+  if (task.status !== "active" && task.status !== "draft") {
+    throw new Error(`Only an open Task can be started: ${task.id}.`);
   }
   if (task.executionGate.state === "enabled") return task;
   return validateTask({

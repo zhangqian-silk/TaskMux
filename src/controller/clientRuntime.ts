@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { findLiveControllerProcessForHome } from "../core/controllerProcessIdentity.js";
+import { readHomeFilesystemId } from "../core/homeFilesystemIdentity.js";
 
 import {
   callController,
@@ -55,7 +57,7 @@ const CONTROLLER_OPERATIONAL_ENVIRONMENT = [
 
 export type FileControllerClientOptions = Readonly<{
   call?: typeof callController;
-  spawnController?: (home: string, environment: NodeJS.ProcessEnv) => void;
+  spawnController?: (home: string, environment: NodeJS.ProcessEnv) => number | void;
   environment?: NodeJS.ProcessEnv;
   startupTimeoutMs?: number;
   shutdownTimeoutMs?: number;
@@ -131,7 +133,13 @@ export async function ensureFileTaskController(
   const timeoutMs = positive(options.startupTimeoutMs, STARTUP_TIMEOUT_MS, "startupTimeoutMs");
   const pollMs = positive(options.pollIntervalMs, POLL_INTERVAL_MS, "pollIntervalMs");
   const spawnController = options.spawnController ?? spawnDetachedFileTaskController;
-  spawnController(home, controllerSpawnEnvironment(home, options.environment ?? process.env));
+  // A readiness timeout is not exit evidence. Reuse the observable startup
+  // process for this exact Home rather than multiplying unready Controllers.
+  const existing = options.spawnController === undefined && options.call === undefined
+    ? findLiveControllerProcessForHome(readHomeFilesystemId(home))
+    : undefined;
+  const startupPid = existing?.pid
+    ?? spawnController(home, controllerSpawnEnvironment(home, options.environment ?? process.env));
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
@@ -141,7 +149,12 @@ export async function ensureFileTaskController(
     } catch (error) {
       if (!isUnavailable(error)) throw error;
       if (Date.now() >= deadline) {
-        throw new Error(`Controller did not become ready within ${timeoutMs} ms.`, { cause: error });
+        throw new Error(
+          `Controller did not become ready within ${timeoutMs} ms.`
+          + (startupPid === undefined ? "" : ` Startup PID: ${startupPid}.`)
+          + " Read current process state before retrying; timeout does not prove it stopped.",
+          { cause: error }
+        );
       }
       await delay(pollMs);
     }
@@ -262,7 +275,7 @@ function assertCompatibleControllerStatus(
 function spawnDetachedFileTaskController(
   home: string,
   environment: NodeJS.ProcessEnv
-): void {
+): number | undefined {
   const child = spawn(
     process.execPath,
     [fileURLToPath(new URL("./controllerMain.js", import.meta.url))],
@@ -273,6 +286,7 @@ function spawnDetachedFileTaskController(
     }
   );
   child.unref();
+  return child.pid;
 }
 
 export type FileControllerRestartResult = Readonly<{
@@ -292,7 +306,33 @@ export async function stopFileTaskController(
   home: string,
   options: FileControllerClientOptions = {}
 ): Promise<FileControllerStopResult> {
-  const call = options.call ?? callController;
+  await waitForForeignHandover(home, options);
+  const physical = options.call === undefined
+    ? findLiveControllerProcessForHome(readHomeFilesystemId(home)) : undefined;
+  const expectedPid = options.expectedPid ?? physical?.pid;
+  const bounded = { ...options, requestTimeoutMs: options.requestTimeoutMs ?? 2000,
+    ...(expectedPid === undefined ? {} : { expectedPid }) };
+  try {
+    const result = await stopControllerGracefully(home, bounded);
+    if (result.stopped || options.call !== undefined) return result;
+  } catch (error) {
+    if (options.call !== undefined || !controllerRecoveryError(error)) throw error;
+  }
+  const stopped = await stopOrphanedFileTaskController(
+    home, options.shutdownTimeoutMs ?? CONTROLLER_SHUTDOWN_TIMEOUT_MS,
+    { force: true, ...(expectedPid === undefined ? {} : { expectedPid }),
+      ...(physical === undefined ? {} : { expectedProcessStartIdentity: physical.processStartIdentity }) }
+  );
+  return stopped === undefined ? { stopped: false, alreadyStopped: true } : { stopped: true, pid: stopped.pid };
+}
+
+async function stopControllerGracefully(
+  home: string,
+  options: FileControllerClientOptions
+): Promise<FileControllerStopResult> {
+  const call = options.call ?? ((h, method, params) => callController(h, method, params, {
+    timeoutMs: options.requestTimeoutMs
+  }));
   const shutdownTimeoutMs = positive(
     options.shutdownTimeoutMs,
     CONTROLLER_SHUTDOWN_TIMEOUT_MS,
@@ -305,6 +345,8 @@ export async function stopFileTaskController(
   const current = await readOptionalControllerStatus(home, call);
   const pid = controllerPid(current);
   if (expectedPid !== undefined && pid !== expectedPid) {
+    if (pid === undefined) throw new ControllerClientError("CONTROLLER_UNAVAILABLE",
+      `Controller ownership could not be queried for expected PID ${expectedPid}.`);
     throw new Error(
       `Controller ownership changed before fenced stop (expected PID ${expectedPid}, `
         + `found ${pid === undefined ? "none" : pid}).`
@@ -348,7 +390,7 @@ export async function stopFileTaskController(
       if (observed !== pid) break;
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Controller did not stop within ${shutdownTimeoutMs} ms.`);
+      throw new ControllerClientError("CONTROLLER_TIMEOUT", `Controller did not stop within ${shutdownTimeoutMs} ms.`);
     }
     await delay(pollMs);
   }
@@ -363,41 +405,8 @@ export async function restartFileTaskController(
   home: string,
   options: FileControllerClientOptions = {}
 ): Promise<FileControllerRestartResult> {
-  const call = options.call ?? callController;
-  const shutdownTimeoutMs = positive(
-    options.shutdownTimeoutMs,
-    CONTROLLER_SHUTDOWN_TIMEOUT_MS,
-    "shutdownTimeoutMs"
-  );
-  const pollMs = positive(options.pollIntervalMs, POLL_INTERVAL_MS, "pollIntervalMs");
-  let current: JsonValue | null = null;
-  let previousPid: number | undefined;
-  try {
-    current = await readOptionalControllerStatus(home, call);
-    previousPid = controllerPid(current);
-  } catch (error) {
-    if (options.call !== undefined || !isInvalidDiscovery(error)) throw error;
-    // A malformed current discovery record cannot authorize a protocol call.
-    // Exact process identity below may still fence and stop an orphaned owner.
-  }
-  if (!controllerRunning(current) && options.call === undefined) {
-    const orphan = await stopOrphanedFileTaskController(home, shutdownTimeoutMs);
-    if (orphan !== undefined) previousPid = orphan.pid;
-  }
-  if (controllerRunning(current)) {
-    await callFileTaskController(home, "controller.stop", {}, options);
-    const deadline = Date.now() + shutdownTimeoutMs;
-    for (;;) {
-      const stillOwned = options.call === undefined
-        ? await ownedControllerDiscoveryExists(home, previousPid)
-        : controllerPid(await readOptionalControllerStatus(home, call)) === previousPid;
-      if (!stillOwned) break;
-      if (Date.now() >= deadline) {
-        throw new Error(`Controller did not stop within ${shutdownTimeoutMs} ms.`);
-      }
-      await delay(pollMs);
-    }
-  }
+  const stopped = await stopFileTaskController(home, options);
+  const previousPid = stopped.pid;
   const started = await ensureFileTaskController(home, options);
   const pid = controllerPid(started);
   return {
@@ -405,6 +414,13 @@ export async function restartFileTaskController(
     ...(previousPid === undefined ? {} : { previousPid }),
     ...(pid === undefined ? {} : { pid })
   };
+}
+
+function controllerRecoveryError(error: unknown): boolean {
+  return error instanceof ControllerClientError && [
+    "CONTROLLER_TIMEOUT", "CONTROLLER_UNAVAILABLE", "CONTROLLER_DELIVERY_UNKNOWN",
+    "CONTROLLER_DISCOVERY_INVALID", "INVALID_RESPONSE", "CONTROLLER_NOT_RUNNING"
+  ].includes(error.code);
 }
 
 function controllerSpawnEnvironment(
@@ -643,7 +659,7 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
     }
   }
 
-  /** Stops only the exact idle Session observed by an Agent command. */
+  /** Explicitly stops the exact Session observed by an Agent command. */
   async stopExactTaskRoleSession(input: Readonly<{
     taskId: string;
     roleName: string;
@@ -652,9 +668,6 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
     nativeSessionId: string;
     sessionUpdatedAt: string;
   }>): Promise<void> {
-    if (this.store.getActiveRun(input.taskId, input.roleName) !== null) {
-      throw new Error(`Role has an active AgentRun: ${input.taskId}/${input.roleName}.`);
-    }
     const owner = {
       scope: "task" as const,
       taskId: input.taskId,
@@ -669,7 +682,8 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
         adapterId: input.adapterId,
         nativeSessionId: input.nativeSessionId,
         sessionUpdatedAt: input.sessionUpdatedAt
-      }
+      },
+      true
     );
     if (target === null) {
       throw new Error(
@@ -683,16 +697,9 @@ export class FileTaskWorkflowRuntime implements TaskWorkflowRuntimePort {
     if (hasRuntimeLifecycleWork(this.store.getWorkMailbox(target))) {
       throw new Error(`Role runtime did not stop: ${input.taskId}/${input.roleName}.`);
     }
-    const session = this.store.getRoleSession(input.taskId, input.roleName);
-    if (
-      session !== null
-      && session.status !== "ended"
-      && session.agentId === input.agentId
-      && session.adapterId === input.adapterId
-      && session.nativeSessionId === input.nativeSessionId
-    ) {
-      throw new Error(`Role runtime session is still active: ${input.taskId}/${input.roleName}.`);
-    }
+    // Cleanup completion proves the requested stop. A retained Message may
+    // already have started a successor on the same reusable conversation;
+    // its new active state must not retroactively turn this stop into failure.
   }
 
   /** Wait until every cancellation requested by Task execution stop is physically settled. */
@@ -994,11 +1001,6 @@ function isDefinitelyNotRunning(error: unknown): boolean {
   if (typeof error !== "object" || error === null || !("code" in error)) return false;
   const code = (error as { code?: unknown }).code;
   return code === "CONTROLLER_NOT_RUNNING";
-}
-
-function isInvalidDiscovery(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error)) return false;
-  return (error as { code?: unknown }).code === "CONTROLLER_DISCOVERY_INVALID";
 }
 
 async function readOptionalControllerStatus(

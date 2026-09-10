@@ -5,6 +5,7 @@ import {
   requireTimestamp
 } from "../domain/validation.js";
 import { TASK_RECORD_ID_PREFIXES } from "../task/taskRecordReference.js";
+import { copyRef, type MailboxEntityRef } from "../coordination/workMailbox.js";
 
 export const CURRENT_TASK_WAKE_SCHEMA_VERSION = 1 as const;
 
@@ -31,6 +32,9 @@ export type TaskWake = Readonly<{
   seq: number;
   /** Canonical wake reason tags aggregated from the mailbox pending batch. */
   reasons: readonly string[];
+  /** Exact input references survive claim consumption and Session replacement,
+   * including records older than this wake's time window. */
+  refs?: readonly MailboxEntityRef[];
   /** ISO timestamp; the delta window's exclusive lower bound. */
   fromCursor: string;
   /** ISO timestamp; the delta window's upper bound (dispatch time). */
@@ -47,6 +51,7 @@ export function createTaskWake(input: Readonly<{
   id: string;
   taskId: string;
   reasons: readonly string[];
+  refs?: readonly MailboxEntityRef[];
   fromCursor: string;
   toCursor: string;
   runId?: string;
@@ -58,6 +63,7 @@ export function createTaskWake(input: Readonly<{
     taskId: requireIdentity(input.taskId, "Task id"),
     seq: wakeSequence(input.id),
     reasons: Object.freeze(input.reasons.map((reason) => requireText(reason, "Wake reason"))),
+    ...(input.refs === undefined ? {} : { refs: Object.freeze(input.refs.map(copyRef)) }),
     fromCursor: requireTimestamp(input.fromCursor, "Wake fromCursor"),
     toCursor: requireTimestamp(input.toCursor, "Wake toCursor"),
     status: "dispatched",
@@ -69,6 +75,10 @@ export function createTaskWake(input: Readonly<{
 }
 
 export function validateTaskWake(wake: TaskWake): void {
+  if (wake.refs !== undefined) {
+    if (!Array.isArray(wake.refs)) throw new Error("Wake references must be an array.");
+    wake.refs.forEach(copyRef);
+  }
   if (wake.schemaVersion !== CURRENT_TASK_WAKE_SCHEMA_VERSION) {
     throw new Error(
       `Task wake ${wake.id} must use schemaVersion ${CURRENT_TASK_WAKE_SCHEMA_VERSION}.`

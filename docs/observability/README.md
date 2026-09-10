@@ -1,207 +1,81 @@
-# Observability (Issue 11)
+# Runtime observations and diagnostics
 
-Read-only observability for the Yui control plane: runtime/storage identity in
-`controller status`, a stable fault classification taxonomy, and an
-`execution audit` read-only aggregation command.
+Read-only projections help an Agent distinguish durable intent, actual runtime
+activity and unknown effects. They do not add a second scheduling or acceptance
+authority.
 
-All observability features are **read-only**: they never wake a Leader, write
-Task state, or change business behavior. Collection failures degrade to
-`unsupported`/`unavailable` without affecting the control plane.
+## Inspection
 
-## Task execution projection
-
-`task context`, `task list --verbose`, and the Web task detail consume the same
-derived execution projection. It adds a read-only Task DAG (`ready`, `blocked`,
-dependency edge status, and transitive root causes), WorkItem stage/round and
-Lane configuration details, historical Group drilldown, and cost/context
-summaries. Costs are the exact token/tool observations Yui can prove plus
-bounded wall-clock duration; an unobservable total is marked partial rather
-than inferred. Context metrics are snapshot references, serialized byte sizes,
-and observed input peaks. Provider compression and marginal-value observations
-remain explicitly unavailable until the runtime records those facts, so the UI
-never fabricates them.
-
-## AgentRuntime status
-
-`yui task role status <task> <role>` projects the provider-independent Agent
-Driver observations documented in [AgentRuntime Drivers](../agentRuntime-drivers.md).
-It reports the Driver, current Session/AgentRun/operation state, recent activity,
-waiting reason, and normalized usage. Host presence remains a separate tmux
-field: a live pane is not proof that the Agent is actively working.
-
-Five minutes without structured activity changes runtime attention to `quiet`
-(or `active-operation-quiet` when an operation is still open). This is a
-diagnostic health signal only. Workflow-stall attention uses durable Yui
-progress and is not postponed by tokens, tools, CPU, RSS, or AgentRun completion.
-
-## Feature flag
-
-The new `controller status` identity fields are gated by `YUI_STATUS_IDENTITY`:
-
-- `YUI_STATUS_IDENTITY=0` (or `false`/`off`) — disable the identity section.
-- unset or any other value — enabled (default).
-
-The `execution audit` command is always available (it is an explicit read-only
-command, not a status field).
-
-## `controller status` identity fields
-
-When enabled, `yui controller status` adds a read-only identity section:
-
-| Field | Source | Notes |
-| --- | --- | --- |
-| `build.packageVersion` | `package.json` | |
-| `build.entryDigest` | SHA-256 of the CLI entry | Detects stale `dist/` |
-| `build.entryRealpath` | `fs.realpath` | |
-| `build.sourceCommit` | `git rev-parse HEAD` | `unsupported` if not a git repo |
-| `build.nodeVersion` | `process.version` | |
-| `build.platform` | `process.platform` | |
-| `storage.storageStatus` | SQLite migration ledger | `current`/`upgradeable`/`uninitialized`/`invalid`/`unsupported` |
-| `storage.storageVersion` | `schema_migrations` head | `unsupported` when unreadable |
-| `storage.minimumStorageVersion` | running CLI | Oldest version with a complete migration path |
-| `storage.configuredBackend` | Current product contract | Always `sqlite` |
-| `storage.workerEnabled` | `YUI_STORE_WORKER` override over the current SQLite default | |
-| `storage.physicalStateJson` | Old `state.json` existence/size | Evidence only; never authoritative |
-| `storage.physicalDatabase` | `yui.db` existence/size/WAL/SHM + `PRAGMA quick_check` | health: `ok`/`corrupt`/`unopenable`/`unsupported` |
-| `storage.findings[]` | Exact-contract and physical evidence | contradictions + warnings |
-| `storage.healthy` | derived | `true` only when health status is `ok` |
-| `runtime.uptimeMs` | Controller process | |
-| `runtime.rssBytes` | `process.resourceUsage` | |
-| `runtime.droppedInboxEvents` | runtime/inbox-invalid | Count of dropped inbox events |
-
-Startup and status both select the current SQLite Store.
-
-### Storage health classification
-
-Findings have three severities, rolled up into a health status:
-
-| Status | Meaning | Exit code |
-| --- | --- | --- |
-| `ok` | no findings | 0 |
-| `fail` | one or more contradictions | 5 |
-
-#### Contradictions (fail-closed)
-
-| Code | Meaning |
-| --- | --- |
-| `current-database-missing` | Current storage is reported but `yui.db` is missing |
-| `database-unhealthy` | `yui.db` exists but `PRAGMA quick_check` fails (corrupt or unopenable) |
-| `unsupported-storage-contract` | The ledger head is newer than current or below the migration floor |
-| `invalid-storage` | The migration ledger or SQLite schema is invalid |
-
-#### Needs repair (degraded)
-
-| Code | Meaning |
-| --- | --- |
-| `storage-uninitialized` | The empty Home has not been initialized; run `yui setup` |
-| `storage-upgrade-required` | A complete migration path exists; run `yui upgrade` or `yui update` |
-
-#### Warnings
-
-| Code | Meaning |
-| --- | --- |
-| `ignored-historical-store` | `state.json` is present but ignored by the current Store |
-| `ignored-legacy-storage-manifest` | `schema.json` is present but is no longer authoritative |
-| `invalid-worker-flag` | `YUI_STORE_WORKER` is not a recognized boolean |
-
-`degraded` and `fail` are both unhealthy for machine-readable doctor/update
-verification. Every finding prints with a precise action. Upgradeable Homes are
-preserved until an explicit migration; unsupported Homes remain untouched.
-
-## Fault classification taxonomy
-
-Stable taxonomy for execution failures (`src/observability/faultClassification.ts`):
-
-| Class | Basis | Typical evidence |
-| --- | --- | --- |
-| `session-dead` | core-fact | startup failure |
-| `delivery-uncertain` | core-fact | exact delivery-unknown reason |
-| `result-missing` | core-fact | missing or untransportable Agent result |
-| `runtime-failure` | core-fact | Provider/runtime failed |
-| `workspace-state` | core-fact | unavailable, dirty, or wrong-branch workspace |
-| `review-infra` | core-fact | ReviewRound failed to execute |
-| `integration-environment` | core-diagnostic | `tsc: not found`, `ENOENT`, dirty target |
-| `integration-candidate-failure` | core-fact | Core-run Integration check failed |
-| `stale-base-target-cas` | core-fact | Integration conflict |
-| `other` | none | unclassified |
-
-`core-diagnostic` is intentionally honest about bounded regex attribution over
-Core-run command diagnostics. Agent-authored Worker or Reviewer results are
-never classified. A cancelled AgentRun is not counted as a fault class.
-
-## `yui execution audit`
-
-Read-only aggregation command. Does not wake a Leader or write Task state.
-
-```
-yui execution audit [--task <task-id>] [--since <iso>] [--until <iso>] [--json]
+```sh
+yui controller status
+yui execution audit --task <task-id> --json
+yui task next-action <task-id>
+yui task role session inspect <task-id> <role>
+yui task run show <task-id>/<run-id> --json
 ```
 
-Sections:
+Controller status exposes the current process and Home identity. Session inspect
+separates desired binding, effective launch, actual connection and Agent-reported
+configuration. Run inspection exposes original input, disposition, exact result
+and diagnostics. A status read does not start another Agent or acknowledge work.
 
-- **tasks** — total/archived/active counts.
-- **runs** — total/active/completed/failed, failure rate, cumulative duration,
-  by-role and by-purpose distribution, fault class counts, and structured
-  launch-failure phase/kind counts parsed from launch diagnostics.
-- **wakes** — Leader AgentRuns and their durable wake reasons.
-  `suppressedWakes` counts durable `wake.suppressed` task events: Leader wakes
-  coalesced by scheduler single-flight because the Role runtime lifecycle lane
-  was busy (Issue 05). The wake stays durable and is retried after the lane
-  settles, so a suppression is scheduler backpressure, never a failed AgentRun.
-- **sessions** — native Session count, broken/stopped, resets, lifecycle events, stop
-  failures.
-- **reviews** — total/completed/failed execution counts. Reviewer prose is not
-  parsed into outcome classes.
-- **integrations** — total/committed/failed, environment failures, gate reuse.
-- **publications** — total/merged/verified/open/closed/superseded external
-  PR/MR references.
-- **events** — total, progress vs semantic, obsolete, message count.
-- **workItems** — total/completed/retired.
-- **orchestration** — per-Task intent type, AgentRun/WorkItem counts, full/delta/
-  failed Reviews, Integration attempts/failures/repeated
-  identities/evidence reuse, native Sessions before first durable progress,
-  publication-to-completion latency, terminal workspaces, and non-blocking
-  cost advisories. `--since`/`--until` filters every underlying record family.
-- **storage** — state.json/runtime/deployments byte sizes.
-- **topLongRunning** — longest-running active/completed AgentRuns with exact refs.
+## Meaning of evidence
 
-Each section degrades independently: a read failure produces an `error` section
-with the error location, without blocking completed sections.
+- Task and WorkItem lifecycle describe intent and acceptance.
+- AgentRun lifecycle describes explicitly requested execution.
+- Provider acceptance and native activity describe the actual input/connection.
+- Host PID, tmux and resource inventory describe process observations.
+- Runtime configuration distinguishes requested values from reported values.
+- Tokens, durations and orchestration costs are advisory observations.
 
-`yui task next-action <task>` shows the same Task-scoped orchestration
-advisories alongside its protocol recommendation. It also shows the canonical
-active AgentRun projection with each AgentRun's purpose and WorkItem/ReviewRound
-binding, so Review activity is never presented as delegated implementation.
-Advisories are derived from existing records and never write state or block a
-legal action. Current
-advisories cover direct-path protocol overhead, initial integrated WorkItem
-fan-out, repeated exact Integration checks,
-same-Reviewer/same-candidate full Review repetition, and
-the two-Session first-progress advisory threshold. No Review advisory is a
-budget or blocks a legal action; the first-progress threshold never chooses
-Agent recovery.
+For a dedicated Claude stream, a main assistant response confirms processing
+of the one current local input before its terminal result. Controller and Role
+reads therefore show accepted/running once that response arrives. Startup,
+echoed user input, child output and repeated old messages do not establish new
+acceptance; message UUIDs are never used as native Turn IDs.
 
-## Rollout
+Ordinary Leader notifications are TaskWake/mailbox delivery, not Leader Runs.
+Role status includes their native admission/activity even when no AgentRun is
+open, and shows a retained Session's actual workspace rather than substituting
+Task main when its WorkItem is terminal.
+Unknown evidence remains unknown; process exit does not prove a shared Provider
+stopped, and successful transport does not prove native acceptance.
 
-1. Ship the read-only status fields behind `YUI_STATUS_IDENTITY` (default on).
-2. Establish the production baseline: run `yui controller status` and
-   `yui execution audit` against the current Home, confirm consistency with
-   manual `ps`/filesystem checks.
-3. Classify existing Core-owned outcomes and diagnostics using the taxonomy;
-   retain the exact Core failure reason as the classification evidence.
-4. If collection overhead exceeds budget, disable high-cost inventory
-   gates; the basic identity and audit remain. No business-state rollback is
-   needed.
+Engineering control evidence can outlive the attached Session cache. Such a
+Role reports retained native input as needing attention, not idle merely because
+the cache is empty. Scoped Task/Session inspection remains available for diagnosis.
+Replacement and native cleanup failures are durable events routed to the
+supervisor, and pending input references remain readable after replacement.
 
-WorkItem execution never consumes these observations as a scheduling,
-recovery, lifecycle, or acceptance signal. Token, duration, and tool-call
-values remain a read-only view; missing observations remain `unobserved`.
+Exact tool start/result events project `tool-active`, while model activity
+projects `model-active`; quiet intervals do not imply a hung or finished Agent.
+Tool failures are operation outcomes, not automatic Run failures. An owned
+Claude execution process dying closes its exact input and marks its Session
+failed, even while the supervising Host remains alive. A deliberately stopped
+Session with settled native input is idle rather than a false runtime failure.
 
-## Rollback
+## Execution audit
 
-- **Status fields**: set `YUI_STATUS_IDENTITY=0`. The identity section is
-  removed from `controller status` output; no state is affected.
-- **Audit command**: the command is read-only and additive; removing it is a
-  code revert, not a state rollback.
-No persistent schema, state machine, or business behavior is changed by this
-Issue. Rollback is always a config flip or code revert.
+`execution audit` aggregates existing Task, Run, wake, Session, Review,
+Integration, Publication, event, WorkItem, storage and orchestration evidence.
+`--since` and `--until` bound the time window. Sections report their own read
+errors without inventing values for missing data.
+
+Fault classification uses Core-owned failure reasons or explicitly identified
+Core diagnostic evidence. Agent-authored report prose is not parsed into
+verdicts or severity. Native Agent errors retain their original payload and
+standard category for the Agent to interpret with current Task context.
+
+Cost and repeated-work advisories do not prevent a legal action, set a Review
+budget or choose a recovery topology. `task next-action` is decision support,
+not an automatically executed plan.
+
+## Privacy and resource boundary
+
+Telemetry and caches are diagnostic material, not Task truth or a transcript
+backup. Do not collect or publish credentials, private environment values or
+raw Provider history merely to explain a status.
+
+Start with exact read-only records. Process changes, cancellation, grant updates
+and resource cleanup require the relevant explicit action and scope. A generic
+diagnostic request does not authorize live-model, shared or production tests.

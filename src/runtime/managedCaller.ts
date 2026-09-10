@@ -2,6 +2,7 @@ import { activeRoleAgentBinding } from "../role/role.js";
 import type { Role } from "../role/role.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import type { AgentRun } from "../agentRun/agentRun.js";
+import { currentProviderConversation } from "./providerRuntimeIdentity.js";
 
 /** Native Session identity supplied by the Agent transport. */
 export const MANAGED_NATIVE_SESSION_ENV = "YUI_NATIVE_SESSION_ID";
@@ -103,6 +104,32 @@ export function requireManagedTaskCaller(
     throw new ManagedRuntimeDriftError("This command requires a managed Task Session.");
   }
   return caller;
+}
+
+/** A released runtime may inspect its own durable context, never regain write
+ * authority. Historical Session identity is sufficient for these scoped reads. */
+export type ManagedTaskReader = Pick<ManagedTaskCaller, "taskId" | "roleName" | "nativeSessionId" | "currentRunId">;
+
+export function resolveManagedTaskReader(
+  store: ManagedCallerStore,
+  environment: NodeJS.ProcessEnv | undefined
+): ManagedTaskReader | undefined {
+  const self = managedTaskSessionIdentity(environment);
+  if (self === undefined) return undefined;
+  try { return requireCurrentRuntime(store, self); } catch (error) {
+    const set = store.getTaskRoleSessionSet(self.taskId, self.roleName);
+    const session = [...Object.values(set?.sessions ?? {}), ...(set?.history ?? [])]
+      .find(candidate => candidate.nativeSessionId === self.nativeSessionId
+        && (self.workspace === undefined || candidate.effective.workspace.root === self.workspace));
+    if (session === undefined) {
+      const binding = set?.providerBinding;
+      if (binding == null || currentProviderConversation(binding).conversationId !== self.nativeSessionId) throw error;
+      return { taskId: self.taskId, roleName: self.roleName, nativeSessionId: self.nativeSessionId! };
+    }
+    return Object.freeze({
+      taskId: self.taskId, roleName: self.roleName, nativeSessionId: session.nativeSessionId
+    });
+  }
 }
 
 /**

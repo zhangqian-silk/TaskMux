@@ -378,6 +378,23 @@ export function settleProviderTurn(
   });
 }
 
+/** Explicitly abandon an engineering input only after its execution resources
+ * are quiescent. This does not invent native acceptance, a Turn id or success. */
+export function cancelQuiescentProviderInput(
+  raw: ProviderRuntimeBinding,
+  input: Readonly<{ attemptId: string; cancelledAt: string; reason: string }>
+): ProviderRuntimeBinding {
+  const binding = validateProviderRuntimeBinding(raw);
+  if (binding.run?.attemptId !== input.attemptId) throw new Error("Provider input identity changed during stop.");
+  if (!providerTurnIsActive(binding.run)) return binding;
+  return validateProviderRuntimeBinding({
+    ...binding,
+    run: { ...binding.run, status: "cancelled",
+      updatedAt: orderedRunTimestamp(binding.run, input.cancelledAt, "Provider input cancelledAt"),
+      terminalReason: input.reason }
+  });
+}
+
 export function updateProviderConversationRecoverability(
   raw: ProviderRuntimeBinding,
   recoverability: ProviderConversationRecoverability

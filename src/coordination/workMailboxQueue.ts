@@ -100,8 +100,7 @@ export function captureRoleRunDispatch(
   mailbox: WorkMailbox | null,
   input: RoleRunDispatchIdentity
 ): RoleRunDispatchToken | null {
-  if (input.roleName === "leader"
-    || mailbox === null
+  if (mailbox === null
     || mailbox.target.kind !== "role"
     || mailbox.target.taskId !== input.taskId
     || mailbox.target.roleName !== input.roleName) {
@@ -115,6 +114,9 @@ export function captureRoleRunDispatch(
       batchId: mailbox.processing.batchId
     };
   }
+  // A Leader's initial planning batch may be explicitly bound to its Run.
+  // Never infer a Leader dispatch from pending semantic notifications.
+  if (input.roleName === "leader") return null;
   const pending = mailbox.pending;
   if (pending === null) return null;
   const dedupeKey = roleRunDispatchDedupeKey(input);

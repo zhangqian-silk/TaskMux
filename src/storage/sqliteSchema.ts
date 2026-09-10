@@ -1129,6 +1129,25 @@ UPDATE review_rounds SET payload = json_set(payload, '$.executionGroup.lanes', j
     // which is what makes replaying old history honest.
     sql: "SELECT 1; -- ACP bindings may carry model/effort and a chosen "
       + "permission mode; existing `default` bindings keep their meaning"
+  },
+  {
+    version: 17,
+    name: "session-origin-input-requests",
+    introducedIn: "0.15.8",
+    // Widen requester provenance: notifications originate in a current Leader
+    // Session without an AgentRun. Existing schemaVersion-3 requests keep their
+    // exact Run/Session origin, including frozen historical Context values.
+    // No guessed native identity or history rewrite is needed.
+    sql: "SELECT 1; -- InputRequest requester.runId is optional when an exact nativeSessionId is present"
+  },
+  {
+    version: 18,
+    name: "replaceable-session-process-custody",
+    introducedIn: "0.15.8",
+    // Existing Session/Run history remains unchanged. Runtime mailboxes may
+    // now retain explicit replacement intent; OS owner records may identify
+    // the dedicated execution child, independently of a disposable Host.
+    sql: "SELECT 1; -- Replacement intent, independent retained native control evidence/process custody, and optional fixed TaskWake refs"
   }
 ]);
 

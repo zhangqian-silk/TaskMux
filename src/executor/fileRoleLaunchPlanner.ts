@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -49,7 +49,7 @@ import {
   formatWorkspacePreflightError,
   type WorkspacePhysicalInspector
 } from "./workspacePreflightClassification.js";
-import { activeLiveRoleAgentSession } from "./agentExecutor.js";
+import { activeLiveRoleAgentSession, taskRoleControlTarget } from "./agentExecutor.js";
 import {
   roleSessionMayContinue,
   effectiveRoleForLaunch,
@@ -163,6 +163,31 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     );
   }
 
+  /** Recovery addresses the recorded Agent/Session, independent of delivery
+   * admission, a missing worktree, or the old Endpoint code generation. */
+  planNativeControl(taskId: string, roleName: string): import("../runtime/nativeSessionControl.js").NativeControlConnection {
+    const set = this.store.getTaskRoleSessionSet(taskId, roleName);
+    const session = taskRoleControlTarget(set);
+    if (session?.adapterId !== "codex") throw new Error("Native metadata control requires a recorded Codex Session.");
+    const configured = this.store.getConfiguredAgent(session.agentId);
+    if (configured === null || configured.adapterId !== session.adapterId) {
+      throw new Error("The recorded native Agent connection is unavailable.");
+    }
+    const agent = configuredAgentToDefinition(configured);
+    const connection = this.store.listEvents(taskId).find(event => event.type === "runtime.native-connection-bound"
+      && event.payload.roleName === roleName && event.payload.agentId === session.agentId
+      && event.payload.nativeSessionId === session.nativeSessionId)?.payload;
+    return {
+      command: configured.command, args: [...agent.baseArgs, "app-server", "proxy"], cwd: this.home,
+      expectedAccountHome: connection?.nativeAccountHome,
+      environment: {
+        ...operationalAgentEnvironment("codex", { ...this.#operationalEnvironment, ...this.#nativeAgentEnvironment }),
+        ...resolveAgentEnvironment(agent, this.#agentEnvironment),
+        ...(connection === undefined ? {} : { HOME: connection.home, CODEX_HOME: connection.codexHome })
+      }
+    };
+  }
+
   plan(input: TaskRoleLaunchPlanInput): PlannedRoleSession {
     const task = this.store.getTask(input.taskId);
     if (task === null) throw new Error(`Task not found: ${input.taskId}.`);
@@ -184,6 +209,11 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
     // Conversation, configured Agent, Context protocol identity, adopted
     // execution environment — still applies.
     const planningDraft = purpose === "planning" && task.status === "draft";
+    // A planning cwd is a disposable per-Task runtime resource, not a delivery
+    // workspace. Materialize only the exact directory selected at creation.
+    if (planningDraft && resolve(role.workspace) === resolve(`${this.home}.task-runtimes`, "planning", task.id)) {
+      mkdirSync(role.workspace, { recursive: true, mode: 0o700 });
+    }
     const workspaceFree = planningDraft || !taskOwnsManagedWorkspace(task);
     // An empty resource plan is a legal Task shape, but it does not make a
     // shared directory a legal cwd. Once such a Task is active it can name the
@@ -711,6 +741,9 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         executionEnvironment: structuredClone(effective.executionEnvironment)
       }),
       ...(providerControl === undefined ? {} : { providerControl }),
+      ...(owner.scope === "global" && binding.adapterId === "codex"
+        ? { interactiveCodexThread: compiled.codexThread }
+        : {}),
       env: {
         ...launchEnvironment,
         YUI_HOME: resolve(this.home),
@@ -723,7 +756,7 @@ export class FileRoleLaunchPlanner implements RoleLaunchPlanner, AgentEnvironmen
         YUI_WORKSPACE: effectiveWorkspace,
         YUI_SESSION_MANIFEST: sessionContext.sessionManifestPath,
         YUI_SESSION_CLI: sessionContext.sessionCliPath,
-        ...(owner.scope === "global" && configured.adapterId === "codex"
+        ...(configured.adapterId === "codex"
           ? { YUI_AGENT_BASE_ARGS: JSON.stringify(configured.baseArgs) }
           : {}),
         ...(sessionTitle === undefined

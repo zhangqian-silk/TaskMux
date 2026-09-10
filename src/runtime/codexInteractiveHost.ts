@@ -67,8 +67,8 @@ export async function runCodexInteractiveHost(
     stop();
   };
   try {
-    // This proxy is a disposable client, not the daemon. No Yui initialization
-    // or Thread request is injected; all requests below belong to the TUI.
+    // This proxy is a disposable client, not the daemon. All requests belong
+    // to the TUI; its startup carries the reserved launch's per-Thread options.
     connection = await openCodexInteractiveConnection({
       command: payload.command, args: [...baseArgs, "app-server", "proxy"],
       environment, cwd: payload.cwd
@@ -111,6 +111,7 @@ export async function runCodexInteractiveHost(
               throw new Error("Codex TUI startup does not match the reserved Session.");
             }
             startupRequestId = message.id;
+            message.params = codexInteractiveStartupParameters(payload, params);
           }
           void connection!.send(message).catch(fail);
         } catch (error) {
@@ -174,6 +175,36 @@ export async function runCodexInteractiveHost(
     if (relay !== undefined) await new Promise<void>((done) => relay!.close(() => done()));
     await control.close();
   }
+}
+
+/** The remote TUI can omit local launch configuration. Apply the reserved
+ * workspace and managed identity on its actual startup, never by starting a
+ * second Thread or changing daemon-wide configuration. */
+export function codexInteractiveStartupParameters(
+  payload: Pick<AgentHostLaunchPayload, "cwd" | "environment" | "interactiveCodexThread">,
+  params: Readonly<Record<string, unknown>>
+): Record<string, unknown> {
+  const options = payload.interactiveCodexThread;
+  if (options === undefined) throw new Error("Global Codex launch is missing its per-Thread options.");
+  const config = params.config === undefined || params.config === null ? {} : jsonObject(params.config);
+  const shell = config.shell_environment_policy === undefined ? {} : jsonObject(config.shell_environment_policy);
+  const set = shell.set === undefined ? {} : jsonObject(shell.set);
+  return {
+    ...params,
+    ...options,
+    cwd: payload.cwd,
+    config: {
+      ...config,
+      ...options.config,
+      shell_environment_policy: {
+        ...shell,
+        set: {
+          ...set,
+          ...Object.fromEntries(Object.entries(payload.environment).filter(([name]) => name.startsWith("YUI_")))
+        }
+      }
+    }
+  };
 }
 
 /** Our loopback relay must stay local, even when the TUI inherits HTTP proxies. */

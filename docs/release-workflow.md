@@ -1,10 +1,11 @@
-# Release workflow
+# Authorized release operations
 
-A release workflow is an authorized, auditable, recoverable orchestration of
+A release workflow is an explicitly chosen, authorized sequence of
 external release effects — pull requests, CI confirmation, merges, version
 tags, npm publishes, fresh-install smoke tests, CLI updates, Controller
-replacements, Project migrations, and post-verification. Instead of an
-operator typing each command by hand, the workflow drives a predeclared plan
+replacements, Project migrations, and post-verification. It is a specialized
+external-effect facility, not Yui's Task planning or Agent execution model.
+The Agent selects a predeclared plan, and the facility drives that plan
 from durable state: every transition is persisted before the next external
 call, so a crash, timeout, or revoked grant never leaves the release guessing.
 
@@ -91,8 +92,8 @@ The global CLI verifies the installed target release and its matching smoke
 receipt, then delegates the unchanged activation arguments to that target's
 `dist/cli.js`. The target release therefore owns the complete handover protocol
 and timeout hierarchy. A no-target activation, help, `--json`, and every other
-command remain on the global CLI. No separate shell launcher or `yui-legacy`
-binary participates in this path.
+command remain on the global CLI. Activation does not add another ordinary CLI
+routing path.
 
 ## Step catalog
 
@@ -178,14 +179,10 @@ the test suite proves at-most-once execution directly.
 
 ## Operator guide
 
-The unreleased Storage 4 migration (planned for 0.15.8, after released 0.15.7 /
-Storage 3) removes Agent launch generations and per-Host caller keys through the
-central migration chain (including the released storage-3 boundary). Session
-and AgentRun history remain; telemetry is grouped by Role/AgentRun and process owners
-by PID/start identity. Accepted Jobs retain only authority that was valid before
-the migration. Old runtime directories are not renamed or deleted: they remain
-resource inventory for explicit Agent cleanup. This storage change requires the
-normal explicit upgrade boundary, not a live schema rewrite by ordinary commands.
+Session authority is checked against current durable bindings. Telemetry is
+grouped by Role/AgentRun, and process owners use PID/start identity. Storage
+changes follow the [single explicit upgrade boundary](sqlite-control-plane-design.md);
+ordinary commands never rewrite the Home schema.
 
 Grant issue and revoke are irreversible-authority operations. They require
 the current registered global Operator conversation. Its native session ID
@@ -213,10 +210,10 @@ yui task grant issue task-15 \
 yui task workflow create task-15 \
   --grant capability-grant-1 \
   --source-repo acme/widget --source-commit abc1234deadbeef0000000000000000000000000 \
-  --source-artifact yui-0.5.3.tgz@sha512-<base64-integrity> \
+  --source-artifact widget-1.0.0.tgz@sha512-<base64-integrity> \
   --step pr:pr-create-or-reuse \
   --step publish:npm-publish --step-irreversibility publish=irreversible \
-  --step-param publish:tarball=./dist/yui-0.5.3.tgz \
+  --step-param publish:tarball=./dist/widget-1.0.0.tgz \
   --step verify:post-verify --step-param verify:command='yui --version'
 
 # 3. Run (or resume) and inspect.

@@ -26,6 +26,7 @@ import {
 } from "../review/taskFinalReviewContractResolution.js";
 import type { ReviewConfig } from "../review/reviewConfig.js";
 import type { Task } from "./task.js";
+import type { DurableJob } from "../job/durableJob.js";
 import { draftWorkItemDependencyIssue } from "./draftPlan.js";
 import {
   currentWorkItemCandidate,
@@ -49,6 +50,7 @@ import {
  */
 
 export type NextActionKind =
+  | "advance-task"
   | "implement-current-work-item"
   | "accept-or-reject-candidate"
   | "integrate-work-item"
@@ -104,6 +106,8 @@ export type NextActionFacts = Readonly<{
   workItems: readonly WorkItem[];
   changeSets: readonly ChangeSet[];
   integrations: readonly IntegrationAttempt[];
+  /** Current check-job state, not a second Integration lifecycle. */
+  integrationJobs?: readonly Pick<DurableJob, "id" | "status">[];
   integrationQueueEntries: readonly IntegrationQueueEntry[];
   reviewRounds: readonly ReviewRound[];
   reviewConfig: ReviewConfig | null;
@@ -245,6 +249,33 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
         { fact: "Task is active", satisfied: false, ref: ref("task", task.id) }
       ],
       recommendedCommand: `yui task activate ${task.id}`
+    });
+  }
+
+  const checkingIntegration = facts.integrations.find(attempt =>
+    attempt.status === "running" && attempt.jobId !== undefined);
+  if (checkingIntegration !== undefined) {
+    const job = facts.integrationJobs?.find(job => job.id === checkingIntegration.jobId);
+    const refs = [ref("integration", checkingIntegration.id), ref("job", checkingIntegration.jobId!)];
+    if (job?.status === "queued" || job?.status === "running") {
+      return buildAction(facts, {
+        kind: "wait-for-owned-execution",
+        reason: `Integration ${checkingIntegration.id} check Job ${job.id} is ${job.status}.`,
+        refs,
+        preconditions: [{ fact: "Check Job is still executing", satisfied: true, ref: refs[1] }],
+        alternatives: [{
+          kind: "continue-integration",
+          reason: "When the check Job settles, continue this exact Integration to consume its result.",
+          recommendedCommand: `yui task integration continue ${task.id}/${checkingIntegration.id}`
+        }]
+      });
+    }
+    return buildAction(facts, {
+      kind: "integrate-work-item",
+      reason: `Integration ${checkingIntegration.id} awaits check-result consumption (${job?.status ?? "read current Job"}); an empty integration queue does not finalize this direct attempt.`,
+      refs,
+      preconditions: [{ fact: "The Integration retains its exact check Job", satisfied: true, ref: refs[0] }],
+      recommendedCommand: `yui task integration continue ${task.id}/${checkingIntegration.id}`
     });
   }
 
@@ -476,24 +507,20 @@ export function projectNextAction(facts: NextActionFacts): NextAction {
           refs: [ref("task", task.id)]
         }];
     return buildAction(facts, {
-      kind: "complete-task",
-      reason: task.type === "bugfix"
-        ? `Task ${task.id} is a Leader-owned bugfix; implement and verify it on Task main without manufacturing a WorkItem.`
-        : task.type === "feature"
-          ? `Feature ${task.id} has no independent delivery units; the Leader may implement it on Task main or create WorkItems only if separate ownership is genuinely useful.`
-          : `Task ${task.id} has no independent delivery units; the Leader decides whether to own it on Task main or create WorkItems only if separate ownership is genuinely useful.`,
+      kind: "advance-task",
+      reason: `Task ${task.id} has no recorded WorkItems. This does not determine its required topology or prove completion; advance the user's persisted requirements and Brief.`,
       refs: [ref("task", task.id)],
       preconditions: [
         { fact: "Task is active", satisfied: task.status === "active", ref: ref("task", task.id) },
         { fact: "Task main is clean, committed, and verified", satisfied: false }
       ],
-      recommendedCommand: `yui task complete ${task.id} --summary-file -`,
-      ...(reviewAlternative.length === 0 ? {} : { alternatives: reviewAlternative }),
-      judgmentRequired: task.type === "bugfix"
-        ? "Leader must judge whether the bugfix risk warrants one optional final Review."
-        : task.type === "feature"
-          ? "Leader must judge whether this feature is small enough to own directly or needs independently owned WorkItems, and whether the final result warrants Review."
-          : "Leader must choose the smallest useful topology from the Project-defined Task intent, then decide whether the frozen result warrants Review."
+      recommendedCommand: `yui task context ${task.id} --json`,
+      alternatives: [...reviewAlternative, {
+        kind: "complete-task",
+        reason: "Complete only after every requested outcome, delegation and Review requirement is satisfied and verified; record counts and a clean commit alone do not prove that.",
+        recommendedCommand: `yui task complete ${task.id} --summary-file -`
+      }],
+      judgmentRequired: "Honor explicit user/Project requirements first. Otherwise choose direct work or independently owned WorkItems and proportionate Review. This projection does not authorize weakening the Task Contract."
     });
   }
 

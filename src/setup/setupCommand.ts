@@ -126,6 +126,7 @@ export async function runSetupCommand(
       `Leader configuration: ${roleStatus.leader}.`,
       `Tmux: ${tmuxBin}.`,
       "Setup did not configure Review, Worker, Profiles, or shell completion.",
+      "Provider login and native key/initialization confirmations remain with the Provider; setup did not call a model.",
       "Run `yui operator enter` to continue, or `yui config show` to inspect configuration."
     ].join("\n")}\n`;
   } finally {

@@ -383,10 +383,14 @@ const taskChildren: readonly NodeInput[] = [
     children: [
       {
         name: "request",
-        summary: "Record an explicit Activation request and return its reference.",
+        summary: "Record an Activation request. empty adds no extra environment (bound Projects still get managed worktrees); scratch creates a Task directory; local requires a registered Resource and grant, not a Project ID.",
         usage: "yui task activation request <task> --request-id <id> "
           + "--environment <empty|scratch|local:<resource>:<read|write>>",
-        options: ["--request-id", "--environment"]
+        options: ["--request-id", "--environment"],
+        examples: [
+          "yui task activation request <task> --request-id start-1 --environment empty",
+          "yui task activation request <gitless-task> --request-id start-1 --environment scratch"
+        ]
       },
       {
         name: "cancel",
@@ -734,9 +738,9 @@ const taskChildren: readonly NodeInput[] = [
       { name: "unbind", summary: "Unbind a dormant Agent from a Task Role.", usage: "yui task role unbind <task> <role> <agent-id>" },
       {
         name: "session",
-        summary: "Inspect or stop one Task Role's native Session.",
+        summary: "Inspect, stop or explicitly select a new Task Role Session.",
         executable: true,
-        sections: [{ id: "manage", title: "Commands", entries: ["inspect", "stop"] }],
+        sections: [{ id: "manage", title: "Commands", entries: ["inspect", "stop", "new"] }],
         children: [
           {
             name: "inspect",
@@ -745,8 +749,14 @@ const taskChildren: readonly NodeInput[] = [
           },
           {
             name: "stop",
-            summary: "Stop one idle Session and its exact Host process.",
+            summary: "Stop the exact Session execution and retain its conversation for possible reuse; preserve Task progress.",
             usage: "yui task role session stop <task> <role> --reason <text>",
+            options: ["--reason"]
+          },
+          {
+            name: "new",
+            summary: "Request replacement even for active or ended Sessions; stop exact execution and preserve Task context, results and workspaces.",
+            usage: "yui task role session new <task> <role> --reason <text>",
             options: ["--reason"]
           }
         ]
@@ -986,7 +996,7 @@ const taskChildren: readonly NodeInput[] = [
       },
       {
         name: "continue",
-        summary: "Continue a Leader-approved manual resolution.",
+        summary: "Consume a finished check Job and finalize this exact Integration, or continue an approved manual resolution.",
         usage: "yui task integration continue <task>/<integration>"
       },
       {

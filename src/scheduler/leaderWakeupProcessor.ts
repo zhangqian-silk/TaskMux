@@ -3,6 +3,7 @@ import { roleAgentSessionResumeMode } from "../executor/agentExecutor.js";
 import type { SchedulerReconcileSelection, SchedulerStorePort, TmuxDeliveryPort } from "./ports.js";
 import { isSchedulerTaskWorkspaceReady } from "./ports.js";
 import { taskOwnsManagedWorkspace } from "../task/task.js";
+import { hasImmediateWakeReason } from "./wakeReason.js";
 
 export type LeaderWakeupProcessingResult = Readonly<{
   taskId: string;
@@ -35,7 +36,8 @@ export async function processLeaderWakeups(
     if (!isSchedulerTaskWorkspaceReady(task, store.getTaskWorkspace(task.id), task.status === "draft" ? "planning" : "execution")) {
       results.push({ ...base, status: "skipped", reason: "workspace-not-ready" }); continue;
     }
-    if (now.getTime() - Date.parse(wakeup.firstRequestedAt) < LEADER_WAKE_AGGREGATION_MS) {
+    if (!hasImmediateWakeReason(wakeup.reasons)
+      && now.getTime() - Date.parse(wakeup.firstRequestedAt) < LEADER_WAKE_AGGREGATION_MS) {
       results.push({ ...base, status: "skipped", reason: "aggregating" }); continue;
     }
     if (task.status === "draft" && store.prepareDraftPlanning?.(task.id, now)) {
@@ -72,7 +74,8 @@ export async function processLeaderWakeups(
         taskId: task.id, roleName: role.name, agentId: effective.agentId,
         adapterId: effective.adapterId, effective, workspace: effective.workspace.root,
         ...(role.managedWorkspace === undefined ? {} : { managedWorkspace: role.managedWorkspace }),
-        ...(!taskOwnsManagedWorkspace(task) ? { workspaceFree: true as const } : {}),
+        ...(task.status === "draft" || !taskOwnsManagedWorkspace(task)
+          ? { workspaceFree: true as const } : {}),
         mode, ...(mode === "resume" && session?.nativeSessionId !== undefined
           ? { nativeSessionId: session.nativeSessionId } : {})
       });
@@ -85,6 +88,7 @@ export async function processLeaderWakeups(
           `Read current context: yui task context ${task.id} --json.`,
           `Read the fixed notification window: yui task wake show ${task.id} ${notification.wakeId}.`,
           "Read referenced result Messages in full before deciding their disposition.",
+          "Follow the Leader Skill to advance outstanding Task work from these durable facts, or record the exact decision/authority needed.",
           "This is a notification, not an execution assignment. No separate final report is required.",
           "Reading context is not an acknowledgement that its requirements have been implemented."
         ].join("\n")

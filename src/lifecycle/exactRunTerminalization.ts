@@ -271,6 +271,42 @@ export type ExactRunRetirementResult = Readonly<{
   reason?: string;
 }>;
 
+/** Explicit runtime replacement has already proved this Role's resources
+ * stopped. A stale active-pointer/Review projection cannot veto cancellation
+ * of its engineering attempts. Never accept work or rewrite an old result. */
+export function cancelQuiescentRoleRuns(
+  store: TaskStore, taskId: string, roleName: string, reason: string, now: Date
+): void {
+  for (const run of store.listRuns(taskId).filter(run => run.roleName === roleName && run.status === "active")) {
+    const outcome = { status: "failed" as const, failureReason: "cancelled" as const, diagnostic: reason };
+    const settled = terminalizeExactTaskRun(store, {
+      taskId, roleName, agentId: run.effective.agentId, runId: run.id, outcome
+    }, now);
+    if (settled.disposition === "applied") continue;
+    store.saveRun(failRun(run, "cancelled", reason, now));
+    settleRoleRunDispatch(store, { taskId, roleName, runId: run.id });
+    if (store.getActiveRun(taskId, roleName)?.id === run.id) store.clearActiveRun(taskId, roleName);
+    if (run.executionGroupId !== undefined && run.executionLaneId !== undefined
+      && store.getActiveExecutionLaneRun(taskId, run.executionGroupId, run.executionLaneId)?.id === run.id) {
+      store.clearActiveExecutionLaneRun(taskId, run.executionGroupId, run.executionLaneId);
+    }
+    if (run.reviewRoundId !== undefined && run.executionGroupId === undefined) {
+      const round = store.getReviewRound(taskId, run.reviewRoundId);
+      if (round?.reviewerRunId === run.id && (round.status === "pending" || round.status === "running")) {
+        store.saveReviewRound(taskId, finishReviewRound(round, "failed", now, { kind: "execution", message: reason }));
+      }
+    }
+    if (roleName !== "leader") {
+      const message = createTaskMessage(store.nextMessageId(taskId), taskId,
+        `Execution ${run.id} cancelled after runtime stop.`, "role-result",
+        { type: "role", roleName }, now, { resultRef: { type: "agent-run-result", runId: run.id } });
+      store.saveMessage(taskId, message);
+      enqueueWork(store, { kind: "role", taskId, roleName: "leader" }, "role-result", now,
+        [{ type: "message", taskId, id: message.id }]);
+    }
+  }
+}
+
 /**
  * Retire one stranded active AgentRun only after its exact Provider Turn is
  * terminal and every durable execution fence is quiet. The caller owns the

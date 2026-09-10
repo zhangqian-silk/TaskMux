@@ -3458,7 +3458,7 @@ test("Controller begin-handover accepts a null fromReleaseId", async (t) => {
 
 test("production storage exposes one current version and one migration floor", () => {
   assert.equal(MIN_SUPPORTED_STORAGE_VERSION, 1);
-  assert.equal(CURRENT_STORAGE_VERSION, 16);
+  assert.equal(CURRENT_STORAGE_VERSION, 18);
   for (const retiredExport of [
     "FileTaskStore",
     "STORAGE_STATE_FILE",
@@ -3864,6 +3864,8 @@ test("fresh SQLite telemetry persists and aggregates by Turn", async (t) => {
 });
 
 test("the built-in Agent Drivers are available through the shared registry", () => {
+  assert.equal(execFileSync(join(root, "dist", "runtime", "claude-process-owner"),
+    [process.execPath, "-e", "process.stdout.write('owner-ready')"], { encoding: "utf8" }), "owner-ready");
   const drivers = builtinAgentDriverRegistry();
   assert.equal(drivers.requireByAdapterId("codex").id, "openai/codex");
   assert.equal(drivers.requireByAdapterId("claude").id, "anthropic/claude-code");

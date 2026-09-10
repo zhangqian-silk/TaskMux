@@ -32,6 +32,7 @@ import {
 } from "../scheduler/roleRunStall.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import type { Task } from "../task/task.js";
+import { requireManagedTaskCaller } from "../runtime/managedCaller.js";
 import {
   resolveTaskRecordReference
 } from "../task/taskRecordReference.js";
@@ -118,7 +119,7 @@ function createRequest(
       };
   const request = store.transaction((tx) => {
     const task = requireTask(tx, parsed.positionals[0]);
-    if (task.status !== "active") throw usageError(inactiveTaskMessage(task, "requesting input"));
+    if (task.status !== "active" && task.status !== "draft") throw usageError(inactiveTaskMessage(task, "requesting input"));
     const blockedRefs = blockedValues.map((value) => parseInputBlockedRef(value, task.id));
     validateBlockedInputOwnership(tx, task.id, blockedRefs);
     const origin = requireLeaderInputOrigin(tx, task.id, options.environment);
@@ -129,7 +130,7 @@ function createRequest(
       { question, choices, blockedRefs, policy },
       now
     );
-    const wasStalled = isRoleRunStalled(tx.listEvents(task.id), origin.run.id);
+    const wasStalled = origin.run !== null && isRoleRunStalled(tx.listEvents(task.id), origin.run.id);
     tx.saveInputRequest(task.id, created);
     enqueueWork(tx, { kind: "operator" }, "input-requested", now, [
       { type: "input", taskId: task.id, id: created.id }
@@ -137,7 +138,7 @@ function createRequest(
       source: "input-request",
       dedupeKey: `operator-input:${task.id}:${created.id}`
     });
-    if (wasStalled) {
+    if (wasStalled && origin.run !== null) {
       recordTaskEvent(tx, task.id, RUN_RECOVERED_EVENT, {
         runId: origin.run.id,
         roleName: LEADER_ROLE,
@@ -147,7 +148,8 @@ function createRequest(
     }
     recordTaskEvent(tx, task.id, "input.requested", {
       requestId: created.id,
-      requesterRunId: created.requester.runId,
+      ...(created.requester.runId === undefined ? {} : { requesterRunId: created.requester.runId }),
+      ...(created.requester.nativeSessionId === undefined ? {} : { requesterNativeSessionId: created.requester.nativeSessionId }),
       policy: created.policy.kind
     }, now);
     return created;
@@ -245,7 +247,7 @@ function answerRequest(
     const current = tx.getInputRequest(located.taskId, located.id);
     if (current === null) throw dataError(`Input request not found: ${located.id}.`);
     const task = requireTask(tx, current.taskId);
-    if (task.status !== "active") throw usageError(inactiveTaskMessage(task, "answering input"));
+    if (task.status !== "active" && task.status !== "draft") throw usageError(inactiveTaskMessage(task, "answering input"));
     const answered = answerInputRequest(current, answer, inputAnswerer(options.environment), now);
     tx.saveInputRequest(task.id, answered);
     recordTaskEvent(tx, task.id, "input.answered", {
@@ -277,7 +279,7 @@ function cancelRequest(
   const now = clock(options);
   const request = store.transaction((tx) => {
     const task = requireTask(tx, parsed.positionals[0]);
-    if (task.status !== "active") throw usageError(inactiveTaskMessage(task, "cancelling input"));
+    if (task.status !== "active" && task.status !== "draft") throw usageError(inactiveTaskMessage(task, "cancelling input"));
     const current = tx.getInputRequest(task.id, parsed.positionals[1]);
     if (current === null) throw dataError(`Input request not found: ${parsed.positionals[1]}.`);
     const cancelledBy = assertInputCancelOrigin(tx, current, options.environment);
@@ -311,36 +313,25 @@ function requireLeaderInputOrigin(
 ): Readonly<{
   requester: InputRequester;
   role: Role;
-  run: AgentRun;
+  run: AgentRun | null;
   sessions: TaskRoleSessionSet | null;
 }> {
   const env = environment ?? {};
+  const caller = requireManagedTaskCaller(store, env);
+  if (caller.taskId !== taskId || caller.roleName !== LEADER_ROLE) {
+    throw usageError("Only the current Task Leader may request user input.");
+  }
   const role = requireRole(store, taskId, LEADER_ROLE);
   const run = store.getActiveRun(taskId, LEADER_ROLE);
-  if (
-    env.YUI_SESSION_SCOPE !== "task"
-    || env.YUI_TASK_ID !== taskId
-    || env.YUI_ROLE !== LEADER_ROLE
-    || run === null
-    || env.YUI_AGENT_ID !== run.effective.agentId
-    || run.status !== "active"
-    || run.workItemId !== undefined
-  ) {
-    throw usageError("Task input request requires the active Leader AgentRun environment.");
-  }
   const sessions = store.getTaskRoleSessionSet(taskId, LEADER_ROLE);
-  const nativeSessionId = trimmed(env.YUI_NATIVE_SESSION_ID);
-  if (nativeSessionId !== undefined
-    && sessions?.sessions[run.effective.agentId]?.nativeSessionId !== nativeSessionId) {
-    throw usageError("Task input request native session does not match the active Leader session.");
-  }
+  const nativeSessionId = caller.nativeSessionId;
   return {
     requester: {
       taskId,
       roleName: "leader",
-      agentId: run.effective.agentId,
-      runId: run.id,
-      ...(nativeSessionId === undefined ? {} : { nativeSessionId })
+      agentId: caller.agentId,
+      ...(run === null ? {} : { runId: run.id }),
+      nativeSessionId
     },
     role,
     run,
@@ -349,7 +340,7 @@ function requireLeaderInputOrigin(
 }
 
 function assertInputCancelOrigin(
-  store: Pick<TaskStore, "getGlobalRole" | "getGlobalRoleSessionSet">,
+  store: TaskStore,
   request: InputRequest,
   environment: NodeJS.ProcessEnv | undefined
 ): "leader" | "operator" {
@@ -357,15 +348,9 @@ function assertInputCancelOrigin(
   if (isCurrentGlobalOperator(store, env)) {
     return "operator";
   }
-  if (
-    env.YUI_SESSION_SCOPE !== "task"
-    || env.YUI_TASK_ID !== request.taskId
-    || env.YUI_ROLE !== request.requester.roleName
-    || env.YUI_AGENT_ID !== request.requester.agentId
-    || (request.requester.nativeSessionId !== undefined
-      && env.YUI_NATIVE_SESSION_ID !== request.requester.nativeSessionId)
-  ) {
-    throw usageError("Only the originating Leader may cancel this input request.");
+  const caller = requireManagedTaskCaller(store, env);
+  if (caller.taskId !== request.taskId || caller.roleName !== LEADER_ROLE) {
+    throw usageError("Only the current Task Leader or Operator may cancel this input request.");
   }
   return "leader";
 }
@@ -477,7 +462,7 @@ function renderInputRequest(request: InputRequest, timeZone: string | undefined)
     `Task: ${request.taskId}`,
     `Status: ${request.status}`,
     `Question: ${request.question}`,
-    `Requested by: ${request.requester.agentId}/${request.requester.runId}`,
+    `Requested by: ${request.requester.agentId}/${request.requester.runId ?? request.requester.nativeSessionId}`,
     ...(request.choices.length === 0
       ? ["Answer type: text"]
       : ["Choices:", ...request.choices.map((choice) => `  ${choice.key}: ${choice.label}`)]),

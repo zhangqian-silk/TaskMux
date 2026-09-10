@@ -124,6 +124,9 @@ function parseOwnerRecord(raw: string): SessionOwnerIdentity {
   const owner = record.owner as Record<string, unknown>;
   const tmux = record.tmux as Record<string, unknown>;
   const providerRoot = record.providerRoot as Record<string, unknown>;
+  if (!["launch-env", "pane-pid", "owned-child"].includes(String(providerRoot.attribution))) {
+    throw new Error("Session owner process attribution is invalid.");
+  }
   return createSessionOwnerIdentity({
     owner: {
       scope: owner.scope === "global" ? "global" : "task",
@@ -151,7 +154,8 @@ function parseOwnerRecord(raw: string): SessionOwnerIdentity {
       ...(providerRoot.processSessionId === undefined
         ? {}
         : { processSessionId: Number(providerRoot.processSessionId) }),
-      attribution: providerRoot.attribution === "pane-pid" ? "pane-pid" : "launch-env"
+      attribution: providerRoot.attribution === "pane-pid" ? "pane-pid"
+        : providerRoot.attribution === "owned-child" ? "owned-child" : "launch-env"
     },
     ...(record.runtimeRoot === undefined ? {} : { runtimeRoot: String(record.runtimeRoot) }),
     recordedAt: new Date(String(record.recordedAt))
