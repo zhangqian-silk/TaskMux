@@ -1,6 +1,7 @@
 import type { ConfiguredAgent } from "../agent/agent.js";
 import { roleLaunchEventPayload, saveTaskRoleUpdate } from "../role/taskRoleUpdate.js";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { createRunInput } from "../context/runInputContract.js";
 import {
@@ -43,9 +44,10 @@ import {
   createRoleSessionSet,
   roleAgentSessionResumeMode,
   updateTaskRoleProviderRuntime,
+  taskRoleControlTarget,
   type TaskRoleSessionSet
 } from "../executor/agentExecutor.js";
-import { transferProviderAuthority } from "../runtime/providerRuntimeIdentity.js";
+import { transferProviderAuthority, currentProviderConversation } from "../runtime/providerRuntimeIdentity.js";
 import type { ProviderAuthorityFence } from "../runtime/providerAuthorityFence.js";
 import {
   resolveEffectiveLaunch,
@@ -97,6 +99,7 @@ import {
 } from "../role/role.js";
 import {
   createRun,
+  runPurposeAdmitsTaskState,
   runExecutionObservation,
   withRunContextSnapshot,
   type AgentRun
@@ -153,7 +156,8 @@ import {
   type MailboxTarget
 } from "../coordination/workMailbox.js";
 import {
-  runtimeLifecycleTarget
+  runtimeLifecycleTarget,
+  RUNTIME_SESSION_REPLACE_REQUIRED_REASON
 } from "../runtime/lifecycleReservation.js";
 import { projectProviderContinuations } from "../runtime/runtimeContinuationProjection.js";
 import { runtimeObservationFromTaskEvent } from "../runtime/runtimeObservation.js";
@@ -298,7 +302,7 @@ import {
   taskLocalActor as resolveTaskLocalActor,
   assertTaskDeliveryAuthority
 } from "./taskActor.js";
-import { currentManagedRuntime } from "../runtime/managedCaller.js";
+import { currentManagedRuntime, resolveManagedTaskReader } from "../runtime/managedCaller.js";
 import { resolveMessageRecipient, messageContinuationBlocker } from "../message/messageContinuation.js";
 import { enqueueOperatorEvent } from "../scheduler/operatorEvent.js";
 import { queueLeaderWakeup } from "../scheduler/wakeupQueue.js";
@@ -1084,7 +1088,7 @@ export function submitOperatorMessage(
       const task = requireTask(tx, taskId);
       assertTaskOpen(task);
       const message = appendMessage(tx, task.id, body, "operator", { type: "operator" }, now);
-      if (task.status === "active") {
+      if (leaderWakingTaskStatus(task.status)) {
         enqueueWork(tx, leaderMailbox(task.id), "operator-input", now, [messageRef(task.id, message.id)]);
       }
       return { task, message, created: false } as const;
@@ -1092,11 +1096,13 @@ export function submitOperatorMessage(
 
     const created = createTaskAggregate(tx, titleFrom(body), {}, now);
     const message = appendMessage(tx, created.task.id, body, "operator", { type: "operator" }, now);
+    enqueueWork(tx, leaderMailbox(created.task.id), "operator-input", now,
+      [messageRef(created.task.id, message.id)]);
     return { ...created, message, created: true } as const;
   });
   notifyMailbox(
     options.runtime,
-    result.task.status === "active" ? leaderMailbox(result.task.id) : taskMailbox(result.task.id),
+    leaderWakingTaskStatus(result.task.status) ? leaderMailbox(result.task.id) : taskMailbox(result.task.id),
     result.task.id
   );
   return result.created
@@ -2317,9 +2323,15 @@ function updateMessage(
       updatedBy: actor,
       ...(wakePolicy === undefined ? {} : { wakePolicy })
     }, now);
-    return { task, message: updated };
+    const queuedForLeader = updated.wakePolicy !== "none";
+    if (queuedForLeader) {
+      enqueueWork(tx, leaderMailbox(task.id), actor === "operator" ? "operator-input" : "user-message",
+        now, [messageRef(task.id, updated.id)], { source: actor });
+    }
+    return { task, message: updated, queuedForLeader };
   });
-  options.runtime?.notifyStateChanged(result.task.id);
+  notifyMailbox(options.runtime, result.queuedForLeader
+    ? leaderMailbox(result.task.id) : taskMailbox(result.task.id), result.task.id);
   return output(`Updated Task Message ${result.task.id}/${result.message.id}\n`, {
     message: result.message
   });
@@ -2357,7 +2369,7 @@ function retireMessage(
     // Remove an isolated pending wake for this exact directive. A merged batch
     // is retained because its other signals remain actionable; context and
     // actionability projections still filter the retired message below.
-    if (task.status === "active") {
+    if (leaderWakingTaskStatus(task.status)) {
       try {
         settleExactWorkExecution(tx, leaderMailbox(task.id), messageRef(task.id, message.id));
       } catch {
@@ -2444,7 +2456,11 @@ function taskRoleSessionCommand(
     );
     const task = requireTask(store, rest[0]);
     const role = requireRole(store, task.id, rest[1]);
-    taskActor(store, options, task.id);
+    const reader = resolveManagedTaskReader(store, options.environment);
+    if (reader === undefined) taskActor(store, options, task.id);
+    else if (reader.taskId !== task.id || (reader.roleName !== "leader" && reader.roleName !== role.name)) {
+      throw usageError("Session inspection is outside the caller's Task/Role.");
+    }
     const sessions = store.getTaskRoleSessionSet(task.id, role.name);
     const active = sessions?.sessions[sessions.activeAgentId] ?? null;
     const binding = sessions?.providerBinding ?? null;
@@ -2457,7 +2473,8 @@ function taskRoleSessionCommand(
     const runConfigurationDetail = renderAgentRunConfiguration(runConfiguration);
     return output(
       active === null
-        ? `No Session exists for ${task.id}/${role.name}.\n`
+        ? `No attached Session exists for ${task.id}/${role.name}.\n`
+          + (binding === null ? "" : `Retained native execution: ${currentProviderConversation(binding).conversationId}; input=${binding.run?.status ?? "none"}. Use session new to replace from durable context.\n`)
         : [
             `Session ${task.id}/${role.name}`,
             // The component, not just the connection plan: several products are
@@ -2480,6 +2497,36 @@ function taskRoleSessionCommand(
       }
     );
   }
+  if (command === "new") {
+    const usage = "Task Role Session new usage: yui task role session new <task> <role> --reason <text>.";
+    const parsed = parseTail(rest, new Set(["--reason"]), usage);
+    exactPositionals(parsed.positionals, 2, usage);
+    const reason = requiredOption(parsed.options, "--reason");
+    const now = clock(options);
+    const result = store.transaction((tx) => {
+      const task = requireTask(tx, parsed.positionals[0]);
+      if (task.status === "archived") throw usageError("An archived Task cannot select a new Session.", usage);
+      const actor = taskActor(tx, options, task.id);
+      const role = requireRole(tx, task.id, parsed.positionals[1]);
+      const current = tx.getTaskRoleSessionSet(task.id, role.name);
+      const previous = current?.sessions[current.activeAgentId];
+      const target = runtimeLifecycleTarget({ scope: "task", taskId: task.id, roleName: role.name });
+      const mailbox = tx.getWorkMailbox(target);
+      if ([...(mailbox?.pending?.reasons ?? []), ...(mailbox?.processing?.batch.reasons ?? [])]
+        .includes(RUNTIME_SESSION_REPLACE_REQUIRED_REASON)) return { taskId: task.id, roleName: role.name, target, alreadyRequested: true };
+      recordTaskEvent(tx, task.id, "runtime.session-replacement-requested", {
+        roleName: role.name, agentId: current?.activeAgentId ?? role.activeAgentId,
+        ...(previous === undefined ? {} : { nativeSessionId: previous.nativeSessionId }),
+        reason, requestedBy: actor
+      }, now);
+      enqueueWork(tx, target, RUNTIME_SESSION_REPLACE_REQUIRED_REASON, now, [{ type: "task", id: task.id }]);
+      return { taskId: task.id, roleName: role.name, target, alreadyRequested: false };
+    });
+    notifyMailbox(options.runtime, result.target, result.taskId);
+    return output(`Requested Session replacement for ${result.taskId}/${result.roleName}. `
+      + "Yui will stop the old execution, retain its history and workspaces, and select a fresh Session. "
+      + "If replacing your own Session, end this turn; the successor reads durable Task context.\n", result);
+  }
   if (command === "stop") {
     const usage = "Task Role Session stop usage: yui task role session stop <task> <role> --reason <text>.";
     const parsed = parseTail(rest, new Set(["--reason"]), usage);
@@ -2488,36 +2535,24 @@ function taskRoleSessionCommand(
     const now = clock(options);
     const request = store.transaction((tx) => {
       const task = requireTask(tx, parsed.positionals[0]);
-      if (task.status !== "active" && task.status !== "completed") {
+      if (!["draft", "active", "completed", "cancelled"].includes(task.status)) {
         throw usageError(
-          `Task Role Session stop requires an active or completed Task: ${task.id}.`,
+          `Task Role Session stop is unavailable for an archived Task: ${task.id}.`,
           usage
         );
       }
       const actor = taskActor(tx, options, task.id);
       const role = requireRole(tx, task.id, parsed.positionals[1]);
       if (actor === "leader" && role.name === LEADER_ROLE) {
-        throw usageError("A Leader cannot stop the Session executing its own current command.", usage);
-      }
-      if (tx.getActiveRun(task.id, role.name) !== null) {
-        throw usageError(
-          `Task Role has an active AgentRun; settle or retire it before stopping the Session: ${task.id}/${role.name}.`,
-          usage
-        );
+        throw usageError("Use task role session new to request your own replacement and end this turn; synchronous self-stop cannot return.", usage);
       }
       const sessions = tx.getTaskRoleSessionSet(task.id, role.name);
-      const session = sessions?.sessions[sessions.activeAgentId];
-      if (session === undefined || session.status === "ended") {
+      const session = taskRoleControlTarget(sessions);
+      if (session === undefined || session.adapterId === undefined) {
         throw usageError(`Task Role has no active Session: ${task.id}/${role.name}.`, usage);
       }
-      const lifecycle = tx.getWorkMailbox(runtimeLifecycleTarget({
-        scope: "task",
-        taskId: task.id,
-        roleName: role.name
-      }));
-      if (lifecycle !== null && workMailboxHasWork(lifecycle)) {
-        throw usageError(`Task Role Session lifecycle is busy: ${task.id}/${role.name}.`, usage);
-      }
+      // A repeated stop is a recovery request, not contention with its own
+      // earlier cleanup obligation.
       recordTaskEvent(tx, task.id, "runtime.session-stop-requested", {
         roleName: role.name,
         agentId: session.agentId,
@@ -3122,9 +3157,6 @@ function editWork(
     assertTaskOpen(task);
     if (task.status === "draft") assertDraftTaskExecutionFree(tx, task);
     const actor = taskActor(tx, options, task.id);
-    if (task.status === "draft" && actor !== "user" && actor !== "operator") {
-      throw usageError("Only the user or Operator may edit a Draft Work Item.");
-    }
     if (item.status === "retired") {
       throw usageError(`Work Item is retired: ${item.id}.`);
     }
@@ -3206,6 +3238,10 @@ function editWork(
       current: editedFieldValues(updated, changedFields),
       editedBy: actor
     }, now);
+    if (actor !== "leader") {
+      enqueueWork(tx, leaderMailbox(task.id), actor === "operator" ? "operator-input" : "user-message",
+        now, [workItemRef(task.id, updated.id)], { source: actor });
+    }
     return { task, item: updated };
   });
   options.runtime?.notifyStateChanged(result.task.id);
@@ -4413,7 +4449,7 @@ function requestTaskReviewRound(
   store: TaskWorkflowStore,
   options: TaskCommandOptions
 ): TaskCommandExecution {
-  const usage = "Task review request usage: yui task review request <task> --role <global-role> "
+  const usage = "Task review request usage: yui task review request <task> --role <reviewer-role> "
     + "[--lane-role <producer-role> ...] [--delta-recheck].";
   const parsed = parseMultiValueTail(
     args,
@@ -4446,8 +4482,8 @@ function requestTaskReviewRound(
         throw usageError("Delta-recheck is not supported with a Task-final review contract.");
       }
     }
-    if (tx.getGlobalRole(reviewerRoleName) === null) {
-      throw usageError(`Global Role not found: ${reviewerRoleName}.`);
+    if (tx.getRole(task.id, reviewerRoleName) === null && tx.getGlobalRole(reviewerRoleName) === null) {
+      throw usageError(`Reviewer Role not found in this Task or global templates: ${reviewerRoleName}.`);
     }
 
     const provenance = taskReviewProvenance(tx, task, options);
@@ -5408,8 +5444,10 @@ function retryRun(
       throw usageError(`AgentRun ${previous.id} is not retryable from ${previous.status}.`);
     }
     const task = requireTask(tx, previous.taskId);
-    if (task.status !== "active") throw usageError(`Task is not active: ${task.id}.`);
     assertTaskExecutionEnabled(task, "retrying a AgentRun");
+    if (!runPurposeAdmitsTaskState(previous.purpose, task)) {
+      throw usageError(`Task does not admit ${previous.purpose} retry: ${task.id}/${task.status}.`);
+    }
     const role = requireRole(tx, task.id, previous.roleName);
     if (tx.getActiveRun(task.id, role.name) !== null) {
       throw usageError(`${task.id}/${role.name} already has an active run.`);
@@ -5594,7 +5632,7 @@ function retryRun(
     }
     const effective = retryLane?.effective ?? resolveEffectiveLaunch({
       role,
-      purpose: "execution",
+      purpose: previous.purpose,
       ...(retryManagedWorkspace === undefined ? {} : { workspace: retryManagedWorkspace }),
       ...(retryItem === null ? {} : { workItemWriteProjectIds: retryItem.writeProjectIds })
     });
@@ -5626,7 +5664,7 @@ function retryRun(
           const retrySnapshot = freezeRunContextSnapshot(tx, {
             taskId: task.id,
             roleName: role.name,
-            purpose: "execution",
+            purpose: previous.purpose,
             ...(previous.workItemId === undefined ? {} : { workItemId: previous.workItemId })
           }, now, "controller", retryGroup?.assignment.contextSnapshotRef);
           return createRunInput({
@@ -5649,6 +5687,7 @@ function retryRun(
       input,
       now,
       {
+        purpose: previous.purpose,
         ...(previous.workItemId === undefined ? {} : { workItemId: previous.workItemId }),
         ...(runningGroup === undefined ? {} : {
           executionGroupId: runningGroup.id,
@@ -7268,7 +7307,9 @@ function createTaskRole(
   now: Date,
   sourceGlobalRoleName?: string
 ): Role {
-  const workspace = task.cwd ?? store.getConfig().defaultWorkspace ?? process.cwd();
+  const workspace = task.status === "draft"
+    ? join(`${store.rootDirectory()}.task-runtimes`, "planning", task.id)
+    : task.cwd ?? store.getConfig().defaultWorkspace ?? process.cwd();
   if (explicitAgentId === undefined) {
     const sourceRoleName = sourceGlobalRoleName
       ?? (roleName === LEADER_ROLE ? LEADER_ROLE : "worker");
@@ -7303,7 +7344,9 @@ function createTaskRoleFromAgentBinding(
   binding: RoleAgentBinding,
   now: Date
 ): Role {
-  const workspace = task.cwd ?? store.getConfig().defaultWorkspace ?? process.cwd();
+  const workspace = task.status === "draft"
+    ? join(`${store.rootDirectory()}.task-runtimes`, "planning", task.id)
+    : task.cwd ?? store.getConfig().defaultWorkspace ?? process.cwd();
   return createRole(
     task.id,
     roleName,
@@ -8422,10 +8465,15 @@ function taskWakeInspectionCommand(
       (event.type === "notification.delivery" || event.type === "notification.resolved")
       && (event.payload.wakeId === wake.id
         || event.payload.attemptId?.startsWith(`notification:${task.id}/${wake.id}/`)));
-    const events = allEvents.filter((e) => inWindow(e.createdAt));
-    const messages = store.listMessages(task.id).filter((m) => inWindow(m.createdAt));
+    const referenced = (type: MailboxEntityRef["type"], id: string) =>
+      wake.refs?.some(ref => ref.type === type && ref.id === id
+        && (!("taskId" in ref) || ref.taskId === task.id)) === true;
+    const events = allEvents.filter((e) => inWindow(e.createdAt) || referenced("event", e.id));
+    const messages = store.listMessages(task.id).filter((m) => inWindow(m.createdAt) || referenced("message", m.id));
     const allRuns = store.listRuns(task.id);
     const referencedRunIds = new Set(referencedWakeRunIds(allRuns, allEvents, events));
+    for (const run of allRuns) if (referenced("run", run.id)) referencedRunIds.add(run.id);
+    for (const message of messages) if (message.resultRef?.type === "agent-run-result") referencedRunIds.add(message.resultRef.runId);
     const runs = operationalTaskRecords(allRuns, allEvents, "run").filter((run) => (
       inWindow(run.createdAt) || referencedRunIds.has(run.id)
     ));

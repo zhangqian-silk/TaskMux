@@ -12,9 +12,8 @@ storage version accepted by the running release.
 - Provider Sessions, transcripts, processes, caches, telemetry, and runtime
   observations support execution and diagnosis; they do not replace durable
   Task facts.
-- `schema.json` and `state.json`, if found, are historical evidence only.
-  Current code never reads them as a compatibility authority or rebuilds
-  `yui.db` from them.
+- Configuration and diagnostics outside the database do not define another
+  storage version or permit rebuilding Task truth heuristically.
 
 ## Admission
 
@@ -49,11 +48,12 @@ read/write path, or second migration authority.
 
 ## AgentRun and Session boundary
 
-A AgentRun is one provider-visible input/terminal interval. It records visible
-inputs and the final provider output, but not hidden reasoning or the full tool
-trace. A Provider Session is a reusable conversation and may contain many Yui
-managed or direct-user AgentRuns. A native Turn terminal ends the AgentRun only; the
-Leader remains the authority for WorkItem and Task completion.
+An AgentRun is an explicitly requested execution. It records associated visible
+inputs and the original result, not hidden reasoning or the full tool trace.
+A Provider Session can contain multiple Runs, ordinary native chat and
+notifications. Native chat and notifications do not automatically create Runs.
+Only an exactly correlated native terminal settles the Run; the Leader remains
+the authority for WorkItem and Task acceptance.
 
 ## Update behavior
 
@@ -67,8 +67,9 @@ Every persistent schema or payload change appends one immutable, contiguous
 storage migration. The CLI publishes both `storageVersion` and
 `minimumStorageVersion`; every valid Home in that inclusive range can upgrade
 directly to the current version without installing intermediate releases.
-Yui 0.15.0 / storage version 1 is the start of that range; pre-0.15.0 Homes are
-preserved but are not migration inputs.
+The current source declares storage version **18**, with minimum supported
+migration version **1**, in `src/storage/storageVersions.ts`. Homes below that
+floor are not migration inputs and remain untouched.
 The target binary's `upgrade --update-preflight` and `--update-apply` result
 shapes and parent-owned handover-lock proof remain backward compatible with
 every updater released from storage version 1 onward, so an old source CLI can

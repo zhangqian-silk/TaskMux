@@ -173,6 +173,8 @@ export type ResumeInput<TConfig extends RoleAgentConfig = RoleAgentConfig> =
 export type CompiledAgentLaunch = Readonly<{
   argv: readonly string[];
   sessionStrategy: "runtime-discovery" | "preallocated";
+  /** Remote TUI flags do not configure the server's new Thread. */
+  codexThread?: CodexThreadOptions;
 }>;
 export type CompiledManagedControlLaunch = CompiledAgentLaunch & Readonly<{
   transport: "codex-app-server-proxy" | "claude-stream-json" | "acp-stdio";
@@ -282,6 +284,18 @@ class CodexAdapter extends BaseAdapter<CodexAgentConfig> {
     return discoverCodexConfiguration(input);
   }
 
+  override compileNew(input: CompileInput<CodexAgentConfig>): CompiledAgentLaunch {
+    const launch = super.compileNew(input);
+    const developerInstructions = codexSessionInstructions(input);
+    return {
+      ...launch,
+      codexThread: {
+        ...codexThreadOptions(input, this.canonicalizeConfig(input.config)),
+        ...(developerInstructions === undefined ? {} : { developerInstructions })
+      }
+    };
+  }
+
   validateStructured(config: CodexAgentConfig): void {
     exact(config, ["adapterId", "model", "effort", "permission", "search", "profile",
       "additionalDirectories", "advanced"], "Codex Agent config");
@@ -346,22 +360,12 @@ class CodexAdapter extends BaseAdapter<CodexAgentConfig> {
       "--config",
       `projects={${JSON.stringify(resolve(input.workspace))}={trust_level="trusted"}}`
     ];
-    const instructions = input.sessionManifestPath === undefined ? [
-      input.developerInstructions,
-      ...(input.skills === undefined || input.skills.length === 0
-        ? []
-        : [
-            "Yui Role Skills are available at the paths below. Before performing work governed by one, read and follow its SKILL.md on demand; do not treat this list as a user message.",
-            ...input.skills.map((skill) => `- ${skill.id}: ${skill.path}/SKILL.md`)
-        ])
-    ].filter((value): value is string => value !== undefined && value.trim().length > 0) : [
-      `Yui managed Session. Read and follow the Session Manifest at ${input.sessionManifestPath} (digest ${input.sessionManifestDigest ?? "unknown"}). Load each Skill and Role Profile by its manifest path before acting; Task content is available only through the manifest's exact Context API.`
-    ];
-    if (instructions.length === 0) return workspaceTrust;
+    const instructions = codexSessionInstructions(input);
+    if (instructions === undefined) return workspaceTrust;
     return [
       ...workspaceTrust,
       "--config",
-      `developer_instructions=${tomlString(instructions.join("\n"))}`
+      `developer_instructions=${tomlString(instructions)}`
     ];
   }
 
@@ -493,6 +497,7 @@ class ClaudeAdapter extends BaseAdapter<ClaudeAgentConfig> {
       input.developerInstructions,
       ...(input.skills ?? []).map((skill) => [
         `# Yui Skill: ${skill.id}`,
+        `Source: ${skill.path}/SKILL.md (resolve relative links from this directory).`,
         skill.content
       ].join("\n\n"))
     ].filter((value): value is string => value !== undefined && value.trim().length > 0);
@@ -750,6 +755,20 @@ function codexThreadOptions(
     runtimeWorkspaceRoots: roots,
     ...(Object.keys(threadConfig).length === 0 ? {} : { config: threadConfig })
   };
+}
+
+function codexSessionInstructions(input: CompileInput<CodexAgentConfig>): string | undefined {
+  if (input.sessionManifestPath !== undefined) {
+    return `Yui managed Session. Read and follow the Session Manifest at ${input.sessionManifestPath} (digest ${input.sessionManifestDigest ?? "unknown"}). Load each Skill and Role Profile by its manifest path before acting; Task content is available only through the manifest's exact Context API.`;
+  }
+  const instructions = [
+    input.developerInstructions,
+    ...(input.skills === undefined || input.skills.length === 0 ? [] : [
+      "Yui Role Skills are available at the paths below. Before performing work governed by one, read and follow its SKILL.md on demand; do not treat this list as a user message.",
+      ...input.skills.map((skill) => `- ${skill.id}: ${skill.path}/SKILL.md`)
+    ])
+  ].filter((value): value is string => value !== undefined && value.trim().length > 0);
+  return instructions.length === 0 ? undefined : instructions.join("\n");
 }
 
 function withoutCodexConfigOverride(argv: readonly string[], key: string): string[] {

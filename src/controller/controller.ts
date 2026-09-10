@@ -857,15 +857,18 @@ async function adoptReleasedTaskActivations(
   for (const taskId of candidates) {
     if (selection.blockedTaskIds?.has(taskId)) continue;
     const task = store.getTask(taskId);
-    if (task?.status !== "draft") continue;
+    if (task?.status !== "draft" || task.executionGate.state !== "enabled") continue;
     const request = task.activationRequest;
     if (request?.disposition !== "pending") continue;
-    if (request.startMode !== "after-planning-turn") continue;
-    // Still inside its planning Turn: the deferral has not been released yet.
-    const planningRun = request.afterPlanningRun === undefined
-      ? null
-      : store.getActiveRun(taskId, "leader");
-    if (planningRun?.id === request.afterPlanningRun) continue;
+    if (request.startMode !== "after-planning-turn"
+      && request.operation.actorId !== `task:${taskId}/role:leader`) continue;
+    // Later Draft discussion is a Session notification, not another AgentRun.
+    // Its durable activation intent is sufficient once the exact native input
+    // is settled. Never create a synthetic Run merely to release that intent.
+    if (store.getActiveRun(taskId, "leader") !== null) continue;
+    const provider = store.getTaskRoleSessionSet?.(taskId, "leader")?.providerBinding;
+    if (provider?.run != null
+      && ["submitting", "accepted", "delivery-unknown"].includes(provider.run.status)) continue;
     try {
       await workspace.activateTaskWorkspace(taskId);
     } catch (error) {

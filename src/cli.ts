@@ -234,8 +234,9 @@ import {
 } from "./runtime/runtimeCoherence.js";
 import {
   requireManagedTaskCaller,
-  type ManagedTaskCaller
+  resolveManagedTaskReader
 } from "./runtime/managedCaller.js";
+import { operatorOfflineCommand, taskDiagnosticTarget } from "./cli/managedDiagnostics.js";
 import {
   readSessionBootstrapManifest,
   refreshManagedSessionCliWrappers,
@@ -304,7 +305,7 @@ export async function main(): Promise<void> {
     || routedForFence?.kind === "help"
     || routedForFence?.kind === "path-error"
     || routedForFence?.kind === "incomplete";
-  if (managedInvocation || !homeFreeInvocation) {
+  if (!homeFreeInvocation) {
     assertCliHomeReleaseFence({
       home,
       packageRoot: fileURLToPath(new URL("../", import.meta.url)),
@@ -336,10 +337,6 @@ export async function main(): Promise<void> {
     process.exitCode = delegated.status ?? 5;
     return;
   }
-  const {
-    contract: taskFinalReviewContract,
-    verifiedStore
-  } = await preflightManagedTaskControlPlane();
   if (args.length === 0) {
     emit(renderCommandHelp((await import("./cli/commandCatalog.js")).ROOT_COMMAND, VERSION));
     return;
@@ -368,6 +365,10 @@ export async function main(): Promise<void> {
   }
 
   if (args[0] === "version") throw usageError("Version usage: yui version");
+  const {
+    contract: taskFinalReviewContract,
+    verifiedStore
+  } = await preflightManagedTaskControlPlane();
   if (args[0] === "update") {
     if (jsonOutput) throw usageError("Update does not support --json.");
     if (args.length !== 1) throw usageError("Update usage: yui update");
@@ -762,7 +763,7 @@ export async function main(): Promise<void> {
     return;
   }
 
-  await assertFileTaskControllerStorageCompatible(home);
+  if (!operatorOfflineCommand(args)) await assertFileTaskControllerStorageCompatible(home);
   // Reuse the store the exact runtime preflight already opened and read for
   // this same Home. Opening a second store would parse the unchanged large
   // state a second time; the per-instance fingerprint cache still invalidates
@@ -2032,12 +2033,18 @@ async function preflightManagedTaskControlPlane(): Promise<ManagedTaskControlPla
     && ["agent-host", "session-notify", "runtime-hook"].includes(args[1] ?? "");
   const home = resolveYuiHome(process.env);
   const manifest = assertManagedSessionManifest(home, "task");
+  const diagnosticTarget = taskDiagnosticTarget(args);
+  const diagnostic = diagnosticTarget !== undefined
+    && diagnosticTarget === process.env.YUI_TASK_ID;
+  if (diagnosticTarget !== undefined && !diagnostic) {
+    throw usageError("Diagnostics must remain within this Session's Task.");
+  }
   // One gate for every managed command: the current CLI, Home, and Controller
   // must agree. Internal callbacks must still be able to append their immutable
   // fact while the Controller is offline.
   await assertRuntimeCoherence(
     { actualHome: home },
-    { checkController: !internalCallback }
+    { checkController: !internalCallback && !diagnostic }
   );
   const verifiedStore = openCurrentTaskStore(home);
   // One authority for "may this process act as this Task Role?". Yui's own
@@ -2046,10 +2053,20 @@ async function preflightManagedTaskControlPlane(): Promise<ManagedTaskControlPla
   // key. Nothing here
   // gates on the current AgentRun: which AgentRun is active is durable state that the
   // command needing it reads, never a fact frozen into a process environment.
-  const runtime: ManagedTaskCaller | undefined = internalCallback
+  const runtime = internalCallback
     ? undefined
-    : requireManagedTaskCaller(verifiedStore, process.env);
+    : diagnostic
+      ? resolveManagedTaskReader(verifiedStore, process.env)
+      : requireManagedTaskCaller(verifiedStore, process.env);
+  if (diagnostic && runtime?.roleName !== "leader"
+    && !(args[1] === "show"
+      || (args[1] === "role" && args[2] === "session" && args[3] === "inspect"
+        && args[5] === runtime?.roleName))) {
+    // Non-Leaders keep their Assignment-scoped read authorization.
+    requireManagedTaskCaller(verifiedStore, process.env);
+  }
   const request = taskFinalReviewInvocation.request;
+  if (request !== undefined && diagnostic) requireManagedTaskCaller(verifiedStore, process.env);
   if (request === undefined) {
     return { contract: undefined, verifiedStore };
   }
@@ -2095,7 +2112,14 @@ async function preflightManagedGlobalControlPlane(): Promise<ManagedTaskControlP
     || manifest.roleKind !== expectedRoleKind) {
     throw new Error("Managed global invocation does not match its Session Manifest.");
   }
-  await assertRuntimeCoherence({ actualHome: home });
+  if (expectedRoleKind === "operator" && ["doctor", "upgrade", "update"].includes(args[0] ?? "")) {
+    // These commands inspect/adopt the storage contract themselves. Requiring
+    // current storage before reaching upgrade would make recovery impossible.
+    return { contract: undefined, verifiedStore: undefined };
+  }
+  await assertRuntimeCoherence({ actualHome: home }, {
+    checkController: !(expectedRoleKind === "operator" && operatorOfflineCommand(args))
+  });
   return { contract: undefined, verifiedStore: openCurrentTaskStore(home) };
 }
 
@@ -2493,7 +2517,7 @@ async function actualTaskReviewCandidateForTaskCommand(
   const status = taskId === undefined ? undefined : store.getTask(taskId)?.status;
   if (taskId === undefined || (status !== "active" && status !== "cancelled")) return undefined;
   try {
-    return await snapshotActualTaskReviewCandidate(taskId, store, preparer);
+    return await snapshotActualTaskReviewCandidate(taskId, store, preparer, !decisionSupportRead);
   } catch (error) {
     if (decisionSupportRead && error instanceof CliError) return undefined;
     throw error;
@@ -2503,16 +2527,18 @@ async function actualTaskReviewCandidateForTaskCommand(
 async function snapshotActualTaskReviewCandidate(
   taskId: string,
   store: TaskStore,
-  preparer: FileTaskWorkspacePreparer
+  preparer: FileTaskWorkspacePreparer,
+  prepareWorkspace = true
 ): Promise<TaskReviewCandidate> {
   const task = store.getTask(taskId);
   if (task === null) throw usageError(`Task not found: ${taskId}.`);
   if (task.projectBindings.length === 0) {
     throw usageError(`Final Task Review requires a Project-backed Task: ${task.id}.`);
   }
-  // Reconcile the durable currentCommit facts from the authoritative Task
-  // clones before freezing a completion/review candidate.
-  await preparer.prepareTaskWorkspace(task.id);
+  // Mutation preflights reconcile before freezing a candidate. A decision-
+  // support read only observes existing heads; it must not migrate Sessions,
+  // create worktrees or acquire workspace ownership as a side effect.
+  if (prepareWorkspace) await preparer.prepareTaskWorkspace(task.id);
   const workspace = store.getTaskWorkspace(task.id);
   if (workspace === null
     || workspace.owner.type !== "task"

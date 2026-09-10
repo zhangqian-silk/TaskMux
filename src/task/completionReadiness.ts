@@ -9,6 +9,9 @@ import {
 import type { ManagedWorkspace } from "../worktree/managedWorkspace.js";
 import type { WorkItem } from "../workItem/workItem.js";
 import type { NextActionFacts, NextActionRef } from "./nextAction.js";
+import type { TaskStore } from "../storage/taskStore.js";
+import type { TaskMessage } from "../message/message.js";
+import { operationalTaskRecords } from "./taskRecordRetirement.js";
 
 /**
  * Issue 06 (Task terminalization readiness): a pure, read-only projection of
@@ -26,6 +29,7 @@ import type { NextActionFacts, NextActionRef } from "./nextAction.js";
  */
 
 export type CompletionBlockerCode =
+  | "pending-user-input"
   | "active-task-review"
   | "open-input-request"
   | "incomplete-work-item"
@@ -76,10 +80,31 @@ export type CompletionReadiness = Readonly<{
  * extra reads on every command.
  */
 export type CompletionReadinessFacts = NextActionFacts & Readonly<{
+  pendingUserMessages?: readonly Pick<TaskMessage, "id">[];
   managedWorkspaces: readonly ManagedWorkspace[];
   durableJobs: readonly DurableJob[];
   integrationQueueEntries: readonly IntegrationQueueEntry[];
 }>;
+
+/** Mailbox refs locate original durable user intent. No separate acknowledgement
+ * state is introduced: finish the current native turn and let the existing
+ * notification delivery present the new input before declaring completion. */
+export function pendingCompletionMessages(store: TaskStore, taskId: string): TaskMessage[] {
+  const mailbox = store.getWorkMailbox({ kind: "role", taskId, roleName: "leader" });
+  const refs = [...(mailbox?.pending?.refs ?? [])];
+  const processing = mailbox?.processing;
+  if (processing?.owner.startsWith("leader-notification:")) {
+    const native = store.getTaskRoleSessionSet(taskId, "leader")?.providerBinding?.run;
+    if (native?.attemptId !== processing.batchId
+      || !["accepted", "completed", "failed", "cancelled"].includes(native.status)) {
+      refs.push(...processing.batch.refs);
+    }
+  }
+  const ids = new Set(refs.filter(ref => ref.type === "message" && ref.taskId === taskId).map(ref => ref.id));
+  return operationalTaskRecords(store.listMessages(taskId), store.listEvents(taskId), "message")
+    .filter(message => ids.has(message.id)
+      && (message.kind === "user" || message.kind === "operator") && message.wakePolicy !== "none");
+}
 
 const ACTIVE_JOB_STATUSES = new Set([
   "queued",
@@ -102,6 +127,15 @@ export function projectCompletionReadiness(
   const blockers: CompletionBlocker[] = [];
   const advisories: CompletionAdvisory[] = [];
   const { task } = facts;
+
+  for (const message of facts.pendingUserMessages ?? []) {
+    blockers.push({
+      code: "pending-user-input",
+      ref: ref("message", message.id),
+      reason: `User message ${message.id} is still awaiting Leader delivery.`,
+      fix: `finish the current native turn, read the next notification and message ${message.id}, then reconsider completion`
+    });
+  }
 
   // A pending/running Task-final Review must be resumed or blocked first.
   for (const round of facts.reviewRounds) {

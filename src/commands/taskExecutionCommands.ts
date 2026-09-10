@@ -84,8 +84,8 @@ export function stopTaskExecutionCommand(
   return store.transaction((tx) => {
     const task = tx.getTask(request.taskId);
     if (task === null) throw usageError(`Task not found: ${request.taskId}.`);
-    if (task.status !== "active") {
-      throw usageError(`Only an active Task can be stopped: ${task.id}.`);
+    if (task.status !== "active" && task.status !== "draft") {
+      throw usageError(`Only an open Task can be stopped: ${task.id}.`);
     }
 
     const changed = task.executionGate.state !== "stopped";
@@ -149,7 +149,7 @@ export function stopTaskExecutionCommand(
       cancelledJobIds: activeJobs.map(({ id }) => id),
       output: changed
         ? `Stopped Task execution: ${task.id}. Progress was preserved; `
-          + `${activeRuns.length} active attempt(s) were terminated and `
+          + `${activeRuns.length} AgentRun record(s) were cancelled and `
           + `${activeJobs.length} DurableJob(s) were cancelled.`
         : `Task execution is already stopped: ${task.id}. Runtime cleanup will be verified.`
     };
@@ -167,8 +167,8 @@ export function startTaskExecutionCommand(
   return store.transaction((tx) => {
     const task = tx.getTask(taskId);
     if (task === null) throw usageError(`Task not found: ${taskId}.`);
-    if (task.status !== "active") {
-      throw usageError(`Only an active Task can be started: ${task.id}.`);
+    if (task.status !== "active" && task.status !== "draft") {
+      throw usageError(`Only an open Task can be started: ${task.id}.`);
     }
     if (task.executionGate.state === "enabled") {
       return { taskId: task.id, changed: false, output: `Task execution is already enabled: ${task.id}.` };

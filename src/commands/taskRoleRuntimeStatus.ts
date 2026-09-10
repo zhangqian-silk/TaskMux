@@ -11,6 +11,7 @@ import {
 import type { TaskStore } from "../storage/taskStore.js";
 import type { TmuxRolePaneState } from "../tmux/tmuxManager.js";
 import type { WorkItem } from "../workItem/workItem.js";
+import { currentProviderConversation, managedProviderTurnId, type ProviderTurnStatus } from "../runtime/providerRuntimeIdentity.js";
 import type { ManagedWorkspace } from "../worktree/managedWorkspace.js";
 import {
   isRoleRunStalled,
@@ -327,12 +328,12 @@ function inspectTaskRoleRuntimeStatus(
   // The active AgentRun snapshot is authoritative for the live Role session. It
   // may point at a ReviewRound-owned workspace, which is intentionally
   // distinct from the WorkItem Develop workspace.
+  const actualWorkspaceRoot = effectiveLaunch?.workspace.root ?? role.workspace;
   const managedWorkspace = activeRun?.workspace
-    ?? (activeRun?.workItemId === undefined
-      ? store.getTaskWorkspace(taskId)
-      : store.getWorkItemWorkspace(taskId, activeRun.workItemId));
+    ?? store.listManagedWorkspaces(taskId).find(({ root }) => root === actualWorkspaceRoot)
+    ?? null;
   const workspace: TaskRoleWorkspaceStatus = managedWorkspace === null
-    ? { managed: false, path: role.workspace }
+    ? { managed: false, path: actualWorkspaceRoot }
     : { ...managedWorkspace, managed: true };
   const events = store.listEvents(taskId);
   const sessionTokens = projectSessionTokenMetrics(
@@ -361,6 +362,11 @@ function inspectTaskRoleRuntimeStatus(
     : latestStallKind(events, activeRun.id);
   const execution = activeRun === null ? undefined
     : runExecutionObservation(activeRun, sessions?.providerBinding, events);
+  const conversation = sessions?.providerBinding == null
+    ? undefined : currentProviderConversation(sessions.providerBinding);
+  const currentProvider = nativeSession !== null
+    && conversation?.conversationId === nativeSession.nativeSessionId
+    ? sessions?.providerBinding : undefined;
   const computedHealth = calculateHealth(
     role,
     activeRun,
@@ -370,9 +376,16 @@ function inspectTaskRoleRuntimeStatus(
     tmux,
     openInputRequestCount,
     stalled,
-    runtime
+    runtime,
+    currentProvider?.run?.status,
+    currentProvider != null && conversation?.recoverability === "unrecoverable"
   );
-  const health = execution !== undefined && computedHealth.health === "running" && execution.delivery !== "accepted"
+  const retainedInput = sessions?.providerBinding?.run;
+  const health = nativeSession === null && retainedInput != null
+    && ["submitting", "accepted", "delivery-unknown"].includes(retainedInput.status)
+    ? { health: "needs-attention" as const,
+        healthReason: `Session cache is unbound; retained native input is ${retainedInput.status}. Inspect or replace this Role's Session.` }
+    : execution !== undefined && computedHealth.health === "running" && execution.delivery !== "accepted"
     ? { health: execution?.delivery === "delivery-unknown" ? "needs-attention" as const : "awaiting-provider-acceptance" as const,
         healthReason: `Execution record is open; native admission is ${execution?.delivery ?? "unobserved"}.` }
     : computedHealth;
@@ -444,7 +457,9 @@ function calculateHealth(
   tmux: TaskRoleTmuxStatus,
   openInputRequestCount: number,
   stalled: boolean,
-  runtime: TaskRoleRuntimeStatus["runtime"]
+  runtime: TaskRoleRuntimeStatus["runtime"],
+  nativeInputStatus?: ProviderTurnStatus,
+  nativeConversationUnrecoverable = false
 ): Pick<TaskRoleRuntimeStatus, "health" | "healthReason"> {
   if (runtimeCleanupPending && nativeSession === null) {
     return {
@@ -467,6 +482,13 @@ function calculateHealth(
     };
   }
   if (tmux.state === "exited") {
+    if (nativeSession?.status === "ended" && nativeSession.endReason === "stopped"
+      && activeRun === null && !runtimeCleanupPending
+      && !["submitting", "accepted", "delivery-unknown"].includes(nativeInputStatus ?? "")) {
+      return role.name === "leader" && openInputRequestCount > 0
+        ? { health: "blocked-input", healthReason: `${openInputRequestCount} durable InputRequest(s) still require user input` }
+        : { health: "idle", healthReason: "the Session was deliberately stopped; no native input remains unsettled" };
+    }
     return {
       health: "needs-attention",
       healthReason: "the tmux pane exited; Provider Conversation/continuation state is unobservable"
@@ -523,6 +545,20 @@ function calculateHealth(
   if (nativeSession?.status === "ended" && tmux.state === "running") {
     return { health: "needs-attention", healthReason: "a stopped native session has a live tmux pane" };
   }
+  if (nativeSession?.status === "active" && tmux.state === "running") {
+    if (nativeConversationUnrecoverable) {
+      return { health: "needs-attention", healthReason: "the native conversation cannot resume; stop its idle Session and explicitly select a new one" };
+    }
+    if (nativeInputStatus === "submitting") {
+      return { health: "awaiting-provider-acceptance", healthReason: "native input is submitting; no AgentRun is required for a notification" };
+    }
+    if (nativeInputStatus === "accepted") {
+      return { health: "running", healthReason: "accepted native input is awaiting its terminal, independently of AgentRun records" };
+    }
+    if (nativeInputStatus === "delivery-unknown") {
+      return { health: "needs-attention", healthReason: "native input disposition is unknown; absence of an AgentRun does not prove idle" };
+    }
+  }
   if (role.name === "leader" && openInputRequestCount > 0) {
     return {
       health: "blocked-input",
@@ -545,51 +581,48 @@ function projectTaskRoleRuntime(
   roleName: string,
   now: Date
 ): TaskRoleRuntimeStatus["runtime"] {
-  if (run === null || session === null) return null;
+  if (session === null) return null;
+  const observed = store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding?.run;
+  // A newly admitted Run must not inherit the preceding input's receipt. A
+  // terminal Run no longer occupies the active index, but its exact binding
+  // still identifies the observations to render.
+  const native = run !== null && managedProviderTurnId(observed) !== run.id ? undefined : observed;
+  if (run === null && native == null) return null;
   let driverId: string;
   try {
-    driverId = builtinDriverIdForAdapter(run.effective.adapterId);
+    driverId = builtinDriverIdForAdapter(run?.effective.adapterId ?? session.adapterId);
   } catch {
     return null;
   }
-  const fence = {
-    taskId: run.taskId,
-    roleName: run.roleName,
-    runId: run.id,
-    agentId: run.effective.agentId,
+  const createdAt = run?.createdAt ?? native!.submittedAt;
+  const updatedAt = run?.updatedAt ?? native!.updatedAt;
+  const receiptId = native?.attemptId ?? formatRunReceiptId(taskId, run!.id);
+  const basicFence = {
+    taskId,
+    roleName,
+    ...(run?.id === undefined && native?.runId === undefined ? {} : { runId: run?.id ?? native?.runId }),
+    agentId: run?.effective.agentId ?? session.agentId,
     driverId,
     nativeSessionId: session.nativeSessionId,
-    nativeTurnId: runtimeNativeTurnId(
-      events,
-      {
-        taskId: run.taskId,
-        roleName: run.roleName,
-        runId: run.id,
-        agentId: run.effective.agentId,
-        driverId,
-        nativeSessionId: session.nativeSessionId,
-        receiptId: store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding?.run?.attemptId
-          ?? formatRunReceiptId(run.taskId, run.id)
-      }
-    ) ?? run.id,
-    receiptId: store.getTaskRoleSessionSet(taskId, roleName)?.providerBinding?.run?.attemptId
-      ?? formatRunReceiptId(run.taskId, run.id)
+    receiptId
   };
-  let projection = projectRuntimeTaskEvents(fence, run.createdAt, events);
+  const nativeTurnId = native?.nativeTurnId ?? runtimeNativeTurnId(events, basicFence);
+  const fence = { ...basicFence, ...(nativeTurnId === undefined ? {} : { nativeTurnId }) };
+  let projection = projectRuntimeTaskEvents(fence, createdAt, events);
   projection = projectRuntimeObservation(projection, createRuntimeObservation({
     schemaVersion: 4,
-    eventId: `runtime-host-${run.id}`,
-    semanticKey: `runtime-host-${run.id}`,
+    eventId: `runtime-host-${receiptId}`,
+    semanticKey: `runtime-host-${receiptId}`,
     kind: "host.observed",
     authority: "host",
-    receivedAt: run.updatedAt,
+    receivedAt: updatedAt,
     fence,
     payload: { alive: tmux.state === "running" }
   }));
   // The semantic progress fence is the same durable fold the scheduler stall
   // pass consumes, so CLI/Web/scheduler share one progress clock.
-  const semanticProgress = latestRunDurableProgressAt(store, taskId, roleName, run.id)
-    ?? { progressAt: run.createdAt };
+  const semanticProgress = (run === null ? undefined : latestRunDurableProgressAt(store, taskId, roleName, run.id))
+    ?? { progressAt: createdAt };
   const classification = classifyRuntimeHealth({
     projection,
     semanticProgressAt: semanticProgress.progressAt,
@@ -626,7 +659,7 @@ function runtimeNativeTurnId(
   expected: Readonly<{
     taskId: string;
     roleName: string;
-    runId: string;
+    runId?: string;
     agentId: string;
     driverId: string;
     nativeSessionId: string;

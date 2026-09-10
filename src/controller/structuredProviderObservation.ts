@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { callController } from "../core/controllerClient.js";
+import { callController, ControllerClientError } from "../core/controllerClient.js";
 import { builtinAgentDriverRegistry } from "../runtime/builtinAgentDrivers.js";
 import { standardAgentError } from "../runtime/agentError.js";
 import type { ProviderDeliveryFailure } from "../runtime/agentError.js";
@@ -26,6 +26,57 @@ import type { RuntimeHookRunFence } from "./runtimeHookRunFence.js";
 import { openCurrentTaskStore } from "../storage/currentTaskStore.js";
 
 let structuredSequence = 0;
+
+export async function publishStructuredProviderAttachmentExit(input: Readonly<{
+  home: string; environment: NodeJS.ProcessEnv; nativeSessionId: string;
+  attemptId?: string; nativeTurnId?: string; failed: boolean; observedAt: string;
+}>): Promise<void> {
+  const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
+  const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
+  const owner = resolveRuntimeHookRunFence(input.environment, adapterId, input.nativeSessionId, {
+    terminal: true, attemptId: input.attemptId, nativeTurnId: input.nativeTurnId
+  });
+  await persistAndApply(input.home, [observation({
+    kind: input.failed ? "session.failed" : "session.ended", observedAt: input.observedAt,
+    sequence: nextStructuredSequence(), ordinal: 0,
+    fence: {
+      taskId: owner.taskId, roleName: owner.roleName, agentId: owner.agentId, driverId: driver.id,
+      nativeSessionId: input.nativeSessionId, conversationId: input.nativeSessionId,
+      ...(owner.runId === undefined ? {} : { runId: owner.runId }),
+      ...(input.attemptId === undefined ? {} : { receiptId: input.attemptId }),
+      ...(input.nativeTurnId === undefined ? {} : { nativeTurnId: input.nativeTurnId })
+    }
+  })], owner.taskId, owner.roleName);
+}
+
+export async function publishStructuredProviderActivity(input: Readonly<{
+  home: string;
+  environment: NodeJS.ProcessEnv;
+  activity: import("../runtime/structuredProviderHost.js").StructuredProviderActivity;
+}>): Promise<void> {
+  const activity = input.activity;
+  const adapterId = requireIdentity(input.environment.YUI_ADAPTER_ID, "Agent adapter id");
+  const driver = builtinAgentDriverRegistry().requireByAdapterId(adapterId);
+  const owner = resolveRuntimeHookRunFence(input.environment, adapterId, activity.nativeSessionId, {
+    nativeTurnId: activity.nativeTurnId, attemptId: activity.attemptId
+  });
+  const event = observation({
+    kind: activity.phase === "model" ? "activity.observed" : `operation.${activity.phase}`,
+    observedAt: activity.observedAt, sequence: nextStructuredSequence(), ordinal: 0,
+    fence: {
+      taskId: owner.taskId, roleName: owner.roleName,
+      ...(owner.runId === undefined ? {} : { runId: owner.runId }),
+      agentId: owner.agentId, driverId: driver.id,
+      nativeSessionId: activity.nativeSessionId, conversationId: activity.conversationId,
+      receiptId: activity.attemptId,
+      ...(activity.nativeTurnId === undefined ? {} : { nativeTurnId: activity.nativeTurnId })
+    },
+    payload: activity.phase === "model"
+      ? { activity: "model", activityId: activity.id }
+      : { operation: "tool", operationId: activity.id }
+  });
+  await persistAndApply(input.home, [event], owner.taskId, owner.roleName);
+}
 
 /** An exact provider item id is evidence of visible input, not an inferred
  * human author. The original managed request is never replaced.
@@ -473,12 +524,19 @@ async function persistAndApply(
     let result: Readonly<{ outcome?: string }>;
     try {
       result = await callController(home, "runtime.observation-apply", entry, {
-        timeoutMs: 10_000
+        // This is only an eager application hint after durable enqueue, not
+        // native admission. Bound it like the wake signal so a frozen
+        // Controller cannot serialize ten seconds of delay per tool event.
+        timeoutMs: 100
       }) as Readonly<{ outcome?: string }>;
     } catch (error) {
-      // Close the race where the handover begins after the first check but
-      // before this socket call. The durable entry remains pending for replay.
-      if (isForeignHandoverLockHeld(home)) return;
+      // Persistence already succeeded. A stopped, frozen or reconnecting
+      // Controller only delays applying this exact observation; it does not
+      // fail the native execution or poison its reusable Host.
+      if (isForeignHandoverLockHeld(home)
+        || (error instanceof ControllerClientError
+          && ["CONTROLLER_NOT_RUNNING", "CONTROLLER_UNAVAILABLE", "CONTROLLER_TIMEOUT",
+            "CONTROLLER_DELIVERY_UNKNOWN"].includes(error.code))) return;
       throw error;
     }
     // A fast Provider can accept the initial AgentRun before the scheduler call

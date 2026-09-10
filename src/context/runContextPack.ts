@@ -381,7 +381,7 @@ export function buildRunContextPack(store: TaskStore, taskId: string, runId: str
     summaries,
     deltas: pointers.filter((ref) => run.inputs[0]!.input.deltaRefIds.includes(ref.refId)),
     completion: Object.freeze({
-      allowedActions: completionActions(view),
+      allowedActions: completionActions(view, run.effective.executionAuthority),
       exactRunRef: `${taskId}/${runId}`
     })
   };
@@ -816,6 +816,7 @@ function contextView(run: Readonly<Pick<AgentRun, "roleName" | "purpose">>): Age
 }
 
 function writableProjects(store: TaskStore, run: AgentRun, view: AgentRunContextView): readonly string[] {
+  if (run.effective.executionAuthority === "planning") return Object.freeze([]);
   if (view === "leader") return Object.freeze(store.getTask(run.taskId)?.projectBindings.map(({ projectId }) => projectId) ?? []);
   if (view === "reviewer") {
     return Object.freeze(run.workspace?.entries.filter(({ access }) => access === "write").map(({ projectId }) => projectId) ?? []);
@@ -824,7 +825,11 @@ function writableProjects(store: TaskStore, run: AgentRun, view: AgentRunContext
   return Object.freeze(store.getWorkItem(run.taskId, run.workItemId)?.writeProjectIds ?? []);
 }
 
-function completionActions(view: AgentRunContextView): readonly string[] {
+function completionActions(
+  view: AgentRunContextView,
+  authority: AgentRun["effective"]["executionAuthority"]
+): readonly string[] {
+  if (authority === "planning") return Object.freeze(["finish-turn", "request-input", "request-activation"]);
   if (view === "leader") return Object.freeze(["finish-turn", "complete-task", "request-input"]);
   if (view === "reviewer") return Object.freeze(["checkpoint", "finish-turn"]);
   if (view === "operator") return Object.freeze(["answer-input", "recover"]);

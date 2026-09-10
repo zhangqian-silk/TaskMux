@@ -28,7 +28,20 @@ const RUNTIME_SKILLS = [
 const RUNTIME_DOCUMENTS = [
   "README.md",
   "ARCHITECTURE.md",
+  "docs/architecture/README.md",
+  "docs/architecture/capabilities-and-resources.md",
+  "docs/agent-result-consumption.md",
+  "docs/agent-runtime-drivers.md",
+  "docs/managed-turn-and-session-runtime.md",
+  "docs/observability/README.md",
+  "docs/provider-runtime.md",
+  "docs/release-workflow.md",
+  "docs/roles-and-configuration.md",
+  "docs/sqlite-control-plane-design.md",
+  "docs/task-dag-semantics.md",
+  "docs/task-delivery.md",
   "docs/task-local-identity.md",
+  "docs/testing/verification-levels.md",
   "docs/plugin-sdk.md",
   "i18n/README.zh-CN.md",
   "LICENSE"
@@ -76,6 +89,12 @@ for (const sourceName of runtimeSources) {
   cpSync(source, destination);
   chmodSync(destination, builtName === "cli.js" ? 0o755 : 0o644);
 }
+const processOwner = resolve(root, "dist/runtime/claude-process-owner");
+if (!lstatSync(processOwner).isFile() || lstatSync(processOwner).isSymbolicLink()) {
+  throw new Error("Build the regular native Claude process owner before runtime assembly.");
+}
+cpSync(processOwner, resolve(output, "dist/runtime/claude-process-owner"));
+chmodSync(resolve(output, "dist/runtime/claude-process-owner"), 0o755);
 for (const name of RUNTIME_DOCUMENTS) {
   const source = resolve(root, name);
   const sourceMetadata = lstatSync(source);
@@ -88,16 +107,33 @@ for (const name of RUNTIME_DOCUMENTS) {
   chmodSync(destination, 0o644);
 }
 
+const expectedSkills = [];
 for (const skill of RUNTIME_SKILLS) {
-  const source = resolve(root, "skills", skill, "SKILL.md");
-  const sourceMetadata = lstatSync(source);
-  if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink()) {
-    throw new Error(`Runtime Skill must be one regular file: ${skill}/SKILL.md.`);
+  const resources = ["SKILL.md"];
+  const references = resolve(root, "skills", skill, "references");
+  if (existsSync(references)) {
+    if (!lstatSync(references).isDirectory() || lstatSync(references).isSymbolicLink()) {
+      throw new Error(`Runtime Skill references must be a regular directory: ${skill}.`);
+    }
+    for (const name of listRegularFiles(references)) {
+      if (!name.endsWith(".md")) {
+        throw new Error(`Unsupported Runtime Skill reference: ${skill}/references/${name}.`);
+      }
+      resources.push(`references/${name}`);
+    }
   }
-  const destination = resolve(output, "skills", skill, "SKILL.md");
-  mkdirSync(dirname(destination), { recursive: true, mode: 0o755 });
-  cpSync(source, destination);
-  chmodSync(destination, 0o644);
+  for (const resource of resources) {
+    const source = resolve(root, "skills", skill, resource);
+    const metadata = lstatSync(source);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      throw new Error(`Runtime Skill resource must be a regular file: ${skill}/${resource}.`);
+    }
+    const destination = resolve(output, "skills", skill, resource);
+    mkdirSync(dirname(destination), { recursive: true, mode: 0o755 });
+    cpSync(source, destination);
+    chmodSync(destination, 0o644);
+    expectedSkills.push(`${skill}/${resource}`);
+  }
 }
 
 const sourcePackage = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -155,14 +191,16 @@ if ("scripts" in runtimePackage || "devDependencies" in runtimePackage) {
 }
 
 const stagedSkills = listRegularFiles(resolve(output, "skills"));
-const expectedSkills = RUNTIME_SKILLS.map((skill) => `${skill}/SKILL.md`).sort();
-if (JSON.stringify(stagedSkills) !== JSON.stringify(expectedSkills)) {
+if (JSON.stringify(stagedSkills) !== JSON.stringify(expectedSkills.sort())) {
   throw new Error("Runtime package must contain exactly the configured Yui Skill files.");
 }
 const stagedRuntime = listRegularFiles(resolve(output, "dist"));
-const expectedRuntime = runtimeSources.map((name) => `${name.slice(0, -3)}.js`).sort();
+const expectedRuntime = [
+  ...runtimeSources.map((name) => `${name.slice(0, -3)}.js`),
+  "runtime/claude-process-owner"
+].sort();
 if (JSON.stringify(stagedRuntime) !== JSON.stringify(expectedRuntime)) {
-  throw new Error("Runtime package must contain exactly the current compiled TypeScript files.");
+  throw new Error("Runtime package must contain exactly the current compiled runtime files.");
 }
 
 // Issue 02: pin the immutable release identity. The manifest lists every

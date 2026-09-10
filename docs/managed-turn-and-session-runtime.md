@@ -1,120 +1,222 @@
-# Managed AgentRun and Session Runtime
+# Session, AgentRun and notifications
 
-The current detailed contract is [Leader Session, AgentRun and notifications](architecture/yui-handbook-full-architecture/architecture/07-session-run-contract.md).
-This document keeps the established link and summarizes the same contract.
-
-## Product decision
+## Authority
 
 Task, WorkItem, Message, Decision, Artifact and Project Knowledge preserve
-durable work. Session identifies the actual native conversation and captured
-authority. AgentRun records an explicitly requested execution and its original
-result. Host is a disposable attachment; it does not own Task truth.
+durable work. Session identifies a native conversation and its captured
+authority. AgentRun records an explicitly requested execution and original
+result. AgentHost is a disposable attachment, not the owner of Task truth.
 
-Direct user conversation and ordinary Leader notifications do not implicitly
-create AgentRuns. A valid Leader Session can read current Context and preserve
-requirements without an active Run or a self-wake. Explicitly dispatched
-Workers, Reviewers and Leader executions load their exact Run Context Pack.
+A current, non-revoked Leader Session can read Context and save scoped Task
+facts, including a formal InputRequest, without an active Run. Its exact
+Session is the request's origin; an actual Run is included when present.
+The question survives that execution ending and remains open until answered
+or cancelled. Worker and Reviewer commands retain exact
+Assignment checks. Session replacement, Role binding, Task scope and resource
+grants are checked at their respective boundaries. An active Run pointer is not
+proof that an unrelated command in the same Session came from that Run.
 
-## Execution path
+Native chat, Goal continuations and ordinary Leader notifications do not
+automatically create Runs. Explicit dispatch loads one exact Run Context Pack.
 
-Read facts, prepare the fixed Session, submit the intended input, and observe
-its exact receipt and terminal. Session existence, input acceptance, native
-activity, Run result and Task acceptance are distinct facts.
-
-Busy with proven non-acceptance preserves the input and permits another
-transport attempt on the same Session. Accepted input is never repeated.
-Transport-only submission is not native acceptance. Unknown submission remains
-fenced and observable; it does not revoke unrelated Leader management actions.
-Definitive rejection terminalizes the corresponding execution.
-
-Ordinary notifications claim a fixed mailbox batch and settle it at confirmed
-acceptance, without requiring a final prose report. Later messages remain
-pending. No periodic force-steer interrupts the user's conversation.
-
-## Owner-directed collaboration
-
-Dispatch establishes an owner and frozen Assignment. Thereafter
-`task message send <task> <body> --to <role> --work-item <id>` (or
-`--review-round <id>`) preserves collaboration for that exact owner. The
-`message.send` capability invokes the same authenticated transaction. The
-Message carries a logical recipient and the original owner Run reference;
-its continuation Run is delivery evidence, not another Message or a result copy.
-
-Busy input remains saved. The Controller reserves at most sixteen ordered
-Messages in one transaction with the next AgentRun, then uses the ordinary
-Provider admission path. Terminal collection checks pending Messages in its
-existing result transaction, so both sides of the send/terminal race are covered.
-No Message means no continuation. The same compatible native Session,
-worktree (including unfinished files), effective permissions and frozen
-Assignment are retained. The bounded Snapshot adds authorized Message refs
-and the preceding original result, without expanding workspace or candidate
-authority. Reading it is not an acknowledgement.
-
-Changed ownership, unavailable compatible Sessions, terminal WorkItems/Tasks
-and obsolete Review candidates produce visible nondelivery reasons. Pending
-Messages may be handed to an already-dispatched successor for the same work
-only through explicit `task message handoff <task/message> --to <role>`.
-Replicated Assignment continuations remain an explicit Lane/Group operation;
-a Message does not silently choose or rewrite a Producer or synthesis lineage.
-
-Unknown Leader notifications retain their exact unconsumed wake, input window
-and delivery event. `task wake show` includes delivery/resolution facts even
-when they occur after that input window. `task wake resolve <task> <wake>
---reason <quiescence-evidence>` releases only that claim, without replay or
-invented acceptance, after the existing native execution fences are clear.
-Unknown or active native effects still prevent conflicting admission; they do
-not prevent scoped local facts or independent Role work. This is an explicit
-Agent/Operator operation, not an automatic recovery worker.
-
-## Results and recovery
-
-The runtime stores one AgentRunResult and a reference Message in the existing
-terminal transaction. `task message show <task/message>` expands the original
-report. Review and Candidate reference the result; Core does not parse prose
-into an acceptance verdict.
-
-Native user input with a reliable item identity may be retained as provider
-observation. A new native Turn does not complete another request sharing its
-Session. Message UUIDs are not invented nativeTurnIds. Local stream correlation
-is used only where the serialized provider transport proves it.
-
-A cancellation request is not physical quiescence. Exact terminal evidence
-settles only its original execution and preserves partial output. Host exit,
-idle UI and unrelated native results are not substitutes for that evidence.
-The Agent chooses recovery; Yui does not start a rescue worker or choose a new
-model automatically.
-
-## Session authority and compatibility
-
-Session identity is checked against the current Role binding and revocation
-facts. Captured planning authority does not become delivery authority when the
-Task activates. Actual workspace conflicts remain enforced at their resource
-boundary. These are local control-plane guarantees, not an OS sandbox against
-another process with the same user's filesystem access.
-
-AgentRun is the current API vocabulary. Historical IDs and provider-native
-terms remain opaque. The private inbox v1 codec retains pending wire facts;
-the CLI's old `task turn` spelling is a bounded alias for existing Manifests.
-There is one current domain schema, migrated centrally from storage 12 to 13
-after adopting the upstream plugin and Draft-planning migrations (1–12 unchanged).
-Optional Message ownership/continuation/handover fields belong to that same
-unreleased transition. Historical planning Runs and their exact Session snapshots
-retain planning authority; Task activation never backfills them as delivery.
-Existing Messages remain unchanged and never acquire
-guessed recipients or automatic executions during migration.
-See the detailed contract for migration, Host protocol v5, rollback and the
-T07/T08/T09 adoption boundary.
-
-## Inspection
+## Context
 
 ```sh
 yui task context <task> --json
+yui task context delta <task> --after <coreCursor>
+yui task context inspect <task> --store <store> --ref <id>
+yui task run context <task/run> --json
+```
+
+Task Context is a bounded authorized working set with a current core cursor.
+Delta pages immutable events through a fixed upper bound; inspect expands a
+current record and can require an exact digest. Runtime observations state their
+own coverage and do not become another durable snapshot.
+
+Run Context freezes Assignment, source references, effective configuration and
+workspace boundaries. A Role edit does not rewrite an existing Assignment.
+Reading either Context does not acknowledge input or create execution authority.
+Every managed input points to the exact Session Manifest and CLI entry. The
+Run Pack is a reference directory: read the relevant requirement and message
+bodies before acting, rather than treating a successful load as the deliverable.
+Planning Packs expose no Project write scope or Task-completion permission.
+
+Current Task reads also expose untargeted user/Operator messages to the Task's
+current Worker and Reviewer Sessions, including requirements added after their
+Run snapshot was frozen. Use `task message list/show` or Task Context inspect
+to read those original records. This does not rewrite the frozen Assignment or
+grant delivery authority. Directed messages, other Roles' results and other
+Tasks remain outside the caller's scope unless its Assignment authorizes them.
+
+## Dispatch and notification
+
+An explicit dispatch persists execution intent before native submission.
+Ordinary Leader wake instead claims a fixed TaskWake/mailbox batch and submits
+a notification through the same Host/Endpoint. Confirmed acceptance consumes
+only that batch; later input remains pending. A notification requires no final
+execution report and does not force steer into a busy native conversation.
+
+Leader-local edits preserve durable events but do not create self-wakes.
+Other sources' input remains durable while the Leader is busy or unavailable.
+Operator notifications likewise carry TaskEvent/InputRequest read pointers,
+not duplicated Task narrative.
+Human input, explicit execution entry and activation failure are delivered
+promptly through the existing wake mechanism. Worker results retain their
+aggregation window. Busy native input still preserves pending messages.
+
+| Evidence | Disposition |
+| --- | --- |
+| Busy with proven non-acceptance | Preserve input; a new transport attempt may use the same Session |
+| Native acceptance | Never resend; wait for the exact terminal if this is an execution |
+| Transport write only | Retain transport evidence; do not claim native acceptance |
+| Explicit rejection | Retain the original cause and settle the corresponding admission |
+| Unknown acceptance/effect | Retain the attempt and conflicting-resource fences; do not replay or switch Session |
+
+Missing receipt after a crash is not proof of non-acceptance. Structured
+`SESSION_BUSY` is evidence; text containing “busy” is not a retry contract.
+
+## Continue existing work
+
+```sh
+yui task message send <task> "Continue with the clarified requirement" \
+  --to <role> --work-item <work-item>
+yui task message handoff <task/message> --to <successor-role>
+```
+
+Review clarification uses `--review-round` instead of `--work-item`.
+Message retains recipient, work association and owner Run. When the Role is
+busy, saving returns without interrupting it. Once it becomes available, a
+bounded ordered batch can create a continuation Run atomically associated with
+those messages. The existing Assignment, effective permissions, workspace and
+unfinished files remain; the snapshot adds authorized messages and the preceding
+original result. Duplicate terminals cannot assign the messages twice.
+
+Ownership changes, incompatible Sessions, terminal work and obsolete Review
+candidates retain visible nondelivery reasons. Explicit handoff only targets an
+already-dispatched successor for the same work. Replicated Producer/synthesis
+lineage is not silently rewritten by a message.
+
+Unknown Leader notifications preserve their wake and input window:
+
+```sh
+yui task wake show <task> <wake>
+yui task wake resolve <task> <wake> --reason <quiescence-evidence>
+```
+
+Resolve releases the claim after native-effect fences are clear. It neither
+replays the notification nor invents acceptance or completion. Independent
+Role work and legal local facts are not a Task-wide recovery lock.
+
+## Exact results
+
+The native terminal settles only the matching execution. Known native Turn IDs
+must match; a serialized stream may use proven local attempt correlation.
+Message UUIDs are not native Turn IDs. Unrelated native chat in the same Session
+cannot complete the pending Yui request.
+
+The terminal transaction saves one AgentRunResult and a reference Message.
+`resultRef: { type: "agent-run-result", runId: "run-12" }` expands the original
+report rather than copying it. Candidate and ReviewRound retain provenance;
+Core does not derive semantic acceptance from prose.
+
+Cancellation requests do not prove physical quiescence. Exact terminal evidence
+preserves partial output and settles the original execution only. Host exit
+does not imply shared Provider or descendant processes have stopped.
+
+## Draft planning and activation
+
+`EffectiveLaunchSnapshot.executionAuthority` captures `planning | delivery`.
+It is not recalculated from the Task's current lifecycle. Planning permits
+local planning facts, not delivery dispatch, candidate adoption, integration or
+delivery workspace Jobs.
+
+The initial Draft planning dispatch creates a planning Run and binds only its
+initial message batch. Acceptance or an exact terminal consumes that batch;
+failure does not repeatedly recreate the same planning execution. Subsequent ordinary
+messages in the existing planning Session remain notifications. Operator submit
+and direct Task messages both reach that Session. Draft plan/WorkItem edits
+preserve execution history; external edits notify the Leader, while its own
+planning edits do not create a self-wake.
+
+New Draft Roles use a Task-specific planning directory under
+`<YUI_HOME>.task-runtimes/planning`, outside the control Home and delivery trees.
+A planning Run can use `task activation request` to persist intent and return an
+`afterPlanningRun` reference immediately. Its terminal releases the request for
+Controller admission; cancelled intent is not resurrected.
+The Leader can also request activation during ordinary discussion without an
+AgentRun: the Controller adopts its durable intent once the native input is
+settled. No synthetic Run or extra user “continue” is required.
+
+For bound Git Projects, `--environment empty` means no additional environment:
+the Projects still receive managed worktrees. `scratch` selects a Task-owned
+directory. `local` requires a registered local Resource and its grant; a Project
+ID is not a local Resource ID.
+
+Resource preparation precedes the atomic adoption of Task status and workspace
+ownership. A failed adoption records a failed request and notifies the Leader
+with durable facts; it does not repeatedly prepare resources on unchanged
+failure. The Leader chooses an explicit retry or corrected request. Successful
+activation likewise leaves a delivery notification for the Leader.
+Activation never mutates the live Session into delivery authority. A changed
+launch must pass the existing Session replacement/environment boundary.
+Planning authority is a CLI guarantee, not a hostile-code filesystem sandbox.
+
+## Inspection and lifecycle
+
+```sh
 yui task run list <task>
 yui task run show <task/run> --json
 yui task message show <task/message>
 yui task role session inspect <task> <role>
+yui task execution start <task>
+yui task execution stop <task> --force --reason <reason>
 ```
 
-`task execution start/stop` continues to control Task-level admission, not one
-AgentRun. Archive remains a separate authorized action after work and resource
-ownership are settled.
+Task execution start/stop controls Task admission, not Task acceptance.
+Stop first fences new Yui work, then interrupts each exact owned native input
+and confirms its terminal before removing the attachment. This also covers
+ordinary Leader notifications without Runs. Unknown native state blocks cleanup;
+stopping a proxy alone never proves a shared Turn ended. Start preserves durable
+progress and admits new input after the old occupancy is settled.
+Draft planning can be paused/resumed, and a failed planning Run retries with
+planning authority. An authorized user/Operator can stop an idle Draft Session
+through `task role session stop`; it need not activate the Task merely to recover.
+`task role session new <task> <role> --reason <reason>` persists an explicit
+replacement request. Reuse is a preference, not a requirement to prove the old
+conversation unrecoverable. The request is legal while an AgentRun is active,
+the Session is ended, or previous cleanup is pending. A Leader may also request
+its own replacement and end its current turn.
+
+`task role session stop` can also stop a running Role without first changing
+its Run status. It retains the native conversation for possible reuse. Pending
+Messages remain intent and may start a continuation after the stop; use Task
+execution stop when the whole Task must remain paused. For self-replacement,
+use the asynchronous `session new` request rather than a synchronous self-stop.
+
+The existing runtime cleanup path stops the exact native execution, closes this
+Role's remaining engineering attempts as cancelled, retains Session/Run history
+and workspaces, and selects a fresh conversation. Other Roles and Task acceptance
+remain unchanged. The Leader receives a new context notification; it decides
+which Worker/Reviewer attempts to retry. Pending input references survive the
+replacement, including records older than the new notification's time window.
+
+An absent Host does not remove the recovery entry point. Codex can be inspected
+and interrupted through a disposable native control connection without starting
+a model. Dedicated Claude process custody is persisted independently of the
+Host. Real unconfirmed execution still prevents conflicting resource reuse;
+cleanup failure is a durable diagnostic routed to the supervisor, not a reason
+to invent acceptance or delete the Task. A preallocated ID alone is not proof
+a conversation exists.
+Codex may retain `systemError` after a failed native Turn. That label alone
+neither proves activity nor authorizes cleanup: Yui checks the latest native
+Turn's terminal metadata and drains background execution before replacing the
+Session. Unknown or still-running native work remains protected.
+
+Released Leaders retain scoped diagnostic reads of their own Task and context,
+but cannot mutate it or read another Task. Operator diagnostics and Controller
+restart do not first require a healthy Controller; explicit restart can stop
+only the exact same-Home process using PID/start identity when RPC is unavailable.
+Operator storage diagnosis/upgrade also reaches the dedicated migration entry
+without first requiring the Home to already have the target storage version.
+Completion, cancellation and archive have distinct authority and resource
+boundaries. Storage changes use the single [upgrade contract](sqlite-control-plane-design.md).

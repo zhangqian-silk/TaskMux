@@ -16,6 +16,7 @@ import { type GlobalRole, type Role } from "../role/role.js";
 import type { ConfiguredAgent } from "../agent/agent.js";
 import {
   AGENT_OPERATIONAL_ENVIRONMENT_NAMES,
+  NATIVE_AGENT_ENVIRONMENT_NAMES,
   nativeAgentEnvironmentNames,
   YUI_MANAGED_RUNTIME_ENVIRONMENT_NAMES
 } from "../agent/launchEnvironment.js";
@@ -177,13 +178,15 @@ export async function startFileTaskControllerRuntime(
     home,
     options.environment ?? process.env
   );
-  const store = options.store
-    ?? (useWorker
+  const ownedStore = options.store === undefined
+    ? (useWorker
       // The worker owns the event-processing hot path while the scheduler uses
       // the synchronous connection. Both point at the same WAL database and
       // serialize via BEGIN IMMEDIATE + busy_timeout.
       ? new SqliteTaskStore(home)
-      : openCurrentTaskStore(home));
+      : openCurrentTaskStore(home))
+    : undefined;
+  const store = options.store ?? ownedStore!;
   const homeId = store.getHomeIdentity().homeId;
   const durableConfig = store.getConfig();
   // When the worker backend is active, the db-touching observer folds run in
@@ -200,502 +203,522 @@ export async function startFileTaskControllerRuntime(
   const inventoryClient = useWorker
     ? new ResourceInventoryClient()
     : undefined;
-  const schedulerStore = options.schedulerStore
-    ?? new FileSchedulerStoreAdapter(
-      store,
-      openSchedulerTelemetry(home, store.getConfig())
-    );
-  const domainIdentity = options.domainIdentity
-    ?? ephemeralDomainFromEnvironment(options.environment ?? process.env);
-  const planner = options.planner ?? new FileRoleLaunchPlanner(home, store, {
-    environment: options.environment
-  });
-  const tmux = options.tmux ?? new TmuxManager(
-    resolveTmuxBin(durableConfig.tmuxBin),
-    new NodeCommandExecutor(),
-    {
-      yuiHome: home,
-      historyLimit: resolveTmuxHistoryLimit(durableConfig.tmuxHistoryLimit),
-      ...(domainIdentity === undefined
-        ? {}
-        : {
-            onRoleTargetRecorded: (target: string) => {
-              if (!recordEphemeralTmuxTarget(home, domainIdentity.token, target)) {
-                throw new Error(
-                  `Ephemeral tmux target fence could not be recorded: ${target}.`
-                );
-              }
-            }
-          })
-    }
-  );
-  const sessionOwners = new SessionOwnerReconciliation({
-    home,
-    store,
-    environment: options.environment,
-    tmux,
-    onWarning: options.onError
-  });
-  // The runtime inbox is also the low-latency discovery source during a
-  // scheduler-owned launch. Waiting only for the post-pass durable projection
-  // would deadlock behind the same pass that is currently starting the host.
-  const runtimeEventInbox = new FileRuntimeEventInbox(home);
-  const catalogs = options.catalogs
-    ?? new AgentConfigurationCatalogService(home, {
-      environment: options.environment ?? process.env
-    });
-  const sessionHost = options.sessionHost ?? new TmuxSessionHost(planner, tmux, {
-    validateLaunch: async (request) => {
-      const agent = store.getConfiguredAgent(request.agentId);
-      if (agent === null) return;
-      const resolved = await catalogs.resolve({
-        agent,
-        cwd: request.workspace,
-        config: effectiveLaunchConfig(request.effective)
-      });
-      validateAgentLaunchConfiguration(
-        resolved.catalog,
-        effectiveLaunchConfig(request.effective)
+  let closeKernel = async (): Promise<void> => {};
+  let closeWeb = async (): Promise<void> => {};
+  try {
+    const schedulerStore = options.schedulerStore
+      ?? new FileSchedulerStoreAdapter(
+        store,
+        openSchedulerTelemetry(home, store.getConfig())
       );
-    },
-    waitForNativeSession: async (request, signal) => {
-      const owner = request.owner;
-      if (owner.scope !== "task") {
-        throw new Error("Native session discovery requires a Task runtime owner.");
-      }
-      while (!signal.aborted) {
-        const session = schedulerStore.getRoleSession(
-          owner.taskId,
-          owner.roleName,
-          request.agentId
-        );
-        if (
-          session !== null && session.status === "active"
-          && session.adapterId === request.adapterId
-          && typeof session.nativeSessionId === "string" && session.nativeSessionId.trim().length > 0
-        ) {
-          return session.nativeSessionId;
-        }
-        for (const event of runtimeEventInbox.list()) {
-          if (
-            event.type === "runtime-observation" && event.observation.kind === "session.started"
-            && event.observation.fence.taskId === owner.taskId
-            && event.observation.fence.roleName === owner.roleName
-            && event.observation.fence.agentId === request.agentId
-            && event.observation.fence.runId === request.runId
-            && typeof event.observation.fence.nativeSessionId === "string"
-            && event.observation.fence.nativeSessionId.trim().length > 0
-          ) {
-            return event.observation.fence.nativeSessionId;
-          }
-        }
-        await abortableDelay(50, signal);
-      }
-      throw new Error("Native session discovery was aborted.");
-    },
-    inactivityTimeoutMs: resolveAgentLaunchInactivityTimeoutSeconds(
-      durableConfig.agentLaunchInactivityTimeoutSeconds
-    ) * 1_000,
-    onHostCreated: ({ binding, pane }) => {
-      sessionOwners.recordHostOwner({
-        owner: binding.owner,
-        agentId: binding.agentId,
-        adapterId: binding.adapterId,
-        ...(binding.nativeSessionId === undefined
-          ? {}
-          : { nativeSessionId: binding.nativeSessionId }),
-        ...(pane.pid === undefined ? {} : { panePid: pane.pid })
-      });
-    }
-  });
-  const promptPush = options.promptPush
-    ?? new AgentHostPromptPushAdapter(home);
-  const runtimeIsolation = options.runtimeIsolation
-    ?? new FileTaskRuntimeIsolation({
-      // A sibling of the exact control Home keeps provider data/cache/tmp out
-      // of both the shared control plane and every managed Git workspace.
-      runtimeRoot: `${resolve(home)}.task-runtimes`,
-      controlPlane: {
-        yuiHome: home,
-        controllerSocketPath: controllerSocketPath(homeId),
-        tmuxNamespace: yuiTmuxServerName(home),
-        globalInstallPaths: [process.execPath]
-      }
-    });
-  const lifecycleHost = {
-    inspectOwner: (owner: Parameters<SessionHostPort["inspectOwner"]>[0]) => (
-      sessionHost.inspectOwner(owner)
-    ),
-    ...(sessionHost.inspectOwners === undefined
-      ? {}
-      : {
-          inspectOwners: (
-            owners: Parameters<NonNullable<SessionHostPort["inspectOwners"]>>[0]
-          ) => sessionHost.inspectOwners!(owners)
-        }),
-    stopOwner: (owner: Parameters<SessionHostPort["stopOwner"]>[0]) => {
-      // Issue 03: the durable `stopped` transition is gated on physical
-      // exit proof. A blocked result keeps the Session non-terminal and
-      // preserves owner records for Operator recovery.
-      return sessionOwners.terminateOwner(owner).then((result) => {
-        if (result.outcome === "stop-blocked") {
-          (options.onError ?? (() => undefined))(
-            new Error(
-              `Role runtime cleanup could not prove physical exit: ${
-                result.remaining
-                  .map(({ record, detail }) => `PID ${record.providerRoot.pid}: ${detail}`)
-                  .join("; ")
-              }`
-            )
-          );
-        }
-        return result.outcome === "stop-confirmed";
-      });
-    },
-  };
-  const resourceActivity = createRuntimeResourceActivityTracker();
-  let runningRuntime: RunningFileTaskController["runtime"] | undefined;
-  let runningController: RunningFileTaskController | undefined;
-  const launchCoordinator = new RuntimeLaunchCoordinator(
-    schedulerStore,
-    sessionHost,
-    {
-      ...(options.now === undefined ? {} : { now: options.now }),
-      assertCurrent: (request) => {
-        assertRuntimeLaunchRequestCurrent(store, request);
-      },
-      runtimeIsolation
-    }
-  );
-  // One inventory scan per scheduler pass. When the inventory worker is active
-  // the blocking /proc scan runs there; otherwise it runs on the main thread.
-  const scanInventory = (panes: readonly RuntimePaneFact[]) => inventoryClient !== undefined
-    ? inventoryClient.scan({
-        currentHome: home,
-        scope: "current",
-        panes,
-        ...(options.environment === undefined
-          ? {}
-          : { environment: options.environment })
-      })
-    : scanControllerResourceInventory({
-        currentHome: home,
-        scope: "current",
-        panes,
-        tmuxBin: resolveTmuxBin(store.getConfig().tmuxBin),
-        ...(options.environment === undefined
-          ? {}
-          : { environment: options.environment })
-      });
-  const delivery = options.delivery ?? new ExecutorRegistry(
-    planner,
-    tmux,
-    agentProcessReadinessProbe,
-    {
-      sessionHost,
-      promptPush,
-      launchCoordinator,
-      roleResourceInventory: async (panes, inputs) => {
-        const inventory = await scanInventory(panes);
-        return inventory.resources.flatMap((resource) => {
-          if (resource.kind !== "agent-session") return [];
-          const owner = resource.owner;
-          if (owner.kind !== "task-role") return [];
-          const active = resource.state === "running" || resource.state === "current";
-          const input = inputs.find((candidate) => (
-            candidate.taskId === owner.taskId
-            && candidate.roleName === owner.roleName
-          ));
-          if (input === undefined) return [];
-          const identity = owner.runId === undefined || owner.adapterId === undefined || (owner.nativeSessionId === undefined) || (owner.nativeSessionId !== undefined && owner.nativeSessionId.trim().length === 0)
-            ? undefined
-            : {
-                taskId: owner.taskId,
-                roleName: owner.roleName,
-                runId: owner.runId,
-                agentId: owner.agentId,
-                adapterId: owner.adapterId,
-                ...(owner.nativeSessionId === undefined
-                  ? {}
-                  : { nativeSessionId: owner.nativeSessionId }),
-              };
-          const changed = !active || input.runId === undefined
-            ? false
-            : resourceActivity({
-                taskId: input.taskId,
-                roleName: input.roleName,
-                runId: input.runId,
-                agentId: input.agentId,
-                adapterId: input.adapterId,
-                ...(input.nativeSessionId === undefined
-                  ? {}
-                  : { nativeSessionId: input.nativeSessionId }),
-              } satisfies RuntimeResourceSampleIdentity, resource);
-          return [{
-            taskId: owner.taskId,
-            roleName: owner.roleName,
-            resource: {
-              observedAt: inventory.observedAt,
-              active,
-              changed: active && changed,
-              ...(identity === undefined ? {} : { identity }),
-              ...(input.progressAt === undefined ? {} : { progressAt: input.progressAt }),
-              cpuTimeMs: resource.cpuTimeMs,
-              ...(resource.ioReadBytes === undefined
-                ? {}
-                : { ioReadBytes: resource.ioReadBytes }),
-              ...(resource.ioWriteBytes === undefined
-                ? {}
-                : { ioWriteBytes: resource.ioWriteBytes }),
-              rssBytes: resource.rssBytes
-            }
-          }];
-        });
-      }
-    }
-  );
-  const workspacePreparer = options.workspacePreparer
-    ?? new FileTaskWorkspacePreparer(home, store);
-  const resourceReaper = options.resourceReaper
-    ?? (domainIdentity === undefined
-      ? undefined
-      : createEphemeralResourceReaper({
-          currentHome: home,
-          // The detached Controller owns one YUI_HOME. Keep automatic
-          // recovery bounded to that domain; cross-home cleanup remains an
-          // explicit `controller cleanup --all` inventory operation.
-          scope: "current",
-          environment: options.environment,
-          tmuxBin: resolveTmuxBin(store.getConfig().tmuxBin),
-          // When the worker backend is active, the reaper's scan runs in the
-          // inventory worker too (same cadence, same inventory shape).
-          ...(inventoryClient === undefined
-            ? {}
-            : {
-                scan: () => inventoryClient.scan({
-                  currentHome: home,
-                  scope: "current",
-                  ...(options.environment === undefined
-                    ? {}
-                    : { environment: options.environment })
-                })
-              })
-        }));
-  // Issue 10: automatic Resource GC. The runner self-skips unless
-  // resourcesGcMode=quarantine and resourcesGcAutoQuarantine=true, so wiring
-  // it unconditionally costs one config read per full pass when disabled.
-  const resourceAutoGc = options.resourceAutoGc
-    ?? createResourceAutoGc({
-      home,
-      store,
+    const domainIdentity = options.domainIdentity
+      ?? ephemeralDomainFromEnvironment(options.environment ?? process.env);
+    const planner = options.planner ?? new FileRoleLaunchPlanner(home, store, {
       environment: options.environment
     });
-  const lifecycleDispatcher = createRuntimeLifecycleDispatcher(
-    store,
-    schedulerStore,
-    sessionHost,
-    options.dispatcher,
-    launchCoordinator,
-    planner
-  );
-  // Process-exit observations are persisted by the Agent Host before socket
-  // delivery. Drain them while this Controller is still the only storage
-  // writer and before it begins accepting new work after a handover.
-  await replayRuntimeProcessExitOutbox(home, async (observation) => {
-    await lifecycleDispatcher("runtime.process-exit-observe", observation);
-  });
-  // f7/rr5: This same inbox feeds the supervisor's terminal channel and the
-  // runtime event processor. When a Job reaches a terminal state, the
-  // supervisor enqueues a durable-job-terminal event; the processor drains it
-  // on the next pass, waking the Controller immediately instead of waiting for
-  // the poll interval.
-  const kernel = createKernelPorts(store, createLinuxProcessPort(), (taskId) => {
-    runningRuntime?.signal(`task:${taskId}`);
-  });
-  const webWorkflow = new FileTaskWorkflowRuntime(home, store, schedulerStore, planner, tmux, workspacePreparer, {
-    environment: options.environment ?? process.env, onError: options.onError
-  });
-  const webSurface = createWebTaskSurface(store, { runtime: {
-    notifyStateChanged: (taskId) => runningRuntime?.signal(`task:${taskId}`),
-    notifyMailboxChanged: (target) => {
-      if (target.kind === "role") runningRuntime?.signal(`role:${target.taskId}/${target.roleName}`);
-      else if (target.kind === "task") runningRuntime?.signal(`task:${target.taskId}`);
-    },
-    reconcileTask: (taskId) => runningRuntime?.signal(`task:${taskId}`)
-  }, yuiHome: home });
-  const surfaces = new SurfaceContributions(kernel.capabilities.registry);
-  const web = createControllerWeb(store, {
-    surface: webSurface,
-    answerInput: async ({ taskId, inputId, answer }) => webSurface.answer(taskId, inputId, answer),
-    panels: {
-      list: (taskId) => surfaces.listPanels(kernel.capabilities.authenticateWebQuery(taskId)),
-      read: (taskId, ref, input) => surfaces.readPanel(kernel.capabilities.authenticateWebQuery(taskId), ref, input)
-    },
-    terminal: new TmuxWebTerminalService({
-      yuiHome: home, tmuxBin: resolveTmuxBin(store.getConfig().tmuxBin), tmux,
-      prepareGlobalRole: (roleName) => webWorkflow.prepareGlobalRoleEnter(roleName),
-      environment: options.environment ?? process.env, onError: options.onError
-    })
-  });
-  const jobSupervisor = new DurableJobSupervisor({
-    store: schedulerStore,
-    process: kernel.runner,
-    artifacts: createFileArtifactPort(home),
-    authorizeStart: (job) => authorizeJobStart(store, job),
-    // rr6/f1: Bounded supervision wake. The supervisor signals the Controller
-    // after spawning a runner (queued→running adoption) and when a runner
-    // exits (terminal harvest), so a quick job converges without waiting for
-    // the recovery interval. Closes over runningRuntime, which is assigned
-    // once startFileTaskController resolves; a wake during shutdown is a
-    // no-op. The recovery interval stays the cross-restart fallback.
-    wake: (taskId) => {
-      try {
-        runningRuntime?.signal(`task:${taskId}`);
-      } catch {
-        // Controller stopped; the recovery interval remains the fallback.
+    const tmux = options.tmux ?? new TmuxManager(
+      resolveTmuxBin(durableConfig.tmuxBin),
+      new NodeCommandExecutor(),
+      {
+        yuiHome: home,
+        historyLimit: resolveTmuxHistoryLimit(durableConfig.tmuxHistoryLimit),
+        ...(domainIdentity === undefined
+          ? {}
+          : {
+              onRoleTargetRecorded: (target: string) => {
+                if (!recordEphemeralTmuxTarget(home, domainIdentity.token, target)) {
+                  throw new Error(
+                    `Ephemeral tmux target fence could not be recorded: ${target}.`
+                  );
+                }
+              }
+            })
       }
-    },
-    terminalEvents: {
-      deliverTerminalEvent(notice) {
-        try {
-          runtimeEventInbox.enqueueDurableJobTerminal({
-            scope: "task",
-            taskId: notice.taskId,
-            jobId: notice.jobId,
-            status: notice.status as "succeeded" | "failed" | "timed-out" | "cancelled" | "unknown-needs-attention",
-            outcome: notice.outcome
-          });
-        } catch (error) {
-          // Best-effort terminal channel: the terminal transition already
-          // committed. A delivery failure must not fail the reconcile pass.
-          (options.onError ?? (() => undefined))(error);
-        }
-      }
-    },
-    onError: options.onError
-  });
-  const jobControl = kernel.jobs;
-  const continuationReconciler = options.continuationMetadata === undefined
-    ? undefined
-    : new ProviderContinuationReconciliationService(
-        store,
-        schedulerStore,
-        options.continuationMetadata
-      );
-  const running = await startFileTaskController(
-    home,
-    schedulerStore,
-    delivery,
-    (method, params) => method === "web.start" || method === "web.stop" || method === "web.status"
-      ? web.dispatch(method, params) : lifecycleDispatcher(method, params),
-    {
-      intervalMs: options.intervalMs
-        ?? reconciliationIntervalMilliseconds(store.getConfig().reconciliationIntervalSeconds),
-      signalWindowMs: options.signalWindowMs,
-      taskConcurrency: options.taskConcurrency
-        ?? resolveControllerTaskConcurrency(durableConfig.controllerTaskConcurrency),
-      deliveryRetryMs: options.deliveryRetryMs,
-      deliveryRetryLimit: options.deliveryRetryLimit,
-      deliveryTimeoutMs: options.deliveryTimeoutMs
-        ?? resolveDeliveryTimeoutSeconds(durableConfig.deliveryTimeoutSeconds) * 1_000,
-      stallWindowMs: options.stallWindowMs
-        ?? resolveRuntimeHealth(durableConfig.runtimeHealth).stallWindowMs,
-      diagnosticAfterMs: options.diagnosticAfterMs
-        ?? resolveRuntimeHealth(durableConfig.runtimeHealth).diagnosticAfterMs,
-      now: options.now,
-      onError: options.onError,
-      lifecycleHost,
-      jobSupervisor,
-      jobControl,
-      capabilityDispatcher: createCapabilityDispatcher(kernel.capabilities),
-      ...(continuationReconciler === undefined ? {} : { continuationReconciler }),
-      ...(resourceReaper === undefined ? {} : { resourceReaper }),
-      resourceAutoGc,
-      onExpiredEphemeralDomain: (domain) => {
-        if (domain.yuiHome !== home) return;
-        void runningController?.close().catch(options.onError ?? (() => undefined));
+    );
+    const sessionOwners = new SessionOwnerReconciliation({
+      home,
+      store,
+      environment: options.environment,
+      tmux,
+      nativeConnection: (taskId, roleName) => planner.planNativeControl(taskId, roleName),
+      onWarning: options.onError
+    });
+    // The runtime inbox is also the low-latency discovery source during a
+    // scheduler-owned launch. Waiting only for the post-pass durable projection
+    // would deadlock behind the same pass that is currently starting the host.
+    const runtimeEventInbox = new FileRuntimeEventInbox(home);
+    const catalogs = options.catalogs
+      ?? new AgentConfigurationCatalogService(home, {
+        environment: options.environment ?? process.env
+      });
+    const sessionHost = options.sessionHost ?? new TmuxSessionHost(planner, tmux, {
+      validateLaunch: async (request) => {
+        const agent = store.getConfiguredAgent(request.agentId);
+        if (agent === null) return;
+        const resolved = await catalogs.resolve({
+          agent,
+          cwd: request.workspace,
+          config: effectiveLaunchConfig(request.effective)
+        });
+        validateAgentLaunchConfiguration(
+          resolved.catalog,
+          effectiveLaunchConfig(request.effective)
+        );
       },
-      workspacePreparer,
-      runtimeEventProcessor: options.runtimeEventProcessor
-        ?? (useWorker && asyncStoreClient !== undefined
-          ? new AsyncRuntimeEventProcessor(
-            runtimeEventInbox,
-            createAsyncRuntimeObserver(
-              (method, args) => asyncStoreClient.invokeObserver(method, args)
-            )
-          )
-          : new FileRuntimeEventProcessor(runtimeEventInbox, schedulerStore)),
-      runtimeObserver: options.runtimeObserver
-        ?? new AgentRuntimeObserver(store, runtimeEventInbox),
-      domainIdentity,
-      ...(options.configuration !== undefined
-        ? { configuration: options.configuration }
-        : options.intervalMs === undefined
-        ? {
-            configuration: {
-              reconciliationIntervalMs: () => reconciliationIntervalMilliseconds(
-                store.getConfig().reconciliationIntervalSeconds
-              )
+      waitForNativeSession: async (request, signal) => {
+        const owner = request.owner;
+        if (owner.scope !== "task") {
+          throw new Error("Native session discovery requires a Task runtime owner.");
+        }
+        while (!signal.aborted) {
+          const session = schedulerStore.getRoleSession(
+            owner.taskId,
+            owner.roleName,
+            request.agentId
+          );
+          if (
+            session !== null && session.status === "active"
+            && session.adapterId === request.adapterId
+            && typeof session.nativeSessionId === "string" && session.nativeSessionId.trim().length > 0
+          ) {
+            return session.nativeSessionId;
+          }
+          for (const event of runtimeEventInbox.list()) {
+            if (
+              event.type === "runtime-observation" && event.observation.kind === "session.started"
+              && event.observation.fence.taskId === owner.taskId
+              && event.observation.fence.roleName === owner.roleName
+              && event.observation.fence.agentId === request.agentId
+              && event.observation.fence.runId === request.runId
+              && typeof event.observation.fence.nativeSessionId === "string"
+              && event.observation.fence.nativeSessionId.trim().length > 0
+            ) {
+              return event.observation.fence.nativeSessionId;
             }
           }
-        : {})
+          await abortableDelay(50, signal);
+        }
+        throw new Error("Native session discovery was aborted.");
+      },
+      inactivityTimeoutMs: resolveAgentLaunchInactivityTimeoutSeconds(
+        durableConfig.agentLaunchInactivityTimeoutSeconds
+      ) * 1_000,
+      onHostCreated: ({ binding, pane }) => {
+        sessionOwners.recordHostOwner({
+          owner: binding.owner,
+          agentId: binding.agentId,
+          adapterId: binding.adapterId,
+          ...(binding.nativeSessionId === undefined
+            ? {}
+            : { nativeSessionId: binding.nativeSessionId }),
+          ...(pane.pid === undefined ? {} : { panePid: pane.pid })
+        });
+      }
+    });
+    const promptPush = options.promptPush
+      ?? new AgentHostPromptPushAdapter(home);
+    const runtimeIsolation = options.runtimeIsolation
+      ?? new FileTaskRuntimeIsolation({
+        // A sibling of the exact control Home keeps provider data/cache/tmp out
+        // of both the shared control plane and every managed Git workspace.
+        runtimeRoot: `${resolve(home)}.task-runtimes`,
+        controlPlane: {
+          yuiHome: home,
+          controllerSocketPath: controllerSocketPath(homeId),
+          tmuxNamespace: yuiTmuxServerName(home),
+          globalInstallPaths: [process.execPath]
+        }
+      });
+    const lifecycleHost = {
+      inspectOwner: (owner: Parameters<SessionHostPort["inspectOwner"]>[0]) => (
+        sessionHost.inspectOwner(owner)
+      ),
+      ...(sessionHost.inspectOwners === undefined
+        ? {}
+        : {
+            inspectOwners: (
+              owners: Parameters<NonNullable<SessionHostPort["inspectOwners"]>>[0]
+            ) => sessionHost.inspectOwners!(owners)
+          }),
+      stopOwner: (owner: Parameters<SessionHostPort["stopOwner"]>[0]) => {
+        // Issue 03: the durable `stopped` transition is gated on physical
+        // exit proof. A blocked result keeps the Session non-terminal and
+        // preserves owner records for Operator recovery.
+        return sessionOwners.terminateOwner(owner).then((result) => {
+          if (result.outcome === "stop-blocked") {
+            (options.onError ?? (() => undefined))(
+              new Error(
+                `Role runtime cleanup could not prove physical exit: ${
+                  result.remaining
+                    .map(({ record, detail }) => `PID ${record.providerRoot.pid}: ${detail}`)
+                    .join("; ")
+                }`
+              )
+            );
+          }
+          return result.outcome === "stop-confirmed";
+        });
+      },
+    };
+    const resourceActivity = createRuntimeResourceActivityTracker();
+    let runningRuntime: RunningFileTaskController["runtime"] | undefined;
+    let runningController: RunningFileTaskController | undefined;
+    const launchCoordinator = new RuntimeLaunchCoordinator(
+      schedulerStore,
+      sessionHost,
+      {
+        ...(options.now === undefined ? {} : { now: options.now }),
+        assertCurrent: (request) => {
+          assertRuntimeLaunchRequestCurrent(store, request);
+        },
+        runtimeIsolation
+      }
+    );
+    // One inventory scan per scheduler pass. When the inventory worker is active
+    // the blocking /proc scan runs there; otherwise it runs on the main thread.
+    const scanInventory = (panes: readonly RuntimePaneFact[]) => inventoryClient !== undefined
+      ? inventoryClient.scan({
+          currentHome: home,
+          scope: "current",
+          panes,
+          ...(options.environment === undefined
+            ? {}
+            : { environment: options.environment })
+        })
+      : scanControllerResourceInventory({
+          currentHome: home,
+          scope: "current",
+          panes,
+          tmuxBin: resolveTmuxBin(store.getConfig().tmuxBin),
+          ...(options.environment === undefined
+            ? {}
+            : { environment: options.environment })
+        });
+    const delivery = options.delivery ?? new ExecutorRegistry(
+      planner,
+      tmux,
+      agentProcessReadinessProbe,
+      {
+        sessionHost,
+        promptPush,
+        launchCoordinator,
+        roleResourceInventory: async (panes, inputs) => {
+          const inventory = await scanInventory(panes);
+          return inventory.resources.flatMap((resource) => {
+            if (resource.kind !== "agent-session") return [];
+            const owner = resource.owner;
+            if (owner.kind !== "task-role") return [];
+            const active = resource.state === "running" || resource.state === "current";
+            const input = inputs.find((candidate) => (
+              candidate.taskId === owner.taskId
+              && candidate.roleName === owner.roleName
+            ));
+            if (input === undefined) return [];
+            const identity = owner.runId === undefined || owner.adapterId === undefined || (owner.nativeSessionId === undefined) || (owner.nativeSessionId !== undefined && owner.nativeSessionId.trim().length === 0)
+              ? undefined
+              : {
+                  taskId: owner.taskId,
+                  roleName: owner.roleName,
+                  runId: owner.runId,
+                  agentId: owner.agentId,
+                  adapterId: owner.adapterId,
+                  ...(owner.nativeSessionId === undefined
+                    ? {}
+                    : { nativeSessionId: owner.nativeSessionId }),
+                };
+            const changed = !active || input.runId === undefined
+              ? false
+              : resourceActivity({
+                  taskId: input.taskId,
+                  roleName: input.roleName,
+                  runId: input.runId,
+                  agentId: input.agentId,
+                  adapterId: input.adapterId,
+                  ...(input.nativeSessionId === undefined
+                    ? {}
+                    : { nativeSessionId: input.nativeSessionId }),
+                } satisfies RuntimeResourceSampleIdentity, resource);
+            return [{
+              taskId: owner.taskId,
+              roleName: owner.roleName,
+              resource: {
+                observedAt: inventory.observedAt,
+                active,
+                changed: active && changed,
+                ...(identity === undefined ? {} : { identity }),
+                ...(input.progressAt === undefined ? {} : { progressAt: input.progressAt }),
+                cpuTimeMs: resource.cpuTimeMs,
+                ...(resource.ioReadBytes === undefined
+                  ? {}
+                  : { ioReadBytes: resource.ioReadBytes }),
+                ...(resource.ioWriteBytes === undefined
+                  ? {}
+                  : { ioWriteBytes: resource.ioWriteBytes }),
+                rssBytes: resource.rssBytes
+              }
+            }];
+          });
+        }
+      }
+    );
+    const workspacePreparer = options.workspacePreparer
+      ?? new FileTaskWorkspacePreparer(home, store);
+    const resourceReaper = options.resourceReaper
+      ?? (domainIdentity === undefined
+        ? undefined
+        : createEphemeralResourceReaper({
+            currentHome: home,
+            // The detached Controller owns one YUI_HOME. Keep automatic
+            // recovery bounded to that domain; cross-home cleanup remains an
+            // explicit `controller cleanup --all` inventory operation.
+            scope: "current",
+            environment: options.environment,
+            tmuxBin: resolveTmuxBin(store.getConfig().tmuxBin),
+            // When the worker backend is active, the reaper's scan runs in the
+            // inventory worker too (same cadence, same inventory shape).
+            ...(inventoryClient === undefined
+              ? {}
+              : {
+                  scan: () => inventoryClient.scan({
+                    currentHome: home,
+                    scope: "current",
+                    ...(options.environment === undefined
+                      ? {}
+                      : { environment: options.environment })
+                  })
+                })
+          }));
+    // Issue 10: automatic Resource GC. The runner self-skips unless
+    // resourcesGcMode=quarantine and resourcesGcAutoQuarantine=true, so wiring
+    // it unconditionally costs one config read per full pass when disabled.
+    const resourceAutoGc = options.resourceAutoGc
+      ?? createResourceAutoGc({
+        home,
+        store,
+        environment: options.environment
+      });
+    const lifecycleDispatcher = createRuntimeLifecycleDispatcher(
+      store,
+      schedulerStore,
+      sessionHost,
+      options.dispatcher,
+      launchCoordinator,
+      planner
+    );
+    // Process-exit observations are persisted by the Agent Host before socket
+    // delivery. Drain them while this Controller is still the only storage
+    // writer and before it begins accepting new work after a handover.
+    await replayRuntimeProcessExitOutbox(home, async (observation) => {
+      await lifecycleDispatcher("runtime.process-exit-observe", observation);
+    });
+    // f7/rr5: This same inbox feeds the supervisor's terminal channel and the
+    // runtime event processor. When a Job reaches a terminal state, the
+    // supervisor enqueues a durable-job-terminal event; the processor drains it
+    // on the next pass, waking the Controller immediately instead of waiting for
+    // the poll interval.
+    const kernel = createKernelPorts(store, createLinuxProcessPort(), (taskId) => {
+      runningRuntime?.signal(`task:${taskId}`);
+    });
+    closeKernel = () => kernel.close();
+    const webWorkflow = new FileTaskWorkflowRuntime(home, store, schedulerStore, planner, tmux, workspacePreparer, {
+      environment: options.environment ?? process.env, onError: options.onError
+    });
+    const webSurface = createWebTaskSurface(store, { runtime: {
+      notifyStateChanged: (taskId) => runningRuntime?.signal(`task:${taskId}`),
+      notifyMailboxChanged: (target) => {
+        if (target.kind === "role") runningRuntime?.signal(`role:${target.taskId}/${target.roleName}`);
+        else if (target.kind === "task") runningRuntime?.signal(`task:${target.taskId}`);
+      },
+      reconcileTask: (taskId) => runningRuntime?.signal(`task:${taskId}`)
+    }, yuiHome: home });
+    const surfaces = new SurfaceContributions(kernel.capabilities.registry);
+    const web = createControllerWeb(store, {
+      surface: webSurface,
+      answerInput: async ({ taskId, inputId, answer }) => webSurface.answer(taskId, inputId, answer),
+      panels: {
+        list: (taskId) => surfaces.listPanels(kernel.capabilities.authenticateWebQuery(taskId)),
+        read: (taskId, ref, input) => surfaces.readPanel(kernel.capabilities.authenticateWebQuery(taskId), ref, input)
+      },
+      terminal: new TmuxWebTerminalService({
+        yuiHome: home, tmuxBin: resolveTmuxBin(store.getConfig().tmuxBin), tmux,
+        prepareGlobalRole: (roleName) => webWorkflow.prepareGlobalRoleEnter(roleName),
+        environment: options.environment ?? process.env, onError: options.onError
+      })
+    });
+    closeWeb = () => web.close();
+    const jobSupervisor = new DurableJobSupervisor({
+      store: schedulerStore,
+      process: kernel.runner,
+      artifacts: createFileArtifactPort(home),
+      authorizeStart: (job) => authorizeJobStart(store, job),
+      // rr6/f1: Bounded supervision wake. The supervisor signals the Controller
+      // after spawning a runner (queued→running adoption) and when a runner
+      // exits (terminal harvest), so a quick job converges without waiting for
+      // the recovery interval. Closes over runningRuntime, which is assigned
+      // once startFileTaskController resolves; a wake during shutdown is a
+      // no-op. The recovery interval stays the cross-restart fallback.
+      wake: (taskId) => {
+        try {
+          runningRuntime?.signal(`task:${taskId}`);
+        } catch {
+          // Controller stopped; the recovery interval remains the fallback.
+        }
+      },
+      terminalEvents: {
+        deliverTerminalEvent(notice) {
+          try {
+            runtimeEventInbox.enqueueDurableJobTerminal({
+              scope: "task",
+              taskId: notice.taskId,
+              jobId: notice.jobId,
+              status: notice.status as "succeeded" | "failed" | "timed-out" | "cancelled" | "unknown-needs-attention",
+              outcome: notice.outcome
+            });
+          } catch (error) {
+            // Best-effort terminal channel: the terminal transition already
+            // committed. A delivery failure must not fail the reconcile pass.
+            (options.onError ?? (() => undefined))(error);
+          }
+        }
+      },
+      onError: options.onError
+    });
+    const jobControl = kernel.jobs;
+    const continuationReconciler = options.continuationMetadata === undefined
+      ? undefined
+      : new ProviderContinuationReconciliationService(
+          store,
+          schedulerStore,
+          options.continuationMetadata
+        );
+    const running = await startFileTaskController(
+      home,
+      schedulerStore,
+      delivery,
+      (method, params) => method === "web.start" || method === "web.stop" || method === "web.status"
+        ? web.dispatch(method, params) : lifecycleDispatcher(method, params),
+      {
+        intervalMs: options.intervalMs
+          ?? reconciliationIntervalMilliseconds(store.getConfig().reconciliationIntervalSeconds),
+        signalWindowMs: options.signalWindowMs,
+        taskConcurrency: options.taskConcurrency
+          ?? resolveControllerTaskConcurrency(durableConfig.controllerTaskConcurrency),
+        deliveryRetryMs: options.deliveryRetryMs,
+        deliveryRetryLimit: options.deliveryRetryLimit,
+        deliveryTimeoutMs: options.deliveryTimeoutMs
+          ?? resolveDeliveryTimeoutSeconds(durableConfig.deliveryTimeoutSeconds) * 1_000,
+        stallWindowMs: options.stallWindowMs
+          ?? resolveRuntimeHealth(durableConfig.runtimeHealth).stallWindowMs,
+        diagnosticAfterMs: options.diagnosticAfterMs
+          ?? resolveRuntimeHealth(durableConfig.runtimeHealth).diagnosticAfterMs,
+        now: options.now,
+        onError: options.onError,
+        lifecycleHost,
+        jobSupervisor,
+        jobControl,
+        capabilityDispatcher: createCapabilityDispatcher(kernel.capabilities),
+        ...(continuationReconciler === undefined ? {} : { continuationReconciler }),
+        ...(resourceReaper === undefined ? {} : { resourceReaper }),
+        resourceAutoGc,
+        onExpiredEphemeralDomain: (domain) => {
+          if (domain.yuiHome !== home) return;
+          void runningController?.close().catch(options.onError ?? (() => undefined));
+        },
+        workspacePreparer,
+        runtimeEventProcessor: options.runtimeEventProcessor
+          ?? (useWorker && asyncStoreClient !== undefined
+            ? new AsyncRuntimeEventProcessor(
+              runtimeEventInbox,
+              createAsyncRuntimeObserver(
+                (method, args) => asyncStoreClient.invokeObserver(method, args)
+              )
+            )
+            : new FileRuntimeEventProcessor(runtimeEventInbox, schedulerStore)),
+        runtimeObserver: options.runtimeObserver
+          ?? new AgentRuntimeObserver(store, runtimeEventInbox),
+        domainIdentity,
+        ...(options.configuration !== undefined
+          ? { configuration: options.configuration }
+          : options.intervalMs === undefined
+          ? {
+              configuration: {
+                reconciliationIntervalMs: () => reconciliationIntervalMilliseconds(
+                  store.getConfig().reconciliationIntervalSeconds
+                )
+              }
+            }
+          : {})
+      }
+    );
+    runningController = running;
+    runningRuntime = running.runtime;
+    // Issue 03: read-only startup reconciliation. Surfaces durable/physical
+    // Session mismatches (including generations whose durable map was cleared)
+    // without changing stop or archive behavior. Cleanup stays an explicit
+    // Operator action in exact-owner-cleanup mode.
+    try {
+      const startupReport = sessionOwners.report();
+      if (startupReport.summary.livePhysicalRoots > 0) {
+        (options.onError ?? (() => undefined))(
+          new Error(
+            `Session reconciliation: ${startupReport.summary.livePhysicalRoots} `
+              + `live physical root(s) across ${startupReport.summary.owners} owner record(s); `
+              + "run `yui session reconcile --report` for details."
+          )
+        );
+      }
+    } catch (error) {
+      (options.onError ?? (() => undefined))(error);
     }
-  );
-  runningController = running;
-  runningRuntime = running.runtime;
-  // Issue 03: read-only startup reconciliation. Surfaces durable/physical
-  // Session mismatches (including generations whose durable map was cleared)
-  // without changing stop or archive behavior. Cleanup stays an explicit
-  // Operator action in exact-owner-cleanup mode.
-  try {
-    const startupReport = sessionOwners.report();
-    if (startupReport.summary.livePhysicalRoots > 0) {
-      (options.onError ?? (() => undefined))(
-        new Error(
-          `Session reconciliation: ${startupReport.summary.livePhysicalRoots} `
-            + `live physical root(s) across ${startupReport.summary.owners} owner record(s); `
-            + "run `yui session reconcile --report` for details."
-        )
-      );
-    }
+    let resourceClose: Promise<void> | undefined;
+    const closeResources = (): Promise<void> => {
+      resourceClose ??= Promise.all([
+        web.close(),
+        kernel.close(),
+        asyncStoreClient?.close() ?? Promise.resolve(),
+        inventoryClient?.close() ?? Promise.resolve()
+      ]).then(() => undefined).finally(() => {
+        ownedStore?.close();
+      });
+      return resourceClose;
+    };
+    const closed = running.closed.then(closeResources);
+    return {
+      ...running,
+      kernel,
+      closed,
+      close: async () => {
+        try {
+          await running.close();
+        } finally {
+          // RPC-driven Controller stops resolve `running.closed` without calling
+          // this wrapper. Share one cleanup promise so both lifecycle paths
+          // release the worker connections before the process can linger.
+          await closeResources();
+        }
+      },
+      store,
+      schedulerStore,
+      planner,
+      tmux,
+      delivery,
+      sessionHost,
+      promptPush,
+      runtimeIsolation,
+      workspacePreparer
+    };
   } catch (error) {
-    (options.onError ?? (() => undefined))(error);
-  }
-  let resourceClose: Promise<void> | undefined;
-  const closeResources = (): Promise<void> => {
-    resourceClose ??= Promise.all([
-      web.close(),
-      kernel.close(),
+    // The socket may never have opened. Startup failure must still release
+    // this attempt's workers/instances instead of leaving an uncallable process.
+    await Promise.allSettled([
+      closeWeb(),
+      closeKernel(),
       asyncStoreClient?.close() ?? Promise.resolve(),
       inventoryClient?.close() ?? Promise.resolve()
-    ]).then(() => undefined);
-    return resourceClose;
-  };
-  const closed = running.closed.then(closeResources);
-  return {
-    ...running,
-    kernel,
-    closed,
-    close: async () => {
-      try {
-        await running.close();
-      } finally {
-        // RPC-driven Controller stops resolve `running.closed` without calling
-        // this wrapper. Share one cleanup promise so both lifecycle paths
-        // release the worker connections before the process can linger.
-        await closeResources();
-      }
-    },
-    store,
-    schedulerStore,
-    planner,
-    tmux,
-    delivery,
-    sessionHost,
-    promptPush,
-    runtimeIsolation,
-    workspacePreparer
-  };
+    ]);
+    ownedStore?.close();
+    throw error;
+  }
 }
 
 export function createRuntimeLifecycleDispatcher(
@@ -1076,7 +1099,8 @@ function resolveRuntimeDesiredEffective(
     ?? undefined;
   return resolveEffectiveLaunch({
     role: taskRole,
-    purpose: "execution",
+    purpose: store.getTask(request.taskId)?.status === "draft" && request.roleName === "leader"
+      ? "planning" : "execution",
     ...(workspace === undefined ? {} : { workspace }),
     ...(item === null ? {} : { workItemWriteProjectIds: item.writeProjectIds })
   });
@@ -1096,7 +1120,9 @@ function assertRuntimeLaunchRequestCurrent(
       request.owner.taskId,
       request.owner.roleName
     );
-    if (!runPurposeAdmitsTaskState(activeRun?.purpose ?? "execution", task)) {
+    const purpose = activeRun?.purpose
+      ?? (task.status === "draft" && request.owner.roleName === "leader" ? "planning" : "execution");
+    if (!runPurposeAdmitsTaskState(purpose, task)) {
       throw new Error(`Task is no longer active: ${request.owner.taskId}.`);
     }
     if (
@@ -1189,7 +1215,8 @@ function currentDesiredEffective(
     ?? undefined;
   return resolveEffectiveLaunch({
     role: role as Role,
-    purpose: "execution",
+    purpose: store.getTask(request.owner.taskId)?.status === "draft" && request.owner.roleName === "leader"
+      ? "planning" : "execution",
     ...(workspace === undefined ? {} : { workspace }),
     ...(item === null ? {} : { workItemWriteProjectIds: item.writeProjectIds })
   });
@@ -1435,7 +1462,7 @@ function validateEnvironmentRefreshSources(
       );
     }
   }
-  const allowedNative = new Set(["CODEX_HOME", "CLAUDE_CONFIG_DIR"]);
+  const allowedNative = new Set<string>(NATIVE_AGENT_ENVIRONMENT_NAMES);
   if (refresh.nativeNames.some((name) => !allowedNative.has(name))) {
     throw applicationError("INVALID_PARAMS", "Runtime native Agent environment scope is invalid.");
   }

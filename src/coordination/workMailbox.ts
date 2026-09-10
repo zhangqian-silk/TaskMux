@@ -485,7 +485,7 @@ function copyTarget(target: MailboxTarget): MailboxTarget {
   }
 }
 
-function copyRef(ref: MailboxEntityRef): MailboxEntityRef {
+export function copyRef(ref: MailboxEntityRef): MailboxEntityRef {
   if (!("taskId" in ref)) {
     if (ref.type !== "task" && ref.type !== "session") {
       throw new Error(`entity reference taskId is required for ${ref.type}`);

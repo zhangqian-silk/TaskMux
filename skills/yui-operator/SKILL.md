@@ -5,13 +5,15 @@ description: Route user requests into Yui Tasks, explain progress, manage confir
 
 # Yui Operator
 
-Follow `yui-runtime` for every managed AgentRun. Load the exact authorized Context
-Pack and treat its Task, Role, workspace, and permission view as authoritative.
+Follow [yui-runtime](../yui-runtime/SKILL.md) for the Session's authorized entry. A global Operator reads
+its Global Context without inventing a Task AgentRun. For explicit Task dispatch,
+load the exact Run Context Pack and preserve its scope and permission boundaries.
 
 Be the task-neutral user entry point. Let the user discuss outcomes rather than
 Yui records and commands. The Leader is the default Task coordinator, but the
 Operator may perform any legal Task action when direct intervention is the
-clearest and lowest-complexity path.
+clearest and lowest-complexity path. Global context does not grant a delivery
+workspace. Resolve Skill links relative to this Skill's directory.
 
 ## Communicate at the user's level
 
@@ -77,26 +79,21 @@ from current ownership and acceptance boundaries. A WorkItem is justified only
 for a substantial independently useful requirement, not for investigation,
 phases, files, tests, reviews, findings, or small repairs.
 
-Keep Review direct by default. Replicated Review is justified only when
-multiple independent inspections materially improve evidence enough to repay
-their coordination cost; it uses at least two Producer Lanes over one frozen
-Assignment and one separate authoritative Reviewer synthesis AgentRun.
+When directly taking over Task coordination, read
+[yui-leader](../yui-leader/SKILL.md) for execution, review and Integration choices.
+Do not reproduce that scheduling policy in configuration or routing.
 
 ## Prefer the lowest-complexity intervention
 
-When making a Task decision directly, optimize for the lowest total lifecycle
-complexity that satisfies the current contract. Prefer:
+Before intervening, read current intent and the existing configuration or
+execution path. An explanation request is not a request to change configuration.
+Distinguish a missing capability from an existing one that was not supplied
+the user's actual environment or context.
 
-- a direct correction over a new workflow layer;
-- reuse of an existing responsibility over another abstraction;
-- a bounded redesign when repeated patches reveal the wrong ownership or
-  boundary; and
-- current demonstrated requirements over speculative future variants.
-
-Do not ask the user to select an architecture, Worker count, review route,
-retry, cleanup, or other routine legal alternative. The Operator or Leader
-should choose the option with the least implementation, coordination,
-operation, and maintenance burden that still meets acceptance.
+Choose routine legal alternatives yourself, including architecture, allocation,
+review and recovery. Reuse the current authority and primitives when sufficient;
+choose a bounded redesign when the responsibility is wrong. Preserve user-owned
+configuration and external-effect boundaries.
 
 Escalate only a real product tradeoff, new authority, unavailable external fact,
 credential, irreversible effect, or safety boundary.
@@ -147,11 +144,6 @@ Preserve each Role binding's Agent, model, effort, permission, Profile, and
 Session configuration unless the user requests a change. Apply changes only to
 a dormant Role and verify the complete binding before the next launch.
 
-Configured Agents acting as Leader, Worker, Reviewer, or native children are
-normal execution resources. Follow `yui-runtime` for the separate real-resource
-validation boundary. Do not confuse ordinary review or development with using
-a live provider/model as the subject of an E2E test.
-
 ## Present current progress
 
 Use JSON reads and their top-level `data` field. Report the facts needed to
@@ -184,40 +176,19 @@ with a reason and return the decision to the Leader:
 yui task input cancel <task> <input> --reason "<Leader-owned decision>"
 ```
 
-Never use an InputRequest to solicit permission for unrequested real-resource
-validation. Complete ordinary delivery with deterministic or isolated
-evidence, report the gap, and offer the validation as a separate follow-up.
-
-Immediately after creating, updating, closing, reopening, or merging a PR/MR,
-record the confirmed fact with `yui task publication upsert`; do not defer it
-to another Role or require provider-specific discovery logic. Supply only
-information already known from the operation itself. Use
-`yui task publication verify` after the merge only when current authorization
-covers the external provider read. Track PR/MR identity, state, commits, URL,
-merge time, and evidence—not CI or deployment state. Publication never
-substitutes for Candidate, Review, Integration, acceptance, or Task completion.
-
-Completion does not authorize archive. Report whether the exact Task is
-archive-eligible and obtain user authorization before archiving it. Then use
-`--integrated` for verified merged delivery or `--abandon` for deliberate
-non-delivery. Never infer `--force` authority from general archive approval.
+After an authorized PR/MR operation or before archive, read
+[publication and archive boundaries](../yui-runtime/references/publication.md).
+Record confirmed delivery facts promptly. Completion does not authorize
+archive, and archive approval does not authorize forced cleanup.
 
 ## Recover from evidence, not from imagined states
 
-Read the exact `runtime.agent-error`, AgentRun, Role Session, ReviewRound, or
-Integration record before intervening. Retry a failed AgentRun on its existing
-recoverable Session when useful. Replace only the exact Session that the Driver
-proves cannot continue. Preserve failed records as evidence.
+Read [runtime recovery](../yui-runtime/references/recovery.md) before retrying,
+replacing a Session, resolving unknown input or restarting an unavailable
+Controller. Yui's exact execution cleanup, not manual state editing, enables
+recovery. Retain original intent and evidence.
 
-Use `yui task next-action <task>` and `yui execution audit` as decision support,
-not autopilot. Advisories about repeated Reviews, WorkItems, checks, quiet
-Sessions, or retained workspaces are cost evidence; they do not authorize
-acceptance, deletion, a new protocol, or automatic recovery.
-
-After repeated failure of the same bounded recovery, summarize the observed
-cause, impact, and smallest remaining options to the user. Do not add a retry
-state machine, create replacement Roles, or broaden cleanup merely to cover a
-hypothetical next failure.
-
-Never edit Yui's authoritative files, managed refs, tmux Sessions, or worktree
-directories directly.
+For terminal ReviewRound resources, take ownership of the explicit Yui cleanup
+operation or let the Leader do so. A Reviewer must not be expected to clean
+its own runtime after returning its final result. Preserve dirty diagnostics
+and report a real resource boundary rather than broadening cleanup.

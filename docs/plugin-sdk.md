@@ -3,7 +3,7 @@
 独立目录可以通过现有 `capability` 入口贡献 Task-local 能力，无需修改 Yui
 安装目录。当前受认证的 Leader 可以管理自己 Task 的插件，global Operator
 仍可管理指定 Task 的插件；Worker／Reviewer 保持调用和读取权限，不获得管理
-或自行授信权限。本 SDK 不实现 Endpoint 注册或 T11 自动升级。
+或自行授信权限。本 SDK 不实现 Endpoint 注册或自动升级。
 
 Store 持久保存用户希望启用/停用的选择，以及对应的确切验证产物引用；
 Host 是实际实例和引用生命周期的唯一权威。Controller 重启后仍能读取选择及
@@ -29,15 +29,15 @@ Host 是实际实例和引用生命周期的唯一权威。Controller 重启后�
 | `plugin.disable` | `id` | 保存停用选择，停止新调用，等待实际引用排空和 dispose |
 
 `directory` 可以是环境内的相对路径或绝对规范路径，但不能是环境根、外部
-路径或经 symlink 到达的目录。先通过 T05 的 `environment.prepare/adopt`
+路径或经 symlink 到达的目录。先通过 `environment.prepare/adopt`
 明确采用一个 writable 环境。scratch 是独立目录所有权，**不是 OS 沙箱**；
-用户目录还需要 T05 的具体 Resource grant。每次新动作复核采用记录、Task
+用户目录还需要具体 Resource grant。每次新动作复核采用记录、Task
 当前状态、目录 identity、资源意图及现行 Resource grant。
 环境复核与主线原生执行使用同一 `resolveExecutionEnvironment`，要求现行 grant
 包含该 preparation 的采用记录。撤权后仅签发一个新 grant 不会隐式重新采用旧环境。
 
 SDK 的实际构建、候选和活实例引用会阻止公开 `environment.release`。
-先停用并排空；T05 仍不会删除用户目录，也不会强删非空 scratch。
+先停用并排空；环境释放不会删除用户目录，也不会强删非空 scratch。
 插件停用不删除源码或验证证据，不提供自动卸载/GC。
 
 示例（`T`、`P`、`V` 分别替换为实际 Task、adopted preparation、validation ID）：
@@ -69,8 +69,8 @@ Task-local 管理权限不等于执行信任：可执行包仍逐阶段核对下
 验证失败由 Agent 保存原错误并判断修复；不可把 unknown／部分效果自动重跑。
 使用新增能力取得实际业务结果后，通过 `artifact.save` 保存独立内容，并在
 Task 结果中保留引用。`artifact.read` 不依赖插件仍活跃。加载成功或保留插件
-源码不是业务闭环完成证据。工程验证与真实 Agent 场景的区别见
-[T10 验证记录](self-extension-evidence.md)。
+源码不是业务闭环完成证据。协议夹具能验证工程边界，但不能证明真实 Agent
+自主选择、编写和修复成功；真实场景验证遵循项目的资源授权边界。
 
 ## 期望选择与实际实例
 
@@ -97,7 +97,7 @@ grant 或写入 Store。当前视图中：
 失败的 activate/disable 仍返回 `kind: failed`，不是伪装成功；在能够读取状态时，
 其 `value` 附带上述当前视图。最近的管理失败按原意图 revision 记录，迟到结果
 不能覆盖新的选择。revision 由内部事务递增，调用者不需要携带 expected token。
-每次新的明确选择清除上次管理失败；历史 Turn/报告与业务 receipt 不受影响。
+每次新的明确选择清除上次管理失败；已有 AgentRun/报告与业务 receipt 不受影响。
 
 停用先提交 disabled，再同步移除新调用入口，等待原引用排空；清理失败不反转
 disabled。若持久提交失败，原实例仍保持可用，不能宣称已停用。发布成功后的
@@ -226,7 +226,7 @@ dispose 必须只释放自己的资源，不管理共享 daemon。任意作者�
 
 ### 执行授权
 
-T05 adopted 目录不授予执行作者代码。每次实际 `build`、`validate`、`activate`
+Adopted 目录不授予执行作者代码。每次实际 `build`、`validate`、`activate`
 或 `call` 尝试还需要现行 `plugin.execute` grant，同时明确限定全部五个参数：
 
 | 参数 | 值 |
@@ -252,7 +252,7 @@ grant 不由 SDK 自签发。次数按真实执行尝试消费，失败也不回
 包含 initialize/selfTest/dispose。build 是另一次执行。
 `call` 是不可从持久步骤恢复的短调用，只增加 usesUsed，不追加永久 reservation；
 其准入由当前调用的绑定闭包持有，不能导出、伪造或用于进程重启后的继续执行。
-build/validate/activate 保留现有 reservation 行为；已有历史 key 不截断或清理。
+build/validate/activate 使用持久 reservation；已有 key 不截断或清理。
 已消费额度的当前调用可以继续复核，但撤销/到期仍阻止后续受控动作，
 额度耗尽则不允许新调用。长期使用不会因每次 call 再新增一条永久 key。
 尚未提交的启用意图事务失败不算已执行尝试，其消费随事务回滚。
@@ -278,20 +278,13 @@ build/validate/activate 保留现有 reservation 行为；已有历史 key 不�
 会使迟到候选拒绝发布。成功发布后旧 generation 只服务已有引用，排空才 dispose；
 清理失败保留诊断 Artifact，不回滚新 Provider 或伪称当前实例仍未发布。
 
-## 采用与迁移
+## 存储与其他入口
 
-合入主线时保留原 1–9，其中 9 是 `adopted-agent-execution-environment`；
-追加 9→10 `plugin-validation-evidence`（不可变验证报告），再追加
-10→11 `plugin-enable-intent`（用户选择），当前存储版本为 11，最低支持仍为 1。
-旧 Task/Artifact/环境配置保持原样，新插件表不推测回填启用意图。
-应用持久结构变更走原显式 upgrade/update 与备份机制。
+验证产物和启用意图属于唯一 Home 存储合同，持久结构变更走显式
+upgrade/update 与备份机制。读取报告不会推测或恢复实例，采用新源码不等于
+授权升级共享 Home、重启 Controller 或执行插件。
 
-本 Task 未发布独立候选中的插件迁移曾编号为 9、10；它们与主线同编号具有不同
-含义。若保留了那种开发 Home，应保留其匹配 binary；不能按相同数字把分叉账本
-当作正式前向历史升级，也不提供启发式修复。采用本源码不等于授权升级共享 Home、
-重启 Controller 或执行插件。
-
-主线 T06 沿同一个 Registry 将能力投影为命令和默认 JSON 查询面板，不复制
-SDK Host；Web 查询身份不因此获得 plugin:manage。主线原生 Session 的环境选择
-与本 SDK 继续共享 T05 环境 owner，释放前同时保护原生执行引用与插件引用。
-T07 的 ACP/Endpoint 注册、Project/global scope 提升及完整热插拔不在本合同内。
+同一个 Registry 将能力投影为命令和受控查询面板，不复制 SDK Host；
+Web 查询身份不获得 `plugin:manage`。原生 Session 与插件共享环境 owner，
+释放前同时检查原生执行引用与插件引用。插件不提供 Project/global scope
+提升或原生 Endpoint 注册。

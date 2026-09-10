@@ -136,7 +136,8 @@ export async function callController(
  */
 export async function stopOrphanedFileTaskController(
   home: string,
-  timeoutMs: number
+  timeoutMs: number,
+  options: Readonly<{ force?: boolean; expectedPid?: number; expectedProcessStartIdentity?: string }> = {}
 ): Promise<Readonly<{ pid: number }> | undefined> {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
     throw new TypeError("Controller timeout must be a positive integer.");
@@ -144,6 +145,11 @@ export async function stopOrphanedFileTaskController(
   const homeFilesystemId = readHomeFilesystemId(home);
   const candidate = findLiveControllerProcessForHome(homeFilesystemId);
   if (candidate === undefined) return undefined;
+  if ((options.expectedPid !== undefined && candidate.pid !== options.expectedPid)
+    || (options.expectedProcessStartIdentity !== undefined
+      && candidate.processStartIdentity !== options.expectedProcessStartIdentity)) {
+    throw new Error("Controller ownership changed before physical recovery.");
+  }
   if (
     inspectLiveControllerProcess(
       candidate.pid,
@@ -158,6 +164,8 @@ export async function stopOrphanedFileTaskController(
     throw error;
   }
   const deadline = Date.now() + timeoutMs;
+  const forceAt = Date.now() + Math.min(1000, timeoutMs / 2);
+  let forced = false;
   while (
     inspectLiveControllerProcess(
       candidate.pid,
@@ -165,6 +173,13 @@ export async function stopOrphanedFileTaskController(
       candidate.processStartIdentity
     ) !== undefined
   ) {
+    if (options.force && !forced && Date.now() >= forceAt) {
+      // The loop revalidates UID, entrypoint, Home and process start identity
+      // immediately before escalation. Never signal a successor Controller.
+      try { process.kill(candidate.pid, "SIGKILL"); }
+      catch (error) { if (!isNodeError(error) || error.code !== "ESRCH") throw error; }
+      forced = true;
+    }
     if (Date.now() >= deadline) {
       throw new ControllerClientError(
         "CONTROLLER_TIMEOUT",

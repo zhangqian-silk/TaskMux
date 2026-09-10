@@ -1,411 +1,192 @@
-# Yui Architecture
+# Yui architecture
 
-Yui is a local control plane for intelligent Agents doing durable work across
-Projects and native runtimes. The user talks to one Operator. The Operator
-routes each request to the right Project and Task; that Task's Leader owns
-decomposition, execution choice, review, integration, and completion.
+Yui is a local control plane and context API for intelligent Agents. Agents own
+planning, execution topology, semantic review, acceptance and recovery. Core
+owns durable identity, authorization, workspace isolation, data integrity and
+bounded effects. It exposes current facts and atomic operations rather than
+choosing a workflow for the Agent.
 
-## Design principles
+## Responsibilities
 
-- **Agents own judgment.** Yui exposes current durable context and atomic
-  capabilities; the Operator, Leader, and Workers choose plans, execution
-  topology, sequencing, retry, and recovery from that context.
-- **Core provides primitives, not a prescribed workflow.** Reads, messages,
-  bounded record transitions, workspace ownership, Session lifecycle, and
-  acceptance are composable operations. Project Skills and Knowledge provide
-  project-specific policy without adding core branches.
-- **Durable intent outranks runtime continuity.** Tasks, WorkItems, Messages,
-  Decisions, results, Project Knowledge, and managed workspaces are authority.
-  Provider Sessions, transcripts, processes, and observations are execution
-  aids that may be resumed or replaced.
-- **Trust explicit Agent actions.** Once identity, authority, and scope are
-  established, a valid Agent command is a semantic declaration. Core should not
-  reconstruct the same judgment through another status protocol.
-- **Fail visibly and let the Agent adapt.** Preserve pending intent and return
-  actionable state. Add automated retry, recovery, leases, or fallback only for
-  a normal product path, a hard safety or data-integrity boundary, or a proven
-  failure whose cost justifies the machinery.
-- **One question has one authority.** Projections and indexes may summarize
-  state, but scheduling and lifecycle decisions must not depend on independently
-  writable copies of the same fact.
+| Boundary | Owns | Does not own |
+| --- | --- | --- |
+| Operator / Leader | User coordination; Task outcome, planning and judgment | Forged runtime receipts or self-granted external authority |
+| Task Store | Tasks, Roles, WorkItems, Runs, messages, results, events and resource ownership | Native transcript or inferred Provider activity |
+| Context | Authorized bounded reads, immutable event deltas, exact execution snapshots | A second writable Task or delivery acknowledgement |
+| Controller | Delivery, observations, Jobs, capability Host and Web listener | Semantic interpretation of Agent prose |
+| CapabilityRegistry / InstanceHost | Descriptor resolution, scoped invocation, implementation references and disposal | Task planning, arbitrary plugin privileges or automatic recovery |
+| AgentHost / AgentEndpoint / Driver | Native connection, input disposition, exact result correlation and observations | Task acceptance or ownership of a shared Provider daemon |
+| Project / Resource | Knowledge, managed Git workspaces, adopted environments and durable artifacts | Permission inferred from a directory name |
+| CLI / Web | Shared domain operations and projections | Independent business state or another plugin Host |
 
-## One outcome, Leader-chosen execution topology
+One `YUI_HOME` has one authoritative SQLite control-plane Store and one
+Controller. Project Knowledge is maintained under the Home; repository material
+can be evidence but is not a substitute for maintained Knowledge.
 
-`Task` is the bounded user outcome. Its optional `type` describes intent, not
-execution topology; software Projects normally use `feature` or `bugfix`, while
-other Projects may define their own types. Yui does not store a Task-level
-direct versus integrated delivery mode. The `direct` and `replicated` labels
-below describe only the execution shape of one WorkItem.
+## Intent, collaboration and execution
 
-A software bugfix is Leader-owned: the Leader implements and verifies it in the
-managed Task main without manufacturing a WorkItem. If the scope proves to need
-independent delivery owners, reclassify it as a feature before creating those
-units. For a feature, the Leader judges whether the whole result is small
-enough to own in the same way or large enough to need independently owned
-delivery units.
+Task represents one bounded outcome, possibly across multiple Projects. Its
+type describes intent and does not prescribe decomposition. A Leader can own
+bounded work directly; WorkItems are substantial independently acceptable
+requirements with explicit owners.
 
-Operator updates have one durable path. Domain and runtime transitions first
-append an immutable TaskEvent; user-owned questions append an InputRequest.
-Only those record references enter the global Operator mailbox. The Controller
-batches pending references into one receipt-backed synthetic user message for
-the existing interactive Operator and defers the complete batch while that
-Operator is busy or unavailable. The message carries CLI read pointers rather
-than copied Task or Provider narrative. No lower layer calls the Operator, no
-mutable notification projection duplicates the event history, and no Goal or
-polling protocol is required to follow work.
+Task lifecycle is `draft / active / completed / cancelled / archived`.
+WorkItem lifecycle is `open / accepted / retired`. Execution, waiting and
+failure belong to AgentRuns and runtime observations, not extra WorkItem states.
+Only accepted direct dependencies satisfy `dependsOn`; replacement metadata does
+not redirect the graph.
 
-`WorkItem` means one substantial, independently acceptable requirement with a
-clear owner. Create multiple WorkItems only when multiple Workers can own and
-advance those requirements independently, normally in parallel. Internal
-implementation steps, test runs, review findings, and local fixes remain AgentRun,
-Event, report, or commit evidence under the existing Task or WorkItem; they are
-not new WorkItems.
+A valid Leader Session can read Context and mutate scoped Task facts without
+an active AgentRun. Worker and Reviewer actions retain their exact Assignment
+and workspace boundaries. Replacing or revoking a Session changes authority;
+a transient delivery failure does not grant or revoke unrelated authority.
+Released Leaders retain scoped diagnostic reads, not write authority.
 
-Native subagents may help an Agent investigate or critique inside its current
-conversation, but they are not a second Yui WorkItem execution model and do
-not create child-session records. A Yui-managed WorkItem dispatch has one
-logical main executor: the current Session for `WorkItem.assignee`. A AgentRun is
-an execution attempt, not a requirement, and repeated AgentRuns may continue the
-same compatible Role Session.
+Durable Task context and engineering control data have separate purposes.
+Requirements, decisions, acceptance and original results must survive outside
+native conversations. AgentRun input/result history remains evidence, while its
+active index, native delivery state, Host and Session selection only control an
+execution attempt. Replacing that execution never completes or deletes the Task.
 
-Without `--lane-role`, dispatch is `direct`: Yui creates only the main AgentRun and
-does not persist an ExecutionGroup or Lane. With at least two distinct
-non-assignee roles, dispatch is `replicated`: one ExecutionGroup freezes a
-canonical Assignment and every Lane independently executes that exact same
-Assignment. One Lane role is invalid, and Lane roles cannot introduce their
-own objective, directive, acceptance criteria, context, or write scope.
+AgentRun records an explicitly requested execution with a frozen Context and
+effective configuration. Native conversation, Goal continuation and ordinary
+Leader notifications do not automatically create Runs. Messages can continue
+already dispatched work through a new, exactly associated Run without changing
+the requirement, captured permissions or workspace.
 
-A Lane is a recoverable logical slot whose durable disposition is `open`,
-`succeeded`, or `failed`. Failed AgentRuns leave the Lane open for an exact
-`task run retry`; `task run settle` records the Leader's decision to stop
-recovering that Lane. Yui waits until every Lane is settled. At least two
-successful Lanes make synthesis eligible and create or wake one idempotent
-main AgentRun with every successful Producer result in stable Lane order. Fewer
-than two successes fail that Group attempt without degrading to a single
-result. Retrying the main AgentRun keeps the same Group and does not rerun a
-successful Lane.
+See [Session and AgentRun](docs/managed-turn-and-session-runtime.md) and
+[Task dependencies](docs/task-dag-semantics.md).
 
-## Profiles, Roles, and Agents
+## Delivery and results
 
-- `Agent` selects a supported adapter such as Codex or Claude and defines its
-  launch context.
-- `WorkerProfile` is a versioned, provider-neutral behavior template containing
-  instructions, Skills, a read/write behavior intent, and optional model/effort hints.
-- `TaskRole` is a mutable Worker instance inside one Task. Applying a Profile
-  copies its portable behavior and the optional model/effort selections into
-  the active Agent binding. Its versioned desired launch configuration is
-  next-launch-only. The Role may bind multiple Agents; every binding retains
-  independent runtime configuration.
-- `AgentRun` records one managed dispatch and an immutable effective snapshot:
-  actual Agent, adapter, model, effort, Profile behavior intent, exact writable
-  Projects, provider permission strategy and native options, workspace, Role
-  context, and source desired revision. A native Role Session stores the same snapshot; running processes
-  are never hot-mutated by later Role edits.
-- A `WorkItemCandidate` is the explicit result currently awaiting Leader
-  acceptance. A dispatched WorkItem Candidate can reference only a successful
-  main AgentRun; the complete replicated provenance is derived through Main AgentRun
-  -> ExecutionGroup -> Lane -> successful Producer AgentRun. A roleless delivery
-  unit managed directly by the Leader may instead use the existing direct
-  source. Lanes never become Candidates or enter Review or Integration.
-- `ReviewRound` records one semantic judgment. A WorkItem Review references
-  that WorkItem's immutable Candidate. A Task-final Review references the
-  frozen Task heads directly and has no synthetic WorkItem/Candidate anchor.
-  Either scope executes directly through one main Reviewer AgentRun or, when the
-  Leader explicitly supplies at least two Producer Roles, through one frozen
-  replicated Assignment followed by one authoritative main synthesis AgentRun.
-  It is never another WorkItem.
+Explicit dispatch and ordinary notification share native input transport, but
+keep different durable owners. The Controller claims a bounded mailbox batch;
+AgentHost serializes submission through AgentEndpoint. The Provider binding
+records actual acceptance and native correlation. A notification can settle
+on acceptance without requiring a final execution report.
 
-Adding another Agent requires an explicit adapter implementation. Profiles do
-not choose adapters, own Sessions, or carry credentials.
+Busy with proven non-acceptance preserves the input for a subsequent attempt.
+Transport submission alone does not prove acceptance. Unknown effects remain
+visible and fenced: no blind resend or inferred success. Explicit replacement
+first resolves actual native execution, then discards its engineering occupancy.
+Input arriving during a claimed batch remains pending for the next batch.
+Context reads do not consume delivery.
 
-For a native subagent, the Leader must choose and read an explicit
-WorkerProfile, using `worker` when no specialist fits. The Leader includes the
-Profile instructions, Skills, behavior intent, workspace boundary, validation expectations, and
-supported model/effort hints in the child brief. Task Role Agent bindings are
-ignored because the child inherits the Leader Agent. Its output remains
-session-local collaboration evidence: it does not create a Yui Lane, Candidate,
-ReviewRound, or Integration source. When that evidence affects delivery, the
-main executor incorporates it into the WorkItem's authoritative result.
+An exact terminal transaction persists one original AgentRunResult and a
+reference Message. Core validates identity, transport and workspace facts;
+it does not parse prose into findings, votes, repair topology or acceptance.
+Provider success and semantic success are distinct.
 
-## Lifecycle and acceptance
+Direct execution uses one main Run. Replicated execution freezes one Assignment
+for distinct Producer Lanes. The Leader explicitly chooses terminal original
+results and starts one main synthesis Run; selected failed results can be useful
+evidence. Core checks provenance, not success counts or consensus. Lanes are not
+Candidates or Integration sources.
 
-WorkItem delivery has one Leader-owned acceptance path regardless of execution
-shape:
+ReviewRound references a frozen Candidate or Task heads and its exact Reviewer
+Run. The original Reviewer output remains on that Run. Review policy and explicit
+Task-final contracts govern when review is required; the Leader decides the
+meaning of the report. See [result consumption](docs/agent-result-consumption.md).
 
-```text
-open --explicit acceptance--> accepted
- ^                              |
- +------withdraw acceptance-----+
-open/accepted --retire--> retired
-```
+## Planning, workspaces and resources
 
-Execution, waiting and failure belong to AgentRuns, not WorkItem responsibility.
-Submitting or rejecting a Candidate leaves the WorkItem open. Brief and
-definition edits preserve acceptance until the Leader explicitly withdraws it.
-Task lifecycle is draft / active / completed / cancelled / archived; ending
-intent does not prove execution resources stopped. Reopening does not replay
-historical delivery requests, and archived Tasks cannot reopen.
+Draft contains planning facts and Project bindings, not an adopted delivery
+workspace. Its private planning directory is outside the control Home and
+delivery trees. Planning Sessions capture `planning` authority. The Leader can
+persist an activation request during a Run or ordinary discussion and return;
+native quiescence releases the intent for current-authority and resource checks.
 
-For `direct`, the assignee's successful main AgentRun supplies the result. For
-`replicated`, Lane AgentRuns supply immutable Producer results and only the
-successful synthesis main AgentRun supplies the Candidate. Roleless WorkItems are
-advanced directly by the Leader but enter the same Candidate, ChangeSet,
-Integration, and acceptance boundary.
+Activation prepares physical resources before atomically adopting Task status,
+workspace identity and ownership. Failure preserves intent and a diagnosis,
+notifies the Leader and stops automatic repetition of that failed adoption.
+Success notifies the Leader to enter delivery without another user prompt.
+Task activation cannot change a live Session's captured authority into
+`delivery`; a compatible delivery launch must establish that boundary.
 
-The Provider's native Turn terminal ends its associated AgentRun and stores the
-final response as immutable AgentRun evidence. It never accepts the WorkItem. The
-Leader checks semantics, evidence, and Git state, then resolves the execution
-result and accepts or rejects it with bounded feedback. A rejected isolated
-WorkItem keeps its workspace so the next AgentRun can repair the same result.
+Stable Project checkouts are read-only references. Managed workspace owners are
+Task, WorkItem, ReviewRound or IntegrationAttempt, not Role names. Multi-Project
+workspaces contain per-Project Git roots. Write scopes and exact Git lineage
+are checked where effects occur; a Profile's behavior intent is not a grant.
 
-An optional global review rule names one existing Global Role and chooses
-`always`, `leader`, or `final`. Candidate rules remain live defaults; each
-WorkItem Candidate snapshots the effective review rule when submitted.
-Every managed execution result is stored first on its exact AgentRun. A Candidate
-is created only from the main result when the Leader resolves the execution
-output for acceptance.
-`always` dispatches a review AgentRun for every candidate, whether it comes
-from a completed execution AgentRun or a Leader-managed direct result; `leader`
-leaves every candidate for the Leader to accept directly or review explicitly.
-`final` keeps WorkItem acceptance and Integration independent and supplies the
-default Reviewer Role when the Leader decides the frozen Task result warrants
-an independent final Review. An immutable Task-final contract can require that
-Review. A Leader-requested Round remains evidence without becoming policy: a
-later Task head does not require another Round unless the Leader requests one
-or an explicit Task contract requires it. This final Reviewer evaluates the whole
-Task, so normal delivery does not pay for a complete review of every WorkItem.
-Review AgentRuns complete only their exact ReviewRound, leave the WorkItem awaiting
-acceptance, and never trigger another review or append a Candidate. Successful
-and failed review attempts both wake the Leader and remain evidence for
-judgment, not a machine verdict. The ReviewRound stores only Core-owned
-identity, frozen Candidate, workspace provenance, execution topology, main
-Reviewer AgentRun reference, lifecycle, and failure diagnostics. The complete
-free-form Reviewer result lives only on that exact AgentRun. The Leader may route
-that result to the original Worker, but Yui never parses or merges it
-automatically.
+An isolated result is captured as immutable per-Project ChangeSets and integrated
+through a candidate worktree. Checks precede compare-and-swap advancement of the
+target head. Conflicts or target movement retain evidence and do not advance it.
+The Leader accepts delivery separately.
 
-Roles describe Agent capability, but they do not own repository workspaces. A
-`ManagedWorkspace` is keyed by its durable owner (`Task`, `WorkItem`,
-`ReviewRound`, or `IntegrationAttempt`); an AgentRun carries only a launch
-snapshot. Review workspaces are writable copies at the frozen commit, so
-diagnostics cannot redirect Develop or become a ChangeSet source. Task-final
-Rounds keep independent immutable records but may reassign one clean physical
-workspace to the next Round for the same Reviewer Role. This lets the native
-Reviewer Session continue while every AgentRun remains bound to its exact Round and
-head.
+Resources support immutable content, external-version and receipt artifacts,
+plus explicitly marked reference material. Environment prepare, adopt, bind and
+release are separate operations. Selection affects future native execution;
+active Sessions retain their captured environment. Trusted-local adoption is
+not an OS sandbox and release never implies deleting user directories.
 
-Dependencies are enforced at dispatch. A Role cannot have overlapping active
-AgentRuns, and terminal Task state fences new messages, dispatches, retries, and
-late results until explicitly reopened.
+## Runtime identity and replacement
 
-## Project workspaces and integration
+Agent execution component, connection plan, native Session, Host attachment and
+AgentRun identify different things. Codex CLI uses App Server, Claude Code CLI
+uses stream-json, and ACP peers use the ACP connection implementation. Unknown
+ACP product identity remains unknown.
 
-Stable Project checkouts are read-only references. Task identity follows one
-bounded outcome rather than Project count. A Task binds zero or more Projects,
-records an independent base ref for each binding, and adopts one workspace root
-only when it becomes active. A Draft owns planning state and Project bindings,
-not a writable Workspace. Activation prepares physical worktrees first and then
-commits status, workspace identity, cwd, and durable Workspace ownership in one
-TaskStore transaction; failure discards unadopted resources and leaves the Task
-Draft. The active Workspace contains a managed main worktree for each binding.
-The `<workspace>/tasks/<task>/main` root is a logical multi-Project container,
-not a Git repository. Each Project child (for example
-`<workspace>/tasks/<task>/main/yui`) is the supported Git cwd and points to
-`<workspace>/worktree/<project>/<task>/main`; Git commands run in that child.
-For a single-Project workspace, the native Agent starts in that Project's
-managed worktree so its project configuration and Skills are discovered
-natively. For a multi-Project workspace, the Agent starts at this root and Yui
-registers every Project worktree through the provider's native
-additional-directory mechanism. The active Leader may append a Project when the
-same outcome expands; replacing an existing binding is not a scope-repair
-mechanism.
+Desired Role configuration, frozen effective launch and actual Agent-reported
+configuration are separate facts. Requested model or permission is not evidence
+that it is currently in effect. ACP configuration is applied and checked through
+negotiated options; unsupported axes fail explicitly instead of being guessed.
 
-Before a Role launch, Yui verifies that every physical Project HEAD still
-descends from its Workspace's recorded base. Normal committed progress is
-allowed; a reset or repoint outside that lineage is reported as
-`physical-drift` and fails closed before Provider launch.
+The Host owns disposable clients, not shared native conversations. Session
+implementations are pinned to their actual code boundary. New calls or Sessions
+can select a new implementation while old references drain. A timeout or client
+exit does not prove descendant resources stopped; unresolved disposal remains
+observable rather than being reported as clean.
 
-A WorkItem can read the full Task workspace but has an explicit Project write
-scope. Isolation creates a second root with independent worktrees for writable
-Projects and Task-main context for the rest. The managed dispatch and
-`yui-worker` Skill name both sets explicitly; the Agent must modify only the
-writable set. Provider permission is binding configuration: every managed Role
-defaults to `bypass`, while `default` and `configured` preserve provider-native
-behavior. Provider permission and Profile access intent do not grant Project
-writes. A Leader-owned source write requires the exact Task-main owner. A
-WorkItem source write requires an exact WorkItem write scope and matching
-managed workspace; a review write instead
-requires an exact ReviewRound owner and frozen Candidate base. Profiles and
-Skills constrain behavior even when provider prompts are bypassed. Provider
-permissions remain Session-wide rather than Project-specific, so the durable
-workspace owner and exact Project scope remain the authorization boundary.
-Scope is monotonic. A Worker cannot expand it directly: it reports the need,
-and the Leader either adds Projects to the existing scope, creates another
-WorkItem, or adds the Project to the Task.
+Session reuse is optional. `task role session new` records replacement intent
+in the existing runtime mailbox, including when a Run is active or the prior
+Session has already ended. Once its resources stop, Yui cancels the old Role's
+engineering attempts, retains history and workspaces, and selects a new Session.
+Unprocessed notification references are carried into the successor's context,
+not lost behind a time cursor. The Agent chooses whether to retry existing work.
+Persistent native connection location and dedicated process custody make recovery
+independent of the old Host. A genuinely live/unknown writer remains a resource
+boundary, not a reason to withhold diagnosis or erase durable context.
 
-An isolated result is handled in this order:
+See [Provider runtime](docs/provider-runtime.md) and
+[Agent Drivers](docs/agent-runtime-drivers.md).
 
-1. the Worker Provider Turn ends and its AgentRun result is recorded;
-2. the Leader reviews semantics and evidence;
-3. Yui captures each writable Project HEAD as an immutable Project ChangeSet;
-4. each Project integration applies the governing Candidate's ChangeSet in a candidate worktree;
-5. configured checks run;
-6. compare-and-swap advances the target only if its HEAD is unchanged;
-7. the Leader accepts the WorkItem;
-8. terminal Integration, ReviewRound, and WorkItem resources become cleanup
-   advisories and are explicitly removed before archive.
+## Capabilities, plugins and surfaces
 
-The context contract is layered: Yui Core owns durable identity, lifecycle,
-access, and workspace safety; generic role Skills own portable orchestration;
-Project Policy/Knowledge and Agent-native Skills versioned in each Project own
-project-specific engineering rules; and the Task Contract owns the requested
-outcome. Yui injects only its own generic Role Skills. It never scans or copies
-Project Skills into managed context; the selected Agent discovers them through
-its native project mechanism. Execution and review select their generic Skill
-by durable AgentRun purpose. A Reviewer result returns as the exact source AgentRun
-text. The Leader decides whether to send feedback to the existing Worker,
-accept, review again, handle a local or Integration issue, or create genuinely
-independent follow-up work. Core neither parses findings nor creates repair
-topology from Reviewer prose.
+Capabilities use authenticated `search / describe / call`. Descriptors declare
+schemas, effects, permissions, scope and Provider identity. Ambiguity requires
+explicit selection. Nested calls cannot amplify caller authority or effect;
+original operation receipts survive a parent failure.
 
-Capture at the same HEAD reuses the existing ChangeSet. A repaired HEAD creates
-a new candidate; only the latest governing candidate may satisfy acceptance.
-An isolated WorkItem cannot be accepted, or a Task with WorkItems completed,
-while any writable Project's latest result is uncaptured or unintegrated.
-Leader-owned completion instead requires a clean committed exact Task-main snapshot.
-Workspace roots are
-multi-Project; ChangeSets and Integration Attempts remain single-Project Git
-boundaries.
+The Registry exposes context, messages, artifacts, environments, plugins and
+selected Task/Job operations. Other CLI/Web operations share domain handlers
+directly. There is no requirement to route every operation through a plugin.
 
-Conflicts store a compact report and block. The Leader chooses rejection or
-manual resolution in the retained candidate worktree. Failed checks, rejected
-results, conflicts, target movement, and abandoned work never advance the
-target. Full check output is streamed to cleanable artifact files; durable
-records retain compact evidence.
+Validated Task-local plugins preserve explicit enabled intent in the Store and
+live instances in InstanceHost. Reading or restarting does not run author code.
+Leader management is limited to its Task; executable code still requires exact
+Operator-issued grants. Plugin validation is not a security certification.
 
-## Durable context
+CLI contributions and controlled Web panels are projections of the Registry.
+Web is loopback-only and Controller-owned; browser credentials do not become
+Operator authority. See [Plugin SDK](docs/plugin-sdk.md) and
+[capabilities and resources](docs/architecture/capabilities-and-resources.md).
 
-Native transcripts remain native to their Agent. Yui persists only the control
-and knowledge needed to resume and audit work:
+## Persistence, completion and operation
 
-- Task Brief: objective, boundaries, cross-Project technical approach, current
-  focus, and Leader summary;
-- Decisions: material choices and supersession;
-- Milestones: independently useful phase outcomes;
-- Project Knowledge: stable facts reusable across Tasks;
-- WorkItems, Roles, AgentRuns, Messages, InputRequests, Events, ChangeSets, and
-  integration evidence.
+The Home has one append-only storage migration chain. Ordinary runtime accepts
+only current records. Explicit upgrade backs up and migrates valid supported
+Homes; malformed state is diagnosed, not automatically repaired.
 
-The Leader updates the Brief when durable Task context changes, records material choices as
-Decisions, records phase outcomes as Milestones, and promotes only cross-Task
-stable facts to Project Knowledge. `task context` is the consolidated recovery
-read; launches and wake messages carry record pointers rather than copied
-context.
+Completion freezes the delivery result and checks applicable acceptance,
+integration and review contracts. It is distinct from publication, verified
+remote merge, physical quiescence and archive. Archive requires settled work
+and clean removable managed resources, preserves Task history, and cannot reopen.
 
-## Runtime ownership
+Runtime health and cost are observations, not semantic verdicts. The Agent reads
+exact faults and current intent to choose retry, repair or abandonment. Yui does
+not automatically create rescue Workers or select another model.
 
-Provider conversations remain user conversations. Yui adds the matching Role
-Skill and Session Manifest pointer, then uses provider-native requests for
-durable Task delivery; it does not own or mirror the full transcript. The
-Controller owns mailbox delivery, wakeups, Role liveness, recovery observations,
-and exact receipts. tmux keeps Yui's client attachment observable where the
-provider path needs one. The Controller owns durable wake consumption and
-Provider submission; the Provider Runtime Binding owns the only AgentRun receipt.
-
-Session, Activation, and AgentRun identities are independent. A Session can span
-AgentRuns and client attachments; one Activation identifies Yui's current
-attachment, not exclusive ownership of the Provider thread. One AgentRun identifies
-one explicitly requested execution. Ordinary Provider UI conversation does not
-create an AgentRun. Yui's authority epoch fences only Yui's own submissions
-and retries.
-
-`AgentRun` is durable execution intent, not Role authority or a global scheduling lock. It records the
-visible inputs, their source and channel, and the final Provider output; it does
-not copy reasoning or tool traffic. All input relayed or generated by Yui has
-source `yui`, while direct Provider input has source `user` and explicit Goal
-continuations have source `provider`.
-`TaskRole` likewise stores configuration and identity, not a writable runtime
-status. CLI and Web show record lifecycle separately from actual
-Session/Provider admission and activity evidence.
-`AgentHost` is the serialized consumer: while a Provider Turn is active, the
-next mailbox wake remains durable and unsubmitted. When that AgentRun ends, Yui
-atomically stores the result. Worker and Reviewer completion enters the bounded
-Leader wake aggregation window; notification delivery creates no AgentRun while
-reusing the same live Session whenever its configuration remains compatible.
-Task and WorkItem completion remain Leader decisions and never follow merely
-from Provider termination.
-
-Codex Task threads remain ordinary native Sessions and can be opened and used
-directly in Desktop. Direct user native Turns do not become Yui AgentRuns. If
-one is active, Yui keeps its pending message until the native Session is available. Global
-interactive entry remains a native Session-lifecycle operation outside the Task
-delivery contract.
-
-Codex establishes an App Server WebSocket through the byte-forwarding
-`app-server proxy` to create or resume a normal thread on the shared daemon.
-Role model, effort, permission, workspace, and shell settings are passed at
-`thread/start`/`thread/resume`, while the ordinary Task message points to the
-Session Manifest and matching Role Skill. Yui does not write either to global
-Codex config. A native Codex profile is rejected because it cannot be isolated
-to one shared-daemon thread. The Agent Host owns only its proxy and WebSocket:
-Task execution stop discards the Yui attachment without waiting for or changing
-the daemon or native thread, and start creates a new attachment.
-Claude uses a persistent stream-json
-transport with exact local attempt correlation and no invented nativeTurnId.
-Pipe writes are transport evidence; the matching result establishes native acceptance.
-For explicit executions Yui records AgentRun intent before writing, accepts only exact Provider evidence, and
-maps an uncertain write to `delivery-unknown` without automatic resubmission.
-
-See [the current shared contract](docs/architecture/yui-handbook-full-architecture/architecture/07-session-run-contract.md) for Session-only
-Leader authority, captured planning/delivery scope, reference Messages, and storage 9 → 10.
-
-Role desired revisions and AgentRun/Session effective snapshots keep configuration
-history explicit. Resume compares the complete effective snapshot and
-workspace compatibility rather than revision alone. Desired drift is expected
-while an old process is running and becomes effective only on a later launch;
-control-plane wakes continue through the live Session's actual snapshot, and
-fresh replacement archives the stopped snapshot instead of rewriting it.
-Mailbox generations, reservations, liveness, and native Turn terminals remain
-the control-plane authority; configuration snapshots do not replace those
-execution facts. Lifecycle code uses structured Hook data, persisted identities, tmux
-process state, receipts, and pane fences. It never parses Agent terminal glyphs,
-progress text, trust dialogs, or final prose to infer readiness or success.
-
-All durable writes use process locking and atomic replacement. Storage validates
-record identity, legal transitions, dependency cycles, cross-record ownership,
-immutable Git evidence, and current Controller protocol compatibility. Worktree
-cleanup revalidates ownership and fails safely when concurrent state changes;
-manual retry is the recovery boundary rather than another durable state
-machine.
-
-Storage has one compatibility authority: the highest contiguous, checksummed
-version in SQLite's append-only migration ledger. The CLI exposes that release's
-current version and minimum supported migration version. Ordinary opening and
-Controller startup accept only the exact current version; historical decoding
-and rewriting exist only inside `yui upgrade` and the migration phase of
-`yui update`.
-
-Yui 0.15.0 establishes storage version 1 as the clean single-version baseline:
-`schema.json` has no authority, and layout/aggregate/record-version axes are
-absent from Home metadata. Pre-0.15.0 Homes are outside the migration floor.
-Future releases append one immutable migration per storage version and retain
-the complete chain from version 1. A fresh Home replays that same chain, so
-fresh and upgraded Homes converge on one current schema.
-
-The staged `upgrade --update-preflight` / `--update-apply` machine handshake is
-also a compatibility contract: target releases keep its established outcomes
-and required fields, plus the parent-owned handover-lock proof, readable by
-every updater released since version 1. Additive detail is allowed; renaming or
-removing consumed fields would strand an otherwise valid cross-version
-migration path.
-
-An upgrade runs only while the Controller is quiesced, creates a consistent
-database backup, applies all missing migrations in one transaction, and
-validates the current record model before writes resume. A missing or changed
-ledger row, a migration gap, a Home below the migration floor, a future Home,
-or malformed data fails closed. Runtime code contains no dual readers,
-historical normalizers, or independently writable compatibility state.
-
-The Web control room is loopback-only and never receives Controller socket
-credentials. It presents durable records and native terminal access without
-becoming a second source of truth.
+The [documentation map](docs/architecture/README.md) links current contracts.
+The [verification policy](docs/testing/verification-levels.md) separates core
+smoke from temporary change-specific and explicitly authorized real-resource
+evidence; documentation is not a claim of full production validation.

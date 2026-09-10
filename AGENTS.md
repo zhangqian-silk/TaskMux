@@ -31,7 +31,7 @@
 - Persist Project Knowledge in YUI_HOME. Repository files may be evidence or reading material, but they are not the authority for Yui's maintained knowledge.
 - Keep Yui CLI primitives project-neutral. Put project-specific planning, build, test, migration, release, review, and recovery judgment in Project Skills, Knowledge, and Task context instead of generic CLI Roles or core branches.
 - Treat stable Project checkouts as read-only reference workspaces. Perform Task and WorkItem changes in managed worktrees.
-- A Project-backed Task receives its main worktree when it is created. During execution, the Leader may create an isolated WorkItem worktree directly when concurrent work warrants it; do not introduce an approval workflow.
+- A Draft Task stores planning facts and Project bindings without a delivery workspace. Activation prepares resources and atomically adopts the Task's main workspace; a planning Session does not gain delivery authority just because the Task becomes active. During execution, the Leader may create an isolated WorkItem worktree directly when concurrent work warrants it; do not introduce an approval workflow.
 - Archive only after active work is settled, results are integrated or deliberately abandoned, and managed worktrees are clean and removable. Worktree cleanup must not delete the Task record.
 
 ## Do not solicit real-resource validation
@@ -46,7 +46,7 @@
 - Provide migration code only for valid earlier versions of persistent Yui data. Any change to a persistent layout, aggregate, record, or configuration schema must declare its version transition and use the centralized migration mechanism.
 - For every other change, implement the current contract directly. Do not add transitional adapters, dual behavior, legacy fallbacks, or automatic repair for malformed or manually modified runtime state. Return a bounded diagnosis and let the Agent or Operator choose cleanup or retry. Migrations preserve valid stored history; they do not repair it heuristically.
 - Before adding persistent state, a retry or recovery worker, a lease, an acknowledgement, or another protocol phase, identify the normal product path or hard boundary it protects. If a visible failure plus Agent retry is sufficient, do not add the mechanism.
-- Keep permanent tests to the seconds-scale core happy path. Change-specific TDD and abnormal, deletion, retirement, retry, or historical-regression fixtures are temporary development evidence and must be removed when the change is complete unless they replace a missing primary product smoke.
+- Keep permanent tests seconds-scale: essential happy paths plus a small set of deterministic regressions for high-impact, easily changed boundaries such as durable context, Session replacement, exact runtime identity, and recovery authority. Keep a regression only when it is fast, protects observable behavior, and adds coverage not already present. Broad fault matrices, real-model exercises, and incident-specific diagnostics remain temporary evidence rather than a one-test-per-incident archive.
 
 ## Keep Yui-specific workflow in its Project Skill
 

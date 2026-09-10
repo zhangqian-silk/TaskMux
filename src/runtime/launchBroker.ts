@@ -29,6 +29,8 @@ export type AgentHostLaunchPayload = Readonly<{
   childLifecycle: "persistent" | "per-turn";
   startMode: "provider" | "idle";
   providerControl?: AgentHostProviderControl;
+  /** Invocation-local options for the native global TUI's own startup request. */
+  interactiveCodexThread?: CodexThreadOptions;
 }>;
 
 export type ProviderOwnedTurn = Readonly<{

@@ -1,5 +1,5 @@
 import { usageError, taskNotFound } from "../errors/cliError.js";
-import { resolveManagedTaskCaller } from "../runtime/managedCaller.js";
+import { resolveManagedTaskReader } from "../runtime/managedCaller.js";
 import type { TaskStore } from "../storage/taskStore.js";
 import { contextContentDigest } from "./contextSnapshot.js";
 import { buildRunContextPack } from "./runContextPack.js";
@@ -236,7 +236,7 @@ export async function withContextObservations(
 }
 
 function authorizeContext(store: TaskStore, taskId: string, environment: NodeJS.ProcessEnv) {
-  const caller = resolveManagedTaskCaller(store, environment);
+  const caller = resolveManagedTaskReader(store, environment);
   if (caller !== undefined && caller.taskId !== taskId) throw usageError("Context is outside the caller's Task.");
   if (caller === undefined && environment.YUI_SESSION_SCOPE === "global" && environment.YUI_ROLE !== "operator") {
     throw usageError("Only Operator may read Task context from a global Session.");
@@ -258,6 +258,20 @@ function authorizeContext(store: TaskStore, taskId: string, environment: NodeJS.
     allow = new Set(pack.authority.readableRefs.map((ref) => `${ref.store}:${ref.refId}`));
     allow.add(`role:${caller.roleName}`);
     allow.add(`turn:${caller.currentRunId}`);
+    // A frozen Assignment is not a cutoff for the Task's current user intent.
+    // Untargeted human/Operator messages are shared Task requirements; scoped
+    // messages and other Roles' results still require the Assignment's refs.
+    const sharedMessageIds = new Set(store.listMessages(taskId)
+      .filter(message => (message.kind === "user" || message.kind === "operator")
+        && message.recipient === undefined && message.workItemId === undefined
+        && message.runId === undefined)
+      .map(message => message.id));
+    for (const id of sharedMessageIds) allow.add(`task-message:${id}`);
+    for (const event of store.listEvents(taskId)) {
+      if (event.type.startsWith("message.") && sharedMessageIds.has(event.payload.messageId)) {
+        allow.add(`task-event:${event.id}`);
+      }
+    }
   }
   return { task, allow, caller };
 }

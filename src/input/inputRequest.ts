@@ -11,7 +11,8 @@ export type InputRequester = Readonly<{
   taskId: string;
   roleName: "leader";
   agentId: string;
-  runId: string;
+  /** Optional execution provenance; a notification Session needs no synthetic Run. */
+  runId?: string;
   nativeSessionId?: string;
 }>;
 
@@ -166,10 +167,9 @@ export function validateInputRequest(value: unknown): InputRequest {
     updatedAt: requireTimestamp(request.updatedAt, "Input request updatedAt")
   };
   validateTaskRecordReference({ taskId: base.taskId, localId: base.id }, "inputRequest");
-  validateTaskRecordReference({
-    taskId: base.requester.taskId,
-    localId: base.requester.runId
-  }, "run");
+  if (base.requester.runId !== undefined) {
+    validateTaskRecordReference({ taskId: base.requester.taskId, localId: base.requester.runId }, "run");
+  }
   for (const reference of base.blockedRefs) {
     validateTaskRecordReference({ taskId: reference.taskId, localId: reference.id },
       reference.type === "run" ? "run" : "workItem");
@@ -309,17 +309,20 @@ function normalizeRequester(value: InputRequester): InputRequester {
   const requester = record(value, "Input requester");
   exact(
     requester,
-    requester.nativeSessionId === undefined
-      ? ["taskId", "roleName", "agentId", "runId"]
-      : ["taskId", "roleName", "agentId", "runId", "nativeSessionId"],
+    ["taskId", "roleName", "agentId",
+      ...(requester.runId === undefined ? [] : ["runId"]),
+      ...(requester.nativeSessionId === undefined ? [] : ["nativeSessionId"])],
     "Input requester"
   );
   if (requester.roleName !== "leader") throw new Error("Input requester must be the Task Leader.");
+  if (requester.runId === undefined && requester.nativeSessionId === undefined) {
+    throw new Error("Input requester requires an originating Run or native Session.");
+  }
   return {
     taskId: requireIdentity(requester.taskId, "Input requester Task id"),
     roleName: "leader",
     agentId: requireIdentity(requester.agentId, "Input requester Agent id"),
-    runId: requireIdentity(requester.runId, "Input requester AgentRun id"),
+    ...(requester.runId === undefined ? {} : { runId: requireIdentity(requester.runId, "Input requester AgentRun id") }),
     ...(requester.nativeSessionId === undefined
       ? {}
       : { nativeSessionId: requireIdentity(requester.nativeSessionId, "Input requester native session id") })

@@ -8,6 +8,9 @@ export function mapClaudeAgentError(
   input: AgentDriverErrorInput
 ): AgentErrorClassification {
   const text = `${input.message}\n${input.raw}`;
+  if (/^No conversation found with session ID: [A-Za-z0-9-]+\.?$/imu.test(input.message)) {
+    return sessionUnavailable("provider.session-not-found");
+  }
   if (/^server_error$/iu.test(input.message) || /\bapi_error\b/iu.test(text)) {
     return recoverable("availability", "provider.server-error");
   }

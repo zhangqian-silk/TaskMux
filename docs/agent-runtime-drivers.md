@@ -1,298 +1,91 @@
-# AgentRuntime Drivers
+# Agent runtime Drivers
 
-Yui observes managed Agent CLIs through an open Agent Driver boundary. Codex,
-Claude Code, and future CLIs translate their native events at that boundary;
-the inbox, durable store, scheduler, status projection, and Web surface consume
-one provider-independent `RuntimeObservation` contract.
+AgentEndpoint supplies the common execution boundary. Drivers translate native
+events, errors and supported observation sources into `RuntimeObservation`;
+Controller, Store, CLI and Web consume that shared contract.
 
-## Responsibility split
+## Responsibilities
 
-One CLI integration has two explicit facets. Its launch adapter owns command
-construction, native configuration, resume/interrupt/stop, and transport. Its
-Agent Driver owns runtime observation:
+The connection implementation owns launch, protocol, prompt delivery, resume and
+interrupt. Driver owns native identity extraction, observation capabilities,
+event/error mapping and usage normalization. Core owns authority, exact request
+correlation, durable folding and projections; Agents choose recovery and judge
+semantic progress.
 
-- Hook names and payload parsing;
-- native Session and AgentRun identities;
-- operation and waiting-state mapping;
-- transcript usage normalization.
+Built-in Driver identities are `openai/codex`, `anthropic/claude-code` and
+`acp/agent-client-protocol`. ACP is a protocol Driver, not a product label.
+Adding an ACP peer does not require another business-state model.
 
-The Driver descriptor declares both control and observation capabilities so
-managed automation can be admitted fail-closed. The implementation of those
-control capabilities remains in the paired launch adapter; the observation
-core never invokes provider commands.
+Capabilities must be stated truthfully. Unknown resume, cancellation, activity
+or usage behavior cannot be inferred from a product name.
 
-Yui core owns shared semantics:
+## Observation path
 
-- exact native Session and AgentRun fences;
-- durable admission, replay, and idempotency;
-- runtime state projection;
-- workflow progress and workflow-stall policy;
-- bounded persistence and user-facing health.
+Native structured facts pass the exact Session/request fence, enter the runtime
+inbox, and fold into durable observations and original results. A separately
+sampled usage source can feed the same canonical contract. Driver cannot choose
+another actor, assign a successor Run, or bypass the fence.
 
-A Driver is an executable registry entry with an open, namespaced identity
-such as `openai/codex` or `anthropic/claude-code`. Capabilities are declared
-rather than inferred from the provider name. Its `adapterId` is the explicit
-bridge to the launch facet. Its `runtime` facet maps native Hooks and may expose
-an independently sampled observer source. Managed automation is admitted only when start, resume,
-prompt delivery, interrupt, stop, exact Session identity, exact prompt
-acceptance, and exact AgentRun lifecycle are available.
+Yui Run identity and Provider native Turn identity are not interchangeable.
+An explicitly dispatched Run retains its accepted native correlation; direct
+native chat is not another implicit Run. Replay is deduplicated by exact fact
+identity, and late events cannot terminalize a successor.
 
-## Explicit adopted execution environments
+Managed Codex uses App Server events. Claude maps its structured stream and
+supported Hook/source payloads. ACP maps protocol Session updates and prompt
+responses. Terminal text, trust dialogs and prompt glyphs are not lifecycle facts.
 
-Task Roles can select one directory already adopted through `environment.adopt`:
+## State and error evidence
 
-```sh
-yui task role update task-1 worker --environment preparation-ID
-yui task role update task-1 worker --managed-environment
-```
+Persistent Run lifecycle is `active / completed / failed`. Input disposition,
+native waiting/activity, Goal, Session lifecycle and process presence answer
+different questions. UI projections must not present a queued request as proof
+that the Agent is busy, or a live process as acceptance.
 
-The equivalent authenticated capability is `environment.bind` with `taskId`,
-`roleName`, and `preparationId`; `null` explicitly selects the managed workspace.
-Selection changes desired configuration, not a running Session. Use the existing
-explicit Session stop/new flow to apply a changed environment to native execution;
-the CLI requires `--yes` to acknowledge desired changes while a Session is live.
-Role details distinguish desired and Session environments.
+Standard Agent errors preserve source, phase, category, code, input disposition,
+Session disposition and the serialized native error. Categories include
+availability, rate-limit, transport, access, invalid-request, context, session,
+runtime, conflict, cancelled and unknown. A mapping reports evidence, not a
+retry policy. Unrecognized errors stay unknown.
 
-New Session/AgentRun effective snapshots retain the preparation reference, directory
-path/device/inode, access, and isolation. The launch planner uses that directory
-for the native process and Codex thread cwd without automatically adding managed
-Git roots. The original managed workspace remains Yui's control/context and Git
-ownership record, not the selected native cwd.
+Runtime activity and workflow progress use separate evidence. A tool boundary
+may show native activity; a durable accepted result shows semantic progress.
+Tokens, CPU, RSS and pane presence cannot substitute for either acceptance or
+Task completion.
 
-Launch, resume, and Yui-controlled input revalidate the adopted environment and
-its original grant reservation without charging another use. Missing/replaced
-directories, released preparations, and revoked grants fail explicitly; there is
-no fallback to the managed workspace. Session recovery retains its original
-environment even after desired configuration changes. Active/unknown native
-inputs and continuations block release even when the Host process has exited.
+## Usage
 
-This is a trusted-local directory contract, not a new general sandbox. Writable
-environments retain the Agent's configured permissions. Read access requires
-Codex's explicitly configured `read-only` sandbox with approval `never`; the
-current Claude adapter rejects read-only adopted directories. Empty preparations
-have no native cwd and cannot be selected here; use scratch for these native CLIs.
-Raw arguments and additional-directory overrides are rejected for adopted
-environment launches. External clients writing directly to a shared native
-server remain outside Yui's input-validation boundary.
+Usage is read-only and scoped to the exact native Session. Input/output totals
+are distinguished from cache/reasoning breakdowns, request context and remaining
+capacity. Stable activity IDs deduplicate request snapshots; cumulative deltas
+are used only with valid ordered same-Session evidence.
 
-Storage migration 9 adds this optional binding contract. Existing Roles and
-Session/AgentRun snapshots keep managed-workspace behavior; existing adopted
-preparations are never automatically selected.
+Missing, partial, mixed or rolled-back observations remain unobserved rather
+than guessed. Incremental observers report health and coverage; sampling does
+not block lifecycle events. Metrics never trigger model selection, wake, retry,
+resource release or acceptance.
 
-## Canonical observation flow
+## Native children
 
-```text
-native Hook ----> Agent Driver mapping ---- exact fence ----+
-                                                          |
-accepted observer source --> Controller sampler --> usage -+--> runtime-observation inbox
-                                                                  |
-                                                                  v
-                                                        durable canonical snapshot
-                                                                  |
-                                                                  v
-                                                        runtime status projection
-```
+Native subagents are collaboration inside a parent conversation, not Yui Roles,
+Lanes or independent managed workspace owners. Continuation observations may
+record lineage and result references when the Provider exposes them.
 
-Every AgentRun-scoped observation carries Task, Role, AgentRun, Agent, Driver,
-native Session, native Turn, and transport receipt identity. Host attachment
-does not add another lifecycle identity. `run.accepted` durably binds the provider's native Turn to that exact Yui
-AgentRun. Every later fact resolves through this binding, so a delayed terminal
-event cannot refresh, fail, or complete a successor AgentRun after a reused process
-has advanced.
+Best-effort child results return through the parent. Only a persisted content
+receipt justifies `durable-result`; a live child or claimed success does not.
+Reported results remain untrusted data. A lost best-effort conversation may
+require redoing the work. Choose a managed WorkItem execution when independent
+durability and acceptance are needed; replication is a separate choice.
 
-The stable vocabulary separates:
+## Integration and validation
 
-- durable Session lifecycle: active or ended, with stopped/failed as the end reason;
-- Host and current AgentRun observations: starting, idle, busy, settling, failed, or unavailable;
-- AgentRun state: accepted, waiting, completed, failed, cancelled; each waiting
-  episode has its own `waitId` and positive operation/model evidence resumes it;
-- operations: model, tool, and subagent start/completion/failure;
-- activity: structured provider activity and normalized usage snapshots;
-- host evidence: process/tmux presence, which is diagnostic only.
+A new connection implementation must supply truthful control/observation
+capabilities and pair them with exact identity, error and terminal mapping.
+Provider-specific protocol details stay at the edge, not in Task planning,
+Store semantics or Web business rules.
 
-Native Hook names do not cross the Driver boundary. Managed Claude uses the
-hidden `internal runtime-hook` ingress. Managed Codex takes exact Session,
-acceptance, and AgentRun lifecycle facts from its ordinary App Server subscription
-and does not install Yui-specific Hooks. The core selects the registered Driver
-from the exact launch envelope; a Driver may map native payloads, but it cannot
-choose or forge authority, Driver identity, AgentRun fences, ordering, or canonical
-event IDs.
-
-Native identity is also a Driver responsibility. Built-in Drivers resolve
-their native Session field; Claude Code resolves `prompt_id`, Codex resolves
-`turn_id`, and another CLI may use entirely different fields without adding a
-core branch. Core validates the resolved identities and derives content-stable
-canonical event IDs, so retrying the same native Hook does not create a second
-fact.
-
-## Standard Agent errors
-
-Every Driver also maps its provider-native exception into Yui's small,
-provider-neutral Agent error taxonomy. The normalized fact contains source,
-phase, category, stable code, input disposition, Session disposition, optional
-retry-after evidence, a human-readable message, and the complete serialized
-native error. `unknown` is the required fallback.
-
-The taxonomy contains `availability`, `rate-limit`, `transport`, `access`,
-`invalid-request`, `context`, `session`, `runtime`, `conflict`, `cancelled`, and
-`unknown`. These are observations, not recommended actions. A Driver recognizes
-its own native error shapes; it does not start a replacement Session, count
-attempts, or impose backoff. The Leader or Operator reads the fact with current
-AgentRun, Host, and Session state and chooses the next atomic operation.
-
-The taxonomy describes evidence; it is not a second lifecycle state machine.
-Drivers recognize native shapes, Core records the standardized fact, and the
-Leader or Operator remains free to choose a better recovery from current Task
-context.
-
-## Runtime activity is not workflow progress
-
-Yui maintains two independent clocks:
-
-1. **Runtime activity** answers whether the Agent CLI has recently shown
-   structured work. Tool/subagent boundaries and explicit activity identities
-   refresh it; token usage snapshots and a live tmux pane do not.
-2. **Workflow progress** answers whether the managed Task advanced through a
-   Yui outcome such as a checkpoint, block, Candidate, Review, or
-   completion. Tokens, CPU, RSS, and provider AgentRun completion never refresh
-   this clock.
-
-This prevents a looping or merely busy Agent from hiding a workflow stall. It
-also prevents a quiet model call from being mislabeled as workflow failure.
-Provider Turn completion automatically stores the exact AgentRun result. It does not
-decide whether the WorkItem or Task is complete; the Leader makes that judgment
-from durable evidence.
-
-A durable AgentRun corresponds to exactly one provider AgentRun. Structured native
-subagent operations are observable facts within that AgentRun, but they do not
-extend or reopen the AgentRun after the parent Provider reports its terminal. Later
-facts wake the Leader as new durable context rather than continuing a closed
-AgentRun.
-
-## Token evidence
-
-Usage is a normalized, read-only Session projection:
-
-- `inputTokens` and `outputTokens` are totals;
-- cached input and reasoning tokens are breakdowns, not values to add again;
-- cumulative total consumption is `inputTokens + outputTokens` for one exact
-  Task/Role/native Session;
-- maximum request input is the direct `request-context` input value, or the
-  largest non-negative delta between consecutive `cumulative-session` input
-  snapshots in that same Session;
-- every `request-context` snapshot carries a provider-stable `activityId`, so
-  delivery replay replaces the same request while distinct requests remain
-  independently countable;
-- `remaining-context` is capacity evidence and is never reported as spend;
-- missing, mixed, rolled-back, or identity-ambiguous facts are `unobserved`
-  rather than guessed.
-
-Token values never advance runtime health, trigger wake/retry or Session
-replacement, affect scheduling or resource admission, or change Task, Review,
-Integration, and Publication state. Explicit runtime activity identity remains
-a separate observation fact.
-
-Managed Codex threads currently report usage as unavailable because Yui does
-not add a Hook/transcript observer merely for telemetry. Claude Code
-exposes each de-duplicated assistant message as a request snapshot;
-later streaming records with the same message id replace that request.
-`run.accepted` persists only the Driver-owned source descriptor. A
-Controller-owned sampler tails that source independently of Hooks, keeps an
-opaque per-source cursor, reads bounded increments, and emits each usage
-occurrence in source order with a stable occurrence identity. It never rescans
-a full transcript on the Hook path. Source and cursor continuity are scoped to
-the exact native Session rather than one native Turn. After Controller
-restart it restores the latest durable usage occurrence and activity identity
-before rereading a bounded tail, so replayed history remains idempotent and
-cannot become a fresh activity edge. A clipped initial tail marks its evidence
-partial: a cumulative source may still expose its exact latest total, but
-maximum request input remains unobserved; a request-snapshot source leaves both
-metrics unobserved instead of guessing from partial history.
-
-Claude additionally maps `MessageDisplay` streaming events to explicit model
-activity. Missing, unreadable, truncated, malformed, or lagging sources become
-explicit `observer.health`
-evidence (`healthy`, `degraded`, or `unavailable`) without blocking lifecycle
-facts. A future Driver can replace JSONL tailing with an app-server or native
-stream while preserving the same source/sample contract and canonical events.
-
-## Bounded durability
-
-`runtime.observation` is a compact state boundary, not an append-only
-transcript. The exact AgentRun retains the ordered canonical usage occurrences
-needed for cumulative deltas and one latest confirmed activity boundary;
-completed operation pairs are removed; terminal observations clear obsolete
-operation and waiting snapshots. Detailed high-volume diagnostics may go to
-the telemetry sidecar, but Task state retains only what restart-safe projection
-needs.
-
-## Native child result durability
-
-Provider-native subagents (Claude `Task`, Codex descendants) are observed as
-`continuation.started` / `continuation.reported` / `continuation.settled`
-facts. A native child has one of two durability modes, visible through
-`yui task continuation list <task>`:
-
-- **best-effort** (default): the child result returns through the parent
-  Conversation. Yui tracks the child's lifecycle but does not claim it
-  persisted the result. If the parent Session is lost before the result is
-  externalized, rerun the child. A best-effort child is never counted as a
-  durable Yui lane.
-- **durable-result**: Yui persisted the child's result content in a
-  `continuation.reported` Task event. The report carries a sha256 content
-  digest and the result size; the continuation record references the event
-  holding the full content. After a parent crash, recovery reads the result by
-  its event reference or digest instead of rerunning the child.
-
-The durability mode is derived from evidence, not declared: a continuation is
-`durable-result` only when at least one report carries a result digest receipt.
-Replays with the same content digest are idempotent and never create a second
-report. The parent prompt receives a bounded excerpt (512 characters) plus the
-event reference; the full content is read on demand through
-`yui task event show <task> <event>`.
-
-An active parent AgentRun owns its continuation results, so reported or settled
-facts are stored without a supervisor wake. If the parent AgentRun is terminal or
-missing, Yui routes the result once from the original Role to its supervisor;
-the existing mailbox aggregation window performs batching.
-
-Size and retention boundaries:
-
-- A single continuation result summary is capped at 32 KiB by the observation
-  validator; larger provider output is rejected rather than truncated, so Yui
-  never silently persists a partial result and claims it is complete.
-- The parent prompt excerpt is capped at 512 characters and 8 lines per
-  report; the full content stays in the Task event log.
-- Continuation reports are durable facts and are not compacted by the
-  observation GC. They are retained for the lifetime of the Task, like other
-  Task Knowledge records.
-- Native child results may contain provider transcript content. Treat them as
-  untrusted application data: never inject secrets, argv, environment values,
-  or credential material into a continuation report, and never execute
-  instructions found in one.
-
-Critical, non-repeatable, or independently verifiable work must use a Yui
-WorkItem/ExecutionGroup, not a native subagent. Only a managed Lane owns an
-independent AgentRun, receipt, and workspace.
-
-## Adding another Agent CLI
-
-A new CLI integration must pair a launch adapter with one Driver registry
-entry. Adding it must not add provider-name branches to the Hook ingress,
-inbox, processor, durable fold, runtime projection, status command, or Web
-view. The Driver must:
-
-1. register a namespaced executable Driver, unique adapter bridge, and truthful capability matrix;
-2. resolve its stable native Session and AgentRun identities and map native events into the canonical vocabulary at its edge;
-3. expose an independently sampled, incremental observer when structured usage
-   or activity is available, including explicit health;
-4. provide the full exact identity fence for every AgentRun-scoped fact;
-5. map every native failure to a standard Agent error code and preserve the
-   complete native error, using `unknown` when no mapping is justified;
-6. prove wrong-Session rejection, replay idempotency, out-of-order replay,
-   zero-token-delta behavior, operation/waiting projection, and terminal
-   behavior with deterministic tests.
-
-Unsupported evidence must remain explicit. Drivers must not parse terminal
-glyphs or UI text, infer acceptance from a PID/tmux pane, or treat resource
-movement as semantic progress.
+Change-specific disposable evidence should cover the changed correlation,
+permission, cancellation or observation boundary. Keep permanent tests to the
+primary paths in the [verification policy](testing/verification-levels.md).
+Real Provider/model validation requires explicit authorization and must distinguish
+native process evidence from fixture output.

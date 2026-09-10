@@ -62,6 +62,7 @@ export type RuntimeTmuxLaunchPlan = Readonly<{
   args: readonly string[];
   env: Readonly<Record<string, string>>;
   providerControl?: AgentHostLaunchPayload["providerControl"];
+  interactiveCodexThread?: AgentHostLaunchPayload["interactiveCodexThread"];
   childLifecycle?: AgentHostLaunchPayload["childLifecycle"];
   executionEnvironment?: AgentHostLaunchPayload["executionEnvironment"];
   deferProviderStart?: boolean;
@@ -587,7 +588,10 @@ export class TmuxSessionHost implements SessionHostPort {
       startMode: planned.launch.deferProviderStart === true ? "idle" : "provider",
       ...(planned.launch.providerControl === undefined
         ? {}
-        : { providerControl: planned.launch.providerControl })
+        : { providerControl: planned.launch.providerControl }),
+      ...(planned.launch.interactiveCodexThread === undefined
+        ? {}
+        : { interactiveCodexThread: planned.launch.interactiveCodexThread })
     }));
     const hostLaunch = {
       command: process.execPath,

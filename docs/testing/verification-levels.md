@@ -1,43 +1,80 @@
 # Verification policy
 
-Yui is a single-user local product. Permanent verification protects only the
-few happy paths whose failure would make the product unusable; it is not a
-historical catalog of every defect or edge case.
+Yui is a single-user local product. Permanent verification protects essential
+happy paths and a few critical, easily changed correctness boundaries. It is
+not a historical catalog of every defect or edge case.
 
 ## Local development
 
-Use the smallest evidence needed for the current change. TDD tests, repro
-scripts, fault injection, and abnormal-data fixtures are temporary development
-tools. Remove them when the requirement is complete unless they reveal that a
-basic product path is absent from the permanent smoke.
+Use the smallest evidence needed for the current change. Retain a focused
+regression when all of the following apply:
 
-Do not retain dedicated regression tests for malformed data, deletion,
-retirement, archive, retry, rollback, recovery, old incidents, or combinatorial
-compatibility. Revalidate those behaviors only when a change directly touches
-them. This keeps maintenance proportional to current product value instead of
-the number of bugs fixed over time.
+- Failure would lose durable intent, cross an authority/isolation boundary, or
+  prevent an Agent/Operator from making legitimate progress.
+- The boundary is shared by frequently changed code or has already failed in
+  a realistic execution.
+- The check is deterministic, uses disposable local fixtures, runs in
+  milliseconds, and asserts observable behavior rather than incidental layout.
+- Equivalent coverage is not already present; prefer one coherent scenario
+  over separate cases for each historical symptom.
+
+Keep broad fault matrices, real-model exercises, malformed-data combinations
+and incident-specific scripts temporary. Remove their harnesses after the
+change, preserving useful reports. Real-resource results do not replace fast
+regressions, and fast regressions do not establish real-model behavior.
 
 ## Permanent core smoke
 
-`npm test` and `npm run test:core` build the checkout and cover the same primary
-happy-path categories:
+`npm test` and `npm run test:core` build the checkout and run one permanent suite:
 
 1. the packaged CLI starts and exposes setup/update/upgrade/Task commands;
 2. one normal SQLite Task and Message survive a reopen;
 3. a supported historical Home migrates through the linear storage chain to current;
-4. the built-in Codex and Claude Drivers are registered.
+4. the built-in Codex and Claude Drivers are registered;
 5. one independent declarative plugin is created, validated, called and disabled
    through authenticated ingress, with its selection and validation preserved.
+6. a Task starts from durable Operator input, exposes planning Context and enters
+   delivery with its original intent and captured planning authority preserved.
+7. Session replacement preserves pending original Messages and independent work;
+   old Sessions keep scoped reads but cannot regain write authority;
+8. InputRequests survive Session replacement without a synthetic AgentRun;
+9. late native terminals cannot settle successor input or invent acceptance;
+10. remote Operator startup carries its reserved workspace, Role instructions
+    and scoped CLI identity, while offline diagnostics/recovery remain reachable.
+11. durably queued native results survive Controller outages and replay without
+    poisoning the Host; known terminal inputs do not become active merely by aging;
+12. Task-final review can use its Task-local Reviewer without a global template.
+13. a native error label permits replacement only with latest-Turn terminal
+    evidence and drained background execution; a wrong native account cannot
+    authorize cleanup.
+14. Claude receives its native environment and settings paths without injected
+    authentication helpers, rewritten approval records, or secrets forwarded
+    to unrelated adapters; native authentication selection stays with Claude. Environment refresh
+    removes revoked keys and keeps values out of durable Task/Role records.
 
-The test phase should remain below two seconds on a normal development machine;
-the TypeScript build is measured separately. Adding a permanent case requires a
-product-level primary path, and overlapping coverage must be replaced rather
-than accumulated.
+Keep the test phase seconds-scale; measure TypeScript build separately. Record
+incremental runtime when adding a critical regression. The seven recovery boundary
+cases initially add about 0.4 seconds of test bodies (about 0.6 seconds standalone,
+including module startup) on the development host. Avoid sleep-based checks or
+mandatory model/daemon launches in the permanent suite.
+
+## Skill and instruction changes
+
+Review the shared Runtime contract and affected Role/Project Skills together.
+Check instruction boundaries with a few relevant scenarios: analysis remains
+read-only, existing mechanisms are reused, Session loss preserves Task intent,
+and execution failure does not prevent authorized supervision. This is a
+bounded review, not a new permanent matrix or permission to use real models.
+
+The package-start check follows local Skill references in the installed tree,
+including cross-Role links. Entry points and their referenced Markdown must
+ship together. File/format checks establish availability, not Agent behavior;
+do not add prose-matching tests or claim model validation from static checks.
 
 ## CI and release
 
 `ci.yml` runs the core smoke plus one package-assembly/start check. It does not
-run a second lint pass or a broader regression suite. `publish.yml` reuses that
+run a second lint pass or a separate broad regression suite. `publish.yml` reuses that
 exact gated commit and adds only tag, artifact, install, and provenance checks
 that are unique to publishing.
 

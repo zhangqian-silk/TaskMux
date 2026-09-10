@@ -5,6 +5,7 @@ import {
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 import { Duplex } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import WebSocket, { type RawData } from "ws";
 
@@ -84,6 +85,16 @@ export type StructuredProviderInputObserved = Readonly<{
   observedAt: string;
 }>;
 
+export type StructuredProviderActivity = Readonly<{
+  conversationId: string;
+  nativeSessionId: string;
+  attemptId: string;
+  nativeTurnId?: string;
+  id: string;
+  phase: "model" | "started" | "completed" | "failed";
+  observedAt: string;
+}>;
+
 export type StructuredProviderTurnTerminal = Readonly<{
   conversationId: string;
   nativeSessionId: string;
@@ -119,6 +130,9 @@ export type StructuredProviderProcessExit = Readonly<{
 }>;
 
 export interface StructuredProviderSession {
+  /** Exact process whose exit proves the dedicated local execution drained. */
+  readonly ownedProcessId?: number;
+  readonly nativeAccountHome?: string;
   readonly adapterId: AgentAdapterId;
   readonly conversationId: string;
   readonly nativeSessionId: string;
@@ -203,6 +217,8 @@ export class ProviderConversationMissingError extends Error {
 export async function startStructuredProviderSession(
   payload: AgentHostLaunchPayload,
   input: Readonly<{
+    onAccepted?: (receipt: StructuredProviderTurnReceipt) => void;
+    onActivity?: (activity: StructuredProviderActivity) => void;
     onStarted?: (started: StructuredProviderTurnStarted) => void;
     onTerminal?: (terminal: StructuredProviderTurnTerminal) => void;
     onGoal?: (goal: StructuredProviderGoal | null) => void;
@@ -218,7 +234,10 @@ export async function startStructuredProviderSession(
   if (control === undefined) {
     throw new Error("Managed Agent Host launch requires Provider control metadata.");
   }
-  const child = spawn(payload.command, [...payload.args], {
+  const ownedClaude = control.adapterId === "claude" && control.transport !== "acp-stdio";
+  const child = spawn(
+    ownedClaude ? fileURLToPath(new URL("./claude-process-owner", import.meta.url)) : payload.command,
+    ownedClaude ? [payload.command, ...payload.args] : [...payload.args], {
     cwd: payload.cwd,
     env: { ...payload.environment },
     stdio: ["pipe", "pipe", "pipe"],
@@ -275,6 +294,7 @@ export async function startStructuredProviderSession(
           input.onTerminal,
           input.onGoal,
           input.onInput,
+          input.onActivity,
           mirror
         );
       return Object.freeze({
@@ -290,8 +310,10 @@ export async function startStructuredProviderSession(
           exit,
           processInstanceId,
           control,
+          input.onAccepted,
           input.onTerminal,
           input.onGoal,
+          input.onActivity,
           mirror
         );
     return Object.freeze({ session });
@@ -558,6 +580,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
   #submissionPending = false;
   readonly #bufferedStarts: Array<Omit<StructuredProviderTurnStarted, "clientOwned">> = [];
   readonly #bufferedTerminals: Array<Omit<StructuredProviderTurnTerminal, "clientOwned">> = [];
+  readonly #bufferedActivities: Array<Omit<StructuredProviderActivity, "attemptId"> & { nativeTurnId: string }> = [];
 
   private constructor(
     private readonly child: ChildProcessWithoutNullStreams,
@@ -572,7 +595,9 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
       | ((terminal: StructuredProviderTurnTerminal) => void)
       | undefined,
     private readonly onGoal: ((goal: StructuredProviderGoal | null) => void) | undefined,
-    private readonly onInput: ((input: StructuredProviderInputObserved) => void) | undefined
+    private readonly onInput: ((input: StructuredProviderInputObserved) => void) | undefined,
+    private readonly onActivity: ((activity: StructuredProviderActivity) => void) | undefined,
+    readonly nativeAccountHome?: string
   ) {}
 
   static async open(
@@ -585,6 +610,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     onTerminal: ((terminal: StructuredProviderTurnTerminal) => void) | undefined,
     onGoal: ((goal: StructuredProviderGoal | null) => void) | undefined,
     onInput: ((input: StructuredProviderInputObserved) => void) | undefined,
+    onActivity: ((activity: StructuredProviderActivity) => void) | undefined,
     mirror: (stream: "stdout" | "stderr", text: string) => void
   ): Promise<Readonly<{
     session: CodexStructuredProviderSession;
@@ -594,7 +620,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
     const channel = await CodexProxyWebSocketChannel.connect(child, mirror);
     const openingMessages: JsonObject[] = [];
     const stopOpeningBuffer = channel.onMessage((message) => openingMessages.push(message));
-    await channel.request("initialize", codexClientInitialization());
+    const initialized = await channel.request("initialize", codexClientInitialization());
     await channel.notify("initialized");
     const runtime = new CodexAppServerRuntime(channel);
     let conversationId: string;
@@ -639,7 +665,9 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
       onStarted,
       onTerminal,
       onGoal,
-      onInput
+      onInput,
+      onActivity,
+      optionalId(initialized.codexHome)
     );
     session.#activeTurnId = resumedActiveTurnId;
     const ownedTurn = control.kind === "restore" ? control.ownedTurn : undefined;
@@ -707,6 +735,25 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
       if (goal !== undefined) {
         if (emit) this.onGoal?.(goal);
         return undefined;
+      }
+      if (emit && (method === "item/started" || method === "item/completed"
+        || method === "item/agentMessage/delta" || method === "item/reasoning/summaryTextDelta")) {
+        const item = object(params.item);
+        const id = optionalId(item?.id) ?? optionalId(params.itemId);
+        const nativeTurnId = optionalId(params.turnId);
+        const tool = ["commandExecution", "mcpToolCall", "dynamicToolCall", "fileChange"].includes(String(item?.type));
+        const model = ["agentMessage", "reasoning"].includes(String(item?.type)) || method.endsWith("Delta") || method.endsWith("/delta");
+        if (id !== undefined && nativeTurnId !== undefined && (tool || model)) {
+          const activity = {
+            conversationId: this.conversationId, nativeSessionId: this.conversationId,
+            nativeTurnId, id, observedAt: new Date().toISOString(),
+            phase: model ? "model" as const : method === "item/started" ? "started" as const
+              : item?.status === "failed" || (typeof item?.exitCode === "number" && item.exitCode !== 0)
+                ? "failed" as const : "completed" as const
+          };
+          if (this.#submissionPending) this.#bufferedActivities.push(activity);
+          else this.#emitActivity(activity);
+        }
       }
       if (method === "item/completed") {
         const item = object(params.item);
@@ -829,6 +876,7 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
       const starts = this.#bufferedStarts.splice(0);
       for (const started of starts) this.#emitStarted(started);
       const buffered = this.#bufferedTerminals.splice(0);
+      for (const activity of this.#bufferedActivities.splice(0)) this.#emitActivity(activity);
       for (const terminal of buffered) this.#emitTerminal(terminal);
     }
   }
@@ -862,6 +910,11 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
 
   #emitTerminal(terminal: Omit<StructuredProviderTurnTerminal, "clientOwned">): void {
     this.#completeTerminal(terminal, true);
+  }
+
+  #emitActivity(activity: Omit<StructuredProviderActivity, "attemptId"> & { nativeTurnId: string }): void {
+    const attemptId = this.#turnAttempts.get(activity.nativeTurnId);
+    if (attemptId !== undefined) this.onActivity?.({ ...activity, attemptId });
   }
 
   #emitStarted(started: Omit<StructuredProviderTurnStarted, "clientOwned">): void {
@@ -914,7 +967,12 @@ class CodexStructuredProviderSession implements StructuredProviderSession {
 
 class ClaudeStructuredProviderSession implements StructuredProviderSession {
   readonly adapterId = "claude" as const;
+  get ownedProcessId(): number | undefined { return this.child.pid; }
   #activeAttemptId: string | undefined;
+  #acceptedAttemptId: string | undefined;
+  #cancelledAttemptId: string | undefined;
+  readonly #seenAssistantIds = new Set<string>();
+  readonly #openToolIds = new Set<string>();
   readonly #resultAttempts = new Map<string, string>();
   #lastGoalKey: string | undefined;
 
@@ -932,8 +990,10 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
     exit: Promise<StructuredProviderProcessExit>,
     processInstanceId: string,
     control: AgentHostProviderControl,
+    onAccepted: ((receipt: StructuredProviderTurnReceipt) => void) | undefined,
     onTerminal: ((terminal: StructuredProviderTurnTerminal) => void) | undefined,
     onGoal: ((goal: StructuredProviderGoal | null) => void) | undefined,
+    onActivity: ((activity: StructuredProviderActivity) => void) | undefined,
     mirror: (stream: "stdout" | "stderr", text: string) => void
   ): Promise<ClaudeStructuredProviderSession> {
     const channel = new JsonLineChannel(child, mirror);
@@ -949,7 +1009,22 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
       channel,
       onGoal
     );
-    channel.onMessage((message) => session.#receive(message, onTerminal));
+    channel.onMessage((message) => session.#receive(message, onTerminal, onAccepted, onActivity));
+    // This client owns the whole Claude execution process, unlike a Codex
+    // proxy. An exit without a result ends the exact local input as failure,
+    // not as continuing work merely because the supervising Host is alive.
+    void exit.then(result => {
+      const attemptId = session.#activeAttemptId;
+      if (attemptId === undefined) return;
+      session.#activeAttemptId = undefined;
+      onTerminal?.({
+        conversationId: nativeSessionId, nativeSessionId, attemptId,
+        clientOwned: true,
+        status: session.#cancelledAttemptId === attemptId ? "cancelled" : "failed",
+        observedAt: new Date().toISOString(),
+        error: `Owned Provider process exited before a terminal result (code=${result.code}, signal=${result.signal}).`
+      });
+    });
     return session;
   }
 
@@ -1001,7 +1076,8 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
     // AgentHost is the sole writer to this dedicated stream-json process.
     // A pipe write is transport evidence only. The later result establishes
     // native acceptance and completion through this exact serialized local
-    // attempt, without inventing a provider execution id or echo protocol.
+    // attempt. A main assistant response can confirm acceptance earlier, without
+    // inventing a provider execution id or trusting the echoed user input.
     return Object.freeze({
       attemptId: turn.attemptId,
       conversationId: this.conversationId,
@@ -1020,6 +1096,7 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
 
   async cancelTurn(attemptId: string): Promise<"requested" | "not-active" | "unknown"> {
     if (this.#activeAttemptId !== attemptId) return "not-active";
+    this.#cancelledAttemptId = attemptId;
     terminateProcessGroup(this.child, "SIGTERM");
     return "requested";
   }
@@ -1034,7 +1111,9 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
 
   #receive(
     message: JsonObject,
-    onTerminal: ((terminal: StructuredProviderTurnTerminal) => void) | undefined
+    onTerminal: ((terminal: StructuredProviderTurnTerminal) => void) | undefined,
+    onAccepted: ((receipt: StructuredProviderTurnReceipt) => void) | undefined,
+    onActivity: ((activity: StructuredProviderActivity) => void) | undefined
   ): void {
     const goal = claudeActiveGoal(message, this.conversationId);
     if (goal !== undefined) {
@@ -1048,7 +1127,57 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
         this.onGoal?.(goal);
       }
     }
-    if (message.type === "user") return;
+    const activity = (id: string, phase: StructuredProviderActivity["phase"]) => {
+      if (this.#activeAttemptId !== undefined) onActivity?.({
+        conversationId: this.conversationId, nativeSessionId: this.conversationId,
+        attemptId: this.#activeAttemptId, id, phase, observedAt: new Date().toISOString()
+      });
+    };
+    if (message.type === "user") {
+      if (optionalId(message.session_id) !== this.conversationId || message.parent_tool_use_id != null) return;
+      const body = object(message.message);
+      for (const raw of Array.isArray(body?.content) ? body.content : []) {
+        const block = object(raw), id = optionalId(block?.tool_use_id);
+        if (block?.type === "tool_result" && id !== undefined && this.#openToolIds.delete(id)) {
+          activity(id, block.is_error === true ? "failed" : "completed");
+        }
+      }
+      return;
+    }
+    if (message.type === "assistant") {
+      if (optionalId(message.session_id) !== this.conversationId
+        || message.parent_tool_use_id != null
+        || object(message.message)?.role !== "assistant") return;
+      const messageId = optionalId(message.uuid);
+      if (messageId === undefined || this.#seenAssistantIds.has(messageId)) return;
+      this.#seenAssistantIds.add(messageId);
+      const attemptId = this.#activeAttemptId;
+      if (attemptId === undefined) return;
+      // This dedicated stream has exactly one owned input in flight. Main
+      // assistant output proves it is being processed; init, echo and child
+      // output do not. Keep the local attempt identity, not the message UUID,
+      // as the correlation key (Claude exposes no exact native Turn id).
+      if (this.#acceptedAttemptId !== attemptId) {
+        this.#acceptedAttemptId = attemptId;
+        onAccepted?.({
+        attemptId,
+        conversationId: this.conversationId,
+        nativeSessionId: this.conversationId,
+        acceptedAt: new Date().toISOString(),
+        acceptance: "provider"
+        });
+      }
+      const body = object(message.message);
+      for (const raw of Array.isArray(body?.content) ? body.content : []) {
+        const block = object(raw), id = optionalId(block?.id);
+        if (block?.type === "tool_use" && id !== undefined && !this.#openToolIds.has(id)) {
+          this.#openToolIds.add(id); activity(id, "started");
+        } else if (block?.type === "text" || block?.type === "thinking") {
+          activity(messageId, "model");
+        }
+      }
+      return;
+    }
     if (message.type !== "result"
       || optionalId(message.session_id) !== this.conversationId) return;
     // A result UUID identifies this message, not the Provider execution.
@@ -1059,11 +1188,14 @@ class ClaudeStructuredProviderSession implements StructuredProviderSession {
     const attemptId = priorAttempt ?? this.#activeAttemptId;
     if (attemptId === undefined) return;
     if (resultId !== undefined) this.#resultAttempts.set(resultId, attemptId);
-    if (attemptId === this.#activeAttemptId) this.#activeAttemptId = undefined;
+    if (attemptId === this.#activeAttemptId) {
+      this.#activeAttemptId = undefined;
+      this.#openToolIds.clear();
+    }
     const failed = message.is_error === true || message.subtype === "error_during_execution";
     const result = typeof message.result === "string" && message.result.length > 0
       ? message.result
-      : "Provider Turn failed.";
+      : providerErrorEvidence(message).error;
     onTerminal?.({
       conversationId: this.conversationId,
       nativeSessionId: this.conversationId,
@@ -1181,8 +1313,12 @@ function providerErrorEvidence(value: unknown): Readonly<{
   rawError: string;
 }> {
   const error = object(value);
+  const errors = Array.isArray(error?.errors)
+    ? error.errors.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : [];
   const message = typeof error?.message === "string" && error.message.length > 0
     ? error.message
+    : errors.length > 0 ? errors.join("\n")
     : typeof value === "string" && value.length > 0
       ? value
       : "Provider Turn failed.";

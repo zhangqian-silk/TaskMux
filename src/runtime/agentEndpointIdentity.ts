@@ -31,6 +31,7 @@ const ENDPOINT_CHECKOUT_MODULES = Object.freeze([
   "agentEndpoint.js",
   "agentEndpointIdentity.js",
   "structuredProviderHost.js",
+  "claude-process-owner",
   "codexAppServerRuntime.js",
   "acpSession.js",
   "acpProtocol.js",

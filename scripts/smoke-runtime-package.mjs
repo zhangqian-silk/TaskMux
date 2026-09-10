@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync
 } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const root = process.env.YUI_INSTALLED_ROOT ?? process.cwd();
@@ -20,10 +20,11 @@ let cli;
 let environment;
 let controllerStarted = false;
 const skills = [
-  ["yui-leader", "# Yui Leader"],
-  ["yui-worker", "# Yui Worker"],
-  ["yui-operator", "# Yui Operator"],
-  ["yui-reviewer", "# Yui Reviewer"]
+  "yui-leader",
+  "yui-worker",
+  "yui-operator",
+  "yui-reviewer",
+  "yui-runtime"
 ];
 
 try {
@@ -38,10 +39,33 @@ try {
   }
 
   const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  for (const [skill, heading] of skills) {
-    const path = join(root, "skills", skill, "SKILL.md");
-    if (!existsSync(path) || !readFileSync(path, "utf8").includes(heading)) {
-      throw new Error(`Installed runtime package is missing ${skill}/SKILL.md.`);
+  // Follow the actual instructions' local Markdown links, including cross-Role
+  // references, in the installed tree. Source-only references cannot satisfy
+  // this check; prose/heading changes do not invalidate the contract.
+  const skillRoot = resolve(root, "skills");
+  const pendingSkills = skills.map((skill) => join(skillRoot, skill, "SKILL.md"));
+  const checkedSkills = new Set();
+  while (pendingSkills.length > 0) {
+    const path = pendingSkills.pop();
+    if (checkedSkills.has(path)) continue;
+    checkedSkills.add(path);
+    if (!existsSync(path) || !statSync(path).isFile()) {
+      throw new Error(`Installed Skill resource is missing: ${relative(skillRoot, path)}.`);
+    }
+    const content = readFileSync(path, "utf8");
+    if (content.trim().length === 0) {
+      throw new Error(`Installed Skill resource is empty: ${relative(skillRoot, path)}.`);
+    }
+    for (const [, href] of content.matchAll(/\[[^\]]+\]\(([^)\s]+)\)/gu)) {
+      if (/^[a-z][a-z\d+.-]*:/iu.test(href)) continue;
+      const target = href.split("#")[0];
+      if (!target.endsWith(".md")) continue;
+      const resolved = resolve(dirname(path), target);
+      const local = relative(skillRoot, resolved);
+      if (local === ".." || local.startsWith("../") || isAbsolute(local)) {
+        throw new Error(`Installed Skill reference leaves its package: ${href}.`);
+      }
+      pendingSkills.push(resolved);
     }
   }
   if (packageJson.bin?.yui !== "./dist/cli.js") {

@@ -1,4 +1,5 @@
 import { createTaskEvent } from "../event/taskEvent.js";
+import { enqueueWork } from "../coordination/workMailboxQueue.js";
 import { createProjectResources, type EnvironmentPlan } from "../resources/projectResourceService.js";
 import type { EnvironmentPreparation } from "../resources/projectResource.js";
 import type { TaskStore } from "../storage/taskStore.js";
@@ -466,6 +467,13 @@ export function recordFailedTaskActivation(
       },
       now
     ));
+    if (task.status === "draft") {
+      // This is a Core operation result, not a Leader-local planning edit.
+      // The Leader must learn the failed disposition and choose a legal next
+      // action; merely stopping automatic retries would otherwise strand it.
+      enqueueWork(tx, {kind:"role", taskId, roleName:"leader"}, "activation-failed",
+        now, [{type:"task", id:taskId}]);
+    }
     return failed;
   });
 }

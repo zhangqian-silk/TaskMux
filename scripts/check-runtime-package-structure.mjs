@@ -11,11 +11,18 @@ const files = new Set(entries.map(({ path }) => path));
 const required = [
   "dist/cli.js",
   "dist/cli/commandCatalog.js",
+  "dist/runtime/claude-process-owner",
   "ARCHITECTURE.md",
   "skills/yui-leader/SKILL.md",
   "skills/yui-worker/SKILL.md",
   "skills/yui-operator/SKILL.md",
-  "skills/yui-reviewer/SKILL.md"
+  "skills/yui-reviewer/SKILL.md",
+  "skills/yui-runtime/SKILL.md",
+  "skills/yui-runtime/references/recovery.md",
+  "skills/yui-runtime/references/publication.md",
+  "skills/yui-leader/references/replicated-execution.md",
+  "skills/yui-leader/references/integration.md",
+  "skills/yui-leader/references/task-plugins.md"
 ];
 for (const path of required) {
   if (!files.has(path)) throw new Error(`runtime package is missing ${path}`);
@@ -25,11 +32,13 @@ for (const path of files) {
     throw new Error(`runtime package contains forbidden path ${path}`);
   }
 }
-const cli = entries.find(({ path }) => path === "dist/cli.js");
-if (cli?.mode !== 0o755) {
-  throw new Error(
-    `runtime package dist/cli.js must be executable (0755), received ${formatMode(cli?.mode)}`
-  );
+for (const executable of ["dist/cli.js", "dist/runtime/claude-process-owner"]) {
+  const entry = entries.find(({ path }) => path === executable);
+  if (entry?.mode !== 0o755) {
+    throw new Error(
+      `runtime package ${executable} must be executable (0755), received ${formatMode(entry?.mode)}`
+    );
+  }
 }
 
 console.log(`Package structure smoke passed (${files.size} files).`);

@@ -98,7 +98,7 @@ import type { PendingWakeup } from "../scheduler/pendingWakeup.js";
 import { validateTaskWake, type TaskWake } from "../scheduler/taskWake.js";
 import { validateTask, type Task } from "../task/task.js";
 import type { NextActionFacts } from "../task/nextAction.js";
-import type { CompletionReadinessFacts } from "../task/completionReadiness.js";
+import { pendingCompletionMessages, type CompletionReadinessFacts } from "../task/completionReadiness.js";
 import {
   operationalTaskRecords,
   TASK_RECORD_RETIRED_EVENT
@@ -1228,6 +1228,9 @@ export class SqliteTaskStore implements TaskStore {
         this.#listPayload<IntegrationAttempt>("integration_attempts", "task_id = ?", [taskId]),
         (attempt) => attempt.id
       ),
+      integrationJobs: this.listDurableJobs(taskId)
+        .filter(job => job.owner.kind === "integration-attempt")
+        .map(job => ({ id: job.id, status: job.status })),
       integrationQueueEntries: this.#sortById(
         this.#listPayload<IntegrationQueueEntry>(
           "integration_queue",
@@ -1269,6 +1272,7 @@ export class SqliteTaskStore implements TaskStore {
     if (base === null) return null;
     return {
       ...base,
+      pendingUserMessages: pendingCompletionMessages(this, taskId),
       managedWorkspaces: this.#sortById(
         this.#listPayload<ManagedWorkspace>("managed_workspaces", "task_id = ?", [taskId]),
         (workspace) => managedWorkspaceKey(workspace.owner)

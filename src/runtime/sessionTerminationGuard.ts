@@ -79,6 +79,9 @@ export async function terminateSessionOwners(
     ["SIGKILL", duration(options.forcedGraceMs, DEFAULT_FORCED_GRACE_MS)]
   ] as const) {
     for (const record of records) {
+      // The dedicated execution supervisor reaps its descendants before exit.
+      // Killing the supervisor would discard that custody proof.
+      if (signal === "SIGKILL" && record.providerRoot.attribution === "owned-child") continue;
       if (state(record) !== "live") continue;
       try { ports.signalProcess(record.providerRoot.pid, signal); }
       catch (error) {

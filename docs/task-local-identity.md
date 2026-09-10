@@ -18,7 +18,7 @@ family:
 The first record of each family in each Task is therefore local `-1`. Deleted,
 cancelled, completed, reopened, and archived records never lower the persisted
 high-water mark, so a local ID is never reused inside its Task. Each allocation
-advances that aggregate high-water mark under the storage process lock.
+advances that aggregate high-water mark inside the Store transaction.
 
 Candidate identity is narrower: `candidate-N` is a WorkItem-local sequence.
 Every Candidate stores its `taskId` and `workItemId`, in addition to the source

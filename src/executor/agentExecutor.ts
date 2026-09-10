@@ -12,16 +12,18 @@ import {
 } from "./effectiveLaunch.js";
 import {
   validateProviderRuntimeBinding,
+  currentProviderConversation,
   type ProviderRuntimeBinding
 } from "../runtime/providerRuntimeIdentity.js";
-import { builtinDriverIdForAdapter } from "../runtime/builtinAgentDrivers.js";
+import { builtinDriverIdForAdapter, builtinAgentDriverRegistry } from "../runtime/builtinAgentDrivers.js";
 import type { ImplementationRef } from "../kernel/instanceHost.js";
 import {
   builtinAgentEndpointImplementation,
   validateAgentEndpointImplementation
 } from "../runtime/agentEndpointIdentity.js";
 
-/** Session existence only. Readiness and activity belong to Host/Turn facts. */
+/** Logical Session selection. A reserved ID alone does not prove a native
+ * conversation exists; readiness, recoverability and activity are observations. */
 export type AgentSessionStatus = "active" | "ended";
 export type AgentSessionEndReason = "stopped" | "failed";
 
@@ -79,6 +81,26 @@ export type TaskRoleSessionSet = RoleSessionSetBase<TaskRoleSessionOwner> & {
   providerBinding: ProviderRuntimeBinding | null;
 };
 export type RoleSessionSet = GlobalRoleSessionSet | TaskRoleSessionSet;
+
+/** Recovery addresses retained execution identity, not a live Session grant.
+ * A released Session cache can be absent while its native binding still needs
+ * to be stopped. No active Session record is fabricated by this projection. */
+export function taskRoleControlTarget(set: TaskRoleSessionSet | null | undefined) {
+  if (set == null) return undefined;
+  const current = set.sessions[set.activeAgentId];
+  const binding = set.providerBinding;
+  const fromBinding = binding !== null && (current === undefined
+    || (binding.run !== null && ["submitting", "accepted", "delivery-unknown"].includes(binding.run.status))
+    || (binding.goal !== null && binding.goal.status !== "complete"));
+  const nativeSessionId = fromBinding ? currentProviderConversation(binding!).conversationId : current?.nativeSessionId;
+  const agentId = fromBinding ? binding!.accountScope : current?.agentId;
+  if (nativeSessionId === undefined || agentId === undefined) return undefined;
+  const session = [...Object.values(set.sessions), ...(set.history ?? [])]
+    .find(entry => entry.nativeSessionId === nativeSessionId && entry.agentId === agentId);
+  const adapterId = session?.adapterId ?? (binding === null ? undefined : builtinAgentDriverRegistry().find(binding.providerNamespace)?.adapterId);
+  return { nativeSessionId, agentId, adapterId, status: session?.status,
+    updatedAt: session?.updatedAt ?? set.updatedAt, fromBinding };
+}
 
 export type ExecutorCapabilities = {
   recover: boolean;
@@ -359,6 +381,40 @@ export function retireTaskRoleSessionsForWorkspace(
   });
 }
 
+/** Explicit fresh-session selection after physical stop. Keep every original
+ * Run/result and the old native identity as history; never invent a new ID. */
+export function selectNewTaskRoleSession(
+  set: TaskRoleSessionSet,
+  agentId: string,
+  now: Date
+): TaskRoleSessionSet {
+  validateRoleSessionSet(set);
+  const session = set.sessions[requireSafeIdentity(agentId, "Agent id")];
+  if (session !== undefined && session.status !== "ended") {
+    throw new Error("Stop the current Session before selecting a new one.");
+  }
+  if (set.activeAgentId === agentId && set.providerBinding !== null) {
+    if (set.providerBinding.run !== null
+      && ["submitting", "accepted", "delivery-unknown"].includes(set.providerBinding.run.status)
+      || set.providerBinding.goal !== null && set.providerBinding.goal.status !== "complete") {
+      throw new Error("Settle the exact native input and Goal before selecting a new Session.");
+    }
+  }
+  if (session === undefined) return validateRoleSessionSet({
+    ...set, ...(set.activeAgentId === agentId ? { providerBinding: null } : {}),
+    updatedAt: now.toISOString()
+  });
+  const sessions = { ...set.sessions };
+  delete sessions[agentId];
+  return validateRoleSessionSet({
+    ...set,
+    sessions,
+    history: [...(set.history ?? []), session],
+    ...(set.activeAgentId === agentId ? { providerBinding: null } : {}),
+    updatedAt: now.toISOString()
+  });
+}
+
 export function rememberRoleAgentCompletedTurn<TSet extends RoleSessionSet>(
   set: TSet,
   agentId: string,
@@ -429,7 +485,10 @@ export function roleAgentSessionResumeMode(
   if (conversation?.recoverability === "unrecoverable") {
     throw new Error(
       `Role Agent native Session is not recoverable: ${agentId}/${session.nativeSessionId}. `
-      + "Explicitly select a new Session to continue; existing input attempts are not replayed."
+      + (set.owner.scope === "task"
+        ? `After stopping the exact idle Session, use yui task role session new ${set.owner.taskId} ${set.owner.roleName} --reason <evidence>, then retry the failed AgentRun. `
+        : "Explicitly select a new Session to continue. ")
+      + "Existing input attempts are not replayed."
     );
   }
   if (roleSessionMayContinue(session.effective, desired)) return "resume";
@@ -628,11 +687,12 @@ export function validateRoleSessionSet<TSet extends RoleSessionSet>(set: TSet): 
       ? null
       : validateProviderRuntimeBinding(taskSet.providerBinding);
     if (providerBinding !== null) {
-      const session = taskSet.sessions[set.activeAgentId];
-      if (session === undefined) {
-        throw new Error("Provider Runtime Binding has no active Role Agent session.");
-      }
-      if (providerBinding.providerNamespace !== builtinDriverIdForAdapter(session.adapterId)) {
+      const conversationId = currentProviderConversation(providerBinding).conversationId;
+      const session = [...Object.values(taskSet.sessions), ...(taskSet.history ?? [])]
+        .find(entry => entry.agentId === providerBinding.accountScope && entry.nativeSessionId === conversationId);
+      // Execution control evidence may outlive the disposable Session cache.
+      // It is not a live Session grant; recovery still needs native/OS proof.
+      if (session !== undefined && providerBinding.providerNamespace !== builtinDriverIdForAdapter(session.adapterId)) {
         throw new Error("Provider Runtime Binding namespace does not match the Agent adapter.");
       }
     }

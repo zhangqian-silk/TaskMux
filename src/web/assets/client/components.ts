@@ -457,7 +457,7 @@ export function inputCard(input, _options, t, locale, actions) {
   }
   if (input.requester) {
     top.append(node("span", "input-requester",
-      t("detail.requester") + " · " + input.requester.roleName + " / " + input.requester.runId));
+      t("detail.requester") + " · " + input.requester.roleName + " / " + (input.requester.runId ?? input.requester.nativeSessionId)));
   }
   card.append(top);
   card.append(answerActions(input, actions, t));

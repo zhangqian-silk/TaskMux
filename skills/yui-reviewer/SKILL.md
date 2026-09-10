@@ -5,7 +5,8 @@ description: Review the exact frozen WorkItem Candidate or unified Task-final sc
 
 # Yui Reviewer
 
-Follow `yui-runtime` first and load the exact current AgentRun Context Pack. The
+Follow [yui-runtime](../yui-runtime/SKILL.md) first and load the exact current
+AgentRun Context Pack. The
 ReviewRound, Candidate, workspace, and Snapshot digest returned there are the
 only review scope; fail closed on any mismatch.
 
@@ -18,9 +19,9 @@ reinterpret its scope:
   anchor.
 
 A Role is an executor, not a workspace owner: each ReviewRound owns an exact
-workspace record. Consecutive Task-final Rounds for the same Reviewer reuse one
-clean physical workspace and native Session while Yui updates the checkout and
-records the new Round snapshot. Treat the new AgentRun Context Pack and frozen head
+workspace record. Consecutive Task-final Rounds may reuse a clean physical
+workspace and native Session while Yui records each Round's exact snapshot.
+Treat the new AgentRun Context Pack and frozen head
 as the authority even when the conversation continues; never reuse an earlier
 verdict. Review edits are confined to that workspace, never modify the
 WorkItem Develop workspace, and never become a ChangeSet source.
@@ -30,12 +31,11 @@ frozen Project commits, and assigned workspace. Inspect those exact commits.
 The current mutable Task-main checkout is context only and must never replace,
 widen, or silently update the assigned Review scope.
 
-The AgentRun also identifies the execution shape. A direct Review AgentRun is the main
-Reviewer and produces the authoritative Review result. In replicated Review,
-a Producer Lane independently inspects the same frozen Assignment in its own
-Lane workspace and returns one complete original result. A Producer result is
-non-authoritative: do not create a Candidate, ChangeSet, integration, or
-completion decision.
+The AgentRun identifies the execution shape. A direct main Reviewer returns
+the authoritative Review report. For a Producer Lane or main synthesis
+assignment, read [replicated execution](../yui-leader/references/replicated-execution.md)
+before acting. Producer evidence is not an authoritative Review result or an
+acceptance decision. Resolve links relative to this Skill's directory.
 
 Clarification for the same ReviewRound may arrive through a Message continuation
 in its exact Context Pack. Preserve the frozen candidate and original results;
@@ -43,14 +43,6 @@ the new execution does not authorize reviewing a newer Task head. Messages for
 an obsolete candidate remain visible but cannot restart the old Review. During
 execution a scoped question may be sent with `task message send <task> "<question>"
 --to leader --review-round <round-id>` (include `--work-item` for WorkItem Review).
-
-Only the main Reviewer synthesis AgentRun may interpret the explicitly selected
-Producer results and complete the ReviewRound. Read every selected source AgentRun's
-original result, inspect every supplied result,
-resolve disagreement through judgment against the frozen sources, and return
-one complete authoritative report. Do not select a winning Lane, mutate
-Producer results, rerun Producers, or omit a selected result from
-the synthesis.
 
 ## Separate infrastructure failure from review judgment
 
@@ -79,11 +71,8 @@ material defect, or needs a full Review, and explain why. These are recommended
 conclusions for the Leader, not machine-readable dispositions. Never create or
 request a follow-up Round yourself.
 
-Keep the context layers distinct. Yui Core owns ReviewRound identity,
-lifecycle, access, workspace, and exact AgentRun-result correlation; this generic Skill owns
-portable review behavior; Agent-native Project Skills and Project Policy and
-Knowledge own project-specific checks and review expectations; and the Task
-Contract owns the current outcome, scope, acceptance, and required evidence.
+Use Project Skills, Policy and Knowledge for project-specific checks. The
+Task Contract and frozen scope determine acceptance and required evidence.
 
 Review design complexity against the current Task Contract and reachable
 operating paths. Report abstractions, state, indirection, fallback, or module
@@ -93,17 +82,19 @@ future-proofing merely because they are possible. A focused redesign is
 appropriate when repeated patches expose a wrong responsibility or duplicated
 authority.
 
-Follow `yui-runtime`'s distinction between normal Agent execution and
-real-resource validation. This Reviewer AgentRun is normal execution; additional
-live-provider, paid, shared, or production validation is not implied.
+Tie each finding to a reachable scenario, violated contract and direct
+evidence. Separate confirmed defects, verification gaps and optional
+improvements. A clean review is valid; do not invent findings to justify the
+Round or change delivery sources to demonstrate a preferred design.
 
 Complete the assigned frozen-scope review before ending the Provider Turn. Accumulate all
 reachable findings, verification gaps, checks actually run, and bounded next
 actions, then return them together in one Review AgentRun result; do not stop as
 soon as the first finding is discovered. A review result is evidence for Leader
 judgment; it does not accept the WorkItem or complete the Task. Preserve the
-ReviewRound record and explicitly clean its workspace after the round is
-terminal.
+ReviewRound record and workspace, and report any diagnostic changes. After
+the Round is terminal, an authorized Leader or Operator owns cleanup through
+Yui; do not attempt to terminate or delete your own managed runtime/workspace.
 
 A helpful default result layout is Conclusion, Material findings, Verification,
 Uncertainty, and Recommended next action. Markdown or JSON are both acceptable.
@@ -120,8 +111,9 @@ specific gap; do not rerun an unchanged complete suite for ceremony.
 
 Return each reachable finding to the Leader with direct evidence and a bounded
 route to the original execution unit: Leader-owned work returns to the Leader,
-native work to the same child, and managed work to the same Role and native
-Session. Keep the existing WorkItem when its scope remains open. For a small
+native work to its parent for disposition, and managed work to the owning Role.
+Session reuse is optional; preserve the assignment rather than requiring an
+old conversation to survive. Keep the WorkItem when its scope remains open. For a small
 Task-main fix, return it to the Leader without recommending another WorkItem;
 recommend a Repair WorkItem only when the repair is itself a substantial,
 independently owned requirement. Never capture or integrate the ReviewRound's

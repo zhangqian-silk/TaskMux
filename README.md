@@ -2,1250 +2,191 @@
 
 # Yui
 
-Yui is a local control plane for intelligent Codex and Claude Agents. It keeps
-user intent, Project knowledge, Tasks, handoffs, and results durable and
-inspectable, while exposing small atomic capabilities for context, messaging,
-delegation, workspaces, Sessions, review, and integration. Agents compose those
-capabilities and decide how to plan, sequence, delegate, retry, and recover.
+Give your Agents work to carry forward, not just another chat to answer.
 
-Yui deliberately does not turn Agent judgment into a deterministic workflow
-engine. Its core owns durable identity, user authority, workspace isolation,
-and atomic state changes. Provider Sessions and runtime observations support
-execution and continuity, but they are not competing sources of Task truth.
+Yui helps you turn requests into organized tasks and coordinate Agents to solve
+them. Describe what you want in conversation: an Agent identifies the relevant
+Project, distinguishes new work from a follow-up, and keeps related requirements
+together. Each Task has a Leader that plans the work, uses other configured
+Agents when useful, and brings results and decisions back to you.
 
-The [Session / AgentRun / notification contract](docs/architecture/yui-handbook-full-architecture/architecture/07-session-run-contract.md)
-describes direct Leader collaboration, execution results and storage migration.
+You do not need to manually create a ticket for every step, carry context between
+terminal windows, or remember which Agent was working on which requirement.
+Yui keeps the intent, progress and results outside any one conversation, so
+continuing work starts from the Task rather than from your memory.
 
-The current implementation restores the useful Role/Agent/session and CLI framework without restoring the later data-maintenance, lease, schedule, and recovery-ledger systems.
-
-The [target architecture handbook](docs/architecture/README.md) preserves the
-2026-09-06 design baseline for the upcoming refactor; it does not describe
-already implemented behavior.
-
-The [independent plugin SDK](docs/plugin-sdk.md) documents the implemented
-Task-local package, validation, explicit activation, and trusted-local execution
-contract. It does not provide an OS sandbox or automatic runtime upgrades.
-
-## Requirements
-
-- Node.js 20.17+, 22.9+, or 24.x
-- Git
-- tmux
-- Codex CLI or Claude Code CLI
-
-## Setup
-
-```sh
-npm install -g @zq-silk/yui
-yui setup
-yui doctor
-```
-
-`setup` is intentionally minimal. It verifies tmux, reuses or creates one
-available Agent, creates the default workspace outside Yui home, and configures
-both Operator and Leader so the user can start Yui and execute Tasks. It does
-not create Worker, Reviewer, Profile, or review-policy configuration, and does
-not ask for model/effort, permission, or shell completion. The required
-Operator and Leader bindings use Yui's adapter default permission strategy
-(`bypass`); further changes belong under `config role`. Running setup again
-preserves already usable Operator and Leader Roles. A successful setup starts
-the current Home's detached Controller before it returns.
-
-All persistent configuration is under `yui config`. `config show` reports the
-complete effective state, while `config --help` introduces each domain and
-shows examples. The Operator can read the same structured catalog with
-`config describe`, explain current values, effects, choices, and activation
-behavior, then apply only changes the user confirms.
-
-Durable settings are grouped by responsibility: `config system` for Home
-defaults and presentation, `config runtime` for Controller health, concurrency,
-launch, and delivery mechanics, `config workflow` for Leader/context/review
-policy, `config resources` for quarantine and GC, and `config tools` for tmux
-and diagnostic telemetry. Configured Agents, global Roles, Profiles, and shell
-completion remain the sibling `config agent|role|profile|completion` domains.
-Use `show`, `set`, and `clear` consistently within each durable-settings domain.
-
-Runtime catalogs are refreshed per command and cached under Yui home. If a live probe times out or fails, Yui shows the last cache for the same Agent launch context and clearly marks it as potentially stale; without a matching cache, it offers CLI defaults and custom values. `yui config agent capabilities <id>` exposes the same one-pass catalog, including models, model-specific efforts, and other runtime choices such as permissions, search availability, profiles, settings sources, and service tiers.
-
-`completion` is also interactive, with or without an explicit shell:
-
-```sh
-yui config completion
-yui config completion zsh
-```
-
-Both forms confirm the generated script, installation path, and shell startup-file change. The installed completion is generated from the command catalog, including nested subcommands.
-
-Yui uses `~/.yui` by default. Set `YUI_HOME` to use an isolated home:
-
-```sh
-export YUI_HOME=/absolute/path/to/yui-home
-yui setup
-```
-
-The home contains the authoritative SQLite database `yui.db`, Project Catalog
-and knowledge, and Controller discovery files. Stable Project checkouts and
-managed worktrees live under the configured workspace, outside Yui home.
-Legacy `schema.json` and `state.json` files are evidence only. Runtime storage
-accepts only the exact current contract; supported earlier storage versions
-enter only through the explicit upgrade boundary.
-
-Every Task-owned record family allocates a monotonically increasing local ID
-inside its Task. Different Tasks may therefore both contain `work-item-1`,
-`run-1`, or `input-1`. A managed Task session may use that short local ID
-because `YUI_TASK_ID` supplies the scope. Outside a Task session, use the
-qualified form `<task-id>/<local-id>`; Yui never searches every Task for a bare
-ID. Commands that already take a Task explicitly, such as `task work create`
-and `task integration start`, keep their subordinate IDs local to that Task.
-Candidate IDs are local to their WorkItem and carry both Task and WorkItem
-provenance.
-
-Yui has one Home storage version, recorded by the append-only SQLite migration
-ledger. Every CLI reports both its current storage version and its minimum
-supported migration version. Runtime admission still has only two outcomes:
-exact current, or rejected; a Controller never migrates storage while serving
-work. `yui upgrade --dry-run` is read-only. `yui upgrade` quiesces a running
-Controller, creates a consistent backup, applies every missing migration in
-one transaction, validates the current contract, and then restarts the
-Controller when it was running before the upgrade.
-
-`yui update` stages and pins one exact package, runs that staged binary's
-storage preflight, stops the exact old Controller, activates the same artifact,
-applies the staged release's migration chain when required, verifies the
-installed binary and current Home, and starts the replacement Controller. A
-Home inside the staged release's supported range can upgrade directly across
-multiple versions without installing intermediate releases. A newer Home, a
-Home below the migration floor, an incomplete migration ledger, or malformed
-data fails closed without a guessed repair.
-
-Yui 0.15.0 establishes storage version 1 and the migration floor. Homes created
-by earlier releases, including 0.14.2, are not on this compatibility line:
-preserve them for inspection with their matching Yui release or initialize a
-new Home. From 0.15.0 onward, each release retains the complete chain, so later
-`yui update` invocations can cross versions directly.
-
-See [Task-local identity](docs/task-local-identity.md) for the current reference
-contract.
-
-Schema work across Tasks is not serialized: any Task may propose the next
-storage migration on its own isolated branch without waiting for another Task's
-schema change to land. The later-integrating branch owns the reconciliation:
-rebase onto the latest project head, preserve every already released migration
-unchanged, allocate the next contiguous storage version, resolve schema and code
-conflicts, and re-run the bounded validation. A migration may update physical
-tables and current record payloads together; it must not introduce another
-writable compatibility axis.
-
-Yui provides four reusable Worker Profile definitions through
-`yui config profile reset`; minimum setup makes each one inherit the current
-Global Worker runtime:
-
-```text
-worker  explorer  implementer  reviewer
-```
-
-Profiles are versioned Worker templates with two independent parts: portable
-behavior (prompt instructions, Skills, and access intent) and runtime intent.
-Runtime either follows the current Global Worker binding dynamically, or names
-one explicit Agent with optional model and effort. `profile list` and `profile
-show` resolve the effective Agent from current configuration and display the
-Global Worker launch revision when inherited; that read does not rewrite or
-revise the Profile. Profiles do not own Sessions or workspaces.
-When an explicit Profile's Agent has a Global Worker binding, active or
-dormant, its other binding settings come from that binding; an unbound Agent
-uses provider defaults. A Worker binding referenced this way cannot be unbound
-until the Profile is updated, changed to inheritance, or removed. The Profile
-still owns model and effort, and omitting either means the provider default
-rather than the Worker's value.
-
-Creating a Task Role from a Profile freezes the Profile behavior and its fully
-resolved runtime binding into the Role. Later Profile or Global Worker changes
-do not rewrite existing Task Roles. On `task role add`, model, effort, and
-other Agent settings require `--agent` so Yui can validate and persist one
-complete explicit binding atomically. When `--profile` and `--agent` are both
-present during creation, the Agent must match the Profile's resolved Agent;
-the Profile runtime remains the base binding and explicit Agent settings
-override corresponding fields. On `task role update`, omitted `--agent`
-updates the active binding, while a provided `--agent` updates that binding
-without activating it; only `task role bind` switches the active Agent. An
-explicit Profile must resolve to that update target, where its runtime is the
-base binding and explicit Agent settings override corresponding fields. An
-inherited Worker Profile is also explicitly reapplied as a complete template:
-its currently resolved Worker Agent must match the update target. Use
-`--agent` to select that binding without activating it.
-Applying a Profile replaces the portable fields owned by AgentProfile
-(`defaultAccess`, description, instructions, skills, and access-derived
-constraints); explicit Role options in the same command apply afterward.
-This Yui Agent Profile is separate from a Codex native config profile also
-named `--profile`.
-
-Current Role selection is distinct from a AgentRun's immutable effective
-configuration. Updating a Worker from A to B preserves A's active Assignment;
-future explicit execution selects B. Leader replacement revokes the old
-management entry without rebuilding Worker assignments.
+[Quick start](#quick-start) · [Working through conversation](#working-through-conversation) · [Core design](#core-design)
 
 ## Quick start
 
-Bind a Project and create a Draft Task:
+You need Linux x64 with glibc, Git, tmux, and Node.js `^20.17.0`, `^22.9.0` or
+`^24.0.0`. For the simplest setup, have Codex CLI or Claude Code CLI installed
+and ready to use with your own account. Yui coordinates those Agents; it does
+not supply model access.
+
+For Claude, Yui passes through your authentication environment and native
+configuration directory; Claude selects the API key or login method using its
+own settings. Replacing a Session does not reset your login or initialization.
+Native first-run confirmations may still require your input.
+
+### 1. Install
 
 ```sh
-yui project add app /absolute/workspace/app \
-  --remote git@example.com:team/app.git --stable main --development main
-yui project update app --alias app-cli
-yui project refresh app
-yui project list
-
-yui task create "Fix CSV escaping" --project app --type bugfix
-yui task create "Ship CSV export" --project app --type feature
-yui task update <task-id> --priority high --tags release,csv --due-at 2026-08-01T00:00:00Z
-yui task update <task-id> --clear-priority --clear-tags --clear-due-at
-yui task message update <task-id>/<message-id> --body-file updated-message.md --wake-policy none
-yui task work edit <task-id>/<work-item-id> --objective "Revised outcome" \
-  --accept "New observable criterion"
-yui task work retire <task-id>/<work-item-id> --summary "Removed from the current Draft"
-yui task show <task-id>
-yui task context <task-id>
-yui task activate <task-id>
+npm install -g @zq-silk/yui
 ```
 
-Context reads return a bounded authorized working set and `coreCursor`.
-Use `task context delta <task-id> --after <coreCursor>` and its continuation
-token for fixed-upper-bound event pages; `task context inspect <task-id>
---store <store> --ref <id> --digest <digest>` expands a current record.
-Reading does not acknowledge delivery. `task next-action` remains a separate
-decision-support query.
+### 2. Set up, yourself or with an Agent
 
-Saved T05 artifacts can be attached with `task work update <task>/<work> done
---summary "..." --artifact-ref <artifact-id>` or `task complete <task>
---summary "..." --artifact-ref <artifact-id>`. Missing, cross-Task, or mutable
-Reference artifacts cannot be selected as fixed results. Context exposes saved
-artifacts and workspace/resource facts without starting their original Runtime.
-
-Brief edits use `task brief update <task-id>` with only the fields to change.
-The transaction reads the latest record and preserves other fields; the last
-explicit write to the same field wins. Edit events preserve before/after values
-for inspection with `task event list <task-id>`, without a required version token
-or automatic rollback. Accepted results remain unchanged.
-
-Task lifecycle is draft / active / completed / cancelled / archived.
-`task cancel <task-id> --summary "..."` ends intent without claiming execution
-has stopped. User/Operator may reopen cancelled Tasks; a Leader may reopen a
-completed Task. Reopening requires fresh explicit work/input selection and
-does not replay old requests. Archive remains a separate user/Operator action.
-
-A Draft stores planning state and Project bindings only; it does not adopt a
-writable managed Workspace. `task activate` prepares every bound Project first,
-then commits the Task's `active` status and Task-owned Workspace together. A
-preparation or consistency failure leaves the Task Draft and reports the
-workspace diagnosis instead of exposing a partially adopted execution root.
-Draft Message and WorkItem edits replace only the named mutable fields while
-preserving record identity and audit history. Repeated options replace the
-whole collection; matching `--clear-*` flags make an empty collection explicit.
-Retired records remain visible in history but leave the current Draft. A
-retired WorkItem never satisfies a dependency and does not redirect downstream
-dependencies through its optional replacement; fix the remaining Draft before
-activation. These Draft-only mutations do not create, stop, or clean runtime
-resources, and activation validates the current dependency graph, Roles, and
-Project scope before any Workspace is adopted.
-
-Task type describes intent rather than selecting an execution protocol.
-Software Projects use `bugfix` or `feature`: a bugfix is Leader-owned; if it
-grows into independently owned delivery requirements, reclassify it as a
-feature before creating WorkItems. The Leader decides whether a feature is
-small enough to deliver on Task main or large enough for independently owned WorkItems. A WorkItem is
-one substantial requirement for one Worker, not a development step, test run,
-review finding, or local fix. Multiple WorkItems are useful only when distinct
-Workers can advance meaningful requirements independently. A WorkItem's
-governing Candidate defines its delivery obligation: each writable Project's
-exact start and result commits must be represented by a committed Integration
-before Task-final Review or completion. Older Candidate, ChangeSet, and queue
-records remain audit evidence without keeping the Task open.
-
-`project refresh` is the explicit network operation for a stable Project checkout. It fetches the
-configured stable branch directly from the Project remote URL and advances only through a clean,
-verified fast-forward. Refresh requires matching stable and development branches, treats untracked
-files as dirty, preserves ignored files, and refuses missing remotes or refs and diverged checkouts.
-When the configured branch is `HEAD`, refresh resolves the remote's symbolic default branch for that
-operation and requires the checkout to be on that branch; detached or mismatched checkouts fail.
-
-### Project lifecycle
-
-Divergence and end-of-life are explicit, Operator-authority operations with fail-closed gates.
-Every destructive command refuses a managed Task Session (run it from an Operator or user
-terminal), an active Task binding, a dirty checkout, and an unreachable or unverified remote.
+Run the interactive setup:
 
 ```sh
-yui project diagnose app
-yui project reset app
-yui project reset app --discard-local
-yui project replace app --discard-local
-yui project retire app --reason "superseded by app-ng"
-yui project delete app --confirm app
-yui project delete app --checkout --confirm app
+yui setup
 ```
 
-`project reset` handles the divergence `project refresh` refuses. Without `--discard-local` it is
-a dry run: it fetches and verifies the remote baseline, and when the checkout has diverged it
-refuses while listing the exact local commits that would be discarded. With `--discard-local` it
-hard-resets the clean checkout to the verified remote commit (a plain fast-forward when the
-checkout is merely behind). `project replace` goes further for Home-managed checkouts: it clones
-the remote into a staging directory, verifies both branches, copies the Yui-local refs
-(`refs/heads/yui/`, `refs/yui/archive/`) so historical evidence keeps resolving, then swaps the
-checkout on disk while the catalog record keeps its path. Replace refuses linked worktrees (Task
-or Integration workspaces) and dirty checkouts, and requires `--discard-local`. The swap is
-recoverable: the previous checkout is parked at a backup path and restored on any failure, a
-catalog refusal rolls the swap back, and a crash mid-swap is healed on the next run (a crash
-before the swap leaves only a removable staging clone).
+Or ask the coding Agent you already use:
 
-`project retire` is the auditable soft deprecation: it records who retired the Project, when, and
-why, while retaining the catalog record, checkout, and every historical
-Task/AgentRun/Review/Integration/Publication reference. A retired Project cannot be refreshed,
-updated, migrated, reset, replaced, maintained through Knowledge writes (add/retire/propose/
-accept/reject), or bound to new Tasks, WorkItems, or Integrations; Knowledge reads (`list`,
-`show`, `proposals list/show`) stay open so the evidence stays auditable.
-`project delete` is the separate hard-removal decision: it requires a retired Project, an exact
-`--confirm <project-id>` acknowledgment, and fails closed while any Task record references the
-Project. `--checkout` additionally removes the Home-managed checkout (external checkouts are
-user-owned and must be removed manually): it first refuses linked worktrees and dirty checkouts,
-then moves the checkout to a tombstone before removing the catalog record, restoring it on any
-failure so the catalog and checkout never disagree unrecoverably. `project show` and
-`project list` display the lifecycle status and retirement record.
+> Yui is installed. Help me run `yui setup` in an interactive terminal,
+> choose an available Agent, and check the result with `yui doctor`.
+> Ask me about any account or setup choices you need.
 
-Use `task context` as the first detailed read of an existing Task. It combines the Task, Brief, active Decisions, recent Milestones, Roles, current and recent WorkItems with their AgentRuns, recent Messages, open and resolved InputRequests, and recent Events. Terminal output keeps histories and long text compact; `yui --json task context <task-id>` returns the complete records in the top-level `data` field.
+Setup establishes the Operator—the Agent you talk to—and a default Task Leader,
+then starts the local Controller. You can begin with those two roles and
+configure Workers or Reviewers later. If your Agent cannot operate an interactive
+terminal, run setup yourself; it only handles the initial configuration.
 
-Leader wakeups stay deliberately small: the wake envelope carries only the
-aggregated wake reasons, a delta window, and read pointers. The durable wake
-ledger is the on-demand read for what changed:
+### 3. Start a conversation
 
 ```sh
-yui task wake list <task-id>
-yui task wake show <task-id> <wake-id>
-```
-
-`wake list` shows the dispatch history with status, reasons, and consuming
-AgentRun; `wake show` renders one wake's delta window — the Events, Messages, and
-AgentRuns recorded between its cursors. A human or Agent can still force a wake
-with `yui task wake <task-id> --force --reason "<text>"`.
-
-Human-facing timestamps default to Beijing time (`Asia/Shanghai`) while durable
-records and `--json` data remain UTC/RFC 3339. Inspect or change the IANA
-timezone with:
-
-```sh
-yui config show
-yui config system set time-zone Europe/London
-```
-
-WorkItem review is one global, optional rule that reuses an existing Global
-Role's Agent, model, permissions, prompt, and Skills:
-
-```sh
-yui config workflow set review --role reviewer --trigger always
-yui config show
-yui config workflow clear review
-```
-
-For Project-backed software delivery, use `--trigger final` to supply the
-default Reviewer Role when the Leader decides the complete frozen Task result
-needs an independent Review:
-
-```sh
-yui config workflow set review --role reviewer --trigger final
-```
-
-Every result entering Leader acceptance is one explicit candidate on its
-existing WorkItem. The current global rule applies to the next candidate in
-every existing or new Task; that candidate snapshots the rule, so later
-`set`/`clear` changes do not rewrite an in-flight decision.
-`always` starts a ReviewRound for every candidate, including a completed Role AgentRun
-or a Leader-managed direct result; `leader` leaves the candidate awaiting
-acceptance so the Leader can accept it directly or run
-`yui task work review <task-id>/<work-item-id>`. A configured review rule therefore keeps
-Leader-managed candidates awaiting a decision instead of marking them done.
-`final` does not create WorkItem ReviewRounds or decide Task topology. The
-Leader explicitly requests a Task-scoped Review, unless an immutable Task
-contract requires one. The Round snapshots the exact Task-main Project heads
-directly, so even a Leader-owned Task with no WorkItem can be reviewed without
-locking the mutable Task workspace. A changed frozen head needs a new semantic
-Round; the same Reviewer Session continues in its
-stable workspace, while every AgentRun remains bound to its exact Round and head.
-The Reviewer follows Project Policy/Knowledge and reports reachable, material,
-actionable findings across the complete Task.
-A ReviewRound freezes the Candidate's exact Git commit and updates the
-Reviewer Role's stable writable workspace to that head while recording exact
-Round-owned workspace evidence. Its AgentRun may edit,
-test, and optionally commit diagnostic evidence there, but never changes the
-Candidate or Worker workspace and never creates another WorkItem, Candidate,
-ChangeSet, or recursive review. The result wakes the Leader, who decides whether
-to route evidence to the original Worker, accept, reject and redispatch that
-Worker in its existing Session, review again, or request user input.
-A failed review remains visible evidence and wakes the Leader, but does not
-take that decision away from the Leader.
-
-An explicit WorkItem Candidate or Task-final Review is direct unless the
-Leader names Producer Roles. Policy-triggered WorkItem Review remains direct
-by default:
-
-```sh
-yui task work review <task-id>/<work-item-id>
-yui task work review <task-id>/<work-item-id> \
-  --lane-role security-reviewer --lane-role correctness-reviewer
-
-yui task review request <task-id> --role reviewer
-yui task review request <task-id> --role reviewer \
-  --lane-role security-reviewer --lane-role correctness-reviewer
-```
-
-Direct Review creates one main Reviewer AgentRun with no ExecutionGroup or Lane.
-Replicated Review requires at least two distinct Producer Roles, all inspecting
-the identical frozen Assignment in isolated Lane workspaces. Yui waits for
-every Lane to settle and requires at least two successful Producer results
-before creating one idempotent main Reviewer synthesis AgentRun. Successful
-Producers are never rerun during Lane or main retry. Producer output is durable
-non-authoritative evidence; only the exact completed main Reviewer AgentRun
-completes the Round. The Leader reads that AgentRun's original result and decides
-what it means.
-
-Task context and next-action expose the Review shape, every frozen Project
-commit, its relation to the current candidate, Producer and main AgentRuns, and
-their owned workspaces. A request that fails after Round creation retains the ReviewRound
-and reports its exact reason; the Leader opens that Round and decides whether
-to retry, inspect or clean the workspace, use another Reviewer, or continue
-other work.
-An active Task-final Review freezes only its own candidate; it does not prevent
-the Leader from processing new input or advancing a later candidate. Delta
-Recheck is always available when Yui can prove an accepted contiguous baseline
-and exact diff. Yui does not select a mode from generic size thresholds;
-`requires-full-review` returns to the Leader without creating another Round.
-Candidate history, every ReviewRound, and the Leader decision remain grouped
-under the original WorkItem. A rejected result creates a new Candidate on the
-next dispatch while reusing the original execution Role, Session, and
-workspace.
-
-Yui Core supplies lifecycle and exact-scope safety; generic role Skills supply
-portable collaboration behavior; Project Policy/Knowledge supplies
-project-specific build, test, migration, release, and review rules; the Task
-Contract supplies the current objective and acceptance. Project-backed Workers
-commit and leave the Develop workspace clean before ending the Provider Turn.
-Yui stores the final AgentRun result and freezes each writable Project's HEAD in the Candidate
-snapshot; ReviewRound worktrees are recreated from those exact commits even if
-Develop later advances during repair.
-
-Task identity follows one bounded outcome, not the number of repositories
-involved. A repository-backed Task may bind multiple Projects, each with its
-own base ref. Yui exposes them under one Task workspace root:
-
-```text
-<workspace>/tasks/<task-id>/main/
-├── backend/
-├── frontend/
-└── shared-sdk/
-```
-
-`<workspace>/tasks/<task-id>/main` is a logical multi-Project container, not a
-Git repository. Each Project child is the supported Git cwd (for example
-`<workspace>/tasks/<task-id>/main/yui`) and points to that Project's managed
-worktree at `<workspace>/worktree/<project>/<task-id>/main`. Run Git commands
-inside the relevant Project child. With one bound Project, the native Agent
-starts in its managed worktree so Agent-native project configuration and Skills
-are discovered normally. With multiple Projects, it starts at the logical root
-and receives every Project worktree through the provider's native
-additional-directory mechanism. Create all known
-bindings together, or let the active Task Leader add one when the same outcome
-expands:
-
-```sh
-yui task create "Update authentication" \
-  --project backend --project frontend \
-  --base backend=develop --base frontend=main \
-  --type feature
-yui task project add <task-id> shared-sdk --base main
-```
-
-Project-backed Tasks record the local baseline, redacted remote identity, and
-the remote-tracking commit observed when their main workspace is created.
-Inspect delivery freshness with:
-
-```sh
-yui task base status <task-id>
-yui task base status <task-id> --refresh
-```
-
-The default check is offline and uses local remote-tracking refs. `--refresh`
-is the explicit authorization to query the configured remote; Yui never
-fetches, rebases, merges, or force-pushes as a hidden side effect of Task
-completion. Behind, diverged, or unavailable remote state is reported as
-delivery-risk evidence for the Leader; it does not replace the Leader's choice
-of delivery base. A dirty Task workspace remains a completion blocker.
-
-Implementation WorkItems declare the Projects they may modify. Their workspace
-keeps the same relative layout, creates isolated worktrees only for that write
-scope, and exposes the other Task Projects as context from Task main. Yui puts
-the exact writable and context-only Project lists into the managed dispatch and
-the `yui-worker` Skill requires the Agent to honor that boundary. Native Agent
-permissions remain session-wide, while Profile `access` is a behavior hint,
-not a provider sandbox or write grant. Every managed Role binding defaults to
-`permission.strategy=bypass`, including `explorer`, so provider prompts do not
-block normal work. Profiles and Skills constrain behavior; exact WorkItem or
-ReviewRound scope and the matching managed workspace are the only authority to
-modify Project files. A Role may instead choose `default` or `configured` and
-retain any supported subset of the provider's native permission options.
-
-Workspace ownership is independent from the executor Role. Yui persists one
-owner-keyed `ManagedWorkspace` for Task main, each WorkItem Develop checkout,
-each ReviewRound, and each IntegrationAttempt; dispatch attaches a snapshot.
-The delivery chain is `isolate -> Candidate -> ReviewRound -> ChangeSet capture
--> Integration -> accept -> cleanup`. Review worktrees start at the frozen
-Candidate commit and never become a Develop ChangeSet source.
-
-Write scope may only expand. The Leader supplies the complete old-plus-new set
-after a Worker reports that another repository is required; an
-existing writable Project cannot be removed:
-
-```sh
-yui task work create <task-id> "Update contract" \
-  --project backend --project frontend --role implementer
-yui task work scope <task-id>/<work-item-id> \
-  --project backend --project frontend --project shared-sdk
-yui task work isolate <task-id>/<work-item-id>
-yui task work reject <task-id>/<work-item-id> \
-  --summary "Write scope expanded; continue in the refreshed workspace."
-yui task work dispatch <task-id>/<work-item-id>
-yui task integration start <task-id> --work-item <work-item-id> \
-  --project backend --strategy cherry-pick --check "<validation command>"
-yui task integration cleanup <task-id>/<integration-id>
-yui task work cleanup <task-id>/<work-item-id> --integrated
-```
-
-The WorkItem Candidate records its exact start and result commits. Integration
-remains a single-Project Git transaction, so the Leader integrates each Project
-independently and chooses fast-forward, cherry-pick, merge, or manual
-application. Acceptance succeeds only after every writable Project result has
-a committed Integration, including an explicit successful no-op when the
-result is already represented. Use `--abandon` only for deliberate discard.
-Dirty worktrees are retained. Native Agent Sessions may be scoped to their
-launch directory, so Yui retires a stopped Role Session whenever the Role moves
-between Task main and an isolated WorkItem worktree. The next dispatch starts a
-Session in the new workspace while durable Yui records preserve context.
-
-Submit information through Operator:
-
-```sh
-yui operator submit "Compare CSV and JSON compatibility" --task <task-id>
-yui operator submit "Investigate a smaller cache design"
-yui operator status
-yui operator list
-yui operator resume
-yui operator resume --last
-yui operator new
 yui operator enter
 ```
 
-If current execution cannot be settled normally, fence the Task and restart
-from its durable progress:
-
-```sh
-yui task execution stop <task-id> --force --reason "<why execution must be fenced>"
-yui task execution start <task-id>
-```
-
-`stop` terminates disposable AgentRuns and Sessions while preserving WorkItems,
-repository changes, Messages, reviews, and other Task progress. `start` admits
-one new Leader attempt from those durable records; it does not recover an old
-Agent conversation.
-
-Without `--task`, `operator submit` creates a new Draft. Drafts accept planning changes but must be activated before Agent execution.
-Operator resolves every request against the Project catalog and existing Task
-context. Follow-up requirements, fixes, reviews, and questions for the same
-bounded outcome stay in that Task even when they involve multiple Projects.
-A distinct outcome, ownership boundary, or lifecycle creates a separate Task.
-Features, bugs, and questions use the same
-Task/WorkItem model rather than separate workflow types.
-`operator status` shows exactly one GlobalRole-selected writer separately from
-retained historical conversations. `operator list` shows recent conversations in fixed most-recently-updated order using
-their Agent and readable title or preview; native provider session IDs remain
-internal. Until an adapter supplies that metadata, Yui shows the provider plus
-a stable short Yui reference so untitled conversations remain distinguishable.
-`operator resume` opens the lightweight numbered history list, while `--last`
-resumes the newest entry directly. Starting a conversation is never a resume
-choice: the explicit `operator new` command starts a clean conversation and
-preserves the previous one in history.
-
-Create a Task-bound Worker instance from a Profile's resolved runtime and
-dispatch a WorkItem:
-
-```sh
-yui config role show worker
-yui config profile show implementer
-yui task role add <task-id> implementer --profile implementer
-yui task role show <task-id> implementer
-
-yui task work create <task-id> "Implement the exporter" \
-  --project app --role implementer
-yui task work isolate <task-id>/<work-item-id>
-yui task work dispatch <task-id>/<work-item-id> --input "Implement and run focused tests"
-```
-
-Without `--lane-role`, the assignee performs the WorkItem directly in its main
-workspace. To request independent production attempts over exactly the same
-frozen Assignment, provide at least two distinct Task Roles; one role is
-rejected, roles cannot repeat, and the assignee cannot be a Lane:
-
-```sh
-yui task work dispatch <task-id>/<work-item-id> \
-  --input "Implement and run focused tests" \
-  --lane-role producer-a --lane-role producer-b
-```
-
-Each Lane is a recoverable logical slot. A successful Lane points to its
-immutable Producer AgentRun result; a failed AgentRun leaves the Lane open and visible
-as `needs-attention`. The Leader retries or explicitly settles that exact AgentRun:
-
-```sh
-yui task run retry <task-id>/<failed-run-id>
-yui task run settle <task-id>/<failed-run-id>
-```
-
-Yui waits until every Lane is settled. At least two successful Producer results
-create one idempotent main AgentRun for the WorkItem assignee; fewer results fail
-the WorkItem attempt without falling back to a single result. A main AgentRun retry
-keeps the same source Group and never reruns successful Lanes. Only a successful
-main AgentRun can become the Candidate used by Review and Integration. `task work
-show`, `task work list`, Task context, and the Web control room derive execution
-shape, recovery targets, synthesis eligibility, main AgentRun, Candidate provenance,
-next action, and owner from the same persisted facts. Missing facts stay
-`unknown` or `unobserved`; token, duration, and tool-call totals are display-only.
-
-Permission is one adapter-specific enum configuration on each Agent binding:
-`default` follows the provider, `bypass` compiles the provider's supported
-bypass flag, and `configured` retains whichever native options are explicitly
-set. Codex options are `sandbox` and `approval`; Claude options are `mode`,
-`allowedTools`, and `disallowedTools`. Provider permission is independent from
-Profile behavior and Project write authority: only an exact WorkItem scope and
-matching managed workspace grant normal Project writes. A ReviewRound is the only non-WorkItem write
-purpose and must match its AgentRun, reviewRoundId, frozen base, and
-ReviewRound-owned main workspace or exact isolated Producer Lane workspace;
-every mismatch fails closed. Its diagnostic commit
-is visible history but is
-explicitly rejected by capture, ChangeSet, Integration, and acceptance paths.
-The Reviewer's final Provider response is its complete free-form Markdown or
-JSON result. Yui stores that text unchanged and does not parse headings, field
-names, checks, severities, findings, or verdicts. Core-owned workspace and Git
-evidence remains separate from Agent prose. Dirty uncommitted diagnosis may end
-without a commit; the worktree is retained and cleanup refuses it until it is
-clean.
-
-Every Role desired launch change increments its revision and applies only to a
-future launch. Each AgentRun and native Role Session stores the complete actual
-agent, adapter, model, effort, Profile access intent, exact writable Projects,
-permission strategy and native options, workspace, context, and source desired revision. Updating,
-switching, or clearing Role overrides never
-hot-mutates an existing process. When the Role has a live Session,
-`task role update`, `config role update`, and `config agent update` report that
-Session once and require `--yes`, so the change is recorded in the knowledge
-that it applies to the next activation; stopping the Session applies it
-immediately instead. `task context`, Role views, AgentRun history,
-Events, and Web show desired/effective revisions, Profile intent, permission, and
-pending next-launch drift.
-
-Both Codex and Claude deliver a managed AgentRun through the Provider's native Turn
-terminal. Yui stores the final assistant response as the exact AgentRun result,
-submits the WorkItem for Leader review, and queues the Leader. It does not
-accept the WorkItem. A Leader never wakes itself; any pending Operator or Worker
-wake remains durable until the Leader is idle.
-
-If the outcome cannot be determined, label the handoff `uncertain`,
-`incomplete`, `blocked`, or `requiring Leader judgment` and submit the most
-complete truthful identities, actions, repository state, checks and errors,
-lifecycle boundary, unfinished work, open decisions, risks, confidence, and
-bounded next options. The AgentRun result is immutable execution evidence only; it
-does not imply acceptance, WorkItem completion, ChangeSet capture,
-Integration, or Task completion.
-
-For one substantial feature requirement, the Leader may create a WorkItem and
-give it to a native subagent or Task Role Worker. A small Task or bugfix stays
-on Task main. Do not create a WorkItem merely to record implementation steps,
-tests, review, or follow-up fixes:
-
-```sh
-yui task work create <task-id> "Implement the export API" \
-  --objective "Deliver the independently acceptable export API requirement" \
-  --accept "The API contract and focused validation are complete"
-yui task work update <task-id>/<work-item-id> running
-yui config profile show reviewer
-```
-
-Subagent creation and result delivery happen inside the Leader's native Agent
-runtime; there is no Yui subagent launch command and Yui does not manage the
-child Session. The Leader must select and read an explicit Worker Profile,
-using `worker` when no specialist fits, and include its revision, instructions,
-Skills, access expectations, validation, and supported model/effort hints in
-the child brief. Agent bindings on Task Roles are ignored: the child inherits
-the Leader Agent, credentials, and conversation context. The Leader reviews the
-returned result and records the actual execution facts:
-
-```sh
-yui task work update <task-id>/<work-item-id> done \
-  --summary "executor=subagent; profile=reviewer@3; model=inherited; round=1; result=reviewed; checks=npm test passed"
-```
-
-Use `inherited` or `unknown` when the native runtime does not expose an actual
-model or effort; do not guess. The three supported paths remain deliberately
-small: Leader direct execution, a conversation-native subagent, or a Task Role
-AgentRun when work needs its own provider, credentials, interaction, or durable
-Session.
-
-For an isolated Task Role result, the Leader first reviews the stored AgentRun result.
-An insufficient result is rejected with feedback and redispatched in the same
-workspace. An acceptable result is captured and integrated in a candidate
-worktree. Checks run there, and the target advances only if its recorded HEAD
-still matches:
-
-```sh
-yui task integration start <task-id> \
-  --work-item <work-item-id> \
-  --strategy cherry-pick \
-  --check "npm test"
-```
-
-Integration state stores compact check outcomes and failure diagnoses. Full stdout and stderr are streamed without truncation to `YUI_HOME/artifacts/integration-checks/...`; `task integration show` exposes the relative log path, and `task integration cleanup` removes both the candidate worktree and those logs.
-
-Code or semantic conflicts remain blocked until that Task's Leader records a decision:
-
-```sh
-yui task integration resolve <task-id>/<integration-id> \
-  --option manual-resolution \
-  --rationale "Preserve the public contract while combining both implementations"
-yui task integration continue <task-id>/<integration-id>
-```
-
-Worker AgentRun completion is not WorkItem completion. The Leader accepts only after reviewing
-the result, validations, and the latest ChangeSet integration:
-
-```sh
-yui task work accept <task-id>/<work-item-id> --summary "Acceptance criteria met."
-```
-
-Use `task work reject` to return an awaiting result for repair and redispatch,
-and `task work retire <task>/<work> --summary "..."` to retire obsolete work,
-optionally naming a replacement. WorkItem and Integration
-worktrees and check logs remain available as evidence until explicit cleanup.
-
-Incorrect historical directives and execution attempts can be removed from
-operational projections without deleting their audit records:
-
-```sh
-yui task message retire <task>/<message> --reason "Superseded instruction"
-yui task run retire <task>/<run> --reason "Invalid launch record"
-```
-
-These commands append a retirement fact. Lists and audit views retain the
-original Message, WorkItem, or AgentRun and mark it retired; managed AgentRun context,
-actionability, recovery, review evidence, and scheduling ignore it. Retiring
-an active AgentRun first terminalizes that exact AgentRun, and retirement is
-idempotent. Only the user or global Operator may retire Messages or AgentRuns;
-WorkItems may also be retired by their Task Leader.
-
-For long-running Tasks, the Leader keeps Yui—not a native transcript—as the
-recovery authority. The Task Brief owns the overall technical approach,
-including how coordinated Project changes fit together. WorkItems own the
-executable per-Project modifications and acceptance checks. The Leader updates
-Brief focus and Leader summary before ending each Provider Turn, records material choices as
-Decisions, adds phase outcomes as Milestones, and promotes only cross-Task
-stable facts to Project Knowledge.
-
-When an active Leader AgentRun cannot continue without a user decision, it creates a durable InputRequest and ends its Provider Turn with a truthful blocked result:
-
-```sh
-yui task input request <task-id> --question "Which format should be the default?" \
-  --choice csv="CSV" --choice json="JSON" --blocks work-item:<work-item-id>
-yui task input list
-yui task input show <task-id>/<input-id>
-yui task input answer <task-id>/<input-id> --choice csv
-```
-
-Requests are user-required by default and remain open until answered or cancelled. When the Agent has a safe recommendation, it may attach a choice fallback and explicit timeout:
-
-```sh
-yui task input request <task-id> --question "Which format should be the default?" \
-  --choice csv="CSV" --choice json="JSON" \
-  --recommend csv --timeout-seconds 300
-```
-
-The recommendation is shown to the user. If no answer arrives, the nearest-deadline timer wakes the Controller to atomically apply that exact choice and queue the fixed Leader session to resume. Free-text and user-required requests never auto-resolve.
-
-`task input list` is the authoritative global open-input Inbox; add a Task ID to scope it, or `--all` to include answered and cancelled requests. Task completion, retirement, Leader attention, stalls, and open input are queued to the global Operator mailbox only as immutable TaskEvent or InputRequest references. The Controller merges one pending mailbox batch into one receipt-backed `[Yui updates]` user message for an existing ready Operator; the Operator reads the referenced records through the CLI and decides what is worth presenting. A running or unavailable Operator is never started or interrupted: the whole batch remains durable and is retried after native run completion or a later Controller pass. This path is a user message, not a tool call, and it never inspects or classifies Agent terminal text. Answers may be submitted by the user or Operator. An open request prevents unrelated pending wakes and Task completion or archival. The originating Leader may instead run `yui task input cancel <task-id> <input-id> --reason "..."`; cancellation queues that fixed Leader session to resume.
-
-Inspect the result:
-
-```sh
-yui task context <task-id>
-```
-
-Use the narrower `task work`, `task message`, `task run`, and Task Knowledge commands when you need one collection or record.
-
-Record a Task's confirmed PR/MR delivery state with one idempotent command:
-
-```sh
-yui task publication upsert <task-id> --project <project> \
-  --provider github --repository <owner/name> --kind pull-request --id <number> \
-  --url <url> --state open --reported
-```
-
-The required provider/repository/external ID selects the current Publication.
-The first upsert creates it. Later upserts inherit omitted metadata and omitted
-merge evidence only while the full evidence context remains unchanged. That
-context is the local commit, PR/MR state, remote commit, evidence text, and
-merge time. If any explicitly supplied context value differs, omitted
-verification resets to `reported` and omitted merge-evidence fields are
-cleared; changing the local commit without an explicit state also resets the
-Publication to `open`. Resupplying identical values remains idempotent. Each
-semantic change appends a new immutable record linked to the previous version,
-while identical input creates no event. `list`, `show`, and `task context`
-retain the complete history. This records facts already known to the caller;
-it does not query a provider or replace Review, Integration, or Task completion
-gates.
-
-Verify one current GitHub or GitLab Publication against the real PR/MR state:
-
-```sh
-yui task publication verify <task-id>/<publication-id>
-```
-
-Verification is an explicit external read. GitHub uses a trusted, PATH-pinned
-local `gh` executable; GitLab uses a trusted, PATH-pinned local `glab`
-executable. Both reuse the CLI's existing authentication, and Yui stores no
-provider token. The command requires the current unsuperseded Publication to
-record the exact Task delivery head, then requires the provider to report the
-same PR/MR head as merged and expose the integrated remote commit. It rechecks
-the Task head and Publication after the remote call before appending a new
-immutable `verified` record. Missing provider CLIs, unavailable
-authentication, ambiguous provider output, open/closed PRs or MRs, moved
-heads, and concurrent local changes fail without recording verification.
-GitLab repositories may use nested namespaces; a recorded self-hosted MR URL
-selects that GitLab host.
-
-Query whether every delivered Project head is represented by a current merged
-Publication:
-
-```sh
-yui task remote-delivery <task-id>
-yui task remote-delivery <task-id> --json
-```
-
-This is a read-only derived projection, not a Task status or writable `merged`
-flag. Active and reopened Tasks use the current clean Task-main heads and mark
-them provisional; completed and archived Tasks use the latest frozen
-`task.completed` heads. For each Project, Yui reports the expected local
-commit, the matching current unsuperseded Publication, PR/MR state,
-verification, and remote commit. Aggregate coverage is `none`, `unavailable`,
-`pending`, `partial`, or `merged`, with independent `allMerged` and
-`allVerified` values.
-Only a current Publication whose `localCommit` exactly matches the expected
-head and whose state is `merged` contributes merged coverage. Missing commits,
-open/closed records, stale heads, and superseded Publications never imply
-remote delivery. Projects whose Task head equals their managed base need no
-Publication. `task show`, `task context`, `task next-action`, and the Web detail
-projection use this same selector.
-`Archive --integrated coverage` requires both `allMerged=true` and
-`allVerified=true`.
-
-When a valid older completed Task has no frozen completion heads, Yui reports
-`unavailable` and keeps integrated archive fail-closed. Reopen and complete the
-Task again to record exact heads, then retry archive. Yui does not guess the
-missing head from a Publication or worktree, and `--force` never overrides
-missing head evidence.
-
-When the requested outcome is finished, complete the Task to stop automatic Leader wakes without deleting its sessions or Task main worktree:
-
-```sh
-yui task complete <task-id> --summary "CSV export shipped and verified"
-yui task complete <task-id> --summary-file delivery.txt --refresh-remote
-yui task reopen <task-id>
-```
-
-When a verified squash-merge Publication records a remote commit that is
-ancestry-divergent from the unchanged local Task head, a user or global Operator
-may explicitly authorize completion against its identical Git tree:
-
-```sh
-yui task complete <task-id> --summary-file delivery.txt \
-  --accept-published-tree <publication-id>
-```
-
-This is an independent exact-tree authorization. Yui requires the current,
-unsuperseded Publication to be merged and verified, its local commit to equal
-the physical Task head, its remote commit to be ancestry-divergent, and both
-commits to resolve to the same exact tree. When a Task-final Review obligation
-exists, completion also requires the latest semantic Round to attest the
-accepted Task head; otherwise completion does not invent a ReviewRound.
-`--refresh-remote` fetches
-the remote object graph before resolving that Publication commit. For a Task
-governed by a durable final-review contract, the stored contract continues to
-require its Reviewer policy, but compatible CLI and Controller updates do not
-need to reproduce its historical control-plane digest. Tasks without that
-contract retain the one-step explicit completion path. The Task event
-audit records the authorization and, on completion, the accepted Project,
-Publication, optional ReviewRound, both commits, and tree.
-
-Completed Tasks reject messages, dispatch, Provider authority changes, retry,
-and late AgentRun delivery until explicitly reopened, while retaining Task main for
-inspection or integration. Terminal WorkItem, Review, Integration, and Lane
-worktrees are non-blocking completion advisories, but they must be settled
-before archive. Every isolated WorkItem worktree is explicitly cleaned as
-integrated or abandoned; that cleanup also removes its managed branch. Archive
-requires `--integrated` or `--abandon` to state the Task main outcome and is
-allowed only after Task main is clean. `--integrated` additionally requires
-remote-delivery `allMerged=true` and `allVerified=true`; Task completion or a
-reported merge alone is never treated as verified remote delivery. When every
-exact Task head is merged but one or more Publications remain `reported`, the
-command identifies those Publications and refuses archive. An explicitly
-authorized `task archive <task-id> --integrated --force` may override only that
-verification gap and records the override in the archive event; it never
-bypasses missing, stale, open, or closed merge evidence. An intentional
-non-merge uses the existing explicit `--abandon` path. Archive removes managed
-worktrees but retains Task and WorkItem records. The Task main branch is
-retained as a recovery artifact instead of being silently deleted.
-Task lifecycle completion/selection only suggests valid source states: Draft for activate, active for complete, and completed for reopen.
-
-## Sessions and tmux
-
-Managed Task Agents use the [hybrid Provider runtime](docs/provider-runtime.md).
-Provider conversations remain ordinary user conversations. Yui adds the Role
-Skill and Session Manifest pointer, then sends Task work through provider-native
-structured requests. Managed prompts are never delivered as terminal bytes.
-
-Codex establishes the App Server WebSocket protocol through `app-server proxy`
-to create or resume an ordinary thread on the shared native daemon. The thread
-remains visible and directly usable in Desktop. Task execution stop terminates
-Yui's Agent Host and proxy while leaving the daemon and thread untouched; start
-creates a fresh proxy attachment.
-If the proxy disconnects, the Host may attach a bounded replacement client and
-reconcile the exact owned AgentRun from native history. A failed fresh attachment
-is released instead of becoming a cleanup prerequisite for later AgentRuns.
-Claude Code keeps its independent stream-json process. Agent Host is the sole
-writer to that process, so a completed stream write accepts the AgentRun; the
-later provider `result` event settles it. An uncertain write becomes
-`delivery-unknown` and is never automatically retried.
-
-Task Role observation and takeover are explicit:
-
-```sh
-yui task role view <task-id> <role>
-yui task role takeover <task-id> <role>
-yui task role release <task-id> <role>
-```
-
-For an independently hosted Provider such as Claude, these commands are the
-supported human-control boundary. A Codex Role uses an ordinary shared thread
-and may be operated directly in Desktop; an active Desktop AgentRun creates bounded
-backpressure for Yui rather than a failed AgentRun.
-
-AgentRun is the only durable Role scheduling state. Conversation state does not
-carry a second current-AgentRun pointer. A Yui-dispatched Provider Turn carries the
-durable AgentRun id that correlates its visible input and terminal result; a direct
-Provider Turn is recorded as direct conversation history without entering the
-scheduling pointer. A native Turn terminal completes that AgentRun, after which Yui
-may claim the next AgentRun and submit it through the same Session.
-TaskRole itself stores identity and desired launch configuration, not runtime
-status; Role status shown by CLI/Web is derived from the active AgentRun plus
-Session/Driver lifecycle facts.
-
-Global Operator and global Role sessions remain native interactive CLIs. Codex
-connects that TUI to the default shared App Server, so the same thread can move
-between Yui and Desktop without transferring a rollout writer or losing its
-Global Context entry. A thin Host in the same pane transparently forwards the
-native TUI's App Server connection and acknowledges its exact `thread/start`
-or `thread/resume` response. Yui records that Thread ID before the first user
-AgentRun, without depending on `notify`, scanning history, or creating a bootstrap
-message. The attachment outlives Controller restarts but exits with the TUI:
-
-```sh
-yui session enter <global-role>
-```
-
-`yui update` accepts either the current Home contract or any valid historical
-contract at or above the staged CLI's minimum supported migration version.
-Unsupported newer Homes and Homes below that floor remain untouched.
-
-tmux fixes a pane's history capacity when that pane is created. Existing panes
-retain their configured capacity; managed runtime output remains observable in
-the Agent Host pane without becoming lifecycle or acknowledgement evidence.
-
-Each Role, including Operator and a Task-bound Worker instance, can bind multiple
-configured Agents, has one active Agent, and keeps a separate native session per
-Agent binding. Multiple bindings may use the same adapter for different accounts,
-models, profiles, or environment sources. They are ready-to-switch configurations,
-not parallel writers: the active binding remains the unique authority. Operator can
-keep multiple conversations for each binding. `operator new` and
-`operator resume` reuse the single Operator tmux pane: when a process is
-running, Yui asks before stopping it and switching the conversation. On a
-cross-Agent switch, the saved model and effort are reused unless the user
-explicitly chooses to update them.
-
-Window existence does not imply a running Agent: `pane_dead=0` is live and
-`pane_dead=1` is an exited, retained diagnostic pane. Status reads never delete
-that evidence, and unreadable state is an error rather than proof of exit.
-An explicit launch can rebuild the exact dead window; tmux refuses to replace
-a live pane. An unidentified live Operator still cannot be overwritten.
-
-The Role's active binding is desired state for the next launch. A
-running AgentRun and its native Session continue under their immutable
-effective snapshot even if the Role is edited or switched. Resume is refused
-only when continuation is impossible: no recoverable native Session, a
-different Agent or adapter, or a different physical workspace. Desired launch
-configuration such as model, effort, permission, Role context, Skills, or
-declared write scope shapes the next activation instead of ending the Session,
-and AgentRun-scoped facts such as ReviewRound identity or candidate commits never
-affect reuse. When continuation is impossible Yui starts a new Session after
-the old process has stopped and keeps the terminal Session's immutable
-effective snapshot in history. Managed
-Sessions invoke the ordinary `yui` command; their Manifest and durable
-Role/AgentRun fences authenticate scope while protocol and storage compatibility
-allow a CLI package or Controller upgrade in place. Exact internal callbacks
-remain fenced to their originating runtime snapshot.
-
-Use `yui config role unbind <global-role> <agent-id>` or `yui task role unbind <task-id> <role> <agent-id>` to retire a dormant binding. The active binding and any non-stopped native session are rejected; a stopped session record is removed atomically with the binding.
-
-Claude session IDs are preallocated at launch. Codex discovers its native
-thread identity from App Server responses. Managed Task AgentRuns use structured
-Provider observations for both CLIs. Global Codex uses the native TUI's exact
-App Server startup response and the existing Host acknowledgement. Legacy
-global `notify` callbacks cannot register a Session or change its lifecycle.
-
-Automated lifecycle and delivery decisions use structured Provider events or
-supported Hook payloads, persisted identities, usage snapshots, tmux process state, receipts, and pane
-fences. Yui never
-parses prompt glyphs, progress text, trust dialogs, or other Agent terminal
-output to infer readiness or success. `captureRole()` remains an explicit
-human-facing transcript read and has no lifecycle authority.
-
-The [AgentRuntime Driver architecture](docs/agent-runtime-drivers.md) keeps
-native Codex/Claude event names at the edge. Core consumes exact-fenced
-Session, AgentRun, operation, waiting, host, and activity observations. A positive
-token delta is evidence of recent runtime activity; an unchanged counter is
-not. A live tmux pane proves only that the host exists. Runtime activity and
-durable workflow progress use independent clocks, so token/tool/resource
-movement cannot conceal a workflow that is not advancing.
-
-Stable Role context never creates a separate bootstrap AgentRun. Task execution AgentRuns use the generic Leader or Worker Skill, while review AgentRuns use the generic Reviewer Skill based on durable AgentRun purpose rather than a configured Role name. The provider either carries the Skill through a safe additive native context channel or points to it from the ordinary Task delivery. These Yui-owned Role Skills define portable orchestration only. Project Skills remain ordinary versioned files in the Project and are discovered, selected, and loaded by the Agent through its native project mechanism; Yui does not scan, parse, copy, or inject them.
-
-Managed Codex keeps the user's native developer instructions unchanged. The ordinary Task message includes a compact absolute Session Manifest pointer, and the manifest identifies the matching Yui-owned Role Skill for Codex to read on demand. Model, effort, permission, workspace, and shell settings are supplied to `thread/start` or `thread/resume` through the shared App Server daemon; a Codex native config profile is rejected because it cannot be isolated to one shared-daemon thread. The underlying Codex config file is never mutated. App Server notifications are the managed thread's lifecycle authority; Yui installs no managed Codex Hook and does not claim `notify`. Interactive Codex Sessions may still use Yui's structured `notify` callback, and Doctor reports any effective configuration conflict. `skills.config` is not misused because it only enables or disables already-discovered Skills. Claude receives the same Yui-owned Role Skill content from a private `0600` managed context file rather than a large or sensitive argv value; retries and resumes reuse the purpose-specific Role path. Non-Operator global Roles stay neutral and receive no Task orchestration Skill. Operator therefore opens at an empty native composer, so the user's text remains its first user message. Leader wakeups and Worker or Reviewer AgentRun assignments remain real mailbox-delivered work messages.
-
-## Controller and failure handling
-
-One background Controller runs per `YUI_HOME`:
-
-```sh
-yui controller status
-yui controller status --all
-yui controller status --all --verbose
-yui controller cleanup
-yui controller cleanup --all
-yui controller stop
-yui controller restart
-```
-
-`controller status` scans the current `YUI_HOME` without starting a Controller. It
-shows a bounded summary of the current Controller, owned Agent sessions, residual
-resources, and live anomalies. `--all` also discovers other same-user Yui homes
-from running processes; `--verbose` expands the resource details. `--json`
-returns the complete typed snapshot even when the human view is abbreviated.
-
-`controller cleanup` is interactive and never selects active Task or Role
-resources. It separates safe and review-required candidates, confirms live
-process cleanup explicitly, and revalidates process, tmux pane, and socket
-identity immediately before acting. Partial failures are reported without
-hiding the resources that remain. Use `--all` to include discovered Yui homes.
-
-`controller restart` replaces the Controller process and its scheduler/socket services with the currently installed Yui version. It can recover a lost discovery record only when the old process still matches the current UID, Controller entrypoint, physical Home, PID, and process-start identity. It does not stop or restart managed tmux/Agent sessions.
-
-Successful `setup` and `update` commands ensure that the current Home has a
-running Controller, starting one when the Home was previously idle. A
-successful `upgrade` restores a Controller only when it stopped one for the
-migration. `update` starts the replacement only after migration and health
-checks pass.
-
-Its recovery reconciliation runs every 120 seconds by default. Normal durable state changes enqueue a Task, Role, or Operator key and return immediately; keys received in the same fixed 100 ms window trigger one non-overlapping targeted pass. Operator presentation has an independent lane, so a blocked Task workspace operation cannot delay a user question. Periodic Git/worktree work is limited to Tasks with durable Task-mailbox work, while active Role liveness uses one tmux inventory. Structured Agent Driver observations, whether received from native provider events or supported Hooks, are exact-fenced before they reach the durable runtime inbox. A terminal AgentRun observation atomically records the exact AgentRun result. Durable mailboxes freeze the current batch while new signals merge into the next batch. Task-orchestration failures retain the exact Controller-owned processing batch for two bounded fast retries and later periodic recovery; a successful retry completes that batch before newer pending work is claimed. Recommended InputRequest and pending AgentRun deadlines share one nearest-deadline selector and therefore do not wait for the recovery interval. Explicit `task reconcile` still requests an immediate recovery pass. The retained loop is:
-
-1. dispatch pending Leader wakes whose Task workspaces are already ready;
-2. prepare active Project Task main worktrees with durable orchestration work;
-3. deliver active Role AgentRuns from durable active-AgentRun state, using ordinary
-   Role mailboxes only as optional delivery hints;
-4. resolve due AgentRun completions and reconcile Role liveness;
-5. dispatch Leader work created or unblocked by the later recovery phases.
-
-Automated input is sent only through tmux. Each pass performs one non-blocking process-state readiness check; a busy startup is retried through a small bounded mailbox timer, while later busy sessions are woken by canonical Agent Driver terminal observations. A pane-local receipt prevents the same AgentRun input from being typed twice after a Controller retry.
-
-If a Role process exits without a terminal Provider result, the Controller fails that AgentRun and queues the Leader. A replicated WorkItem or Review Producer Lane remains open for exact retry or explicit settlement; completed sibling results remain reusable. Recovery failures are exposed through the small Jobs view:
-
-```sh
-yui jobs list
-yui jobs retry leader-recovery:<task-id>
-yui task reconcile <task-id>
-yui task run retry <failed-run-id>
-yui task run settle <failed-run-id>
-```
-
-`jobs` is not a restored generic queue: it presents durable pending Leader wakes and Leader recovery failures only.
-
-`task run settle` records that the Leader will no longer recover the exact
-current failed Producer Lane AgentRun. Only then does the Lane become failed and the
-settled Group become eligible for WorkItem or Review synthesis when at least
-two Producer results succeeded. The same command retains its narrow repair for an obsolete failed
-Reviewer AgentRun whose Task-final ReviewRound is stranded on an old frozen
-candidate; that repair never creates a retry Round.
-
-Completion is the reversible execution fence. Archiving is terminal and is accepted only after active work is settled: it stops the Task's tmux session and removes clean managed worktrees. Dirty worktrees keep the Task completed and are preserved for deliberate resolution.
-
-## Local web control room
-
-Run the local control room on the default loopback address:
-
-```sh
-yui web
-# Yui web control room: http://127.0.0.1:4173
-```
-
-Use `--port <port>` or `--host 127.0.0.1|::1|localhost` to change the
-listener. Yui rejects non-loopback hosts because the control room exposes Task
-metadata, Briefs, Roles, WorkItems, AgentRuns, messages, Decisions, Milestones, and
-InputRequests. A random token embedded in the served page protects its write
-and terminal endpoints.
-
-The Web surface can answer an open InputRequest through the same durable CLI
-mutation used by Terminal users. It can also attach to the existing Operator,
-Leader, or Worker tmux pane through a native xterm client. Closing the browser
-terminal detaches only that tmux client; the Agent process and conversation
-continue running in tmux. The Web surface does not duplicate transcripts or
-maintain another session state.
-
-The dashboard opens on an overview cockpit: four operational metrics (active
-tasks, open inputs waiting on you, completed tasks, and the total), a
-cross-task attention inbox that surfaces every open InputRequest with its
-question and urgency so you can answer without drilling in, and the list of
-currently active tasks. Each task row carries a derived execution status
-(progressing, needs attention, blocked, recovering) so stalled or failed
-work is visible before you open a task. Selecting a task opens an anchored
-detail view (Summary, Focus, Work items, AgentRuns, Roles, History, Messages)
-with a sticky tab bar that tracks the visible section. The Summary tab leads
-with an execution band that consolidates the Task's owner, current action,
-attention list, blockers, and fail-closed indicators; Work items surface
-their current ExecutionGroup with per-lane status, Candidates, and
-retirement disposition; AgentRuns show purpose, execution lineage, final result,
-and Leader disposition; Reviews show direct or replicated shape, frozen
-Assignment, Producer Lane state, main synthesis AgentRun, and authoritative result.
-
-The control room supports English and Simplified Chinese, selecting an initial locale from the browser and remembering manual changes. The theme selector switches between the dark Control Room, the light Paper Ledger, and the dark-blue Atlas themes. Both choices are stored only in browser `localStorage`; they do not modify `YUI_HOME`.
-
-## Management commands
-
-The restored management surface includes:
-
-```sh
-yui update
-yui upgrade [--dry-run]
-yui config agent add|list|show|capabilities|update|remove
-yui config role add|list|show|update|remove|bind|unbind
-yui config profile add|list|show|update|remove|reset
-yui config completion [bash|zsh|fish]
-yui session enter|record|replace|reconcile
-yui session stop --all
-yui project add|clone|refresh|update|discover|list|show|knowledge
-yui project reset|replace|retire|delete
-```
-
-`yui update` stages the newly published package side by side and asks that exact
-binary to classify the Home. Only then does it stop the exact old Controller,
-activate the same concrete package version, apply the complete missing
-migration chain when needed, validate the actually installed binary and Home,
-and start the replacement Controller. Unsupported Homes block preflight and
-remain untouched.
-
-`yui upgrade --dry-run` prints the ordered migration plan without writing.
-`yui upgrade` creates a timestamped SQLite backup and upgrades any valid Home
-from the CLI's minimum supported storage version to its current version. Yui
-0.15.0 is storage version 1; pre-0.15.0 Homes remain outside that migration
-line and are never rewritten.
-
-Agent environment bindings store process-environment variable names, never secret values. Adapter-owned lifecycle arguments cannot be overridden through raw arguments.
-
-## Scope
-
-Yui targets one trusted local user on one machine. Its Web/API surface is
-loopback-only and intentionally omits remote or multi-user Web access,
-distributed coordination, backup/import/export commands, trash/restore,
-derived indexes, recovery journals, runtime leases, inactivity TTLs,
-cooldowns, and recurring schedules.
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for persistence and scheduling details.
-## Development
-
-```sh
-npm ci
-npm test
-```
-
-The permanent suite is intentionally one seconds-scale core smoke. It checks
-CLI startup, a normal SQLite Task path, exact-current storage admission, and the
-built-in Agent Drivers. Change-specific TDD fixtures and abnormal-data repros
-are temporary development evidence and are removed when the change is complete;
-they do not accumulate as permanent regression tests. See
-[the verification policy](./docs/testing/verification-levels.md).
-
-To make user terminals use this checkout, reversibly link the user-level `yui` command:
-
-```sh
-make link
-command -v yui
-yui doctor
-```
-
-The first `make link` saves the original `yui` entry in the same user-level bin directory and replaces it with a managed symlink to this checkout. A later `make link` from another checkout only moves that managed symlink; the last checkout wins and development links never form a backup chain. Run `make link` and `make unlink` serially—do not invoke them concurrently from multiple environments or checkouts. The launcher defaults `YUI_HOME` to the active checkout's `output/dev/home`; an explicit `YUI_HOME` remains authoritative. Managed Agent launches do not depend on this global link: the Controller prepends a private launcher for its own Yui CLI and `YUI_HOME`. Run `yui controller restart` if an already-running Controller must load the new build. `make unlink` from any checkout using this implementation verifies the shared managed state and restores the one original `yui` entry.
-
-```sh
-make unlink
-```
-
-To run this checkout in isolation without changing the global `yui`, build only
-its local launcher instead of linking:
-
-```sh
-make install-local
-./output/dev/bin/yui doctor
-```
-
-`make install-local` writes a self-contained launcher at `output/dev/bin/yui`
-and never touches the user-level `yui` command. The launcher resolves its own
-checkout and defaults `YUI_HOME` to this checkout's `output/dev/home`. The
-Controller socket is derived from that Home's durable `homeId` at the fixed
-Linux path `/tmp/yui-<uid>/<homeId>.sock`; discovery also binds the physical
-Home directory, so caller `TMPDIR`, path aliases, and copied runtime records
-cannot redirect control requests. The tmux server namespace and state remain
-scoped to the selected Home, so the checkout stays separate from other
-checkouts and the global install.
-It is idempotent, so re-run it after pulling new code (then run
-`./output/dev/bin/yui controller restart` if a Controller is already running).
-Call the launcher by its absolute path for a stable per-checkout entry point;
-exporting `output/dev/bin` onto `PATH` is a per-shell convenience only.
-
-`make install-local` builds `dist/` and writes exactly one file—the launcher
-itself. It does not modify `PATH` and does not create the data home, so run
-`./output/dev/bin/yui setup` once before commands that need state. Because a
-bare `yui` is resolved through `PATH` and not by the current directory, working
-inside this checkout does not make a bare `yui` use the local launcher; it still
-runs whatever `PATH` finds. Select this instance with the absolute launcher
-path, or, for one interactive shell only, prepend it to `PATH`:
-
-```sh
-export PATH="$PWD/output/dev/bin:$PATH"   # this shell only; not for automation
-```
-
-This is the recommended entry point for agents and scripts: run
-`make install-local` once, then call `<checkout>/output/dev/bin/yui ...` by
-absolute path from any working directory. Avoid relying on `export` persisting,
-since each command runs in a fresh process.
+Tell the Operator what you want to work on:
+
+> My project is at `/absolute/path/to/app`. Help me add CSV export.
+> First clarify the scope, then implement and verify it. Don't publish anything.
+
+The Operator can register the Project and organize the request into a Task.
+Its Leader handles planning and execution within your instructions. You can
+ask questions, refine the requirement, or bring another request to the same
+Operator without learning Task IDs or internal commands.
+
+## Working through conversation
+
+### Let the Agent organize the work
+
+You can bring a mixture of new requests, corrections and questions:
+
+> The CSV export also needs to preserve leading zeros in account numbers.
+> Separately, investigate why login is slow. Prioritize the export first.
+
+The Operator uses existing Task context to decide what belongs together and
+what deserves an independent Task. It can organize work by Project, type,
+priority and tags. A follow-up need not become a new Task, and a Task need not
+be split into a WorkItem for every implementation step.
+
+The Leader owns delivery: small work can stay with the Leader; independent
+requirements can go to configured Workers; a Reviewer can inspect the result
+when appropriate. Agents choose the plan and delegation. The Controller
+delivers the scheduled work, observes execution and returns results to the
+responsible Agent—without requiring you to relay messages between sessions.
+
+### Configure by asking
+
+Stay in the Operator conversation to change how Yui works:
+
+> Show me the available Agents and models. Suggest a setup for planning,
+> implementation and review, then apply it after I confirm.
+
+The Operator reads the actual configuration and supported choices before
+making changes. You can ask it to change a model, bind another Agent, adjust
+review preferences or explain a setting. It should tell you what changes,
+whether it affects future launches or a live Session, and which choices need
+your confirmation. You do not need to hand-edit configuration files.
+
+### Pick up where you left off
+
+> What is still active? Which tasks need my decision? Continue the CSV task
+> from its saved state and summarize what remains.
+
+Tasks retain requirements, decisions and results independently of the native
+chat history. Yui delivers durable updates to the Operator; the Agent can
+recover context and continue compatible sessions, or choose a new execution
+when necessary. A failed process does not erase the Task, and an uncertain
+submission is not silently repeated.
+
+For a visual overview, run `yui web` in another terminal. The local Web view
+shows the same tasks and pending questions; it is not a separate task system.
+
+## Core design
+
+### Agents make decisions; Yui makes work durable
+
+Yui is a local control plane and context API, not a fixed workflow engine.
+The Operator recognizes and routes requests. A Leader owns each Task's outcome
+and chooses planning, delegation, review and recovery. The Controller handles
+delivery and runtime facts; it does not decide whether an Agent's answer is
+good enough.
+
+Tasks, messages, decisions, original execution results and Project Knowledge
+are durable context. Agents read and update that context through small,
+scoped CLI operations. Session and process state support execution, but do not
+replace the record of what the user asked for.
+
+### Separate the task from the conversation
+
+A Task is the outcome; a WorkItem is an independently acceptable requirement;
+a Session is a native conversation; an AgentRun is an explicitly requested
+execution. Keeping them separate lets you discuss a Task without starting work,
+continue a requirement across executions, and inspect the original result
+without confusing “the Agent finished speaking” with “the work was accepted.”
+
+A Draft can hold planning before adopting a delivery workspace. For repository
+work, changes happen in managed worktrees rather than the stable Project
+checkout. The Leader evaluates results and coordinates review and integration
+against the actual scope.
+
+### Keep execution replaceable and authority explicit
+
+Codex CLI, Claude Code CLI and ACP connections—including a Claude Agent SDK
+bridge—share an execution boundary while retaining their native capabilities
+and conversations. Configured intent and what the running Agent actually reports
+are distinct facts; Yui does not pretend every integration behaves identically.
+
+When a Task needs an additional capability, its Leader can create and validate a
+Task-local plugin and explicitly activate it within existing authority.
+Executable plugins need specific execution grants. Results can be saved
+independently of the plugin or Session that produced them.
+
+Yui is designed for one trusted local user. It is not an OS sandbox or a remote
+multi-user service. Publishing, granting new access and other external effects
+still require the corresponding authority.
+
+## Learn more
+
+The [architecture overview](ARCHITECTURE.md) explains the end-to-end design.
+The [documentation map](docs/architecture/README.md) links the current contracts
+for configuration, execution, delivery, storage and plugins. Use `yui --help`
+when you want to operate the CLI directly.
+
+Yui stores its control-plane data under `~/.yui` by default; `YUI_HOME` selects
+another instance. See [storage and upgrades](docs/sqlite-control-plane-design.md)
+before moving between builds or updating an existing Home.
+
+## Contributing
+
+In a source checkout, start with `npm ci` and `npm test`. Read
+`.agents/skills/develop-yui/SKILL.md` and the
+[verification policy](docs/testing/verification-levels.md).
+Source builds also need a Linux C compiler and static libc development libraries
+for the Claude process owner. Published packages include that executable;
+npm users do not need to compile it.
+
+To exercise your checkout, run `make install-local`, then use the absolute
+`<checkout>/output/dev/bin/yui` launcher. It defaults to an isolated Home under
+that checkout; run its `setup` before stateful use. Do not use the global `yui`
+or `make link` to validate local changes. Live-model, paid or shared-resource
+tests require an explicit request for those resources.
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](LICENSE)

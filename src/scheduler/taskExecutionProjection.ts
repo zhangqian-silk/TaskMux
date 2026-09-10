@@ -836,29 +836,16 @@ function collectAttention(input: Readonly<{
   }
   for (const request of input.inputRequests.filter(({ status }) => status === "open")) {
     const requester = request.requester;
-    const run = requester === undefined
-      ? undefined
-      : activeRuns.find(({ id }) => id === requester.runId);
-    const role = requester === undefined
-      ? undefined
-      : input.roles.find(({ name }) => name === requester.roleName);
-    const session = requester === undefined
-      ? undefined
-      : input.roleSessions.find(({ roleName }) => roleName === requester.roleName);
+    // Origin is durable provenance, not a live execution lease. Questions
+    // remain answerable after their originating Run ends or Session changes.
     if (
-      run === undefined
-      || run.roleName !== "leader"
-      || requester === undefined
-      || run.effective?.agentId !== requester.agentId
-      || (role?.adapterId !== undefined && role.adapterId !== run.effective?.adapterId)
-      || (requester.nativeSessionId !== undefined
-        && session?.nativeSessionId !== requester.nativeSessionId)
+      requester === undefined || requester.taskId !== task.id || requester.roleName !== "leader"
     ) {
       result.push({
         kind: "identity-mismatch",
         id: `input:${request.id}`,
         owner: "leader",
-        summary: `InputRequest ${request.id} does not match the active Leader AgentRun/session; it is held fail-closed.`,
+        summary: `InputRequest ${request.id} has an invalid Task/Leader origin; it is held fail-closed.`,
         ...(requester?.runId === undefined ? {} : { runId: requester.runId }),
         roleName: "leader",
         failClosed: true
